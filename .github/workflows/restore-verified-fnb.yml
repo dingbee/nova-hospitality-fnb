@@ -17,7 +17,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Fetch verified standalone source
         run: |
           set -euo pipefail
@@ -29,7 +28,6 @@ jobs:
           test -f export/nova-fnb/README.md
           test -f export/nova-fnb/package.json
           test -f export/nova-fnb/src/lib/independence.test.ts
-
       - name: Replace repository with verified F&B source
         run: |
           set -euo pipefail
@@ -38,27 +36,20 @@ jobs:
           test -f package.json
           test -f src/lib/independence.test.ts
           test ! -d src/routes
-
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
       - name: Typecheck
         run: bun run typecheck
-
       - name: Full test suite
         run: bun run test
-
       - name: Production build
         run: bun run build
-
       - name: Remove one-time restore workflow
         run: rm -f .github/workflows/restore-verified-fnb.yml
-
       - name: Commit verified standalone product
         run: |
           set -euo pipefail
@@ -67,3 +58,5 @@ jobs:
           git add -A
           git commit -m 'Restore verified standalone NOVA Hospitality F&B'
           git push origin main
+
+# Trigger retry: source is fixed at mtoni-river-lodge@b092431a3c2d4dca4b4aaa72a3839b6ae273d5e2
