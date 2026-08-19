@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# ==========================================================================
+# nova — Restaurant & Bar OS standalone local lifecycle
+#
+#   ./nova up       start database, apply standalone schema, seed demo, serve
+#   ./nova down     stop the appliance and the database container
+#   ./nova status   show component health
+#   ./nova seed     (re)load synthetic demo data
+#   ./nova reset    destroy the LOCAL database volume and rebuild from scratch
+#   ./nova logs     tail gateway + PostgREST logs
+#
+# Touches only this machine: a Docker volume named nova_fnb_pgdata and
+# ~/.nova-fnb. It never reads or writes any hosted environment.
+# ==========================================================================
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMPOSE="$ROOT/standalone/docker/docker-compose.yml"
+ENV_FILE="$ROOT/standalone/.env"
+
+log() { printf '\033[36m[nova]\033[0m %s\n' "$*"; }
+die() { printf '\033[31m[nova] %s\033[0m\n' "$*" >&2; exit 1; }
+
+# Standalone packages carry a build marker so a terminal can prove which
+# package it is running. Absent in the source repository.
+[[ -f "$ROOT/standalone/BUILD_INFO" ]] && log "$(grep '^STANDALONE_BUILD=' "$ROOT/standalone/BUILD_INFO")"
+
+[[ -f "$ENV_FILE" ]] || die "missing standalone/.env — run: cp standalone/.env.example standalone/.env"
+set -a; source "$ENV_FILE"; set +a
+
+# Relative paths in .env are resolved against the repository root.
+case "${NOVA_MIGRATIONS_DIR:-}" in ./*) NOVA_MIGRATIONS_DIR="$ROOT/${NOVA_MIGRATIONS_DIR#./}";; esac
+case "${NOVA_SEED_DIR:-}" in ./*) NOVA_SEED_DIR="$ROOT/${NOVA_SEED_DIR#./}";; esac
+export NOVA_ENV_FILE="$ENV_FILE" NOVA_MIGRATIONS_DIR NOVA_SEED_DIR
+mkdir -p "${NOVA_KEY_DIR:-$HOME/.nova-fnb/keys}" "${NOVA_RUN_DIR:-$HOME/.nova-fnb/run}" \
+         "${NOVA_BACKUP_DIR:-$HOME/.nova-fnb/backups}"
+
+# Standalone safety gate: refuse to run against anything hosted.
+for v in VITE_SUPABASE_URL NOVA_DB_HOST; do
+  [[ "${!v:-}" == *supabase.co* ]] && die "$v points at a hosted project — refusing to start"
+done
+
+compose() { docker compose --env-file "$ENV_FILE" -f "$COMPOSE" "$@"; }
+
+db_up() {
+  command -v docker >/dev/null || die "docker is required"
+  log "starting local PostgreSQL on 127.0.0.1:${NOVA_DB_PORT}"
+  compose up -d
+  for _ in $(seq 1 60); do
+    compose exec -T postgres pg_isready -U "$NOVA_DB_SUPERUSER" >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  die "PostgreSQL did not become ready"
+}
+
+case "${1:-up}" in
+  up)
+    db_up
+    log "installing appliance (schema, keys, TLS, UI bundle, gateway)"
+    bash "$ROOT/local/scripts/install.sh"
+    bash "$ROOT/local/scripts/seed-demo.sh"
+    log "ready → https://localhost:${NOVA_GATEWAY_TLS_PORT:-8443}"
+    ;;
+  down)
+    bash "$ROOT/local/scripts/stop.sh" 2>/dev/null || true
+    compose down
+    log "stopped"
+    ;;
+  seed) bash "$ROOT/local/scripts/seed-demo.sh" ;;
+  status)
+    compose ps
+    bash "$ROOT/local/scripts/novactl.sh" status 2>/dev/null || true
+    ;;
+  logs) tail -n 200 -f "${NOVA_RUN_DIR:-$HOME/.nova-fnb/run}"/*.log ;;
+  reset)
+    read -r -p "Destroy the LOCAL nova_fnb database volume? [y/N] " a
+    [[ "$a" == "y" ]] || exit 0
+    bash "$ROOT/local/scripts/stop.sh" 2>/dev/null || true
+    compose down -v
+    log "volume removed — run ./nova up to rebuild"
+    ;;
+  *) die "unknown command: $1" ;;
+esac
