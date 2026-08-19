@@ -1,0 +1,14 @@
+# Migrations skipped by the local installer, with reasons.
+#
+# The product migrations under supabase/migrations remain authoritative for
+# SCHEMA. A small number of historical migrations are DATA edits made against
+# one specific hosted property (hard-coded row UUIDs that only exist there).
+# A clean standalone installation has no such rows, so those migrations are
+# not applicable — they are recorded in the ledger as skipped-by-policy rather
+# than silently ignored.
+#
+# Format: <filename>  # <reason>
+# Only data-only migrations may be listed here. Never skip a schema migration.
+
+20260721144859_b10a8bc5-70f4-451d-9560-c7a3011c4128.sql  # property-specific room unit data (hard-coded room UUIDs)
+20260806142337_0c977466-741b-4cd6-bc22-892f03edb5bd.sql  # demo/test booking data for one hosted property

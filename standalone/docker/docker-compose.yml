@@ -1,0 +1,26 @@
+# Restaurant & Bar OS — standalone local infrastructure.
+# Isolated by name, volume and port from anything else on the machine.
+name: nova-fnb
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: nova-fnb-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${NOVA_DB_SUPERUSER:-nova_superuser}
+      POSTGRES_PASSWORD: ${NOVA_DB_SUPERUSER_PASSWORD:-change-me-locally}
+      POSTGRES_DB: postgres
+    ports:
+      - "127.0.0.1:${NOVA_DB_PORT:-55432}:5432"
+    volumes:
+      - nova_fnb_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${NOVA_DB_SUPERUSER:-nova_superuser}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  nova_fnb_pgdata:
+    name: nova_fnb_pgdata

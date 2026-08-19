@@ -1,0 +1,23 @@
+{
+  "id": "/admin?terminal",
+  "name": "NOVA Hospitality — Restaurant & Bar OS",
+  "short_name": "NOVA",
+  "description": "Operational terminal for the NOVA Hospitality Restaurant & Bar OS.",
+  "start_url": "/admin/restaurant/pos",
+  "scope": "/admin",
+  "display": "standalone",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#141c2b",
+  "theme_color": "#141c2b",
+  "categories": ["business", "productivity"],
+  "icons": [
+    { "src": "/nova-terminal-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/nova-terminal-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Restaurant POS", "short_name": "Restaurant", "url": "/admin/restaurant/pos" },
+    { "name": "Bar POS", "short_name": "Bar", "url": "/admin/restaurant/bar/pos" },
+    { "name": "Kitchen", "short_name": "Kitchen", "url": "/admin/restaurant/kitchen" }
+  ]
+}

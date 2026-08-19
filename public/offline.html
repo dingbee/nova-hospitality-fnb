@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0F2620" />
+    <meta name="robots" content="noindex" />
+    <title>Offline — NOVA Hospitality F&B</title>
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <style>
+      :root {
+        --ivory: #f5f1ea;
+        --charcoal: #1c1d1a;
+        --forest: #0f2620;
+        --muted: rgba(28, 29, 26, 0.65);
+        --line: rgba(28, 29, 26, 0.12);
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; min-height: 100%; }
+      body {
+        background: var(--ivory);
+        color: var(--charcoal);
+        font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-weight: 300;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+      }
+      main {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 3rem 1.5rem;
+      }
+      .card {
+        max-width: 560px;
+        width: 100%;
+        text-align: center;
+      }
+      .eyebrow {
+        font-size: 0.72rem;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin: 0 0 1.25rem;
+      }
+      h1 {
+        font-family: "Cormorant Garamond", "Times New Roman", serif;
+        font-weight: 400;
+        font-size: clamp(2.25rem, 5vw, 3.25rem);
+        line-height: 1.1;
+        margin: 0 0 1.25rem;
+      }
+      p { margin: 0 0 1rem; color: var(--muted); font-size: 1rem; }
+      .divider {
+        width: 40px; height: 1px; background: var(--charcoal);
+        opacity: 0.3; margin: 1.75rem auto;
+      }
+      .links {
+        margin-top: 2rem;
+        display: grid;
+        gap: 0.5rem;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      }
+      .links a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.85rem 1rem;
+        font-size: 0.72rem;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: var(--charcoal);
+        text-decoration: none;
+        border: 1px solid var(--charcoal);
+        transition: background 0.2s, color 0.2s;
+      }
+      .links a:hover, .links a:focus-visible {
+        background: var(--charcoal); color: var(--ivory); outline: none;
+      }
+      .retry {
+        margin-top: 1.25rem;
+        background: var(--charcoal); color: var(--ivory);
+        border: 1px solid var(--charcoal);
+        padding: 0.85rem 1.5rem; cursor: pointer;
+        font-size: 0.72rem; letter-spacing: 0.24em; text-transform: uppercase;
+        font-family: inherit;
+      }
+      .retry:hover { background: transparent; color: var(--charcoal); }
+      footer {
+        padding: 1.5rem; text-align: center;
+        font-size: 0.7rem; letter-spacing: 0.18em; text-transform: uppercase;
+        color: var(--muted); border-top: 1px solid var(--line);
+      }
+      .status {
+        display: inline-flex; align-items: center; gap: 0.5rem;
+        font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase;
+        color: var(--muted); margin-top: 1.25rem;
+      }
+      .dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: #b9542a; display: inline-block;
+      }
+      .dot.online { background: #4f7a4a; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="card">
+        <p class="eyebrow">NOVA Hospitality F&B</p>
+        <h1>You're offline by the river.</h1>
+        <p>
+          We can't reach the network just now, but pages you've already
+          visited remain available. Karibu — explore them below, or try
+          again when you're back online.
+        </p>
+        <div class="divider" aria-hidden="true"></div>
+        <button class="retry" type="button" onclick="location.reload()">
+          Try again
+        </button>
+        <div class="status" role="status" aria-live="polite">
+          <span id="dot" class="dot" aria-hidden="true"></span>
+          <span id="status-text">Offline</span>
+        </div>
+        <nav class="links" aria-label="Cached pages">
+          <a href="/">Home</a>
+          <a href="/rooms">Rooms</a>
+          <a href="/experiences">Experiences</a>
+          <a href="/dining">Dining</a>
+          <a href="/contact">Contact</a>
+          <a href="/lodge">About</a>
+        </nav>
+      </div>
+    </main>
+    <footer>NOVA Hospitality F&B · Arusha, Tanzania</footer>
+    <script>
+      (function () {
+        var dot = document.getElementById("dot");
+        var text = document.getElementById("status-text");
+        function update() {
+          var online = navigator.onLine;
+          if (online) {
+            dot.classList.add("online");
+            text.textContent = "Back online — reloading…";
+            setTimeout(function () { location.reload(); }, 600);
+          } else {
+            dot.classList.remove("online");
+            text.textContent = "Offline";
+          }
+        }
+        window.addEventListener("online", update);
+        window.addEventListener("offline", update);
+        update();
+      })();
+    </script>
+  </body>
+</html>

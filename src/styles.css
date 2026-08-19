@@ -1,0 +1,1056 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-display: "Cormorant Garamond", "Playfair Display", Georgia, serif;
+  --font-serif: "Cormorant Garamond", Georgia, serif;
+  --font-sans: "Inter", "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-xl: 16px;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Adaptive OS semantic aliases (resolved inside .nova-os) */
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-surface-muted: var(--surface-muted);
+  --color-border-subtle: var(--border-subtle);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-focus: var(--focus);
+
+  --color-ivory: var(--ivory);
+  --color-bone: var(--bone);
+  --color-clay: var(--clay);
+  --color-ember: var(--ember);
+  --color-river: var(--river);
+  --color-forest: var(--forest);
+  --color-charcoal: var(--charcoal);
+  --color-gold: var(--gold);
+
+  --shadow-soft: 0 30px 60px -30px color-mix(in oklab, var(--charcoal) 40%, transparent);
+  --shadow-deep: 0 60px 120px -40px color-mix(in oklab, var(--charcoal) 60%, transparent);
+}
+
+:root {
+  --radius: 4px;
+
+  /* NOVA modern-luxury palette — exact HEX system
+     Token names retained for backward compatibility with existing
+     class names (bg-ivory, bg-bone, text-charcoal, bg-charcoal,
+     text-ivory, etc.) — only the values are refreshed. */
+  --ivory: #FFFFFF;        /* dominant background + light text on dark */
+  --bone: #F5F5F5;         /* alternate sections, cards, content blocks */
+  --clay: #C0B87A;         /* soft gold accent (sparingly) */
+  --ember: #C0B87A;        /* accent alias */
+  --gold: #C0B87A;         /* accent alias */
+  --river: #6B6B6B;        /* muted secondary text */
+  --forest: #2A5430;       /* deep green hover */
+  --charcoal: #1A1A1A;     /* primary text + black luxe surfaces */
+  --green: #346739;        /* brand primary green */
+
+  --background: var(--ivory);
+  --foreground: var(--charcoal);
+  --card: #FFFFFF;
+  --card-foreground: var(--charcoal);
+  --popover: #FFFFFF;
+  --popover-foreground: var(--charcoal);
+  --primary: var(--green);
+  --primary-foreground: #FFFFFF;
+  --secondary: var(--bone);
+  --secondary-foreground: var(--charcoal);
+  --muted: var(--bone);
+  --muted-foreground: #6B6B6B;
+  --accent: var(--clay);
+  --accent-foreground: var(--charcoal);
+  --destructive: oklch(0.55 0.22 25);
+  --destructive-foreground: #FFFFFF;
+  --border: rgba(26, 26, 26, 0.10);
+  --input: rgba(26, 26, 26, 0.14);
+  --ring: var(--green);
+}
+
+.dark {
+  --background: var(--charcoal);
+  --foreground: var(--ivory);
+  --card: oklch(0.22 0.01 80);
+  --card-foreground: var(--ivory);
+  --popover: oklch(0.22 0.01 80);
+  --popover-foreground: var(--ivory);
+  --primary: var(--ivory);
+  --primary-foreground: var(--charcoal);
+  --secondary: oklch(0.26 0.01 80);
+  --secondary-foreground: var(--ivory);
+  --muted: oklch(0.26 0.01 80);
+  --muted-foreground: oklch(0.7 0.02 80);
+  --accent: var(--gold);
+  --accent-foreground: var(--charcoal);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: var(--gold);
+}
+
+@layer base {
+  * { border-color: var(--color-border); }
+
+  html {
+    scroll-behavior: smooth;
+    /* Root scaling — consistent across Android Chrome, Samsung Internet, Safari, Firefox. */
+    -webkit-text-size-adjust: 100%;
+    -moz-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    overflow-x: hidden;
+    max-width: 100%;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.7;
+    font-size: 16px;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+    max-width: 100%;
+  }
+
+  /* Global mobile responsiveness guardrails.
+     Prevent any descendant from exceeding viewport width. */
+  #root, main, section, header, footer, article, aside, div {
+    max-width: 100%;
+  }
+  img, video, picture, canvas { height: auto; }
+
+  /* ============================================================
+     MOBILE-FIRST RESPONSIVE ARCHITECTURE
+     ------------------------------------------------------------
+     Sprint 5+ refactor. Replaces the earlier desktop-first
+     corrective layers (which lived inside `@media (max-width:…)`
+     blocks) with a continuous fluid system that scales from
+     320 → 1920 px with no dead zones.
+
+     Breakpoints (Tailwind defaults) are used only for coarse
+     grid/layout swaps in components — never for base typography
+     or spacing. Those scale via clamp() at all widths.
+
+     Tokens:
+       Typography → --fs-* (fluid font sizes)
+       Spacing    → --space-* (fluid gaps / padding)
+       Section    → --section-y, --section-x, --hero-pt
+     ============================================================ */
+
+  /* ---------- Fluid design tokens ---------- */
+  :root {
+    /* Typography — clamp(mobile-min, viewport-scaled, desktop-max).
+       vw factor tuned so growth crosses 640→1024 smoothly. */
+    --fs-xs:   clamp(0.75rem, 0.72rem + 0.15vw, 0.8125rem);
+    --fs-sm:   clamp(0.8125rem, 0.78rem + 0.2vw,  0.875rem);
+    --fs-base: clamp(0.9375rem, 0.9rem + 0.25vw,  1rem);
+    --fs-lg:   clamp(1rem,     0.95rem + 0.35vw,  1.125rem);
+    --fs-xl:   clamp(1.0625rem, 0.98rem + 0.55vw, 1.25rem);
+    --fs-2xl:  clamp(1.25rem, 1.1rem + 0.9vw,     1.5rem);
+    --fs-3xl:  clamp(1.5rem,  1.28rem + 1.2vw,    1.875rem);
+    --fs-4xl:  clamp(1.75rem, 1.45rem + 1.6vw,    2.25rem);
+    --fs-5xl:  clamp(2rem,    1.65rem + 2.2vw,    3rem);
+    --fs-6xl:  clamp(2.25rem, 1.75rem + 3vw,      3.75rem);
+    --fs-7xl:  clamp(2.5rem,  1.9rem + 4vw,       4.5rem);
+    --fs-8xl:  clamp(2.75rem, 2rem + 5vw,         6rem);
+    --fs-9xl:  clamp(3rem,    2.2rem + 6.5vw,     8rem);
+
+    /* Spacing — fluid gaps / paddings.
+       Small → mid → large ranges suitable for gap-*, mt-*, py-* usage. */
+    --space-4:  clamp(0.75rem, 0.7rem + 0.25vw, 1rem);
+    --space-6:  clamp(1rem,   0.9rem + 0.5vw,   1.5rem);
+    --space-8:  clamp(1.25rem, 1.1rem + 0.75vw, 2rem);
+    --space-10: clamp(1.5rem, 1.25rem + 1.25vw, 2.5rem);
+    --space-12: clamp(1.75rem, 1.4rem + 1.75vw, 3rem);
+    --space-16: clamp(2rem,   1.5rem + 2.5vw,   4rem);
+    --space-20: clamp(2.25rem, 1.65rem + 3vw,   5rem);
+    --space-24: clamp(2.5rem, 1.75rem + 3.75vw, 6rem);
+    --space-28: clamp(2.75rem, 1.85rem + 4.5vw, 7rem);
+    --space-32: clamp(3rem,   2rem + 5vw,       8rem);
+
+    /* Section / hero layout */
+    --section-x: clamp(1rem, 0.5rem + 2.5vw, 3rem);
+    --section-y: clamp(2.5rem, 1.5rem + 5vw, 6rem);
+    --hero-pt:   clamp(4.5rem, 3rem + 6vw, 7rem);
+
+    /* ---------- Semantic width tokens ----------
+       Standard container widths — used by <Container variant="…"> and
+       the `.container-*` utilities below. */
+    --w-reading: 68ch;         /* long-form article body */
+    --w-content: 72rem;        /* default content column (1152px) */
+    --w-wide:    88rem;        /* wide marketing sections (1408px) */
+    --w-full:    100%;         /* edge-to-edge */
+
+    /* ---------- Semantic radius tokens ----------
+       Layered on top of the existing --radius-sm/md/lg/xl in @theme. */
+    --radius-2xl: 24px;
+    --radius-pill: 9999px;
+
+    /* ---------- Elevation tokens (shadows) ---------- */
+    --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.04);
+    --shadow-md: 0 8px 20px -8px rgb(0 0 0 / 0.12), 0 2px 6px -2px rgb(0 0 0 / 0.06);
+    --shadow-lg: 0 24px 48px -18px rgb(0 0 0 / 0.20), 0 6px 12px -6px rgb(0 0 0 / 0.08);
+    --shadow-xl: 0 40px 80px -24px rgb(0 0 0 / 0.28), 0 10px 20px -8px rgb(0 0 0 / 0.10);
+
+    /* ---------- Semantic typography roles ----------
+       Role tokens map to the fluid --fs-* scale. Use these — not raw
+       Tailwind sizes — for anything with editorial meaning. */
+    --type-display-size: var(--fs-8xl); --type-display-lh: 1.02; --type-display-tr: -0.03em;
+    --type-hero-size:    var(--fs-7xl); --type-hero-lh:    1.06; --type-hero-tr:    -0.025em;
+    --type-h1-size:      var(--fs-6xl); --type-h1-lh:      1.08; --type-h1-tr:      -0.02em;
+    --type-h2-size:      var(--fs-5xl); --type-h2-lh:      1.12; --type-h2-tr:      -0.015em;
+    --type-h3-size:      var(--fs-4xl); --type-h3-lh:      1.18; --type-h3-tr:      -0.01em;
+    --type-body-lg-size: var(--fs-lg);  --type-body-lg-lh: 1.7;
+    --type-body-size:    var(--fs-base); --type-body-lh:   1.7;
+    --type-small-size:   var(--fs-sm);  --type-small-lh:  1.55;
+    --type-caption-size: var(--fs-xs);  --type-caption-lh: 1.4;
+  }
+
+  /* ---------- Semantic width container utilities ----------
+     Reusable layout containers. Component authors should reach for
+     these instead of scattering max-w-[1100px] / max-w-6xl values. */
+  .container-reading { width: 100%; max-width: var(--w-reading); margin-inline: auto; padding-inline: var(--section-x); }
+  .container-content { width: 100%; max-width: var(--w-content); margin-inline: auto; padding-inline: var(--section-x); }
+  .container-wide    { width: 100%; max-width: var(--w-wide);    margin-inline: auto; padding-inline: var(--section-x); }
+  .container-full    { width: 100%; max-width: var(--w-full);    padding-inline: var(--section-x); }
+
+  /* ---------- Semantic typography role utilities ---------- */
+  .type-display { font-family: var(--font-display); font-weight: 400; font-size: var(--type-display-size); line-height: var(--type-display-lh); letter-spacing: var(--type-display-tr); text-wrap: balance; }
+  .type-hero    { font-family: var(--font-display); font-weight: 400; font-size: var(--type-hero-size);    line-height: var(--type-hero-lh);    letter-spacing: var(--type-hero-tr);    text-wrap: balance; }
+  .type-h1      { font-family: var(--font-display); font-weight: 400; font-size: var(--type-h1-size);      line-height: var(--type-h1-lh);      letter-spacing: var(--type-h1-tr);      text-wrap: balance; }
+  .type-h2      { font-family: var(--font-display); font-weight: 400; font-size: var(--type-h2-size);      line-height: var(--type-h2-lh);      letter-spacing: var(--type-h2-tr);      text-wrap: balance; }
+  .type-h3      { font-family: var(--font-display); font-weight: 500; font-size: var(--type-h3-size);      line-height: var(--type-h3-lh);      letter-spacing: var(--type-h3-tr); }
+  .type-body-lg { font-family: var(--font-sans);    font-size: var(--type-body-lg-size); line-height: var(--type-body-lg-lh); }
+  .type-body    { font-family: var(--font-sans);    font-size: var(--type-body-size);    line-height: var(--type-body-lh); }
+  .type-small   { font-family: var(--font-sans);    font-size: var(--type-small-size);   line-height: var(--type-small-lh); }
+  .type-caption { font-family: var(--font-sans);    font-size: var(--type-caption-size); line-height: var(--type-caption-lh); letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-muted-foreground); }
+
+  /* Elevation utilities keyed to the shadow tokens. */
+  .shadow-token-xs { box-shadow: var(--shadow-xs); }
+  .shadow-token-sm { box-shadow: var(--shadow-sm); }
+  .shadow-token-md { box-shadow: var(--shadow-md); }
+  .shadow-token-lg { box-shadow: var(--shadow-lg); }
+  .shadow-token-xl { box-shadow: var(--shadow-xl); }
+
+  /* ============================================================
+     NOVA F&B OS — COMMAND CENTER SURFACE TOKENS
+     Layered on top of the base semantic palette. Applied only
+     inside the admin shell (.nova-os) so the public site is
+     unaffected.
+     ============================================================ */
+  :root {
+    --os-canvas: #F7F7F5;          /* soft graphite-tinted warm off-white */
+    --os-surface: #FFFFFF;         /* card / panel surface */
+    --os-surface-2: #FAFAF8;       /* subtle nested surface */
+    --os-hairline: rgba(26,26,26,0.06);
+    --os-hairline-strong: rgba(26,26,26,0.10);
+    --os-ink: #0F1210;             /* primary ink */
+    --os-ink-2: #4A4E4B;           /* secondary ink */
+    --os-ink-3: #6B6F6C;           /* muted ink */
+    --os-green: #346739;
+    --os-green-soft: rgba(52,103,57,0.08);
+    --os-gold: #C0B87A;
+    --os-gold-soft: rgba(192,184,122,0.14);
+    --os-info: #3D6FA8;
+    --os-info-soft: rgba(61,111,168,0.10);
+    --os-warn: #B7791F;
+    --os-warn-soft: rgba(183,121,31,0.12);
+    --os-danger: #B4433C;
+    --os-danger-soft: rgba(180,67,60,0.10);
+    --os-success: #2F8F55;
+    --os-success-soft: rgba(47,143,85,0.10);
+
+    --os-shadow-card: 0 1px 0 rgba(26,26,26,0.02), 0 2px 8px -4px rgba(26,26,26,0.06), 0 12px 32px -20px rgba(26,26,26,0.10);
+    --os-shadow-float: 0 1px 0 rgba(26,26,26,0.02), 0 12px 32px -12px rgba(26,26,26,0.12), 0 30px 60px -30px rgba(26,26,26,0.18);
+  }
+
+  /* Admin shell scope — swap the base canvas to warm graphite */
+  .nova-os {
+    background-color: var(--os-canvas);
+    color: var(--os-ink);
+  }
+
+  /* Motion utilities used across the OS */
+  @keyframes os-fade-in-up {
+    from { opacity: 0; transform: translate3d(0, 6px, 0); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0); }
+  }
+  .os-fade-in { animation: os-fade-in-up .35s cubic-bezier(.2,.7,.2,1) both; }
+  .os-fade-in-delay-1 { animation-delay: 40ms; }
+  .os-fade-in-delay-2 { animation-delay: 90ms; }
+  .os-fade-in-delay-3 { animation-delay: 140ms; }
+  .os-fade-in-delay-4 { animation-delay: 200ms; }
+  @media (prefers-reduced-motion: reduce) {
+    .os-fade-in, .os-fade-in-delay-1, .os-fade-in-delay-2,
+    .os-fade-in-delay-3, .os-fade-in-delay-4 { animation: none; }
+  }
+
+  /* Card primitives scoped to the OS */
+  .os-card {
+    background: var(--os-surface);
+    border: 1px solid var(--os-hairline);
+    border-radius: 20px;
+    box-shadow: var(--os-shadow-card);
+  }
+  .os-card-flat {
+    background: var(--os-surface);
+    border: 1px solid var(--os-hairline);
+    border-radius: 20px;
+  }
+  .os-chip {
+    display: inline-flex; align-items: center; gap: .35rem;
+    padding: 2px 10px; border-radius: 9999px;
+    font-size: 0.72rem; font-weight: 500;
+    border: 1px solid var(--os-hairline-strong);
+    background: var(--os-surface-2);
+    color: var(--os-ink-2);
+  }
+
+  /* ---------- Global fluid typography (mobile-first) ----------
+     Overrides Tailwind's static text-* utilities with clamp()
+     tokens so headings scale continuously between 320 → 1920 px.
+     No corrective media queries required. */
+  .text-xs   { font-size: var(--fs-xs); }
+  .text-sm   { font-size: var(--fs-sm); }
+  .text-base { font-size: var(--fs-base); }
+  .text-lg   { font-size: var(--fs-lg); }
+  .text-xl   { font-size: var(--fs-xl); }
+  .text-2xl  { font-size: var(--fs-2xl); line-height: 1.25; }
+  .text-3xl  { font-size: var(--fs-3xl); line-height: 1.2; }
+  .text-4xl  { font-size: var(--fs-4xl); line-height: 1.18; }
+  .text-5xl  { font-size: var(--fs-5xl); line-height: 1.14; }
+  .text-6xl  { font-size: var(--fs-6xl); line-height: 1.1;  }
+  .text-7xl  { font-size: var(--fs-7xl); line-height: 1.08; }
+  .text-8xl  { font-size: var(--fs-8xl); line-height: 1.06; }
+  .text-9xl  { font-size: var(--fs-9xl); line-height: 1.04; }
+
+  /* ---------- Global fluid spacing utilities ----------
+     Applied to Tailwind's static spacing scale so section padding,
+     gaps, and margins breathe naturally across viewports.
+     Only the historically-oversized values are fluidised; small
+     values (< 4) stay static so component layouts remain precise. */
+  .py-16 { padding-top: var(--space-16); padding-bottom: var(--space-16); }
+  .py-20 { padding-top: var(--space-20); padding-bottom: var(--space-20); }
+  .py-24 { padding-top: var(--space-24); padding-bottom: var(--space-24); }
+  .py-28 { padding-top: var(--space-28); padding-bottom: var(--space-28); }
+  .py-32 { padding-top: var(--space-32); padding-bottom: var(--space-32); }
+  .pt-16 { padding-top: var(--space-16); }
+  .pt-20 { padding-top: var(--space-20); }
+  .pt-24 { padding-top: var(--space-24); }
+  .pt-28 { padding-top: var(--space-28); }
+  .pt-32 { padding-top: var(--space-32); }
+  .pb-16 { padding-bottom: var(--space-16); }
+  .pb-20 { padding-bottom: var(--space-20); }
+  .pb-24 { padding-bottom: var(--space-24); }
+  .pb-28 { padding-bottom: var(--space-28); }
+  .pb-32 { padding-bottom: var(--space-32); }
+  .px-8  { padding-left: var(--space-8);  padding-right: var(--space-8);  }
+  .px-10 { padding-left: var(--space-10); padding-right: var(--space-10); }
+  .px-12 { padding-left: var(--space-12); padding-right: var(--space-12); }
+  .gap-10 { gap: var(--space-10); }
+  .gap-12 { gap: var(--space-12); }
+  .gap-16 { gap: var(--space-16); }
+  .mt-16 { margin-top: var(--space-16); }
+  .mt-20 { margin-top: var(--space-20); }
+  .mt-24 { margin-top: var(--space-24); }
+  .mb-16 { margin-bottom: var(--space-16); }
+  .mb-20 { margin-bottom: var(--space-20); }
+  .mb-24 { margin-bottom: var(--space-24); }
+
+  /* ---------- Hero secondary hierarchy (all viewports) ----------
+     Non-structural visual weighting — kept from previous system
+     but expressed against `[data-hero]` (stable attribute) rather
+     than fragile `class*=` string matches. */
+  [data-hero] .eyebrow,
+  section[class*="h-[75svh]"] .eyebrow,
+  section[class*="h-[85svh]"] .eyebrow {
+    opacity: 0.75;
+  }
+  @media (max-width: 767px) {
+    [data-hero] nav[aria-label="Breadcrumb"],
+    section[class*="h-[75svh]"] nav[aria-label="Breadcrumb"],
+    section[class*="h-[85svh]"] nav[aria-label="Breadcrumb"] {
+      opacity: 0.7;
+      transform: scale(0.94);
+      transform-origin: left center;
+    }
+  }
+
+  /* ---------- Mobile-only ergonomics (≤ 767px) ----------
+     Kept intentionally: touch targets, icon cap, hero heading
+     balance. Everything else scales fluidly via clamp(). */
+  @media (max-width: 767px) {
+    svg.lucide:not(.icon-decorative) {
+      max-width: 32px;
+      max-height: 32px;
+      width: auto;
+      height: auto;
+    }
+    button:not(.no-min-touch),
+    a[role="button"],
+    [role="button"]:not(.no-min-touch) {
+      min-height: 44px;
+    }
+    .hero h1, [data-hero] h1 { text-wrap: balance; }
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    line-height: 1.12;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+    hyphens: auto;
+  }
+
+  p {
+    line-height: 1.75;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+  }
+
+  /* Prevent media and embeds from overflowing their containers */
+  img, video, iframe, svg {
+    max-width: 100%;
+  }
+
+  /* ---------- iOS / Android safe-area helpers ----------
+     Sprint 5+ Part III. Consumed by floating CTAs, footer, and any
+     bottom-anchored surface via `pb-safe` / inline `env(...)`. */
+  .pb-safe { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+  .pt-safe { padding-top: env(safe-area-inset-top); }
+  .pl-safe { padding-left: env(safe-area-inset-left); }
+  .pr-safe { padding-right: env(safe-area-inset-right); }
+  .inset-safe-x { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+
+  /* Constrain long-form prose for readability */
+  .prose-measure { max-width: 68ch; }
+  .prose-measure-narrow { max-width: 56ch; }
+
+  /* Refined link & button transitions */
+  a, button {
+    transition: color 300ms ease, background-color 300ms ease,
+                border-color 300ms ease, opacity 300ms ease,
+                transform 400ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* Focus ring — calm, accessible */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  /* Honor reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  .eyebrow {
+    font-family: var(--font-sans);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--color-muted-foreground);
+  }
+
+  .rule {
+    display: inline-block;
+    width: 48px;
+    height: 1px;
+    background: currentColor;
+    opacity: 0.4;
+    vertical-align: middle;
+    margin: 0 0.75rem;
+  }
+}
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+  .text-pretty { text-wrap: pretty; }
+
+  .ken-burns {
+    animation: kenBurns 26s ease-in-out infinite alternate;
+  }
+
+  .reveal-up {
+    animation: revealUp 1.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .reveal-fade {
+    animation: revealFade 1.6s ease-out both;
+  }
+
+  .grain::after {
+    content: "";
+    position: absolute; inset: 0;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.35 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    opacity: 0.15;
+    mix-blend-mode: overlay;
+  }
+
+  /* Hero text shadow — subtle support for legibility over imagery.
+     Low opacity, minimal blur, not visually obvious. */
+  .hero-text-shadow {
+    text-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.35),
+      0 2px 12px rgba(0, 0, 0, 0.25);
+  }
+
+  /* Unified hero overlay — neutral luxe black, stronger top & bottom.
+     Mobile uses a slightly stronger stack for readability on smaller screens. */
+  .hero-overlay {
+    background-image:
+      linear-gradient(
+        to bottom,
+        rgba(10, 10, 10, 0.65) 0%,
+        rgba(10, 10, 10, 0.30) 40%,
+        rgba(10, 10, 10, 0.22) 60%,
+        rgba(10, 10, 10, 0.70) 100%
+      );
+  }
+  @media (min-width: 1024px) {
+    .hero-overlay {
+      background-image:
+        linear-gradient(
+          to bottom,
+          rgba(10, 10, 10, 0.55) 0%,
+          rgba(10, 10, 10, 0.25) 45%,
+          rgba(10, 10, 10, 0.18) 60%,
+          rgba(10, 10, 10, 0.65) 100%
+        );
+    }
+  }
+}
+
+@keyframes kenBurns {
+  0% { transform: scale(1.02) translate3d(0,0,0); }
+  100% { transform: scale(1.10) translate3d(-1.5%, -1%, 0); }
+}
+@keyframes revealUp {
+  from { opacity: 0; transform: translateY(28px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes revealFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@utility kenburns-slow {
+  animation: kenBurns 24s ease-in-out infinite alternate;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .kenburns-slow { animation: none; }
+}
+
+/* ============================================================
+   NOVA F&B OS — Command Centre dark shell
+   Restores the production admin theme: warm charcoal/graphite
+   application canvas with soft white cards, refined sidebar,
+   and refined top navigation. Scoped strictly to .nova-os so
+   the public website is untouched.
+   ============================================================ */
+[data-os-theme="dark"] .nova-os {
+  /* Luxury charcoal — quiet, expensive, editorial */
+  --os-canvas: #111315;
+  --os-surface: #181B1E;      /* sidebar / rail / topbar surfaces */
+  --os-surface-2: #202427;    /* cards, elevated panels */
+  --os-hairline: rgba(255,255,255,0.06);
+  --os-hairline-strong: rgba(255,255,255,0.10);
+
+  --os-ink: #F5F5F3;          /* primary text on dark */
+  --os-ink-2: #B7B9BC;        /* secondary */
+  --os-ink-3: #7E8185;        /* muted */
+
+  --os-green: #5EA56D;
+  --os-green-soft: rgba(94,165,109,0.14);
+  --os-gold: #C0B87A;
+  --os-gold-soft: rgba(192,184,122,0.14);
+  --os-info: #7AA7D6;
+  --os-info-soft: rgba(122,167,214,0.12);
+  --os-warn: #D8A94A;
+  --os-warn-soft: rgba(216,169,74,0.14);
+  --os-danger: #C65D5D;
+  --os-danger-soft: rgba(198,93,93,0.14);
+  --os-success: #5EA56D;
+  --os-success-soft: rgba(94,165,109,0.14);
+
+  --os-shadow-card:
+    0 1px 0 rgba(255,255,255,0.02) inset,
+    0 1px 2px rgba(0,0,0,0.35),
+    0 20px 40px -24px rgba(0,0,0,0.55);
+  --os-shadow-float:
+    0 1px 0 rgba(255,255,255,0.03) inset,
+    0 20px 60px -20px rgba(0,0,0,0.65);
+
+  --foreground: var(--os-ink);
+  --muted-foreground: var(--os-ink-3);
+  --border: var(--os-hairline);
+  --input: rgba(255,255,255,0.10);
+
+  background-color: var(--os-canvas);
+  color: var(--foreground);
+  font-feature-settings: "ss01", "cv11", "tnum";
+}
+
+/* Cards use the elevated surface, hairline border, quiet shadow */
+[data-os-theme="dark"] .nova-os .os-card,
+[data-os-theme="dark"] .nova-os .os-card-flat {
+  background: var(--os-surface-2);
+  border: 1px solid var(--os-hairline);
+  border-radius: 18px;
+}
+[data-os-theme="dark"] .nova-os .os-card { box-shadow: var(--os-shadow-card); }
+
+/* Sidebar & rail sit on the mid surface */
+[data-os-theme="dark"] .nova-os aside[aria-label="Primary navigation"],
+[data-os-theme="dark"] .nova-os aside[aria-label="Assistant"] {
+  background: var(--os-surface) !important;
+  border-color: var(--os-hairline) !important;
+}
+
+/* Chips */
+[data-os-theme="dark"] .nova-os .os-chip {
+  background: rgba(255,255,255,0.03);
+  border-color: var(--os-hairline-strong);
+  color: var(--os-ink-2);
+}
+
+/* Card hover — subtle lift */
+[data-os-theme="dark"] .nova-os .os-card {
+  transition: transform .35s cubic-bezier(.2,.7,.2,1),
+              border-color .3s ease,
+              box-shadow .35s ease;
+}
+[data-os-theme="dark"] .nova-os .os-card:hover {
+  border-color: var(--os-hairline-strong);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.03) inset,
+    0 1px 2px rgba(0,0,0,0.35),
+    0 28px 60px -28px rgba(0,0,0,0.70);
+}
+
+/* Popovers / dropdowns on dark shell — keep light for readability */
+[data-os-theme="dark"] .nova-os [data-os-surface="light"] {
+  --foreground: #0F1210;
+  --muted-foreground: #6B6F6C;
+  color: #0F1210;
+}
+
+/* Command Centre hero image bleed helper */
+.os-hero-bleed {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  border: 1px solid var(--os-hairline);
+  background: linear-gradient(180deg, #1B1F22 0%, #14171A 100%);
+}
+.os-hero-bleed::before {
+  content: "";
+  position: absolute; inset: 0;
+  background-image: var(--os-hero-image);
+  background-size: cover;
+  background-position: center;
+  opacity: 0.28;
+  filter: blur(1px) saturate(0.9);
+}
+.os-hero-bleed::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, rgba(17,19,21,0.95) 0%, rgba(17,19,21,0.70) 55%, rgba(17,19,21,0.30) 100%),
+              linear-gradient(180deg, rgba(17,19,21,0.10) 0%, rgba(17,19,21,0.85) 100%);
+}
+.os-hero-bleed > * { position: relative; z-index: 1; }
+
+/* The dashboard hero keeps its cinematic dark plate in both themes, so
+   invert the ink tokens locally in Light Mode to preserve contrast. */
+[data-os-theme="light"] .nova-os .os-hero-bleed {
+  --os-ink: #F4F6F5;
+  --os-ink-2: rgba(244, 246, 245, 0.78);
+  --os-ink-3: rgba(244, 246, 245, 0.6);
+  --os-hairline: rgba(255, 255, 255, 0.16);
+  --os-hairline-strong: rgba(255, 255, 255, 0.26);
+  --os-surface: rgba(255, 255, 255, 0.08);
+  --os-surface-2: rgba(255, 255, 255, 0.1);
+  color: #F4F6F5;
+}
+[data-os-theme="light"] .nova-os .os-hero-bleed :is(h1, h2, h3, p, span, a, strong) {
+  color: inherit;
+}
+
+/* Active nav indicator */
+[data-os-theme="dark"] .nova-os [data-nav-active="true"] {
+  position: relative;
+  background: var(--os-green-soft);
+  color: #C7E5CE !important;
+}
+[data-os-theme="dark"] .nova-os [data-nav-active="true"]::before {
+  content: "";
+  position: absolute; left: 4px; top: 8px; bottom: 8px;
+  width: 2px; border-radius: 2px;
+  background: var(--os-green);
+}
+
+/* ============================================================
+   NOVA F&B OS — GLOBAL PRIMITIVE UNIFICATION
+   Remaps shadcn design tokens inside `.nova-os` so EVERY
+   primitive (Card, Dialog, Popover, Input, Select, Table,
+   Badge, Tabs, Tooltip, DropdownMenu, Sheet, Accordion, etc.)
+   inherits the Command Centre look without per-component
+   edits. Presentation only — no functional or logic changes.
+   ============================================================ */
+[data-os-theme="dark"] .nova-os {
+  /* Remap shadcn semantic tokens to the OS dark palette */
+  --background: var(--os-canvas);
+  --card: var(--os-surface-2);
+  --card-foreground: var(--os-ink);
+  --popover: #1E2225;
+  --popover-foreground: var(--os-ink);
+  --primary: var(--os-green);
+  --primary-foreground: #ffffff;
+  --secondary: rgba(255,255,255,0.04);
+  --secondary-foreground: var(--os-ink);
+  --muted: rgba(255,255,255,0.03);
+  --muted-foreground: var(--os-ink-3);
+  --accent: rgba(255,255,255,0.05);
+  --accent-foreground: var(--os-ink);
+  --destructive: var(--os-danger);
+  --destructive-foreground: #ffffff;
+  --ring: var(--os-green);
+}
+
+/* ---------- Cards ---------- */
+[data-os-theme="dark"] .nova-os [data-slot="card"],
+[data-os-theme="dark"] .nova-os .bg-card {
+  background: var(--os-surface-2);
+  border-color: var(--os-hairline);
+  color: var(--os-ink);
+  border-radius: 18px;
+  box-shadow: var(--os-shadow-card);
+}
+
+/* ---------- Inputs, Textareas, Selects ---------- */
+[data-os-theme="dark"] .nova-os input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+[data-os-theme="dark"] .nova-os textarea,
+[data-os-theme="dark"] .nova-os select,
+[data-os-theme="dark"] .nova-os [role="combobox"] {
+  background-color: rgba(255,255,255,0.03);
+  border-color: var(--os-hairline-strong);
+  color: var(--os-ink);
+  border-radius: 10px;
+}
+[data-os-theme="dark"] .nova-os input::placeholder,
+[data-os-theme="dark"] .nova-os textarea::placeholder {
+  color: var(--os-ink-3);
+}
+[data-os-theme="dark"] .nova-os input:focus-visible,
+[data-os-theme="dark"] .nova-os textarea:focus-visible,
+[data-os-theme="dark"] .nova-os select:focus-visible,
+[data-os-theme="dark"] .nova-os [role="combobox"]:focus-visible {
+  outline: none;
+  border-color: var(--os-green);
+  box-shadow: 0 0 0 3px var(--os-green-soft);
+}
+
+/* ---------- Buttons ---------- */
+[data-os-theme="dark"] .nova-os button {
+  border-radius: 10px;
+}
+[data-os-theme="dark"] .nova-os button.bg-primary,
+[data-os-theme="dark"] .nova-os [data-variant="default"].bg-primary {
+  background: var(--os-green);
+  color: #ffffff;
+}
+[data-os-theme="dark"] .nova-os button.bg-primary:hover { background: color-mix(in oklab, var(--os-green) 88%, black); }
+
+/* ---------- Tables ---------- */
+[data-os-theme="dark"] .nova-os table { color: var(--os-ink); }
+[data-os-theme="dark"] .nova-os thead tr,
+[data-os-theme="dark"] .nova-os [data-slot="table-header"] tr {
+  border-color: var(--os-hairline) !important;
+}
+[data-os-theme="dark"] .nova-os th {
+  color: var(--os-ink-3);
+  font-weight: 500;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+[data-os-theme="dark"] .nova-os tbody tr {
+  border-color: var(--os-hairline) !important;
+  transition: background-color .2s ease;
+}
+[data-os-theme="dark"] .nova-os tbody tr:hover {
+  background-color: rgba(255,255,255,0.03);
+}
+[data-os-theme="dark"] .nova-os td { color: var(--os-ink); }
+
+/* ---------- Dialogs, Sheets, Popovers, Dropdowns, Command ---------- */
+[data-os-theme="dark"] .nova-os [role="dialog"],
+[data-os-theme="dark"] .nova-os [data-radix-popper-content-wrapper] > *,
+[data-os-theme="dark"] .nova-os [data-slot="popover-content"],
+[data-os-theme="dark"] .nova-os [data-slot="dropdown-menu-content"],
+[data-os-theme="dark"] .nova-os [data-slot="select-content"],
+[data-os-theme="dark"] .nova-os [data-slot="dialog-content"],
+[data-os-theme="dark"] .nova-os [data-slot="sheet-content"],
+[data-os-theme="dark"] .nova-os [data-slot="command"] {
+  background: #1E2225 !important;
+  border-color: var(--os-hairline-strong) !important;
+  color: var(--os-ink) !important;
+  border-radius: 14px;
+  box-shadow: var(--os-shadow-float);
+}
+[data-os-theme="dark"] .nova-os [role="menuitem"]:hover,
+[data-os-theme="dark"] .nova-os [data-slot="dropdown-menu-item"]:hover,
+[data-os-theme="dark"] .nova-os [data-slot="select-item"][data-highlighted] {
+  background: rgba(255,255,255,0.05);
+}
+
+/* ---------- Badges ---------- */
+[data-os-theme="dark"] .nova-os [data-slot="badge"],
+[data-os-theme="dark"] .nova-os .inline-flex.items-center.rounded-full.border {
+  border-color: var(--os-hairline-strong);
+}
+
+/* ---------- Tabs ---------- */
+[data-os-theme="dark"] .nova-os [role="tablist"] {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--os-hairline);
+  border-radius: 12px;
+  padding: 4px;
+}
+[data-os-theme="dark"] .nova-os [role="tab"] {
+  color: var(--os-ink-2);
+  border-radius: 8px;
+  transition: background-color .2s ease, color .2s ease;
+}
+[data-os-theme="dark"] .nova-os [role="tab"][data-state="active"] {
+  background: var(--os-surface-2);
+  color: var(--os-ink);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 1px 2px rgba(0,0,0,0.3);
+}
+
+/* ---------- Separators & borders ---------- */
+[data-os-theme="dark"] .nova-os hr,
+[data-os-theme="dark"] .nova-os [data-slot="separator"] {
+  background-color: var(--os-hairline);
+  border-color: var(--os-hairline);
+}
+
+/* ---------- Tooltip ---------- */
+[data-os-theme="dark"] .nova-os [data-slot="tooltip-content"] {
+  background: #F5F5F3;
+  color: #0F1210;
+  border-radius: 8px;
+  font-size: 0.72rem;
+}
+
+/* ---------- Scrollbars (subtle, unified) ---------- */
+[data-os-theme="dark"] .nova-os *::-webkit-scrollbar { width: 10px; height: 10px; }
+[data-os-theme="dark"] .nova-os *::-webkit-scrollbar-track { background: transparent; }
+[data-os-theme="dark"] .nova-os *::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.06);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+[data-os-theme="dark"] .nova-os *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.12); background-clip: padding-box; }
+
+/* ---------- Headings inside admin shell ---------- */
+[data-os-theme="dark"] .nova-os h1, .nova-os h2, .nova-os h3, .nova-os h4 {
+  color: var(--os-ink);
+}
+
+/* ---------- Muted text unification ---------- */
+[data-os-theme="dark"] .nova-os .text-muted-foreground { color: var(--os-ink-3); }
+
+/* ---------- Legacy card usages (raw utility stacks) ----------
+   Any component that used the old "rounded-lg border bg-card"
+   pattern (SEO nav, module tab bars, etc.) inherits the unified
+   card token via the remaps above; no further work required. */
+
+/* ============================================================
+   NOVA F&B OS — ADAPTIVE THEME LAYER (Sprint 3A)
+   Light is the base for `.nova-os`; the dark rules above are
+   scoped to [data-os-theme="dark"], which the ThemeProvider sets
+   on <html> only while the OS shell is mounted. The public
+   website therefore never inherits OS theming.
+   ============================================================ */
+
+/* ---------- Light OS surface + semantic mapping ---------- */
+.nova-os {
+  --os-canvas: #F7F7F5;
+  --os-surface: #FFFFFF;
+  --os-surface-2: #FAFAF8;
+  --os-hairline: rgba(26,26,26,0.06);
+  --os-hairline-strong: rgba(26,26,26,0.10);
+  --os-ink: #0F1210;
+  --os-ink-2: #4A4E4B;
+  --os-ink-3: #5F6462;
+
+  /* shadcn token remap → OS surfaces (light) */
+  --background: var(--os-canvas);
+  --foreground: var(--os-ink);
+  --card: var(--os-surface);
+  --card-foreground: var(--os-ink);
+  --popover: var(--os-surface);
+  --popover-foreground: var(--os-ink);
+  --primary: var(--os-green);
+  --primary-foreground: #FFFFFF;
+  --secondary: var(--os-surface-2);
+  --secondary-foreground: var(--os-ink);
+  --muted: var(--os-surface-2);
+  --muted-foreground: var(--os-ink-3);
+  --accent: rgba(26,26,26,0.04);
+  --accent-foreground: var(--os-ink);
+  --destructive: var(--os-danger);
+  --destructive-foreground: #FFFFFF;
+  --border: var(--os-hairline);
+  --input: var(--os-hairline-strong);
+  --ring: var(--os-green);
+}
+
+/* ---------- Canonical semantic aliases (both themes) ----------
+   Derived from the OS tokens so a single palette drives everything. */
+.nova-os {
+  --surface: var(--os-surface);
+  --surface-elevated: var(--os-surface-2);
+  --surface-muted: var(--os-surface-2);
+  --border-subtle: var(--os-hairline);
+  --input-foreground: var(--os-ink);
+  --success: var(--os-success);
+  --success-foreground: #FFFFFF;
+  --warning: var(--os-warn);
+  --warning-foreground: #FFFFFF;
+  --danger: var(--os-danger);
+  --danger-foreground: #FFFFFF;
+  --info: var(--os-info);
+  --info-foreground: #FFFFFF;
+  --focus: var(--os-green);
+}
+
+/* ---------- Focus visibility (WCAG 2.2 AA, both themes) ---------- */
+.nova-os :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ---------- Light-mode primitive polish ---------- */
+.nova-os [data-slot="card"],
+.nova-os .bg-card {
+  background: var(--os-surface);
+  border-color: var(--os-hairline);
+  color: var(--os-ink);
+}
+.nova-os [data-nav-active="true"] {
+  position: relative;
+  background: var(--os-green-soft);
+  color: var(--os-green);
+}
+.nova-os [data-nav-active="true"]::before {
+  content: "";
+  position: absolute; left: 4px; top: 8px; bottom: 8px;
+  width: 2px; border-radius: 2px;
+  background: var(--os-green);
+}
+.nova-os th { color: var(--os-ink-3); }
+.nova-os tbody tr:hover { background-color: rgba(26,26,26,0.025); }
+
+/* ---------- Portalled overlays follow the OS theme ----------
+   Radix portals render outside `.nova-os`, so target the root
+   attribute instead. Only present while the OS shell is mounted. */
+[data-os-theme="dark"] [data-slot="dialog-content"],
+[data-os-theme="dark"] [data-slot="sheet-content"],
+[data-os-theme="dark"] [data-slot="popover-content"],
+[data-os-theme="dark"] [data-slot="dropdown-menu-content"],
+[data-os-theme="dark"] [data-slot="select-content"],
+[data-os-theme="dark"] [data-slot="command"],
+[data-os-theme="dark"] [data-radix-popper-content-wrapper] > * {
+  --background: #1E2225;
+  --foreground: #F5F5F3;
+  --card: #202427;
+  --card-foreground: #F5F5F3;
+  --popover: #1E2225;
+  --popover-foreground: #F5F5F3;
+  --muted: rgba(255,255,255,0.04);
+  --muted-foreground: #9DA1A4;
+  --accent: rgba(255,255,255,0.06);
+  --accent-foreground: #F5F5F3;
+  --border: rgba(255,255,255,0.10);
+  --input: rgba(255,255,255,0.14);
+  --primary: #5EA56D;
+  --primary-foreground: #ffffff;
+  --ring: #5EA56D;
+  background-color: #1E2225;
+  color: #F5F5F3;
+  border-color: rgba(255,255,255,0.10);
+}
+[data-os-theme="dark"] [data-slot="dialog-overlay"],
+[data-os-theme="dark"] [data-slot="sheet-overlay"] {
+  background-color: rgba(6,8,9,0.72);
+}
+[data-os-theme="dark"] [data-radix-popper-content-wrapper] input,
+[data-os-theme="dark"] [data-slot="dialog-content"] input,
+[data-os-theme="dark"] [data-slot="sheet-content"] input,
+[data-os-theme="dark"] [data-slot="dialog-content"] textarea,
+[data-os-theme="dark"] [data-slot="sheet-content"] textarea,
+[data-os-theme="dark"] [data-slot="command"] input {
+  background-color: rgba(255,255,255,0.03);
+  border-color: rgba(255,255,255,0.10);
+  color: #F5F5F3;
+}
+[data-os-theme="dark"] [data-slot="command"] input::placeholder,
+[data-os-theme="dark"] [data-slot="dialog-content"] input::placeholder,
+[data-os-theme="dark"] [data-slot="sheet-content"] textarea::placeholder {
+  color: #7E8185;
+}
+
+/* ---------- Colour-scheme hint (native controls, scrollbars) ---------- */
+[data-os-theme="dark"] { color-scheme: dark; }
+[data-os-theme="light"] { color-scheme: light; }
