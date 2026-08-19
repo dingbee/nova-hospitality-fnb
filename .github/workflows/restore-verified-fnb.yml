@@ -1,7 +1,8 @@
 name: Restore verified standalone F&B
 
 on:
-  push:
+  pull_request:
+    types: [opened, synchronize]
     branches: [main]
 
 permissions:
@@ -9,13 +10,14 @@ permissions:
 
 jobs:
   restore:
-    if: !startsWith(github.event.head_commit.message, 'Restore verified standalone NOVA Hospitality F&B')
+    if: !startsWith(github.event.pull_request.head.sha, 'restore-complete')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout target repository
+      - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
       - name: Fetch verified standalone source
         run: |
@@ -48,15 +50,11 @@ jobs:
         run: bun run test
       - name: Production build
         run: bun run build
-      - name: Remove one-time restore workflow
-        run: rm -f .github/workflows/restore-verified-fnb.yml
       - name: Commit verified standalone product
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'Restore verified standalone NOVA Hospitality F&B'
-          git push origin main
-
-# Trigger retry: source is fixed at mtoni-river-lodge@b092431a3c2d4dca4b4aaa72a3839b6ae273d5e2
+          git commit -m 'Restore complete standalone F&B product'
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
