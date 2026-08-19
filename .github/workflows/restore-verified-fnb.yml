@@ -1,0 +1,72 @@
+name: Restore verified standalone NOVA Hospitality F&B
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    if: github.event.head_commit.message != 'Restore verified standalone NOVA Hospitality F&B'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout destination
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch frozen verified source
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/source
+          mkdir -p /tmp/source
+          curl -fsSL https://codeload.github.com/dingbee/mtoni-river-lodge/tar.gz/b092431a3c2d4dca4b4aaa72a3839b6ae273d5e2 -o /tmp/source.tgz
+          tar -xzf /tmp/source.tgz -C /tmp/source --strip-components=3 mtoni-river-lodge-b092431a3c2d4dca4b4aaa72a3839b6ae273d5e2/export/nova-fnb
+          test -f /tmp/source/package.json
+          test -f /tmp/source/src/lib/independence.test.ts
+          test -f /tmp/source/src/lib/rbac/authorization-gate.test.ts
+
+      - name: Replace destination with verified F&B source
+        run: |
+          set -euo pipefail
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a /tmp/source/. .
+          test -f package.json
+          test -d src/modules/restaurant
+          test -d src/modules/intelligence
+          test -d local
+          test -d standalone
+          test ! -d src/domains/content
+          test ! -f src/lib/booking.functions.ts
+
+      - name: Install and verify
+        run: |
+          set -euo pipefail
+          corepack enable || true
+          npm install -g bun
+          bun install --frozen-lockfile
+          bunx tsc --noEmit
+          bunx vitest run
+          bun run build
+          bun run verify:bundle
+
+      - name: Final provenance scan
+        run: |
+          set -euo pipefail
+          if grep -RniE 'nvdjyvxqyfabgbaxcogu|mtoniriverlodge|mtoni river lodge|mtoni-river-lodge' src local standalone dist --exclude='*.map' --exclude='independence.test.ts' --exclude='verify-bundle-origin.ts' --exclude='security-uat-gate.md'; then
+            echo 'ERROR: runtime Mtoni reference detected'
+            exit 1
+          fi
+
+      - name: Remove one-time restore workflow and commit
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/restore-verified-fnb.yml
+          git config user.name 'dingbee'
+          git config user.email 'engutoto@googlemail.com'
+          git add -A
+          git commit -m 'Restore verified standalone NOVA Hospitality F&B'
+          git push origin main
