@@ -17,6 +17,8 @@ import type {
 } from "../core/contracts";
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
+import { BAR_STATION_TYPES } from "../bar/contracts";
+import { groupItemsByStation } from "./grouping";
 
 type Sb = any;
 
@@ -125,11 +127,7 @@ export async function fireOrder(sb: Sb, userId: string, input: FireOrderInput) {
     .eq("tenant_id", input.tenantId);
   const targets = new Map<string, number>(((stations ?? []) as any[]).map((s) => [s.id, Number(s.target_prep_minutes)]));
 
-  const groups = new Map<string, any[]>();
-  for (const item of items) {
-    const key = item.station_id ?? "unassigned";
-    groups.set(key, [...(groups.get(key) ?? []), item]);
-  }
+  const groups = groupItemsByStation(items);
 
   const created: any[] = [];
   for (const [stationKey, group] of groups) {
@@ -271,8 +269,7 @@ export async function advanceTicket(sb: Sb, userId: string, input: AdvanceTicket
         .eq("tenant_id", input.tenantId)
         .eq("id", ticket.station_id)
         .maybeSingle();
-      const barTypes = ["bar", "cocktail", "coffee", "service_bar", "beverage"];
-      if (station && barTypes.includes(String(station.station_type))) {
+      if (station && (BAR_STATION_TYPES as readonly string[]).includes(String(station.station_type))) {
         await emitRestaurantEvent(sb, userId, {
           type: "bar.ticket.delayed",
           tenantId: input.tenantId,

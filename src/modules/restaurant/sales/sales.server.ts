@@ -26,6 +26,14 @@ import { consumeForOrderItem } from "../inventory/movements.server";
 import { activeRecipeForMenuItem } from "../products/recipes.server";
 import { consumeForRecipeSale } from "../products/consumption.server";
 import { currentFxRate, loadRuleSet, quoteWithRuleSet } from "../pricing/resolution.server";
+import { isBeverageCategory } from "../bar/lens";
+import { BAR_STATION_TYPES } from "../bar/contracts";
+import {
+  resolveCataloguedLineStation,
+  resolveOpenItemStation,
+  type ProductStationInfo,
+  type StationRow,
+} from "./stationRouting";
 
 type Sb = any;
 
@@ -187,6 +195,71 @@ async function unitCostsForMenuItems(sb: Sb, tenantId: string, menuItemIds: stri
   return map;
 }
 
+/**
+ * Fetches everything `resolveCataloguedLineStation`/`resolveOpenItemStation`
+ * need to decide a line's final station, scoped to this tenant only — so a
+ * client-proposed station id that belongs to another tenant can never match.
+ */
+async function loadStationResolutionContext(sb: Sb, tenantId: string, menuItemIds: string[]) {
+  const { data: stationRows } = await sb
+    .from("restaurant_stations")
+    .select("id, station_type, active, sort_order")
+    .eq("tenant_id", tenantId)
+    .order("sort_order");
+  const allStations = ((stationRows ?? []) as any[]).map((s) => ({ id: s.id, stationType: s.station_type }) satisfies StationRow);
+  const activeStations = ((stationRows ?? []) as any[])
+    .filter((s) => s.active !== false)
+    .map((s) => ({ id: s.id, stationType: s.station_type }) satisfies StationRow);
+
+  const products = new Map<string, ProductStationInfo>();
+  if (menuItemIds.length > 0) {
+    const { data: productRows } = await sb
+      .from("restaurant_products")
+      .select("menu_item_id, station_id, category_id")
+      .eq("tenant_id", tenantId)
+      .eq("active", true)
+      .in("menu_item_id", menuItemIds);
+
+    const { data: menuItemRows } = await sb
+      .from("restaurant_menu_items")
+      .select("id, category_id")
+      .eq("tenant_id", tenantId)
+      .in("id", menuItemIds);
+    const menuItemCategory = new Map(((menuItemRows ?? []) as any[]).map((m) => [m.id, m.category_id ?? null]));
+
+    const categoryIds = new Set<string>();
+    for (const p of (productRows ?? []) as any[]) {
+      const catId = p.category_id ?? menuItemCategory.get(p.menu_item_id) ?? null;
+      if (catId) categoryIds.add(catId);
+    }
+    for (const catId of menuItemCategory.values()) if (catId) categoryIds.add(catId);
+
+    const { data: categoryRows } =
+      categoryIds.size > 0
+        ? await sb.from("restaurant_categories").select("id, name").eq("tenant_id", tenantId).in("id", [...categoryIds])
+        : { data: [] as any[] };
+    const categoryName = new Map(((categoryRows ?? []) as any[]).map((c) => [c.id, c.name]));
+
+    for (const p of (productRows ?? []) as any[]) {
+      if (!p.menu_item_id) continue;
+      const catId = p.category_id ?? menuItemCategory.get(p.menu_item_id) ?? null;
+      products.set(p.menu_item_id, {
+        stationId: p.station_id ?? null,
+        isBeverage: isBeverageCategory(catId ? categoryName.get(catId) : undefined),
+      });
+    }
+    // A menu item with no product row at all still gets a category-based lane
+    // default rather than silently falling through to "unassigned".
+    for (const id of menuItemIds) {
+      if (products.has(id)) continue;
+      const catId = menuItemCategory.get(id) ?? null;
+      products.set(id, { stationId: null, isBeverage: isBeverageCategory(catId ? categoryName.get(catId) : undefined) });
+    }
+  }
+
+  return { allStations, activeStations, products };
+}
+
 /** A modifier exactly as chosen at the till, snapshotted onto the sold line. */
 export type SalesLineModifier = {
   modifierId?: string;
@@ -223,6 +296,11 @@ export async function insertLines(
   },
 ) {
   const ids = lines.map((l) => l.menuItemId).filter(Boolean) as string[];
+  // Station authority: a client-proposed stationId (from the till, the bar
+  // POS, or a direct API call) is a proposal only. The server re-derives the
+  // final station the same way pricing is re-derived below — from the
+  // product's own configuration, never from what the client sent.
+  const stationCtx = await loadStationResolutionContext(sb, tenantId, [...new Set(ids)]);
   const costs = await unitCostsForMenuItems(sb, tenantId, ids);
   // The recipe version in force at the moment of sale is pinned onto the line,
   // so a later recipe change never rewrites this order's economics.
@@ -303,7 +381,9 @@ export async function insertLines(
       modifier_total: modifierAmount,
       guest_notes: l.guestNotes ?? null,
       created_by: ctx.userId ?? null,
-      station_id: l.stationId ?? null,
+      station_id: l.menuItemId
+        ? resolveCataloguedLineStation(stationCtx.products.get(l.menuItemId) ?? null, stationCtx.activeStations, BAR_STATION_TYPES)
+        : resolveOpenItemStation(l.stationId, stationCtx.allStations),
       description: l.description,
       quantity: l.quantity,
       unit_price: Number((quote.unitPrice + modifierPerUnit).toFixed(4)),

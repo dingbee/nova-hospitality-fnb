@@ -119,7 +119,7 @@ export async function posCatalog(
   const menuIds = ((menus ?? []) as any[]).map((m) => m.id);
   const activeMenuId = input.menuId ?? menuIds[0] ?? null;
 
-  const [{ data: categories }, { data: items }, { data: products }, { data: variants }, { data: groups }, { data: modifiers }, { data: links }] =
+  const [{ data: categories }, { data: items }, { data: products }, { data: variants }, { data: groups }, { data: modifiers }, { data: links }, { data: stations }] =
     await Promise.all([
       sb.from("restaurant_categories").select("id, name, slug, kind, sort_order").eq("tenant_id", input.tenantId).order("sort_order"),
       activeMenuId
@@ -154,6 +154,7 @@ export async function posCatalog(
         .eq("active", true)
         .order("sort_order"),
       sb.from("restaurant_product_modifier_groups").select("product_id, group_id, sort_order").eq("tenant_id", input.tenantId),
+      sb.from("restaurant_stations").select("id, station_type").eq("tenant_id", input.tenantId).eq("active", true),
     ]);
 
   const productByMenuItem = new Map<string, any>();
@@ -168,6 +169,8 @@ export async function posCatalog(
     menus: menus ?? [],
     activeMenuId,
     categories: (categories ?? []).filter((c: any) => c.kind !== "inventory"),
+    /** Station type per station id, so the till can label "send to production" accurately without guessing. */
+    stations: ((stations ?? []) as any[]).map((s) => ({ id: s.id, stationType: s.station_type })),
     modifierGroups: groupList,
     items: ((items ?? []) as any[]).map((i) => {
       const product = productByMenuItem.get(i.id) ?? null;

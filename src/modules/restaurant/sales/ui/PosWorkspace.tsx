@@ -44,6 +44,8 @@ import { deriveLifecycle, tableTone, TABLE_TONE_CLASS, TABLE_TONE_LABEL, type Ta
 import { ServiceLifecycleBar } from "./ServiceLifecycleBar";
 import { OrderTimeline } from "./OrderTimeline";
 import { beverageCategories } from "@/modules/restaurant/bar/lens";
+import { BAR_STATION_TYPES } from "@/modules/restaurant/bar/contracts";
+import { sendToStationLabel } from "../stationRouting";
 
 const newRequestId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `pos-${Date.now()}-${Math.random()}`;
@@ -330,6 +332,23 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
   const serverItems = ((order.data as any)?.items ?? []) as any[];
   const live = serverItems.filter((i) => i.status !== "voided");
   const orderRow = (order.data as any)?.order;
+  const stations = (catalog.data?.stations ?? []) as { id: string; stationType: string | null }[];
+  const stationTypeById = useMemo(() => new Map(stations.map((s) => [s.id, s.stationType])), [stations]);
+  const itemStationById = useMemo(() => new Map(items.map((i) => [i.id, i.station_id as string | null])), [items]);
+  /**
+   * "Send to production" label, computed from the actual stations of what is
+   * about to fire: staged cart lines (proposed, from the catalogue) plus
+   * already-added-but-unfired order items (resolved, from the server at
+   * insert time). Never hardcoded, so it can never claim a drink is headed
+   * to the kitchen.
+   */
+  const sendLabel = useMemo(() => {
+    const pending = [
+      ...cart.map((l) => (l.menuItemId ? itemStationById.get(l.menuItemId) : l.stationId) ?? null),
+      ...live.filter((i) => i.status === "ordered").map((i) => i.station_id ?? null),
+    ].map((stationId) => (stationId ? (stationTypeById.get(stationId) ?? null) : null));
+    return sendToStationLabel(pending, BAR_STATION_TYPES);
+  }, [cart, live, itemStationById, stationTypeById]);
   const orderTickets = ((order.data as any)?.tickets ?? []) as any[];
   const orderPayments = ((order.data as any)?.payments ?? []) as any[];
   const billTotal = Number(orderRow?.total ?? 0) + cart.reduce((s, l) => s + lineTotal(l), 0);
@@ -531,7 +550,7 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                     disabled={life.nextAction === "none" || life.blocked || sendLines.isPending}
                     onClick={runNextAction}
                   >
-                    Next: {life.nextActionLabel}
+                    Next: {life.nextAction === "send-to-kitchen" ? sendLabel : life.nextActionLabel}
                   </Button>
                 </div>
               )}
@@ -612,7 +631,7 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                   disabled={cart.length === 0 || sendLines.isPending}
                   onClick={() => sendLines.mutate({ fire: true })}
                 >
-                  <Send className="size-4" /> Send to kitchen
+                  <Send className="size-4" /> {sendLabel}
                 </Button>
                 <Button
                   variant="outline"
