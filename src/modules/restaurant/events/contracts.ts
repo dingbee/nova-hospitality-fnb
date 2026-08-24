@@ -27,6 +27,7 @@ export const RESTAURANT_EVENT_TYPES = [
   "restaurant.receipt.delivery.delivered",
   "restaurant.bill.requested",
   "restaurant.bill.presented",
+  "restaurant.service_request.acknowledged",
   "restaurant.table.released",
   "restaurant.order.closed",
   "restaurant.order.voided",
@@ -142,7 +143,10 @@ export const RESTAURANT_EVENT_TYPES = [
 export type RestaurantEventType = (typeof RESTAURANT_EVENT_TYPES)[number];
 
 /** Severity mirrors the intelligence severity scale. */
-export const RESTAURANT_EVENT_SEVERITY: Record<RestaurantEventType, "info" | "low" | "medium" | "high"> = {
+export const RESTAURANT_EVENT_SEVERITY: Record<
+  RestaurantEventType,
+  "info" | "low" | "medium" | "high"
+> = {
   "restaurant.menu.created": "info",
   "restaurant.menu.updated": "info",
   "restaurant.menu.published": "low",
@@ -161,6 +165,7 @@ export const RESTAURANT_EVENT_SEVERITY: Record<RestaurantEventType, "info" | "lo
   "restaurant.receipt.delivery.delivered": "info",
   "restaurant.bill.requested": "info",
   "restaurant.bill.presented": "info",
+  "restaurant.service_request.acknowledged": "info",
   "restaurant.table.released": "info",
   "restaurant.order.closed": "low",
   "restaurant.order.voided": "medium",

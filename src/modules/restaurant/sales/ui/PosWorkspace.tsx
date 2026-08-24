@@ -3,6 +3,7 @@ import { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
+  Bell,
   ChefHat,
   CreditCard,
   DoorOpen,
@@ -48,6 +49,7 @@ import {
   releaseRestaurantTableFn,
   requestRestaurantBillFn,
 } from "../bill.functions";
+import { acknowledgeServiceRequestFn } from "@/modules/restaurant/service-requests/service-requests.functions";
 import type { BillSplitMode } from "../bill.contracts";
 import { PosItemDialog } from "./PosItemDialog";
 import { PosBillDialog } from "./PosBillDialog";
@@ -146,6 +148,7 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
   const presentBillFn = useServerFn(presentRestaurantBillFn);
   const releaseTableFn = useServerFn(releaseRestaurantTableFn);
   const refundFn = useServerFn(refundRestaurantPaymentFn);
+  const acknowledgeServiceRequestFnCall = useServerFn(acknowledgeServiceRequestFn);
 
   const board = useQuery({
     queryKey: ["restaurant.pos.board", tenantId],
@@ -319,6 +322,13 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
       setReceipt(null);
       refresh();
     },
+  });
+
+  const acknowledgeRequest = useAdminMutation({
+    mutationFn: (vars: { requestId: string }) =>
+      acknowledgeServiceRequestFnCall({ data: { tenantId: tenantId!, requestId: vars.requestId } }),
+    successMessage: "Guest request acknowledged",
+    onSuccess: refresh,
   });
 
   const refund = useAdminMutation({
@@ -568,10 +578,19 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                       ? setOrderId(t.order.id)
                       : openBill.mutate({ tableId: t.id, guestCount: t.seats ?? 2 })
                   }
-                  className={`min-h-20 rounded-lg border p-3 text-left transition-colors hover:border-primary ${
+                  className={`relative min-h-20 rounded-lg border p-3 text-left transition-colors hover:border-primary ${
                     TABLE_TONE_CLASS[tone]
                   } ${orderId && t.order?.id === orderId ? "ring-2 ring-primary" : ""}`}
                 >
+                  {t.serviceRequest && (
+                    <span
+                      className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border border-destructive/50 bg-destructive/10 text-destructive"
+                      title="Guest needs staff"
+                      aria-label="Guest needs staff"
+                    >
+                      <Bell className="size-3.5" />
+                    </span>
+                  )}
                   <span className="block text-sm font-semibold">{t.code}</span>
                   <span className="block text-xs text-muted-foreground">{t.zone ?? t.name}</span>
                   <span className="mt-1 block text-xs">
@@ -708,6 +727,25 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                     )}
                     {life.receiptDelivered && <Badge variant="secondary">Receipt delivered</Badge>}
                   </div>
+                  {activeTable?.serviceRequest && (
+                    <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2">
+                      <span className="flex items-center gap-1.5 text-xs font-medium text-destructive">
+                        <Bell className="size-3.5" />
+                        Guest needs assistance
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="min-h-8"
+                        disabled={acknowledgeRequest.isPending}
+                        onClick={() =>
+                          acknowledgeRequest.mutate({ requestId: activeTable.serviceRequest.id })
+                        }
+                      >
+                        Acknowledge
+                      </Button>
+                    </div>
+                  )}
                   <Button
                     className="min-h-11 w-full"
                     disabled={life.nextAction === "none" || life.blocked || sendLines.isPending}

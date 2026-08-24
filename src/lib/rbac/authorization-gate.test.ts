@@ -276,19 +276,20 @@ describe("direct server-function bypass", () => {
   });
 
   /**
-   * Exactly five files may skip requireSupabaseAuth, and all five are held
+   * Exactly six files may skip requireSupabaseAuth, and all six are held
    * to the same rule as every other bypass surface in this describe block:
    * no identity, only an unguessable id, and every other fact (tenant,
    * property, location, price, station, payable amount, order status,
-   * timestamps) re-derived server-side rather than trusted from the
-   * request. Adding a sixth entry here is a security review, not a
-   * formatting change.
+   * timestamps, staff identity) re-derived server-side rather than trusted
+   * from the request. Adding a seventh entry here is a security review,
+   * not a formatting change.
    */
   const ALLOWED_UNAUTHENTICATED = [
     join(ROOT, "src/modules/restaurant/receipts/delivery.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfbill.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selforder.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfpay.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selfstaff.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selftrack.functions.ts"),
   ].sort();
 
@@ -387,6 +388,27 @@ describe("direct server-function bypass", () => {
     // at all — that stays authoritative in selfpay.server.ts alone.
     expect(server).not.toMatch(/\.(update|insert|delete)\(/);
     expect(server).not.toMatch(/payment_state|restaurant_payments/);
+  });
+
+  it("self-order staff requests never accept tenant/property/location/status/staff identity from the client, and never call the staff-only acknowledgeServiceRequest", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selfstaff.functions.ts"));
+    expect(fn).toMatch(/requestStaffSchema\.parse/);
+    // The contract carries only tableId/orderId — everything else (whether
+    // an alert already exists, its status, who acknowledged it) is
+    // re-derived server-side, never accepted from the client. Matched as
+    // field definitions, not prose.
+    const contracts = read(join(ROOT, "src/modules/restaurant/selforder/selfstaff.contracts.ts"));
+    expect(contracts).not.toMatch(
+      /\n\s*(tenantId|propertyId|locationId|status|requestedAt|acknowledgedAt|acknowledgedBy)\s*:/,
+    );
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selfstaff.server.ts"));
+    expect(server).toMatch(/resolveGuestTableContext/);
+    expect(server).not.toMatch(/input\.tenantId|input\.propertyId|input\.locationId/);
+    // The staff-only acknowledgement path (service-requests.server.ts) is a
+    // separate module this file never imports or calls — a guest can never
+    // reach the capability-gated acknowledge action.
+    expect(server).not.toMatch(/acknowledgeServiceRequest/);
+    expect(server).not.toMatch(/assertCapability/);
   });
 
   /**

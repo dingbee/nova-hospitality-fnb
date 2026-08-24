@@ -35,6 +35,10 @@ import { GUEST_PAYMENT_METHODS } from "@/modules/restaurant/selforder/selfpay.co
 import { requestGuestBillFn } from "@/modules/restaurant/selforder/selfbill.functions";
 import { guestOrderProgressFn } from "@/modules/restaurant/selforder/selftrack.functions";
 import {
+  guestStaffRequestStatusFn,
+  requestStaffFn,
+} from "@/modules/restaurant/selforder/selfstaff.functions";
+import {
   buildChosenModifiers,
   isMissingRequiredModifiers,
   resolveVariantUnitPrice,
@@ -271,6 +275,7 @@ function GuestOrderPage() {
           shortly.
         </p>
         <OrderProgressPanel tableId={tableId} orderId={confirmed.orderId} />
+        <RequestStaffPanel tableId={tableId} orderId={confirmed.orderId} />
         <RequestBillPanel tableId={tableId} orderId={confirmed.orderId} />
         <GuestPaymentPanel tableId={tableId} orderId={confirmed.orderId} />
         <Button
@@ -827,6 +832,83 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The first live guest-to-staff alert. Polls the same safe pattern every
+ * other guest panel on this screen uses (see OrderProgressPanel /
+ * GuestPaymentPanel) rather than a new realtime layer — see
+ * selfstaff.server.ts for the spam-controlled write and read this wraps.
+ */
+function RequestStaffPanel({ tableId, orderId }: { tableId: string; orderId: string }) {
+  const requestFn = useServerFn(requestStaffFn);
+  const statusFn = useServerFn(guestStaffRequestStatusFn);
+
+  const status = useQuery({
+    queryKey: ["selforder.staffRequest", tableId, orderId],
+    queryFn: () => statusFn({ data: { tableId, orderId } }),
+    refetchInterval: 8_000,
+  });
+
+  const request = useMutation({
+    mutationFn: async () => {
+      const result = await requestFn({ data: { tableId, orderId } });
+      // Refetch before settling so the UI reflects the new state the
+      // instant the button stops showing "Requesting…", instead of
+      // waiting for the next 8s poll.
+      await status.refetch();
+      return result;
+    },
+  });
+
+  if (status.isPending || !status.data) return null;
+  const s = status.data;
+
+  if (s.ok && s.status === "acknowledged") {
+    return (
+      <div className="mt-2 w-full max-w-sm rounded-2xl border border-primary/30 bg-primary/5 p-4 text-left">
+        <p className="text-sm font-semibold text-primary">Staff acknowledged</p>
+        <p className="mt-1 text-xs text-muted-foreground">Someone will be with you shortly.</p>
+      </div>
+    );
+  }
+
+  if (s.ok && s.status === "requested") {
+    return (
+      <div className="mt-2 w-full max-w-sm rounded-2xl border border-primary/30 bg-primary/5 p-4 text-left">
+        <p className="text-sm font-semibold text-primary">Staff requested</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          A member of our team has been notified.
+        </p>
+      </div>
+    );
+  }
+
+  if (request.data && !request.data.ok) {
+    return (
+      <div className="mt-2 w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
+        <p className="text-xs text-muted-foreground">
+          Staff can't be requested right now — please ask a member of staff directly.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full max-w-sm">
+      <Button
+        variant="outline"
+        className="min-h-11 w-full rounded-full"
+        disabled={request.isPending}
+        onClick={() => request.mutate()}
+      >
+        {request.isPending ? "Requesting…" : "Need assistance? Request staff"}
+      </Button>
+      {request.isError && (
+        <p className="mt-2 text-xs text-destructive">Couldn't reach staff. Please try again.</p>
       )}
     </div>
   );

@@ -26,6 +26,7 @@ import {
   type SalesLineInput,
 } from "./sales.server";
 import { loadRuleSet, resolveDisplayPrice } from "../pricing/resolution.server";
+import { listActiveServiceRequests } from "../service-requests/service-requests.server";
 import type {
   AddPosLinesInput,
   OpenPosOrderInput,
@@ -75,7 +76,7 @@ export async function posBoard(
   const since = new Date();
   since.setHours(0, 0, 0, 0);
 
-  const [{ data: tables }, { data: orders }, { data: today }] = await Promise.all([
+  const [{ data: tables }, { data: orders }, { data: today }, serviceRequests] = await Promise.all([
     tableQuery,
     orderQuery,
     sb
@@ -84,6 +85,10 @@ export async function posBoard(
       .eq("tenant_id", input.tenantId)
       .gte("opened_at", since.toISOString())
       .limit(1000),
+    // Guest "Request staff" alerts, reusing this same already-polled board
+    // read rather than a second polling loop — see
+    // service-requests.server.ts / selfstaff.server.ts.
+    listActiveServiceRequests(sb, userId, input.tenantId),
   ]);
 
   const openOrders = (orders ?? []) as any[];
@@ -95,8 +100,10 @@ export async function posBoard(
     tables: ((tables ?? []) as any[]).map((t) => ({
       ...t,
       order: openOrders.find((o) => o.table_id === t.id) ?? null,
+      serviceRequest: serviceRequests.find((r) => r.tableId === t.id) ?? null,
     })),
     openOrders,
+    serviceRequests,
     stats: {
       openBills: openOrders.length,
       openValue: Number(openOrders.reduce((s, o) => s + Number(o.total ?? 0), 0).toFixed(2)),
