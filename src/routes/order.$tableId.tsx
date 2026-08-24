@@ -57,6 +57,7 @@ type MenuItem = {
   price: number;
   currency: string;
   available: boolean;
+  priceConfigured?: boolean;
   image_url: string | null;
   category_id: string | null;
   modifier_group_ids: string[];
@@ -236,7 +237,7 @@ function GuestOrderPage() {
           <button
             key={item.id}
             type="button"
-            disabled={item.available === false}
+            disabled={item.available === false || item.priceConfigured === false}
             onClick={() => setPickerItem(item)}
             className="flex flex-col overflow-hidden rounded-lg border bg-card text-left transition-colors hover:border-primary disabled:opacity-50"
           >

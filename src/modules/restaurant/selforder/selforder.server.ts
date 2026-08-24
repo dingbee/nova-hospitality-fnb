@@ -82,13 +82,16 @@ export async function resolveGuestTableContext(
 export async function guestMenu(sb: Sb, tableId: string) {
   const table = await resolveGuestTableContext(sb, tableId);
   const catalog = await fetchSellableCatalog(sb, table.tenantId, {
+    propertyId: table.propertyId ?? undefined,
     locationId: table.locationId ?? undefined,
   });
   return {
     table,
     ...catalog,
-    // A guest never sees an item staff have marked unavailable.
-    items: catalog.items.filter((i: any) => i.available !== false),
+    // A guest never sees an item staff have marked unavailable, or one the
+    // pricing engine has no active price for — a price it would only refuse
+    // at submission is never worth putting in front of a guest to tap.
+    items: catalog.items.filter((i: any) => i.available !== false && i.priceConfigured !== false),
   };
 }
 
@@ -124,10 +127,13 @@ export async function submitGuestOrder(
 ) {
   const table = await resolveGuestTableContext(sb, input.tableId);
   const catalog = await fetchSellableCatalog(sb, table.tenantId, {
+    propertyId: table.propertyId ?? undefined,
     locationId: table.locationId ?? undefined,
   });
   const sellableIds = new Set(
-    (catalog.items as any[]).filter((i) => i.available !== false).map((i) => i.id as string),
+    (catalog.items as any[])
+      .filter((i) => i.available !== false && i.priceConfigured !== false)
+      .map((i) => i.id as string),
   );
 
   const { valid, rejected } = pickGuestOrderableLines(sellableIds, input.lines);

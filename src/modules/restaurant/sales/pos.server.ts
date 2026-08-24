@@ -25,6 +25,7 @@ import {
   transitionOrder,
   type SalesLineInput,
 } from "./sales.server";
+import { loadRuleSet, resolveDisplayPrice } from "../pricing/resolution.server";
 import type {
   AddPosLinesInput,
   OpenPosOrderInput,
@@ -126,7 +127,7 @@ export async function posCatalog(
 export async function fetchSellableCatalog(
   sb: Sb,
   tenantId: string,
-  input: { locationId?: string; menuId?: string } = {},
+  input: { propertyId?: string; locationId?: string; menuId?: string } = {},
 ) {
   let menuQuery = sb
     .from("restaurant_menus")
@@ -208,6 +209,16 @@ export async function fetchSellableCatalog(
     modifiers: ((modifiers ?? []) as any[]).filter((m) => m.group_id === g.id),
   }));
 
+  // The exact same authority insertLines resolves each line's price from
+  // (loadRuleSet -> resolveBasePrice), asked once here for every item on the
+  // menu instead of once per order line. A menu item with no eligible
+  // restaurant_prices row is never shown as orderable at a number the order
+  // path would then refuse — the two can't drift apart because they're the
+  // same lookup.
+  const menuItemIds = ((items ?? []) as any[]).map((i) => i.id);
+  const rules = await loadRuleSet(sb, tenantId, { menuItemIds });
+  const priceAt = new Date();
+
   return {
     menus: menus ?? [],
     activeMenuId,
@@ -220,6 +231,16 @@ export async function fetchSellableCatalog(
       const groupIds = product
         ? ((links ?? []) as any[]).filter((l) => l.product_id === product.id).map((l) => l.group_id)
         : [];
+      const resolved = resolveDisplayPrice(rules, {
+        at: priceAt,
+        propertyId: input.propertyId ?? null,
+        locationId: input.locationId ?? null,
+        productId: product?.id ?? null,
+        menuItemId: i.id,
+        orderType: "dine_in",
+        channel: "dine_in",
+        quantity: 1,
+      });
       return {
         ...i,
         product_id: product?.id ?? null,
@@ -228,6 +249,10 @@ export async function fetchSellableCatalog(
           ? ((variants ?? []) as any[]).filter((v) => v.product_id === product.id)
           : [],
         modifier_group_ids: groupIds,
+        price: resolved?.amount ?? i.price,
+        currency: resolved?.currency ?? i.currency,
+        /** False means insertLines will refuse this line — the catalogue must not present it as orderable. */
+        priceConfigured: resolved !== null,
       };
     }),
   };

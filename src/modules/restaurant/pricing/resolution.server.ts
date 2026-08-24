@@ -6,6 +6,7 @@
 import { assertTenantRead } from "../core/access.server";
 import {
   quoteLine,
+  resolveBasePrice,
   resolveFxRate,
   type ChargeRule,
   type ModifierSelection,
@@ -174,6 +175,17 @@ export async function loadRuleSet(
   };
 }
 
+/** Which of a rule set's price candidates could possibly apply to this item — before scope/dates/channel are checked. */
+function candidatesFor(rules: CommercialRuleSet, ctx: PricingContext): PriceCandidate[] {
+  return rules.prices.filter((p) =>
+    ctx.menuItemId
+      ? p.menuItemId === ctx.menuItemId || (ctx.productId ? p.productId === ctx.productId : false)
+      : ctx.productId
+        ? p.productId === ctx.productId
+        : false,
+  );
+}
+
 export function quoteWithRuleSet(
   rules: CommercialRuleSet,
   ctx: PricingContext,
@@ -185,13 +197,7 @@ export function quoteWithRuleSet(
     strict?: boolean;
   } = {},
 ): PricingQuote {
-  const scoped = rules.prices.filter((p) =>
-    ctx.menuItemId
-      ? p.menuItemId === ctx.menuItemId || (ctx.productId ? p.productId === ctx.productId : false)
-      : ctx.productId
-        ? p.productId === ctx.productId
-        : false,
-  );
+  const scoped = candidatesFor(rules, ctx);
   return quoteLine({
     ctx,
     prices: scoped,
@@ -206,6 +212,26 @@ export function quoteWithRuleSet(
     lineDiscount: fallback.lineDiscount,
     strict: fallback.strict,
   });
+}
+
+/**
+ * Whether the authoritative pricing engine can actually price this item right
+ * now — the same eligibility and precedence rules `quoteWithRuleSet` uses
+ * (`resolveBasePrice` over the same scoped candidates), without the
+ * tax/promotion pipeline and without throwing. A catalogue asking "is this
+ * orderable" for many items in one pass needs an answer per item, not an
+ * exception on the first one that isn't priced yet.
+ *
+ * This is the single place both the till and the self-order catalogue ask
+ * "what would insertLines actually charge for this line" — so a displayed
+ * price and a validated price can never come from two different mechanisms.
+ */
+export function resolveDisplayPrice(
+  rules: CommercialRuleSet,
+  ctx: PricingContext,
+): { amount: number; currency: string } | null {
+  const candidate = resolveBasePrice(candidatesFor(rules, ctx), ctx, rules.priceLists);
+  return candidate ? { amount: candidate.amount, currency: candidate.currency } : null;
 }
 
 /** Explainable single-item resolution used by the Pricing Centre preview. */

@@ -595,7 +595,7 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                 <button
                   key={i.id}
                   type="button"
-                  disabled={!orderId || i.available === false}
+                  disabled={!orderId || i.available === false || i.priceConfigured === false}
                   onClick={() => setPickerItem(i)}
                   className="flex flex-col overflow-hidden rounded-lg border bg-card text-left transition-colors hover:border-primary disabled:opacity-50"
                 >
@@ -613,10 +613,16 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                     <span className="mt-auto text-xs text-muted-foreground">
                       {money(Number(i.price ?? 0), currency)}
                     </span>
-                    {(i.variants ?? []).length > 0 && (
+                    {i.priceConfigured === false ? (
                       <Badge variant="secondary" className="w-fit">
-                        {i.variants.length} variants
+                        No active price
                       </Badge>
+                    ) : (
+                      (i.variants ?? []).length > 0 && (
+                        <Badge variant="secondary" className="w-fit">
+                          {i.variants.length} variants
+                        </Badge>
+                      )
                     )}
                   </div>
                 </button>
