@@ -113,11 +113,25 @@ export async function posCatalog(
   input: { tenantId: string; propertyId?: string; locationId?: string; menuId?: string },
 ) {
   await assertTenantRead(sb, userId, input.tenantId);
+  return fetchSellableCatalog(sb, input.tenantId, input);
+}
 
+/**
+ * The tenant-scoped catalogue read itself, with no caller-identity check —
+ * every filter below is `tenant_id`-scoped, so this is safe to call from any
+ * context that has already established which tenant it's allowed to read
+ * (a staff caller via `posCatalog`'s `assertTenantRead`, or a guest caller
+ * whose tenant was derived from a resolved table, never from client input).
+ */
+export async function fetchSellableCatalog(
+  sb: Sb,
+  tenantId: string,
+  input: { locationId?: string; menuId?: string } = {},
+) {
   let menuQuery = sb
     .from("restaurant_menus")
     .select("id, name, status, currency, location_id")
-    .eq("tenant_id", input.tenantId)
+    .eq("tenant_id", tenantId)
     .eq("status", "published")
     .order("updated_at", { ascending: false });
   if (input.locationId)
@@ -139,49 +153,49 @@ export async function posCatalog(
     sb
       .from("restaurant_categories")
       .select("id, name, slug, kind, sort_order")
-      .eq("tenant_id", input.tenantId)
+      .eq("tenant_id", tenantId)
       .order("sort_order"),
     activeMenuId
       ? sb
           .from("restaurant_menu_items")
           .select(
-            "id, menu_id, category_id, name, description, price, currency, available, tags, allergens, sort_order",
+            "id, menu_id, category_id, name, description, price, currency, available, tags, allergens, sort_order, image_url",
           )
-          .eq("tenant_id", input.tenantId)
+          .eq("tenant_id", tenantId)
           .eq("menu_id", activeMenuId)
           .order("sort_order")
       : Promise.resolve({ data: [] }),
     sb
       .from("restaurant_products")
       .select("id, name, menu_item_id, station_id, price, product_type, active")
-      .eq("tenant_id", input.tenantId)
+      .eq("tenant_id", tenantId)
       .eq("active", true),
     sb
       .from("restaurant_product_variants")
       .select("id, product_id, name, price, price_is_delta, active, sort_order")
-      .eq("tenant_id", input.tenantId)
+      .eq("tenant_id", tenantId)
       .eq("active", true)
       .order("sort_order"),
     sb
       .from("restaurant_modifier_groups")
       .select("id, code, name, min_select, max_select, required, sort_order")
-      .eq("tenant_id", input.tenantId)
+      .eq("tenant_id", tenantId)
       .eq("active", true)
       .order("sort_order"),
     sb
       .from("restaurant_modifiers")
       .select("id, group_id, name, price_delta, effect, sort_order")
-      .eq("tenant_id", input.tenantId)
+      .eq("tenant_id", tenantId)
       .eq("active", true)
       .order("sort_order"),
     sb
       .from("restaurant_product_modifier_groups")
       .select("product_id, group_id, sort_order")
-      .eq("tenant_id", input.tenantId),
+      .eq("tenant_id", tenantId),
     sb
       .from("restaurant_stations")
       .select("id, station_type")
-      .eq("tenant_id", input.tenantId)
+      .eq("tenant_id", tenantId)
       .eq("active", true),
   ]);
 

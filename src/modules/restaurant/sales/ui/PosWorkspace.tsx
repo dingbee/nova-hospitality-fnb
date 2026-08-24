@@ -590,24 +590,35 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
               }
             />
           ) : (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
               {filtered.map((i) => (
                 <button
                   key={i.id}
                   type="button"
                   disabled={!orderId || i.available === false}
                   onClick={() => setPickerItem(i)}
-                  className="min-h-20 rounded-lg border bg-card p-3 text-left transition-colors hover:border-primary disabled:opacity-50"
+                  className="flex flex-col overflow-hidden rounded-lg border bg-card text-left transition-colors hover:border-primary disabled:opacity-50"
                 >
-                  <span className="block text-sm font-medium">{i.name}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {money(Number(i.price ?? 0), currency)}
-                  </span>
-                  {(i.variants ?? []).length > 0 && (
-                    <Badge variant="secondary" className="mt-1">
-                      {i.variants.length} variants
-                    </Badge>
-                  )}
+                  <div className="flex aspect-[4/3] w-full items-center justify-center bg-muted">
+                    {i.image_url ? (
+                      <img src={i.image_url} alt="" className="size-full object-cover" />
+                    ) : (
+                      <span className="text-2xl text-muted-foreground" aria-hidden>
+                        {i.name?.[0]?.toUpperCase() ?? "?"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-1 flex-col gap-1 p-2.5">
+                    <span className="text-sm font-medium leading-tight">{i.name}</span>
+                    <span className="mt-auto text-xs text-muted-foreground">
+                      {money(Number(i.price ?? 0), currency)}
+                    </span>
+                    {(i.variants ?? []).length > 0 && (
+                      <Badge variant="secondary" className="w-fit">
+                        {i.variants.length} variants
+                      </Badge>
+                    )}
+                  </div>
                 </button>
               ))}
             </div>

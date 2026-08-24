@@ -605,6 +605,81 @@ export async function createOrder(sb: Sb, userId: string, input: CreateOrderInpu
   return { ...order, ...totals };
 }
 
+/**
+ * Opens an order with no staff actor — the self-order surface a customer
+ * reaches from a table, with no login. `assertCapability` is deliberately
+ * never called here: there is no `restaurant_members` row to check. Every
+ * value that would normally come from a trusted session (tenant, property,
+ * location, currency) must already have been re-derived server-side from a
+ * resolved table before this is called — see
+ * `../selforder/selforder.server.ts`. `server_user_id`/`created_by` stay
+ * null (both columns are nullable) and `source` records the channel so
+ * these orders are distinguishable from staff-rung sales in every report.
+ */
+export async function createGuestOrder(
+  sb: Sb,
+  input: {
+    tenantId: string;
+    propertyId: string | null;
+    locationId: string | null;
+    tableId: string;
+    guestName?: string | null;
+    currency: string;
+    lines: SalesLineInput[];
+  },
+) {
+  const { data: order, error } = await sb
+    .from("restaurant_orders")
+    .insert({
+      tenant_id: input.tenantId,
+      property_id: input.propertyId,
+      location_id: input.locationId,
+      table_id: input.tableId,
+      order_number: reference("ORD"),
+      order_type: "dine_in",
+      status: "open",
+      guest_count: 1,
+      guest_name: input.guestName ?? null,
+      currency: input.currency,
+      source: "self_order",
+      server_user_id: null,
+      created_by: null,
+    })
+    .select("id, order_number, currency")
+    .single();
+  if (error) throw new Error(error.message);
+
+  const baseCurrency = await tenantBaseCurrency(sb, input.tenantId);
+  const exchangeRate = await currentFxRate(sb, input.tenantId, baseCurrency, input.currency);
+  await sb
+    .from("restaurant_orders")
+    .update({ base_currency: baseCurrency, exchange_rate: exchangeRate })
+    .eq("id", order.id)
+    .eq("tenant_id", input.tenantId);
+
+  await insertLines(sb, input.tenantId, order.id, input.lines, {
+    currency: input.currency,
+    propertyId: input.propertyId,
+    locationId: input.locationId,
+    orderType: "dine_in",
+    exchangeRate,
+  });
+
+  await sb
+    .from("restaurant_tables")
+    .update({ status: "occupied" })
+    .eq("id", input.tableId)
+    .eq("tenant_id", input.tenantId);
+
+  // Not routed through emitRestaurantEvent/recordEvent: that path requires a
+  // real staff principal (assertIntelRead(supabase, userId)) and there is
+  // none here. A self-order's own row (source = 'self_order') is the audit
+  // trail; wiring guest orders into the Intelligence Core event stream is a
+  // separate, later decision about what actor a guest-originated event
+  // should carry.
+  return { ...order, ...(await recalcOrder(sb, input.tenantId, order.id)) };
+}
+
 export async function addOrderItems(sb: Sb, userId: string, input: AddOrderItemsInput) {
   await assertCapability(sb, userId, input.tenantId, "sales.manage");
   const { data: order } = await sb

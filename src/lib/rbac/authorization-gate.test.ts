@@ -247,7 +247,20 @@ describe("direct server-function bypass", () => {
     expect(fnFiles.length).toBeGreaterThan(30);
   });
 
-  it("every server function authenticates, except the token-scoped guest receipt", () => {
+  /**
+   * Exactly two files may skip requireSupabaseAuth, and both are held to the
+   * same rule as every other bypass surface in this describe block: no
+   * identity, only an unguessable id, and every other fact (tenant,
+   * property, location, price, station) re-derived server-side rather than
+   * trusted from the request. Adding a third entry here is a security
+   * review, not a formatting change.
+   */
+  const ALLOWED_UNAUTHENTICATED = [
+    join(ROOT, "src/modules/restaurant/receipts/delivery.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selforder.functions.ts"),
+  ].sort();
+
+  it("every server function authenticates, except the token-scoped guest surfaces", () => {
     const unauthenticated: string[] = [];
     for (const f of fnFiles) {
       const s = read(f);
@@ -256,13 +269,29 @@ describe("direct server-function bypass", () => {
         if (!/\.middleware\(\[[^\]]*requireSupabaseAuth/.test(head)) unauthenticated.push(f);
       }
     }
-    expect(unauthenticated).toEqual([join(ROOT, "src/modules/restaurant/receipts/delivery.functions.ts")]);
+    expect([...new Set(unauthenticated)].sort()).toEqual(ALLOWED_UNAUTHENTICATED);
   });
 
-  it("the one public function is scoped by an unguessable token, not by identity", () => {
+  it("the guest receipt is scoped by an unguessable token, not by identity", () => {
     const s = read(join(ROOT, "src/modules/restaurant/receipts/delivery.functions.ts"));
     expect(s).toMatch(/sharedReceiptSchema\.parse/);
     expect(s).toMatch(/getSharedReceipt\(data\.token\)/);
+  });
+
+  it("self-ordering is scoped by table id, never by a client-supplied tenant/property/location", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selforder.functions.ts"));
+    expect(fn).toMatch(/guestMenuSchema\.parse/);
+    expect(fn).toMatch(/submitGuestOrderSchema\.parse/);
+    // The input schemas below carry no tenantId/propertyId/locationId field at
+    // all — resolveGuestTableContext is the only place those are produced,
+    // and it derives them from the table row, never from the request body.
+    const contracts = read(
+      join(ROOT, "src/modules/restaurant/selforder/selforder.contracts.ts"),
+    );
+    expect(contracts).not.toMatch(/tenantId|propertyId|locationId/);
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selforder.server.ts"));
+    expect(server).toMatch(/resolveGuestTableContext/);
+    expect(server).not.toMatch(/input\.tenantId|input\.propertyId|input\.locationId/);
   });
 
   it("no server function accepts a role, permission or admin flag from the client", () => {
