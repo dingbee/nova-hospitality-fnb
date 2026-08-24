@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { StatCard } from "@/components/os/StatCard";
 import { EmptyState } from "@/components/os/EmptyState";
+import { StatusChip } from "@/components/os/StatusChip";
 import { getRestaurantContextFn } from "@/modules/restaurant/intelligence/context.functions";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import { RestaurantQuickActions } from "@/modules/restaurant/ui/RestaurantQuickActions";
@@ -17,7 +18,8 @@ export const Route = createFileRoute("/_authenticated/admin/restaurant/")({
       { title: "Restaurant & Bar OS Overview — NOVA Hospitality F&B" },
       {
         name: "description",
-        content: "Outlets, menus, inventory, suppliers and purchasing at a glance for the active restaurant tenant.",
+        content:
+          "Outlets, menus, inventory, suppliers and purchasing at a glance for the active restaurant tenant.",
       },
       { name: "robots", content: "noindex,nofollow" },
     ],
@@ -35,7 +37,8 @@ function RestaurantOverview() {
     enabled: Boolean(tenantId),
   });
 
-  if (ws.isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading workspace…</div>;
+  if (ws.isLoading)
+    return <div className="p-6 text-sm text-muted-foreground">Loading workspace…</div>;
 
   if (!ws.data?.tenant) {
     return (
@@ -59,42 +62,70 @@ function RestaurantOverview() {
 
       <RestaurantQuickActions />
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <StatCard label="Outlets" value={String(d?.locations ?? "—")} icon={Store} />
-        <StatCard
-          label="Menus published"
-          value={d ? `${d.menus.published}/${d.menus.total}` : "—"}
-          icon={BookOpen}
-        />
-        <StatCard
-          label="Menu items available"
-          value={d ? `${d.menuItems.available}/${d.menuItems.total}` : "—"}
-          icon={BookOpen}
-        />
-        <StatCard
-          label="Stock items"
-          value={String(d?.inventory.total ?? "—")}
-          icon={Boxes}
-          hint={d ? `${d.inventory.low} at or below reorder point` : undefined}
-        />
-        <StatCard label="Stock value" value={money(d?.inventory.stockValue)} icon={Boxes} />
-        <StatCard
-          label="Suppliers"
-          value={d ? `${d.suppliers.active}/${d.suppliers.total}` : "—"}
-          icon={Truck}
-        />
-        <StatCard
-          label="Open purchase orders"
-          value={String(d?.purchasing.open ?? "—")}
-          icon={ShoppingCart}
-          hint={d ? money(d.purchasing.openValue) : undefined}
-        />
-        <StatCard
-          label="Average food cost"
-          value={d?.costing.averageFoodCostPercent != null ? `${d.costing.averageFoodCostPercent}%` : "—"}
-          icon={Calculator}
-          hint={d ? `${d.costing.costedItems} costed items` : undefined}
-        />
+      {/*
+        Grouped by what they describe, not one flat bank of eight. This
+        dashboard is structural/setup health (outlets, catalogue, stock,
+        suppliers) — it does not carry live "today" numbers (sales, open
+        tables, kitchen/bar load) because getRestaurantContextFn doesn't
+        return them; those already live on POS, Kitchen and Bar, each
+        showing its own real-time stats. Duplicating them here would mean
+        either a second fetch of the same data or fabricating a number,
+        neither of which belongs in a presentation-only pass.
+      */}
+      <div className="space-y-3">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Menu &amp; catalogue
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <StatCard label="Outlets" value={String(d?.locations ?? "—")} icon={Store} />
+          <StatCard
+            label="Menus published"
+            value={d ? `${d.menus.published}/${d.menus.total}` : "—"}
+            icon={BookOpen}
+          />
+          <StatCard
+            label="Menu items available"
+            value={d ? `${d.menuItems.available}/${d.menuItems.total}` : "—"}
+            icon={BookOpen}
+          />
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Inventory &amp; procurement
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <StatCard
+            label="Stock items"
+            value={String(d?.inventory.total ?? "—")}
+            icon={Boxes}
+            hint={d ? `${d.inventory.low} at or below reorder point` : undefined}
+            tone={(d?.inventory.low ?? 0) > 0 ? "warn" : "green"}
+          />
+          <StatCard label="Stock value" value={money(d?.inventory.stockValue)} icon={Boxes} />
+          <StatCard
+            label="Suppliers"
+            value={d ? `${d.suppliers.active}/${d.suppliers.total}` : "—"}
+            icon={Truck}
+          />
+          <StatCard
+            label="Open purchase orders"
+            value={String(d?.purchasing.open ?? "—")}
+            icon={ShoppingCart}
+            hint={d ? money(d.purchasing.openValue) : undefined}
+          />
+          <StatCard
+            label="Average food cost"
+            value={
+              d?.costing.averageFoodCostPercent != null
+                ? `${d.costing.averageFoodCostPercent}%`
+                : "—"
+            }
+            icon={Calculator}
+            hint={d ? `${d.costing.costedItems} costed items` : undefined}
+          />
+        </div>
       </div>
 
       <SectionCard
@@ -106,7 +137,11 @@ function RestaurantOverview() {
             <Link
               to="/admin/restaurant/inventory-control"
               search={{ tab: "positions" } as never}
-              className="flex min-h-14 items-center rounded-lg border px-4 hover:bg-muted"
+              className={`flex min-h-14 items-center rounded-lg border px-4 hover:bg-muted ${
+                (d?.inventory.low ?? 0) > 0
+                  ? "border-[color:var(--os-warn)]/40 bg-[color:var(--os-warn-soft)]"
+                  : ""
+              }`}
             >
               {d?.inventory.low ?? 0} items at or below reorder point
             </Link>
@@ -115,7 +150,11 @@ function RestaurantOverview() {
             <Link
               to="/admin/restaurant/procurement"
               search={{ tab: "requests" } as never}
-              className="flex min-h-14 items-center rounded-lg border px-4 hover:bg-muted"
+              className={`flex min-h-14 items-center rounded-lg border px-4 hover:bg-muted ${
+                (d?.purchasing.open ?? 0) > 0
+                  ? "border-[color:var(--os-info)]/40 bg-[color:var(--os-info-soft)]"
+                  : ""
+              }`}
             >
               {d?.purchasing.open ?? 0} open purchase orders to follow up
             </Link>
@@ -140,10 +179,13 @@ function RestaurantOverview() {
         ) : (
           <ul className="divide-y text-sm">
             {ws.data.locations.map((l) => (
-              <li key={l.id} className="flex items-center justify-between py-2">
-                <span>{l.name}</span>
-                <span className="text-xs uppercase text-muted-foreground">
-                  {l.location_type} · {l.status}
+              <li key={l.id} className="flex items-center justify-between gap-2 py-2">
+                <span className="min-w-0 truncate">{l.name}</span>
+                <span className="flex shrink-0 items-center gap-2">
+                  <span className="text-xs uppercase text-muted-foreground">{l.location_type}</span>
+                  <StatusChip tone={l.status === "active" ? "success" : "neutral"}>
+                    {l.status}
+                  </StatusChip>
                 </span>
               </li>
             ))}
