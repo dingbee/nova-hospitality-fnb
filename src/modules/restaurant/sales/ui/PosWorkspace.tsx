@@ -6,6 +6,8 @@ import {
   ChefHat,
   CreditCard,
   DoorOpen,
+  Minus,
+  Plus,
   Printer,
   ReceiptText,
   RotateCcw,
@@ -20,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { SectionCard } from "@/components/os/SectionCard";
 import { StatCard } from "@/components/os/StatCard";
 import { EmptyState } from "@/components/os/EmptyState";
+import { StatusChip, type StatusTone } from "@/components/os/StatusChip";
 import { GuestContextBanner } from "./GuestContextBanner";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
@@ -72,6 +75,22 @@ const newRequestId = () =>
     : `pos-${Date.now()}-${Math.random()}`;
 
 const FLOOR_LEGEND: TableTone[] = ["free", "seated", "production", "ready", "billing", "attention"];
+
+/** Presentation-only mapping from an order item's own status word to a StatusChip tone — no new state. */
+function itemStatusTone(status: string): StatusTone {
+  switch (status) {
+    case "ready":
+      return "success";
+    case "preparing":
+      return "warning";
+    case "voided":
+      return "danger";
+    case "served":
+      return "neutral";
+    default:
+      return "info"; // "ordered"
+  }
+}
 
 /** Which operating environment the till is rendering: restaurant service or bar service. */
 export type PosLens = "restaurant" | "bar";
@@ -382,6 +401,13 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
   const serverItems = ((order.data as any)?.items ?? []) as any[];
   const live = serverItems.filter((i) => i.status !== "voided");
   const orderRow = (order.data as any)?.order;
+  // Which table (if any) this bill is on — read from the floor board already
+  // in memory, purely so the Bill panel can say "Table 12" instead of
+  // leaving the operator to infer it from the order number.
+  const activeTable = useMemo(
+    () => ((board.data as any)?.tables ?? []).find((t: any) => t.id === orderRow?.table_id) ?? null,
+    [board.data, orderRow?.table_id],
+  );
   const stations = (catalog.data?.stations ?? []) as { id: string; stationType: string | null }[];
   const stationTypeById = useMemo(
     () => new Map(stations.map((s) => [s.id, s.stationType])),
@@ -472,6 +498,17 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
       default:
         break;
     }
+  };
+
+  /** Adjusts the quantity of a line still staged at the till — client-only state, same as removing one. Nothing already sent to the server is touched here; that's what void is for. */
+  const updateCartQty = (key: string, delta: number) => {
+    setCart((prev) =>
+      prev.flatMap((l) => {
+        if (l.key !== key) return [l];
+        const next = l.quantity + delta;
+        return next <= 0 ? [] : [{ ...l, quantity: next }];
+      }),
+    );
   };
 
   if (!tenantId) {
@@ -636,6 +673,13 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
           description={
             orderRow ? `${orderRow.status} · ${orderRow.payment_state}` : "Open a table to start."
           }
+          actions={
+            orderRow ? (
+              <Badge variant="outline" className="min-h-8 px-3 text-sm font-semibold">
+                {activeTable ? `Table ${activeTable.code}` : "Walk-in / bar tab"}
+              </Badge>
+            ) : undefined
+          }
         >
           {!orderId ? (
             <EmptyState
@@ -673,81 +717,121 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                   </Button>
                 </div>
               )}
-              <div className="space-y-2">
-                {live.map((i) => (
-                  <div
-                    key={i.id}
-                    className="flex items-start justify-between gap-2 rounded border bg-card p-2 text-sm"
-                  >
-                    <span className="min-w-0">
-                      <span className="block font-medium">
-                        {Number(i.quantity)} × {i.description}
-                      </span>
-                      {(i.modifiers ?? []).length > 0 && (
-                        <span className="block text-xs text-muted-foreground">
-                          {(i.modifiers ?? []).map((m: any) => m.name).join(", ")}
-                        </span>
-                      )}
-                      <span className="block text-xs text-muted-foreground">
-                        {i.seat_number ? `Seat ${i.seat_number} · ` : ""}
-                        {i.status}
-                      </span>
-                    </span>
-                    <span className="flex shrink-0 items-center gap-1">
-                      <span className="tabular-nums">
-                        {money(Number(i.line_total ?? 0), currency)}
-                      </span>
-                      {canVoid && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="size-8"
-                          onClick={() => {
-                            const reason = window.prompt("Reason for voiding this line?");
-                            if (reason && reason.trim().length >= 3) {
-                              voidLine.mutate({ orderItemId: i.id, reason: reason.trim() });
-                            }
-                          }}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      )}
-                    </span>
-                  </div>
-                ))}
-
-                {cart.map((l) => (
-                  <div
-                    key={l.key}
-                    className="flex items-start justify-between gap-2 rounded border border-dashed p-2 text-sm"
-                  >
-                    <span className="min-w-0">
-                      <span className="block font-medium">
-                        {l.quantity} × {l.description}
-                      </span>
-                      {l.modifiers.length > 0 && (
-                        <span className="block text-xs text-muted-foreground">
-                          {l.modifiers.map((m) => m.name).join(", ")}
-                        </span>
-                      )}
-                      <span className="block text-xs text-muted-foreground">staged</span>
-                    </span>
-                    <span className="flex shrink-0 items-center gap-1">
-                      <span className="tabular-nums">{money(lineTotal(l), currency)}</span>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="size-8"
-                        onClick={() => setCart((prev) => prev.filter((c) => c.key !== l.key))}
+              <div className="space-y-3">
+                {live.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      On the bill
+                    </p>
+                    {live.map((i) => (
+                      <div
+                        key={i.id}
+                        className="flex items-start justify-between gap-2 rounded border bg-card p-2 text-sm"
                       >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </span>
+                        <span className="min-w-0">
+                          <span className="block font-medium">
+                            {Number(i.quantity)} × {i.description}
+                          </span>
+                          {(i.modifiers ?? []).length > 0 && (
+                            <span className="block text-xs text-muted-foreground">
+                              {(i.modifiers ?? []).map((m: any) => m.name).join(", ")}
+                            </span>
+                          )}
+                          <span className="mt-1 flex items-center gap-1.5">
+                            {i.seat_number && (
+                              <span className="text-xs text-muted-foreground">
+                                Seat {i.seat_number}
+                              </span>
+                            )}
+                            <StatusChip tone={itemStatusTone(i.status)}>{i.status}</StatusChip>
+                          </span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1">
+                          <span className="tabular-nums">
+                            {money(Number(i.line_total ?? 0), currency)}
+                          </span>
+                          {canVoid && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="size-8"
+                              onClick={() => {
+                                const reason = window.prompt("Reason for voiding this line?");
+                                if (reason && reason.trim().length >= 3) {
+                                  voidLine.mutate({ orderItemId: i.id, reason: reason.trim() });
+                                }
+                              }}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          )}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
+
+                {cart.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      Not yet sent
+                    </p>
+                    {cart.map((l) => (
+                      <div key={l.key} className="rounded border border-dashed p-2 text-sm">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="min-w-0">
+                            <span className="block font-medium">{l.description}</span>
+                            {l.modifiers.length > 0 && (
+                              <span className="block text-xs text-muted-foreground">
+                                {l.modifiers.map((m) => m.name).join(", ")}
+                              </span>
+                            )}
+                          </span>
+                          <span className="shrink-0 tabular-nums">
+                            {money(lineTotal(l), currency)}
+                          </span>
+                        </div>
+                        <div className="mt-1.5 flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              className="size-7"
+                              onClick={() => updateCartQty(l.key, -1)}
+                              aria-label="Decrease quantity"
+                            >
+                              <Minus className="size-3.5" />
+                            </Button>
+                            <span className="w-5 text-center text-xs font-medium tabular-nums">
+                              {l.quantity}
+                            </span>
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              className="size-7"
+                              onClick={() => updateCartQty(l.key, 1)}
+                              aria-label="Increase quantity"
+                            >
+                              <Plus className="size-3.5" />
+                            </Button>
+                          </div>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-7"
+                            onClick={() => setCart((prev) => prev.filter((c) => c.key !== l.key))}
+                            aria-label="Remove item"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
-              <div className="flex items-center justify-between border-t pt-2 text-sm font-semibold">
+              <div className="flex items-center justify-between border-t-2 pt-3 text-base font-semibold">
                 <span>Total</span>
                 <span className="tabular-nums">{money(billTotal, currency)}</span>
               </div>
@@ -785,81 +869,87 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                     <DoorOpen className="size-4" /> Release table
                   </Button>
                 )}
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    variant="ghost"
-                    className="min-h-11"
-                    onClick={() => {
-                      const code = window.prompt(
-                        "Move to which table code? Leave blank to detach.",
-                      );
-                      if (code === null) return;
-                      const match = ((board.data as any)?.tables ?? []).find(
-                        (t: any) => String(t.code).toLowerCase() === code.trim().toLowerCase(),
-                      );
-                      transfer.mutate({ tableId: match?.id ?? null });
-                    }}
-                  >
-                    Move table
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    className="min-h-11"
-                    onClick={() => showReceipt.mutate({ orderId: orderId, reprint: false })}
-                  >
-                    <Printer className="size-4" /> Receipt
-                  </Button>
-                </div>
-                {canReopen && orderRow?.status === "closed" && (
-                  <Button
-                    variant="outline"
-                    className="min-h-11"
-                    onClick={() => reopen.mutate({ orderId })}
-                  >
-                    <RotateCcw className="size-4" /> Reopen bill
-                  </Button>
-                )}
-                {canVoid && orderRow?.status !== "cancelled" && (
-                  <Button
-                    variant="ghost"
-                    className="min-h-11 text-destructive"
-                    disabled={cancelBill.isPending}
-                    onClick={() => {
-                      const reason = window.prompt("Cancel this whole bill. Reason?");
-                      if (reason && reason.trim().length >= 3)
-                        cancelBill.mutate({ orderId, reason: reason.trim() });
-                    }}
-                  >
-                    Cancel bill
-                  </Button>
-                )}
-                {canVoid &&
-                  orderPayments.some(
-                    (p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded",
-                  ) && (
+
+                <div className="mt-1 space-y-2 border-t pt-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    More
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
                     <Button
                       variant="ghost"
-                      className="min-h-11 text-destructive"
+                      className="min-h-11"
                       onClick={() => {
-                        const target = orderPayments.find(
-                          (p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded",
+                        const code = window.prompt(
+                          "Move to which table code? Leave blank to detach.",
                         );
-                        if (!target) return;
-                        const reason = window.prompt(
-                          `Refund ${money(Number(target.amount), currency)} taken by ${target.method}. Reason?`,
+                        if (code === null) return;
+                        const match = ((board.data as any)?.tables ?? []).find(
+                          (t: any) => String(t.code).toLowerCase() === code.trim().toLowerCase(),
                         );
-                        if (reason && reason.trim().length >= 3) {
-                          refund.mutate({
-                            paymentId: target.id,
-                            amount: Number(target.amount),
-                            reason: reason.trim(),
-                          });
-                        }
+                        transfer.mutate({ tableId: match?.id ?? null });
                       }}
                     >
-                      <CreditCard className="size-4" /> Refund a payment
+                      Move table
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="min-h-11"
+                      onClick={() => showReceipt.mutate({ orderId: orderId, reprint: false })}
+                    >
+                      <Printer className="size-4" /> Receipt
+                    </Button>
+                  </div>
+                  {canReopen && orderRow?.status === "closed" && (
+                    <Button
+                      variant="outline"
+                      className="min-h-11 w-full"
+                      onClick={() => reopen.mutate({ orderId })}
+                    >
+                      <RotateCcw className="size-4" /> Reopen bill
                     </Button>
                   )}
+                  {canVoid && orderRow?.status !== "cancelled" && (
+                    <Button
+                      variant="ghost"
+                      className="min-h-11 w-full text-destructive"
+                      disabled={cancelBill.isPending}
+                      onClick={() => {
+                        const reason = window.prompt("Cancel this whole bill. Reason?");
+                        if (reason && reason.trim().length >= 3)
+                          cancelBill.mutate({ orderId, reason: reason.trim() });
+                      }}
+                    >
+                      Cancel bill
+                    </Button>
+                  )}
+                  {canVoid &&
+                    orderPayments.some(
+                      (p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded",
+                    ) && (
+                      <Button
+                        variant="ghost"
+                        className="min-h-11 w-full text-destructive"
+                        onClick={() => {
+                          const target = orderPayments.find(
+                            (p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded",
+                          );
+                          if (!target) return;
+                          const reason = window.prompt(
+                            `Refund ${money(Number(target.amount), currency)} taken by ${target.method}. Reason?`,
+                          );
+                          if (reason && reason.trim().length >= 3) {
+                            refund.mutate({
+                              paymentId: target.id,
+                              amount: Number(target.amount),
+                              reason: reason.trim(),
+                            });
+                          }
+                        }}
+                      >
+                        <CreditCard className="size-4" /> Refund a payment
+                      </Button>
+                    )}
+                </div>
               </div>
 
               <details className="rounded-lg border bg-card p-2">
