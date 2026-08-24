@@ -26,6 +26,14 @@ import { consumeForOrderItem } from "../inventory/movements.server";
 import { activeRecipeForMenuItem } from "../products/recipes.server";
 import { consumeForRecipeSale } from "../products/consumption.server";
 import { currentFxRate, loadRuleSet, quoteWithRuleSet } from "../pricing/resolution.server";
+import { isBeverageCategory } from "../bar/lens";
+import { BAR_STATION_TYPES } from "../bar/contracts";
+import {
+  resolveCataloguedLineStation,
+  resolveOpenItemStation,
+  type ProductStationInfo,
+  type StationRow,
+} from "./stationRouting";
 
 type Sb = any;
 
@@ -47,7 +55,11 @@ async function tenantBaseCurrency(sb: Sb, tenantId: string): Promise<string> {
 
 /* ---------------- Service periods ---------------- */
 
-export async function listServicePeriods(sb: Sb, userId: string, input: z.infer<typeof listServicePeriodsSchema>) {
+export async function listServicePeriods(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listServicePeriodsSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_service_periods")
@@ -78,7 +90,11 @@ export async function upsertServicePeriod(
     active: input.active,
   };
   const q = input.id
-    ? sb.from("restaurant_service_periods").update(row).eq("id", input.id).eq("tenant_id", input.tenantId)
+    ? sb
+        .from("restaurant_service_periods")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
     : sb.from("restaurant_service_periods").insert(row);
   const { data, error } = await q.select("id, code, name").single();
   if (error) throw new Error(error.message);
@@ -100,7 +116,11 @@ export async function listTables(sb: Sb, userId: string, input: z.infer<typeof l
   return data ?? [];
 }
 
-export async function upsertTable(sb: Sb, userId: string, input: z.infer<typeof upsertTableSchema>) {
+export async function upsertTable(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof upsertTableSchema>,
+) {
   await assertCapability(sb, userId, input.tenantId, "location.manage");
   const row = {
     tenant_id: input.tenantId,
@@ -144,29 +164,43 @@ export async function listOrders(sb: Sb, userId: string, input: z.infer<typeof l
   return data ?? [];
 }
 
-export async function getOrder(sb: Sb, userId: string, input: { tenantId: string; orderId: string }) {
+export async function getOrder(
+  sb: Sb,
+  userId: string,
+  input: { tenantId: string; orderId: string },
+) {
   await assertTenantRead(sb, userId, input.tenantId);
-  const [{ data: order, error }, { data: items }, { data: payments }, { data: tickets }] = await Promise.all([
-    sb.from("restaurant_orders").select("*").eq("tenant_id", input.tenantId).eq("id", input.orderId).single(),
-    sb
-      .from("restaurant_order_items")
-      .select("id, menu_item_id, station_id, description, quantity, unit_price, discount, tax_amount, line_total, unit_cost, line_cost, status, course, notes")
-      .eq("tenant_id", input.tenantId)
-      .eq("order_id", input.orderId)
-      .order("created_at"),
-    sb
-      .from("restaurant_payments")
-      .select("id, method, state, amount, currency, reference, captured_at")
-      .eq("tenant_id", input.tenantId)
-      .eq("order_id", input.orderId)
-      .order("captured_at"),
-    sb
-      .from("restaurant_kitchen_tickets")
-      .select("id, ticket_number, station_id, status, queued_at, started_at, ready_at, served_at, prep_seconds, delay_seconds, is_delayed, target_minutes")
-      .eq("tenant_id", input.tenantId)
-      .eq("order_id", input.orderId)
-      .order("queued_at"),
-  ]);
+  const [{ data: order, error }, { data: items }, { data: payments }, { data: tickets }] =
+    await Promise.all([
+      sb
+        .from("restaurant_orders")
+        .select("*")
+        .eq("tenant_id", input.tenantId)
+        .eq("id", input.orderId)
+        .single(),
+      sb
+        .from("restaurant_order_items")
+        .select(
+          "id, menu_item_id, station_id, description, quantity, unit_price, discount, tax_amount, line_total, unit_cost, line_cost, status, course, notes",
+        )
+        .eq("tenant_id", input.tenantId)
+        .eq("order_id", input.orderId)
+        .order("created_at"),
+      sb
+        .from("restaurant_payments")
+        .select("id, method, state, amount, currency, reference, captured_at")
+        .eq("tenant_id", input.tenantId)
+        .eq("order_id", input.orderId)
+        .order("captured_at"),
+      sb
+        .from("restaurant_kitchen_tickets")
+        .select(
+          "id, ticket_number, station_id, status, queued_at, started_at, ready_at, served_at, prep_seconds, delay_seconds, is_delayed, target_minutes",
+        )
+        .eq("tenant_id", input.tenantId)
+        .eq("order_id", input.orderId)
+        .order("queued_at"),
+    ]);
   if (error || !order) throw new Error("Order not found.");
   return { order, items: items ?? [], payments: payments ?? [], tickets: tickets ?? [] };
 }
@@ -181,10 +215,86 @@ async function unitCostsForMenuItems(sb: Sb, tenantId: string, menuItemIds: stri
     .eq("tenant_id", tenantId)
     .in("menu_item_id", menuItemIds)
     .order("computed_at", { ascending: false });
-  for (const row of ((data ?? []) as any[])) {
+  for (const row of (data ?? []) as any[]) {
     if (!map.has(row.menu_item_id)) map.set(row.menu_item_id, Number(row.total_cost ?? 0));
   }
   return map;
+}
+
+/**
+ * Fetches everything `resolveCataloguedLineStation`/`resolveOpenItemStation`
+ * need to decide a line's final station, scoped to this tenant only — so a
+ * client-proposed station id that belongs to another tenant can never match.
+ */
+async function loadStationResolutionContext(sb: Sb, tenantId: string, menuItemIds: string[]) {
+  const { data: stationRows } = await sb
+    .from("restaurant_stations")
+    .select("id, station_type, active, sort_order")
+    .eq("tenant_id", tenantId)
+    .order("sort_order");
+  const allStations = ((stationRows ?? []) as any[]).map(
+    (s) => ({ id: s.id, stationType: s.station_type }) satisfies StationRow,
+  );
+  const activeStations = ((stationRows ?? []) as any[])
+    .filter((s) => s.active !== false)
+    .map((s) => ({ id: s.id, stationType: s.station_type }) satisfies StationRow);
+
+  const products = new Map<string, ProductStationInfo>();
+  if (menuItemIds.length > 0) {
+    const { data: productRows } = await sb
+      .from("restaurant_products")
+      .select("menu_item_id, station_id, category_id")
+      .eq("tenant_id", tenantId)
+      .eq("active", true)
+      .in("menu_item_id", menuItemIds);
+
+    const { data: menuItemRows } = await sb
+      .from("restaurant_menu_items")
+      .select("id, category_id")
+      .eq("tenant_id", tenantId)
+      .in("id", menuItemIds);
+    const menuItemCategory = new Map(
+      ((menuItemRows ?? []) as any[]).map((m) => [m.id, m.category_id ?? null]),
+    );
+
+    const categoryIds = new Set<string>();
+    for (const p of (productRows ?? []) as any[]) {
+      const catId = p.category_id ?? menuItemCategory.get(p.menu_item_id) ?? null;
+      if (catId) categoryIds.add(catId);
+    }
+    for (const catId of menuItemCategory.values()) if (catId) categoryIds.add(catId);
+
+    const { data: categoryRows } =
+      categoryIds.size > 0
+        ? await sb
+            .from("restaurant_categories")
+            .select("id, name")
+            .eq("tenant_id", tenantId)
+            .in("id", [...categoryIds])
+        : { data: [] as any[] };
+    const categoryName = new Map(((categoryRows ?? []) as any[]).map((c) => [c.id, c.name]));
+
+    for (const p of (productRows ?? []) as any[]) {
+      if (!p.menu_item_id) continue;
+      const catId = p.category_id ?? menuItemCategory.get(p.menu_item_id) ?? null;
+      products.set(p.menu_item_id, {
+        stationId: p.station_id ?? null,
+        isBeverage: isBeverageCategory(catId ? categoryName.get(catId) : undefined),
+      });
+    }
+    // A menu item with no product row at all still gets a category-based lane
+    // default rather than silently falling through to "unassigned".
+    for (const id of menuItemIds) {
+      if (products.has(id)) continue;
+      const catId = menuItemCategory.get(id) ?? null;
+      products.set(id, {
+        stationId: null,
+        isBeverage: isBeverageCategory(catId ? categoryName.get(catId) : undefined),
+      });
+    }
+  }
+
+  return { allStations, activeStations, products };
 }
 
 /** A modifier exactly as chosen at the till, snapshotted onto the sold line. */
@@ -223,10 +333,18 @@ export async function insertLines(
   },
 ) {
   const ids = lines.map((l) => l.menuItemId).filter(Boolean) as string[];
+  // Station authority: a client-proposed stationId (from the till, the bar
+  // POS, or a direct API call) is a proposal only. The server re-derives the
+  // final station the same way pricing is re-derived below — from the
+  // product's own configuration, never from what the client sent.
+  const stationCtx = await loadStationResolutionContext(sb, tenantId, [...new Set(ids)]);
   const costs = await unitCostsForMenuItems(sb, tenantId, ids);
   // The recipe version in force at the moment of sale is pinned onto the line,
   // so a later recipe change never rewrites this order's economics.
-  const recipeByMenuItem = new Map<string, { productId: string; recipeId: string; version: number }>();
+  const recipeByMenuItem = new Map<
+    string,
+    { productId: string; recipeId: string; version: number }
+  >();
   for (const id of [...new Set(ids)]) {
     const active = await activeRecipeForMenuItem(sb, tenantId, id);
     if (active) recipeByMenuItem.set(id, active);
@@ -239,7 +357,7 @@ export async function insertLines(
       .select("id, computed_cost")
       .eq("tenant_id", tenantId)
       .in("id", recipeIds);
-    for (const r of ((recipes ?? []) as any[])) recipeCosts.set(r.id, Number(r.computed_cost ?? 0));
+    for (const r of (recipes ?? []) as any[]) recipeCosts.set(r.id, Number(r.computed_cost ?? 0));
   }
 
   // Commercial rules in force at this moment. Resolved once per order, then
@@ -303,7 +421,13 @@ export async function insertLines(
       modifier_total: modifierAmount,
       guest_notes: l.guestNotes ?? null,
       created_by: ctx.userId ?? null,
-      station_id: l.stationId ?? null,
+      station_id: l.menuItemId
+        ? resolveCataloguedLineStation(
+            stationCtx.products.get(l.menuItemId) ?? null,
+            stationCtx.activeStations,
+            BAR_STATION_TYPES,
+          )
+        : resolveOpenItemStation(l.stationId, stationCtx.allStations),
       description: l.description,
       quantity: l.quantity,
       unit_price: Number((quote.unitPrice + modifierPerUnit).toFixed(4)),
@@ -331,7 +455,9 @@ export async function insertLines(
         // the rules decided. Divergence is a signal worth investigating.
         proposed_unit_price: proposedUnitPrice || null,
         proposal_overridden:
-          catalogued && proposedUnitPrice > 0 && Math.abs(proposedUnitPrice - quote.unitPrice) > 0.009,
+          catalogued &&
+          proposedUnitPrice > 0 &&
+          Math.abs(proposedUnitPrice - quote.unitPrice) > 0.009,
       },
       unit_cost: unitCost,
       line_cost: Number((unitCost * l.quantity).toFixed(4)),
@@ -341,7 +467,10 @@ export async function insertLines(
       status: "ordered",
     };
   });
-  const { data, error } = await sb.from("restaurant_order_items").insert(rows).select("id, line_total, line_cost");
+  const { data, error } = await sb
+    .from("restaurant_order_items")
+    .insert(rows)
+    .select("id, line_total, line_cost");
   if (error) throw new Error(error.message);
   return (data ?? []) as any[];
 }
@@ -351,13 +480,22 @@ export async function recalcOrder(sb: Sb, tenantId: string, orderId: string) {
   const [{ data: items }, { data: payments }] = await Promise.all([
     sb
       .from("restaurant_order_items")
-      .select("line_total, line_cost, status, discount, tax_amount, service_charge_amount, quantity, unit_price")
+      .select(
+        "line_total, line_cost, status, discount, tax_amount, service_charge_amount, quantity, unit_price",
+      )
       .eq("tenant_id", tenantId)
       .eq("order_id", orderId),
-    sb.from("restaurant_payments").select("amount, state").eq("tenant_id", tenantId).eq("order_id", orderId),
+    sb
+      .from("restaurant_payments")
+      .select("amount, state")
+      .eq("tenant_id", tenantId)
+      .eq("order_id", orderId),
   ]);
   const live = ((items ?? []) as any[]).filter((i) => i.status !== "voided");
-  const subtotal = live.reduce((s, i) => s + Number(i.quantity ?? 0) * Number(i.unit_price ?? 0), 0);
+  const subtotal = live.reduce(
+    (s, i) => s + Number(i.quantity ?? 0) * Number(i.unit_price ?? 0),
+    0,
+  );
   const discountTotal = live.reduce((s, i) => s + Number(i.discount ?? 0), 0);
   const taxTotal = live.reduce((s, i) => s + Number(i.tax_amount ?? 0), 0);
   const serviceTotal = live.reduce((s, i) => s + Number(i.service_charge_amount ?? 0), 0);
@@ -367,8 +505,7 @@ export async function recalcOrder(sb: Sb, tenantId: string, orderId: string) {
     .filter((p) => p.state !== "refunded")
     .reduce((s, p) => s + Number(p.amount ?? 0), 0);
 
-  const paymentState =
-    paid <= 0 ? "unpaid" : paid + 0.01 < total ? "partially_paid" : "paid";
+  const paymentState = paid <= 0 ? "unpaid" : paid + 0.01 < total ? "partially_paid" : "paid";
 
   const { data, error } = await sb
     .from("restaurant_orders")
@@ -384,7 +521,9 @@ export async function recalcOrder(sb: Sb, tenantId: string, orderId: string) {
     })
     .eq("tenant_id", tenantId)
     .eq("id", orderId)
-    .select("id, order_number, subtotal, total, paid_total, cost_total, payment_state, currency, location_id, property_id, status")
+    .select(
+      "id, order_number, subtotal, total, paid_total, cost_total, payment_state, currency, location_id, property_id, status",
+    )
     .single();
   if (error) throw new Error(error.message);
   return data;
@@ -439,7 +578,11 @@ export async function createOrder(sb: Sb, userId: string, input: CreateOrderInpu
     });
   }
   if (input.tableId) {
-    await sb.from("restaurant_tables").update({ status: "occupied" }).eq("id", input.tableId).eq("tenant_id", input.tenantId);
+    await sb
+      .from("restaurant_tables")
+      .update({ status: "occupied" })
+      .eq("id", input.tableId)
+      .eq("tenant_id", input.tenantId);
   }
   const totals = await recalcOrder(sb, input.tenantId, order.id);
 
@@ -496,7 +639,10 @@ export async function recordPayment(sb: Sb, userId: string, input: RecordPayment
       state: input.state,
       amount: input.amount,
       tendered: input.tendered ?? null,
-      change_due: input.tendered != null ? Math.max(0, Number((input.tendered - input.amount).toFixed(2))) : 0,
+      change_due:
+        input.tendered != null
+          ? Math.max(0, Number((input.tendered - input.amount).toFixed(2)))
+          : 0,
       reference: input.reference ?? null,
       booking_id: input.bookingId ?? null,
       created_by: userId,
@@ -521,7 +667,12 @@ export async function recordPayment(sb: Sb, userId: string, input: RecordPayment
     entityType: "restaurant_order",
     entityId: input.orderId,
     source: "restaurant-os",
-    payload: { method: input.method, amount: input.amount, state: input.state, order_total: Number(totals.total) },
+    payload: {
+      method: input.method,
+      amount: input.amount,
+      state: input.state,
+      order_total: Number(totals.total),
+    },
   });
   return { payment, order: totals };
 }
@@ -535,7 +686,9 @@ export async function transitionOrder(sb: Sb, userId: string, input: TransitionO
 
   const { data: order } = await sb
     .from("restaurant_orders")
-    .select("id, order_number, status, table_id, location_id, property_id, service_period_id, order_type, guest_count, currency")
+    .select(
+      "id, order_number, status, table_id, location_id, property_id, service_period_id, order_type, guest_count, currency",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("id", input.orderId)
     .single();
@@ -561,7 +714,9 @@ export async function transitionOrder(sb: Sb, userId: string, input: TransitionO
   if (input.status === "closed") {
     const { data: items } = await sb
       .from("restaurant_order_items")
-      .select("id, menu_item_id, recipe_id, recipe_version, description, quantity, unit_price, line_total, line_cost, status, modifiers")
+      .select(
+        "id, menu_item_id, recipe_id, recipe_version, description, quantity, unit_price, line_total, line_cost, status, modifiers",
+      )
       .eq("tenant_id", input.tenantId)
       .eq("order_id", input.orderId);
 
@@ -634,7 +789,11 @@ export async function transitionOrder(sb: Sb, userId: string, input: TransitionO
         .eq("id", input.orderId);
     }
     if (order.table_id) {
-      await sb.from("restaurant_tables").update({ status: "cleaning" }).eq("id", order.table_id).eq("tenant_id", input.tenantId);
+      await sb
+        .from("restaurant_tables")
+        .update({ status: "cleaning" })
+        .eq("id", order.table_id)
+        .eq("tenant_id", input.tenantId);
     }
 
     await emitRestaurantEvent(sb, userId, {
@@ -658,7 +817,11 @@ export async function transitionOrder(sb: Sb, userId: string, input: TransitionO
     // Evidence of the sale, frozen at close. Never recomputed.
     try {
       const { issueReceipt } = await import("./receipts.server");
-      await issueReceipt(sb, userId, { tenantId: input.tenantId, orderId: order.id, reprint: false });
+      await issueReceipt(sb, userId, {
+        tenantId: input.tenantId,
+        orderId: order.id,
+        reprint: false,
+      });
     } catch (err) {
       console.warn("[restaurant-os] receipt not issued", (err as Error).message);
     }
