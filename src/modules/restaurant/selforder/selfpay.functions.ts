@@ -49,31 +49,10 @@ export const confirmGuestPaymentFn = createServerFn({ method: "POST" })
   });
 
 /**
- * Pesapal's own server-to-server IPN callback target. IMPORTANT — this is
- * NOT yet actually reachable by Pesapal: createServerFn endpoints use
- * TanStack Start's own RPC calling convention, not a plain HTTP GET/POST
- * with query-string params the way Pesapal's IPN mechanism calls a
- * registered URL. Shipping the verification LOGIC here (confirmPesapalCallback,
- * fully tested) is still correct and reusable, but wiring a genuinely
- * Pesapal-callable endpoint needs a plain HTTP route — this codebase's
- * installed TanStack Start version has no createServerFileRoute/equivalent,
- * and no Nitro server/api convention is wired into its build plugin either.
- * Until that route exists, the guest's own browser-return confirmation
- * (confirmGuestPaymentFn above) is the only path that actually marks an
- * order paid; a guest who never returns to the browser after paying will
- * not be reconciled automatically. See the final report's "remaining
- * blocker" for what adding a real route requires.
+ * Pesapal's actual server-to-server IPN callback target is not a
+ * createServerFn — TanStack Start's RPC calling convention isn't something
+ * an external service's plain GET-with-query-params can address. It's the
+ * Vercel Function at /api/pesapal-ipn.ts (project root), which imports and
+ * calls the same confirmPesapalCallback this module exports. See that
+ * file's header comment for why.
  */
-export const pesapalIpnFn = createServerFn({ method: "GET" })
-  .inputValidator((d: unknown) => {
-    const raw = d as Record<string, unknown> | null | undefined;
-    return {
-      orderId: String(raw?.OrderMerchantReference ?? ""),
-      providerReference: String(raw?.OrderTrackingId ?? ""),
-    };
-  })
-  .handler(async ({ data }) => {
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const mod = await import("./selfpay.server");
-    return mod.confirmPesapalCallback(supabaseAdmin, data);
-  });

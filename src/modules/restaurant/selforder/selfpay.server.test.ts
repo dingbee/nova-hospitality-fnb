@@ -137,7 +137,9 @@ function fakeAdapter(overrides: Partial<PaymentProviderAdapter> = {}): PaymentPr
       providerReference: "track-1",
       redirectUrl: "https://pesapal.test/checkout/track-1",
     }),
-    verify: async () => ({ status: "paid" }),
+    // Matches seedFor's default order (total 11000, currency TZS) so the
+    // happy-path tests reconcile cleanly without each needing its own override.
+    verify: async () => ({ status: "paid", amount: 11000, currency: "TZS" }),
     ...overrides,
   };
 }
@@ -236,7 +238,7 @@ describe("confirmGuestPaymentFromBrowser / confirmPesapalCallback", () => {
     const adapter = fakeAdapter({
       verify: async (input) => {
         verifiedReference = input.providerReference;
-        return { status: "paid" };
+        return { status: "paid", amount: 11000, currency: "TZS" };
       },
     });
     const result = await confirmGuestPaymentFromBrowser(
@@ -249,6 +251,34 @@ describe("confirmGuestPaymentFromBrowser / confirmPesapalCallback", () => {
     const status = await guestOrderStatus(db as any, { tableId: TABLE, orderId: ORDER });
     expect(status.paidTotal).toBe(11000);
     expect(status.amountDue).toBe(0);
+  });
+
+  it("does not settle the order when the provider confirms a different amount than is owed", async () => {
+    const db = seedFor({ total: 11000, paid_total: 0 });
+    const result = await confirmGuestPaymentFromBrowser(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, orderTrackingId: "track-1" },
+      // A "paid" status alone is not enough — Pesapal confirms it paid a
+      // different amount than this order is actually owed.
+      fakeAdapter({
+        verify: async () => ({ status: "paid", amount: 5000, currency: "TZS" }),
+      }) as any,
+    );
+    expect(result).toEqual({ ok: false, reason: "amount_mismatch" });
+    const status = await guestOrderStatus(db as any, { tableId: TABLE, orderId: ORDER });
+    expect(status.paidTotal).toBe(0);
+  });
+
+  it("does not settle the order when the provider confirms the right amount in the wrong currency", async () => {
+    const db = seedFor({ total: 11000, paid_total: 0, currency: "TZS" });
+    const result = await confirmGuestPaymentFromBrowser(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, orderTrackingId: "track-1" },
+      fakeAdapter({
+        verify: async () => ({ status: "paid", amount: 11000, currency: "KES" }),
+      }) as any,
+    );
+    expect(result).toEqual({ ok: false, reason: "amount_mismatch" });
   });
 
   it("does not mark the order paid when the provider reports a decline", async () => {

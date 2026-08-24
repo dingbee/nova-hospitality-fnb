@@ -107,7 +107,12 @@ describe("createPesapalAdapter", () => {
         vi.fn(async (url: string) => {
           if (url.includes("/Auth/RequestToken")) return jsonResponse({ token: "tok-1" });
           if (url.includes("/GetTransactionStatus")) {
-            return jsonResponse({ status_code: 1, payment_status_description: "Completed" });
+            return jsonResponse({
+              status_code: 1,
+              payment_status_description: "Completed",
+              amount: 11000,
+              currency: "TZS",
+            });
           }
           throw new Error(`unexpected fetch: ${url}`);
         }),
@@ -115,6 +120,9 @@ describe("createPesapalAdapter", () => {
       const adapter = createPesapalAdapter()!;
       const result = await adapter.verify({ providerReference: "track-1" });
       expect(result.status).toBe("paid");
+      // The caller (confirmGuestPayment) reconciles these against the order
+      // it expected — a "paid" status with no amount to check would defeat that.
+      expect(result).toMatchObject({ amount: 11000, currency: "TZS" });
     });
 
     it("verify() maps a failed transaction to failed, never paid", async () => {

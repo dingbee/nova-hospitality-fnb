@@ -122,11 +122,18 @@ export type PaymentProviderAdapter = {
   /**
    * The only source of truth for "did this actually get paid" — always
    * re-queried from the provider, never inferred from a redirect or a
-   * webhook payload's own claimed status.
+   * webhook payload's own claimed status. amount/currency are the
+   * provider's own record of what was actually paid, required whenever
+   * status is "paid" — confirmGuestPayment reconciles them against the
+   * order's own amount due before recording anything, rather than trusting
+   * a "paid" status alone.
    */
   verify(input: {
     providerReference: string;
-  }): Promise<{ status: "paid" | "failed" | "pending" | "expired"; failureReason?: string }>;
+  }): Promise<
+    | { status: "paid"; amount: number; currency: string }
+    | { status: "failed" | "pending" | "expired"; failureReason?: string }
+  >;
 };
 
 /**
@@ -180,19 +187,26 @@ export type ConfirmGuestPaymentResult =
   | { ok: true; status: "paid"; order: Awaited<ReturnType<typeof guestOrderStatus>> }
   | { ok: true; status: "pending" }
   | { ok: false; reason: "declined" | "expired"; detail?: string }
+  | { ok: false; reason: "amount_mismatch" }
   | { ok: false; reason: "already_paid" }
   | { ok: false; reason: "provider_not_configured" };
+
+/** A cent of slack against floating-point/rounding noise — the same tolerance recalcOrder already uses for its own paid/total comparison. */
+const AMOUNT_TOLERANCE = 0.01;
 
 /**
  * The one place a Pesapal outcome is ever turned into a recorded payment —
  * called both from the guest's browser on return from checkout, and from
- * the provider's own server-to-server callback (see selfpay.functions.ts).
- * Both paths do the identical thing: re-verify with the provider, then
- * hand off to the existing, unchanged, idempotent recordGuestPayment. A
- * repeated call (browser refresh, a replayed webhook) is safe — verify()
- * is read-only, and recordGuestPayment's client_request_id unique index
- * (keyed on the provider reference) makes the eventual insert a no-op the
- * second time.
+ * the provider's own server-to-server callback (see api/pesapal-ipn.ts).
+ * Both paths do the identical thing: re-verify with the provider, reconcile
+ * the amount/currency the provider actually confirms against this order's
+ * own amount due, then hand off to the existing, unchanged, idempotent
+ * recordGuestPayment. A "paid" status alone is never enough — the provider
+ * must also confirm the right amount, in the right currency, for this
+ * exact order, or nothing is recorded. A repeated call (browser refresh, a
+ * replayed webhook) is safe — verify() is read-only, and
+ * recordGuestPayment's client_request_id unique index (keyed on the
+ * provider reference) makes the eventual insert a no-op the second time.
  */
 export async function confirmGuestPayment(
   sb: Sb,
@@ -218,6 +232,17 @@ export async function confirmGuestPayment(
       reason: result.status === "expired" ? "expired" : "declined",
       detail: result.failureReason,
     };
+  }
+
+  // The provider says paid — but not for whatever it says, only for what
+  // this order is actually owed. A stale/reused tracking id, or a provider
+  // confirming a different amount than expected, must never settle a bill
+  // for less (or more) than it's actually worth.
+  if (
+    Math.abs(Number(result.amount) - amountDue) > AMOUNT_TOLERANCE ||
+    result.currency !== order.currency
+  ) {
+    return { ok: false, reason: "amount_mismatch" };
   }
 
   await recordGuestPayment(sb, {

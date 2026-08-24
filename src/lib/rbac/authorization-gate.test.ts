@@ -34,11 +34,16 @@ const read = (p: string) => readFileSync(p, "utf8");
 
 /** Latest definition of a SQL function across the migration chain. */
 function latestFunctionBody(name: string): string {
-  const files = readdirSync(MIG_DIR).filter((f) => f.endsWith(".sql")).sort();
+  const files = readdirSync(MIG_DIR)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
   let body = "";
   for (const f of files) {
     const sql = sqlOf(f);
-    const re = new RegExp(`CREATE OR REPLACE FUNCTION public\\.${name}\\b[\\s\\S]*?\\$\\$([\\s\\S]*?)\\$\\$;`, "g");
+    const re = new RegExp(
+      `CREATE OR REPLACE FUNCTION public\\.${name}\\b[\\s\\S]*?\\$\\$([\\s\\S]*?)\\$\\$;`,
+      "g",
+    );
     for (const m of sql.matchAll(re)) body = m[1]!;
   }
   return body;
@@ -75,7 +80,7 @@ describe("has_any_role resolves exclusively through canonical RBAC", () => {
   it("honours tenant, property and outlet scope", () => {
     expect(CANONICAL).toMatch(/ur\.tenant_id\s+=\s+_tenant_id/);
     expect(CANONICAL).toMatch(/ur\.property_id = _property_id/);
-    expect(CANONICAL).toMatch(/ur\.outlet_id   = _outlet_id/);
+    expect(CANONICAL).toMatch(/ur\.outlet_id {3}= _outlet_id/);
   });
 
   it("never infers authorization from email or user metadata", () => {
@@ -92,7 +97,10 @@ describe("has_any_role resolves exclusively through canonical RBAC", () => {
 
   it("leaves no application code reading the legacy store", () => {
     const offenders = SRC.filter(
-      (p) => /\.(ts|tsx)$/.test(p) && !p.endsWith(".test.ts") && /from\("user_roles"\)|\.from\('user_roles'\)/.test(read(p)),
+      (p) =>
+        /\.(ts|tsx)$/.test(p) &&
+        !p.endsWith(".test.ts") &&
+        /from\("user_roles"\)|\.from\('user_roles'\)/.test(read(p)),
     );
     expect(offenders).toEqual([]);
   });
@@ -117,7 +125,11 @@ describe("nova_has_permission scope chain", () => {
       },
     };
     await expect(
-      assertPermission(sb, "u1", "INVENTORY:WRITE", { tenantId: "t1", propertyId: "p1", outletId: "o1" }),
+      assertPermission(sb, "u1", "INVENTORY:WRITE", {
+        tenantId: "t1",
+        propertyId: "p1",
+        outletId: "o1",
+      }),
     ).rejects.toBeInstanceOf(ForbiddenError);
     expect(seen[0]).toMatchObject({ _tenant_id: "t1", _property_id: "p1", _outlet_id: "o1" });
   });
@@ -165,7 +177,9 @@ describe("role assignment and revocation", () => {
 
   it("grants access only after the role is assigned", async () => {
     const d = db();
-    await expect(assertPermission(d.sb, "u1", "INVENTORY:WRITE")).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(assertPermission(d.sb, "u1", "INVENTORY:WRITE")).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
     d.grant("u1", "OWNER");
     await expect(assertPermission(d.sb, "u1", "INVENTORY:WRITE")).resolves.toBeUndefined();
   });
@@ -176,14 +190,18 @@ describe("role assignment and revocation", () => {
     await expect(assertPermission(d.sb, "u1", "INVENTORY:WRITE")).resolves.toBeUndefined();
     d.revoke("u1", "OWNER");
     // Re-checked on every call: nothing is cached in a session claim.
-    await expect(assertPermission(d.sb, "u1", "INVENTORY:WRITE")).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(assertPermission(d.sb, "u1", "INVENTORY:WRITE")).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
   });
 
   it("a wrong role is not an insufficient-permission escape hatch", async () => {
     const d = db();
     d.grant("u1", "WAITER");
     await expect(assertPermission(d.sb, "u1", "POS:WRITE")).resolves.toBeUndefined();
-    await expect(assertPermission(d.sb, "u1", "ADMINISTRATION:ADMIN")).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(assertPermission(d.sb, "u1", "ADMINISTRATION:ADMIN")).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
   });
 
   it("fails closed when the database errors", async () => {
@@ -201,18 +219,24 @@ describe("role assignment and revocation", () => {
 /* ---------------------------------------------------------- OWNER bootstrap */
 describe("OWNER bootstrap", () => {
   it("grants the canonical OWNER role, not a legacy flag", () => {
-    expect(CANONICAL).toMatch(/INSERT INTO public\.rbac_user_roles \(user_id, role_code, tenant_id\)[\s\S]*?'OWNER'/);
+    expect(CANONICAL).toMatch(
+      /INSERT INTO public\.rbac_user_roles \(user_id, role_code, tenant_id\)[\s\S]*?'OWNER'/,
+    );
   });
 
   it("is idempotent on replay", () => {
     const grant = CANONICAL.slice(CANONICAL.indexOf("FUNCTION public.nova_grant_owner"));
     expect(grant).toMatch(/ON CONFLICT \(code\) DO UPDATE/);
     expect(grant).toMatch(/ON CONFLICT \(user_id\) DO UPDATE/);
-    expect(grant).toMatch(/ON CONFLICT \(user_id, role_code, tenant_id, property_id, outlet_id\) DO NOTHING/);
+    expect(grant).toMatch(
+      /ON CONFLICT \(user_id, role_code, tenant_id, property_id, outlet_id\) DO NOTHING/,
+    );
   });
 
   it("refuses to mint a second owner through bootstrap replay", () => {
-    expect(CANONICAL).toMatch(/IF EXISTS \(SELECT 1 FROM public\.rbac_user_roles WHERE role_code = 'OWNER'\)/);
+    expect(CANONICAL).toMatch(
+      /IF EXISTS \(SELECT 1 FROM public\.rbac_user_roles WHERE role_code = 'OWNER'\)/,
+    );
   });
 
   it("never creates, renames or deletes an account", () => {
@@ -222,8 +246,12 @@ describe("OWNER bootstrap", () => {
   });
 
   it("is reachable only by the service role", () => {
-    expect(CANONICAL).toMatch(/REVOKE ALL ON FUNCTION public\.nova_grant_owner\(uuid, text, text\) FROM public, anon, authenticated/);
-    expect(CANONICAL).toMatch(/GRANT EXECUTE ON FUNCTION public\.nova_grant_owner\(uuid, text, text\) TO service_role/);
+    expect(CANONICAL).toMatch(
+      /REVOKE ALL ON FUNCTION public\.nova_grant_owner\(uuid, text, text\) FROM public, anon, authenticated/,
+    );
+    expect(CANONICAL).toMatch(
+      /GRANT EXECUTE ON FUNCTION public\.nova_grant_owner\(uuid, text, text\) TO service_role/,
+    );
   });
 
   it("the appliance installer grants OWNER through the canonical path", () => {
@@ -286,9 +314,7 @@ describe("direct server-function bypass", () => {
     // The input schemas below carry no tenantId/propertyId/locationId field at
     // all — resolveGuestTableContext is the only place those are produced,
     // and it derives them from the table row, never from the request body.
-    const contracts = read(
-      join(ROOT, "src/modules/restaurant/selforder/selforder.contracts.ts"),
-    );
+    const contracts = read(join(ROOT, "src/modules/restaurant/selforder/selforder.contracts.ts"));
     expect(contracts).not.toMatch(/tenantId|propertyId|locationId/);
     const server = read(join(ROOT, "src/modules/restaurant/selforder/selforder.server.ts"));
     expect(server).toMatch(/resolveGuestTableContext/);
@@ -314,6 +340,23 @@ describe("direct server-function bypass", () => {
     expect(server).not.toMatch(/payment_state:\s*["']paid["']/);
   });
 
+  /**
+   * api/pesapal-ipn.ts is deliberately outside src/ (it's a Vercel Function,
+   * not a TanStack Start route — see its own header comment for why) so the
+   * SRC walk above never sees it. Held to the same rule anyway: it must not
+   * trust the IPN's own query params for anything but locating which order
+   * to re-check, and must go through the one shared, tested verification
+   * path rather than recording a payment itself.
+   */
+  it("the Pesapal IPN endpoint re-verifies with the provider and never records a payment itself", () => {
+    const ipn = read(join(ROOT, "api/pesapal-ipn.ts"));
+    expect(ipn).toMatch(/confirmPesapalCallback/);
+    expect(ipn).not.toMatch(/recordGuestPayment|recordPayment|takePosPayment/);
+    expect(ipn).not.toMatch(/payment_state:\s*["']paid["']/);
+    // The service-role client must stay server-side, never in the response body.
+    expect(ipn).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY/);
+  });
+
   it("no server function accepts a role, permission or admin flag from the client", () => {
     const offenders: string[] = [];
     for (const f of fnFiles) {
@@ -331,7 +374,10 @@ describe("direct server-function bypass", () => {
     const s = read(join(ROOT, "src/lib/staff.functions.ts"));
     for (const fn of ["assignRole", "revokeRole"]) {
       const seg = s.slice(s.indexOf(`export const ${fn}`));
-      const body = seg.slice(0, seg.indexOf("export const", 10) === -1 ? seg.length : seg.indexOf("export const", 10));
+      const body = seg.slice(
+        0,
+        seg.indexOf("export const", 10) === -1 ? seg.length : seg.indexOf("export const", 10),
+      );
       expect(body).toMatch(/assertPermission\([^)]*"ADMINISTRATION:ADMIN"\)/);
       expect(body).toMatch(/rbac_user_roles/);
     }

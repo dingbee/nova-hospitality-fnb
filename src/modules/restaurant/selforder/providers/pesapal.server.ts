@@ -154,7 +154,14 @@ export function createPesapalAdapter(): PaymentProviderAdapter | null {
         `/api/Transactions/GetTransactionStatus?orderTrackingId=${encodeURIComponent(providerReference)}`,
         { method: "GET" },
       );
-      return { status: mapStatus(body), failureReason: body.payment_status_description };
+      const status = mapStatus(body);
+      if (status === "paid") {
+        // GetTransactionStatus's own record of what was actually paid — the
+        // caller reconciles this against the order it expected, so a
+        // "Completed" status is never trusted for whatever amount it wants.
+        return { status: "paid", amount: Number(body.amount), currency: String(body.currency) };
+      }
+      return { status, failureReason: body.payment_status_description };
     },
   };
 }
