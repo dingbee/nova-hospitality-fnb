@@ -248,16 +248,17 @@ describe("direct server-function bypass", () => {
   });
 
   /**
-   * Exactly two files may skip requireSupabaseAuth, and both are held to the
-   * same rule as every other bypass surface in this describe block: no
-   * identity, only an unguessable id, and every other fact (tenant,
-   * property, location, price, station) re-derived server-side rather than
-   * trusted from the request. Adding a third entry here is a security
-   * review, not a formatting change.
+   * Exactly three files may skip requireSupabaseAuth, and all three are held
+   * to the same rule as every other bypass surface in this describe block:
+   * no identity, only an unguessable id, and every other fact (tenant,
+   * property, location, price, station, payable amount) re-derived
+   * server-side rather than trusted from the request. Adding a fourth entry
+   * here is a security review, not a formatting change.
    */
   const ALLOWED_UNAUTHENTICATED = [
     join(ROOT, "src/modules/restaurant/receipts/delivery.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selforder.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selfpay.functions.ts"),
   ].sort();
 
   it("every server function authenticates, except the token-scoped guest surfaces", () => {
@@ -292,6 +293,25 @@ describe("direct server-function bypass", () => {
     const server = read(join(ROOT, "src/modules/restaurant/selforder/selforder.server.ts"));
     expect(server).toMatch(/resolveGuestTableContext/);
     expect(server).not.toMatch(/input\.tenantId|input\.propertyId|input\.locationId/);
+  });
+
+  it("self-order payment never accepts an amount, currency or payment/order status from the client", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selfpay.functions.ts"));
+    expect(fn).toMatch(/guestOrderStatusSchema\.parse/);
+    expect(fn).toMatch(/initiateGuestPaymentSchema\.parse/);
+    // The client sends nothing but tableId/orderId/method — the payable
+    // amount is order.total - order.paid_total, read fresh server-side.
+    // (Checked as schema field definitions, not prose: this file's own doc
+    // comment above legitimately talks about "amount"/"currency".)
+    const contracts = read(join(ROOT, "src/modules/restaurant/selforder/selfpay.contracts.ts"));
+    expect(contracts).not.toMatch(/\n\s*(amount|currency|status|paymentState)\s*:/i);
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selfpay.server.ts"));
+    expect(server).toMatch(/resolveGuestTableContext/);
+    expect(server).toMatch(/order\.total.*order\.paid_total|amountDue/);
+    // No path here ever sets restaurant_orders.payment_state or
+    // restaurant_payments.state to "paid" except through recalcOrder, which
+    // derives it from actual payment rows — a guest cannot declare victory.
+    expect(server).not.toMatch(/payment_state:\s*["']paid["']/);
   });
 
   it("no server function accepts a role, permission or admin flag from the client", () => {

@@ -570,6 +570,55 @@ export async function takePosPayment(sb: Sb, userId: string, input: PosPaymentIn
   return { order: totals, settled, duplicate: Boolean(duplicate), receipt };
 }
 
+/**
+ * The same recording+idempotency+recalc core as takePosPayment, for a
+ * caller with no staff session — the self-order payment surface. No
+ * assertCapability (there is no restaurant_members row for a guest), no
+ * auto-close (closing consumes stock and posts actual cost; that stays a
+ * staff action at the till, same as it always has), no event emission (the
+ * same reason createGuestOrder skips it — that path requires a real
+ * principal). `providerReference` is used as both the idempotency key and
+ * the traceable reference, exactly as the POS's own "Reference" field is
+ * already described to staff: recorded so the payment can be traced back
+ * to the provider.
+ */
+export async function recordGuestPayment(
+  sb: Sb,
+  input: {
+    tenantId: string;
+    orderId: string;
+    method: string;
+    amount: number;
+    currency: string;
+    providerReference: string;
+  },
+) {
+  const { data: duplicate } = await sb
+    .from("restaurant_payments")
+    .select("id, amount, method, state")
+    .eq("tenant_id", input.tenantId)
+    .eq("client_request_id", input.providerReference)
+    .maybeSingle();
+
+  if (!duplicate) {
+    const { error } = await sb.from("restaurant_payments").insert({
+      tenant_id: input.tenantId,
+      order_id: input.orderId,
+      client_request_id: input.providerReference,
+      method: input.method,
+      state: "paid",
+      amount: input.amount,
+      currency: input.currency,
+      reference: input.providerReference,
+      created_by: null,
+    });
+    if (error) throw new Error(error.message);
+  }
+
+  const totals = await recalcOrder(sb, input.tenantId, input.orderId);
+  return { order: totals, duplicate: Boolean(duplicate) };
+}
+
 /** Reopens a closed bill for correction. Supervisor-only and always evidenced. */
 export async function reopenPosOrder(sb: Sb, userId: string, input: ReopenPosOrderInput) {
   await assertCapability(sb, userId, input.tenantId, "sales.reopen");

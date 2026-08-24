@@ -26,6 +26,11 @@ import {
   guestMenuFn,
   submitGuestOrderFn,
 } from "@/modules/restaurant/selforder/selforder.functions";
+import {
+  guestOrderStatusFn,
+  initiateGuestPaymentFn,
+} from "@/modules/restaurant/selforder/selfpay.functions";
+import { GUEST_PAYMENT_METHODS } from "@/modules/restaurant/selforder/selfpay.contracts";
 import type { SalesLineModifier } from "@/modules/restaurant/sales/sales.server";
 
 export const Route = createFileRoute("/order/$tableId")({
@@ -88,7 +93,11 @@ function GuestOrderPage() {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [guestName, setGuestName] = useState("");
-  const [confirmed, setConfirmed] = useState<{ orderNumber: string; total: number } | null>(null);
+  const [confirmed, setConfirmed] = useState<{
+    orderId: string;
+    orderNumber: string;
+    total: number;
+  } | null>(null);
 
   const currency = menu.data?.table.currency ?? "USD";
   const items = (menu.data?.items ?? []) as MenuItem[];
@@ -150,8 +159,12 @@ function GuestOrderPage() {
           })),
         },
       }),
-    onSuccess: (order: { order_number: string; total: number }) => {
-      setConfirmed({ orderNumber: order.order_number, total: Number(order.total ?? 0) });
+    onSuccess: (order: { id: string; order_number: string; total: number }) => {
+      setConfirmed({
+        orderId: order.id,
+        orderNumber: order.order_number,
+        total: Number(order.total ?? 0),
+      });
       setCart([]);
       setCartOpen(false);
     },
@@ -178,7 +191,7 @@ function GuestOrderPage() {
 
   if (confirmed) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center">
+      <div className="flex min-h-screen flex-col items-center gap-3 bg-background px-6 pt-16 text-center">
         <UtensilsCrossed className="size-10 text-primary" />
         <h1 className="text-xl font-semibold text-foreground">Order sent</h1>
         <p className="text-sm text-muted-foreground">
@@ -188,7 +201,8 @@ function GuestOrderPage() {
           Your order is on its way to the kitchen and bar. A member of staff will bring it out
           shortly.
         </p>
-        <Button className="mt-4 min-h-11" onClick={() => setConfirmed(null)}>
+        <GuestPaymentPanel tableId={tableId} orderId={confirmed.orderId} />
+        <Button variant="outline" className="mt-2 min-h-11" onClick={() => setConfirmed(null)}>
           Order more
         </Button>
       </div>
@@ -469,5 +483,94 @@ function ItemPicker({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * The one payment surface a guest can reach without staff help. Polls the
+ * server-authoritative order/bill status (never trusts the total this page
+ * itself just showed) and, on request, asks the server to charge the
+ * server-derived amount due — this component sends nothing but tableId,
+ * orderId and a chosen method.
+ */
+function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: string }) {
+  const statusFn = useServerFn(guestOrderStatusFn);
+  const payFn = useServerFn(initiateGuestPaymentFn);
+  const [method, setMethod] = useState<(typeof GUEST_PAYMENT_METHODS)[number]>("mobile_money");
+
+  const status = useQuery({
+    queryKey: ["selforder.paymentStatus", tableId, orderId],
+    queryFn: () => statusFn({ data: { tableId, orderId } }),
+    refetchInterval: 8_000,
+  });
+
+  const pay = useMutation({
+    mutationFn: () => payFn({ data: { tableId, orderId, method } }),
+    onSuccess: () => status.refetch(),
+  });
+
+  if (status.isPending) return null;
+  if (status.isError || !status.data) return null;
+
+  const s = status.data;
+  const currency = s.currency;
+
+  if (s.paymentState === "paid" || s.amountDue <= 0) {
+    return (
+      <div className="sig-raise mt-2 w-full max-w-sm rounded-lg border border-primary/30 bg-primary/5 p-4 text-left">
+        <p className="text-sm font-semibold text-primary">Paid</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {money(s.total, currency)} settled on order {s.orderNumber}.
+        </p>
+      </div>
+    );
+  }
+
+  const result = pay.data;
+
+  return (
+    <div className="mt-2 w-full max-w-sm rounded-lg border bg-card p-4 text-left">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">Amount due</span>
+        <span className="font-semibold">{money(s.amountDue, currency)}</span>
+      </div>
+
+      <div className="mt-3 flex gap-2">
+        {GUEST_PAYMENT_METHODS.map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => setMethod(m)}
+            className={`min-h-10 flex-1 rounded-md border px-3 text-sm capitalize ${method === m ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground"}`}
+          >
+            {m.replace("_", " ")}
+          </button>
+        ))}
+      </div>
+
+      {result && !result.ok && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          {result.reason === "provider_not_configured" &&
+            "Online payment isn't available at this venue yet — please pay a member of staff."}
+          {result.reason === "provider_declined" &&
+            `Payment wasn't accepted${result.detail ? `: ${result.detail}` : "."} Please try again or pay a member of staff.`}
+          {result.reason === "not_payable" && "This order can no longer be paid online."}
+          {result.reason === "already_paid" && "This order is already settled."}
+        </p>
+      )}
+      {pay.isError && (
+        <p className="mt-3 text-xs text-destructive">
+          Couldn't reach the payment service. Please try again.
+        </p>
+      )}
+
+      <Button
+        className="mt-3 min-h-11 w-full"
+        disabled={pay.isPending}
+        onClick={() => pay.mutate()}
+      >
+        {pay.isPending ? "Processing…" : "Pay now"}
+      </Button>
+    </div>
   );
 }
