@@ -101,13 +101,65 @@ export async function posBoard(
   const revenue = closedToday.reduce((s, o) => s + Number(o.total ?? 0), 0);
   const covers = closedToday.reduce((s, o) => s + Number(o.guest_count ?? 0), 0);
 
+  // deriveLifecycle() needs items/tickets to tell "table just opened" apart
+  // from "in production" / "ready" / "bill requested" — without them it
+  // falls straight into its own empty-bill branch every time. The
+  // per-order detail fetch (getOrder) already supplies this for whichever
+  // one order is selected; the floor grid draws a tone for every open
+  // order at once, so it gets the same two reads scoped across all of
+  // them in one round trip each, not one per table.
+  const openOrderIds = openOrders.map((o) => o.id);
+  const [{ data: allItems }, { data: allTickets }] =
+    openOrderIds.length > 0
+      ? await Promise.all([
+          sb
+            .from("restaurant_order_items")
+            .select("order_id, status")
+            .eq("tenant_id", input.tenantId)
+            .in("order_id", openOrderIds),
+          sb
+            .from("restaurant_kitchen_tickets")
+            .select("order_id, status, queued_at, target_minutes, is_delayed")
+            .eq("tenant_id", input.tenantId)
+            .in("order_id", openOrderIds),
+        ])
+      : [{ data: [] }, { data: [] }];
+
+  const itemsByOrder = new Map<string, any[]>();
+  for (const i of (allItems ?? []) as any[]) {
+    itemsByOrder.set(i.order_id, [...(itemsByOrder.get(i.order_id) ?? []), i]);
+  }
+  const now = Date.now();
+  const ticketsByOrder = new Map<string, any[]>();
+  for (const t of (allTickets ?? []) as any[]) {
+    const elapsed = (now - new Date(t.queued_at).getTime()) / 1000;
+    const ticket = {
+      status: t.status,
+      // Same "still open and past its own prep target" formula
+      // kitchen.server.ts's listTickets already computes — mirrored, not
+      // reinvented, so the floor grid and the Kitchen board never disagree
+      // about what "delayed" means.
+      is_delayed:
+        t.status === "queued" || t.status === "preparing"
+          ? elapsed > t.target_minutes * 60
+          : t.is_delayed,
+    };
+    ticketsByOrder.set(t.order_id, [...(ticketsByOrder.get(t.order_id) ?? []), ticket]);
+  }
+  const withLifecycleInputs = (o: any) => ({
+    ...o,
+    items: itemsByOrder.get(o.id) ?? [],
+    tickets: ticketsByOrder.get(o.id) ?? [],
+  });
+  const openOrdersWithLifecycleInputs = openOrders.map(withLifecycleInputs);
+
   return {
     tables: ((tables ?? []) as any[]).map((t) => ({
       ...t,
-      order: openOrders.find((o) => o.table_id === t.id) ?? null,
+      order: openOrdersWithLifecycleInputs.find((o) => o.table_id === t.id) ?? null,
       serviceRequest: serviceRequests.find((r) => r.tableId === t.id) ?? null,
     })),
-    openOrders,
+    openOrders: openOrdersWithLifecycleInputs,
     serviceRequests,
     stats: {
       openBills: openOrders.length,

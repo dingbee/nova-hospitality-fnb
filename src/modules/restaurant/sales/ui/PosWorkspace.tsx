@@ -567,7 +567,13 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
         >
           <div className="grid grid-cols-2 gap-2">
             {((board.data as any)?.tables ?? []).map((t: any) => {
-              const tableLife = t.order ? deriveLifecycle({ order: t.order }) : null;
+              const tableLife = t.order
+                ? deriveLifecycle({
+                    order: t.order,
+                    items: t.order.items ?? [],
+                    tickets: t.order.tickets ?? [],
+                  })
+                : null;
               const tone = tableTone(t, tableLife);
               return (
                 <button
