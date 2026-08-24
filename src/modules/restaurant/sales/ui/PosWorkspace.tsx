@@ -9,12 +9,14 @@ import {
   Printer,
   ReceiptText,
   RotateCcw,
+  Search,
   Send,
   Trash2,
   Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { SectionCard } from "@/components/os/SectionCard";
 import { StatCard } from "@/components/os/StatCard";
 import { EmptyState } from "@/components/os/EmptyState";
@@ -59,6 +61,7 @@ import {
 } from "./lifecycle";
 import { ServiceLifecycleBar } from "./ServiceLifecycleBar";
 import { OrderTimeline } from "./OrderTimeline";
+import { PosMenuItemCard } from "./PosMenuItemCard";
 import { beverageCategories } from "@/modules/restaurant/bar/lens";
 import { BAR_STATION_TYPES } from "@/modules/restaurant/bar/contracts";
 import { sendToStationLabel } from "../stationRouting";
@@ -94,6 +97,7 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
   const [orderId, setOrderId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [catalogSearch, setCatalogSearch] = useState("");
   const [pickerItem, setPickerItem] = useState<any | null>(null);
   const [payOpen, setPayOpen] = useState(false);
   const [roomChargeAmount, setRoomChargeAmount] = useState<number | null>(null);
@@ -359,10 +363,21 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
     const ids = new Set(barCategories.map((c) => c.id));
     return items.filter((i) => ids.has(i.category_id));
   }, [items, isBar, barCategories]);
-  const filtered = useMemo(
+  const byCategory = useMemo(
     () => (categoryId ? scoped.filter((i) => i.category_id === categoryId) : scoped),
     [scoped, categoryId],
   );
+  // Client-side name filter over the already-fetched catalogue — no new
+  // query, no server round trip. Purely narrows what's already in `byCategory`.
+  const filtered = useMemo(() => {
+    const q = catalogSearch.trim().toLowerCase();
+    if (!q) return byCategory;
+    return byCategory.filter((i) =>
+      String(i.name ?? "")
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [byCategory, catalogSearch]);
 
   const serverItems = ((order.data as any)?.items ?? []) as any[];
   const live = serverItems.filter((i) => i.status !== "voided");
@@ -561,10 +576,19 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
               : "Tap an item to configure and stage it on the bill."
           }
         >
-          <div className="mb-3 flex flex-wrap gap-2">
+          <div className="relative mb-2">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={catalogSearch}
+              onChange={(e) => setCatalogSearch(e.target.value)}
+              placeholder={isBar ? "Search drinks…" : "Search the menu…"}
+              className="h-10 pl-8"
+            />
+          </div>
+          <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
             <Button
               variant={categoryId ? "outline" : "default"}
-              className="min-h-10"
+              className="min-h-10 shrink-0 rounded-full"
               onClick={() => setCategoryId(null)}
             >
               All
@@ -573,7 +597,7 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
               <Button
                 key={c.id}
                 variant={categoryId === c.id ? "default" : "outline"}
-                className="min-h-10"
+                className="min-h-10 shrink-0 rounded-full"
                 onClick={() => setCategoryId(c.id)}
               >
                 {c.name}
@@ -582,50 +606,25 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
           </div>
           {filtered.length === 0 ? (
             <EmptyState
-              title={isBar ? "No drinks" : "No items"}
+              title={catalogSearch ? "No matches" : isBar ? "No drinks" : "No items"}
               description={
-                isBar
-                  ? "Publish a beverage menu to sell from the bar till."
-                  : "Publish a menu to sell from this till."
+                catalogSearch
+                  ? "Try a different search or category."
+                  : isBar
+                    ? "Publish a beverage menu to sell from the bar till."
+                    : "Publish a menu to sell from this till."
               }
             />
           ) : (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
               {filtered.map((i) => (
-                <button
+                <PosMenuItemCard
                   key={i.id}
-                  type="button"
+                  item={i}
+                  currency={currency}
                   disabled={!orderId || i.available === false || i.priceConfigured === false}
-                  onClick={() => setPickerItem(i)}
-                  className="flex flex-col overflow-hidden rounded-lg border bg-card text-left transition-colors hover:border-primary disabled:opacity-50"
-                >
-                  <div className="flex aspect-[4/3] w-full items-center justify-center bg-muted">
-                    {i.image_url ? (
-                      <img src={i.image_url} alt="" className="size-full object-cover" />
-                    ) : (
-                      <span className="text-2xl text-muted-foreground" aria-hidden>
-                        {i.name?.[0]?.toUpperCase() ?? "?"}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex flex-1 flex-col gap-1 p-2.5">
-                    <span className="text-sm font-medium leading-tight">{i.name}</span>
-                    <span className="mt-auto text-xs text-muted-foreground">
-                      {money(Number(i.price ?? 0), currency)}
-                    </span>
-                    {i.priceConfigured === false ? (
-                      <Badge variant="secondary" className="w-fit">
-                        No active price
-                      </Badge>
-                    ) : (
-                      (i.variants ?? []).length > 0 && (
-                        <Badge variant="secondary" className="w-fit">
-                          {i.variants.length} variants
-                        </Badge>
-                      )
-                    )}
-                  </div>
-                </button>
+                  onSelect={() => setPickerItem(i)}
+                />
               ))}
             </div>
           )}
