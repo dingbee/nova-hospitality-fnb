@@ -32,6 +32,7 @@ import {
   initiateGuestPaymentFn,
 } from "@/modules/restaurant/selforder/selfpay.functions";
 import { GUEST_PAYMENT_METHODS } from "@/modules/restaurant/selforder/selfpay.contracts";
+import { requestGuestBillFn } from "@/modules/restaurant/selforder/selfbill.functions";
 import {
   buildChosenModifiers,
   isMissingRequiredModifiers,
@@ -268,6 +269,7 @@ function GuestOrderPage() {
           Your order is on its way to the kitchen and bar. A member of staff will bring it out
           shortly.
         </p>
+        <RequestBillPanel tableId={tableId} orderId={confirmed.orderId} />
         <GuestPaymentPanel tableId={tableId} orderId={confirmed.orderId} />
         <Button
           variant="outline"
@@ -732,6 +734,60 @@ function ItemPicker({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Lets the guest ask for their bill without flagging down staff. Idempotent
+ * server-side (requestGuestBill returns the existing bill_requested_at
+ * rather than writing a second one), so a double tap or a page reload
+ * after tapping is always safe — this component's own "already requested"
+ * view just doesn't persist across a reload, since nothing here needs a
+ * new read path to guarantee that safety property.
+ */
+function RequestBillPanel({ tableId, orderId }: { tableId: string; orderId: string }) {
+  const requestFn = useServerFn(requestGuestBillFn);
+  const request = useMutation({
+    mutationFn: () => requestFn({ data: { tableId, orderId } }),
+  });
+
+  if (request.data?.ok) {
+    return (
+      <div className="mt-2 w-full max-w-sm rounded-2xl border border-primary/30 bg-primary/5 p-4 text-left">
+        <p className="text-sm font-semibold text-primary">Bill requested</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          A member of staff will be with you shortly.
+        </p>
+      </div>
+    );
+  }
+
+  if (request.data && !request.data.ok) {
+    return (
+      <div className="mt-2 w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
+        <p className="text-xs text-muted-foreground">
+          This order can no longer request a bill — please ask a member of staff.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full max-w-sm">
+      <Button
+        variant="outline"
+        className="min-h-11 w-full rounded-full"
+        disabled={request.isPending}
+        onClick={() => request.mutate()}
+      >
+        {request.isPending ? "Requesting…" : "Request bill"}
+      </Button>
+      {request.isError && (
+        <p className="mt-2 text-xs text-destructive">
+          Couldn't request the bill. Please try again.
+        </p>
+      )}
+    </div>
   );
 }
 

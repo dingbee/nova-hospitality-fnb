@@ -276,15 +276,17 @@ describe("direct server-function bypass", () => {
   });
 
   /**
-   * Exactly three files may skip requireSupabaseAuth, and all three are held
+   * Exactly four files may skip requireSupabaseAuth, and all four are held
    * to the same rule as every other bypass surface in this describe block:
    * no identity, only an unguessable id, and every other fact (tenant,
-   * property, location, price, station, payable amount) re-derived
-   * server-side rather than trusted from the request. Adding a fourth entry
-   * here is a security review, not a formatting change.
+   * property, location, price, station, payable amount, order status,
+   * timestamps) re-derived server-side rather than trusted from the
+   * request. Adding a fifth entry here is a security review, not a
+   * formatting change.
    */
   const ALLOWED_UNAUTHENTICATED = [
     join(ROOT, "src/modules/restaurant/receipts/delivery.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selfbill.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selforder.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfpay.functions.ts"),
   ].sort();
@@ -338,6 +340,31 @@ describe("direct server-function bypass", () => {
     // restaurant_payments.state to "paid" except through recalcOrder, which
     // derives it from actual payment rows — a guest cannot declare victory.
     expect(server).not.toMatch(/payment_state:\s*["']paid["']/);
+  });
+
+  it("self-order bill request never accepts tenant/property/location/status/timestamps, and never calls the staff-only requestBill", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selfbill.functions.ts"));
+    expect(fn).toMatch(/requestGuestBillSchema\.parse/);
+    // The contract carries only tableId/orderId — everything else this
+    // action needs (tenant, order status, whether it was already
+    // requested) is re-derived server-side from that lookup, never
+    // accepted from the client.
+    // Matched as field definitions ("word:"), not prose — this file's own
+    // doc comment legitimately talks about "tenant"/"status"/"timestamp".
+    const contracts = read(join(ROOT, "src/modules/restaurant/selforder/selfbill.contracts.ts"));
+    expect(contracts).not.toMatch(
+      /\n\s*(tenantId|propertyId|locationId|status|billRequestedAt|billPresentedAt)\s*:/,
+    );
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selfbill.server.ts"));
+    expect(server).toMatch(/resolveGuestTableContext/);
+    expect(server).not.toMatch(/input\.tenantId|input\.propertyId|input\.locationId/);
+    // This wrapper performs the same minimal state transition requestBill()
+    // does, but never calls the staff-only function itself (which requires
+    // assertCapability + a real userId) — the two paths stay independent,
+    // so nothing here can silently change what staff-triggered requestBill
+    // is authorized to do.
+    expect(server).not.toMatch(/\brequestBill\(/);
+    expect(server).not.toMatch(/assertCapability/);
   });
 
   /**
