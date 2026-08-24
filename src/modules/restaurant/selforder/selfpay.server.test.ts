@@ -2,6 +2,8 @@
 import { describe, expect, it } from "vitest";
 import {
   initiateGuestPayment,
+  confirmGuestPaymentFromBrowser,
+  confirmPesapalCallback,
   guestOrderStatus,
   type PaymentProviderAdapter,
 } from "./selfpay.server";
@@ -92,8 +94,9 @@ function fakeDb(seed: {
 const TENANT = "tenant-1";
 const TABLE = "table-1";
 const ORDER = "order-1";
+const RETURN_URL = "https://example.test/order/table-1?pay=return";
 
-function seedFor(orderOverrides: Partial<Record<string, unknown>> = {}, payments: any[] = []) {
+function seedFor(orderOverrides: Partial<Record<string, unknown>> = {}) {
   return fakeDb({
     tables: [
       {
@@ -122,19 +125,22 @@ function seedFor(orderOverrides: Partial<Record<string, unknown>> = {}, payments
       },
     ],
     orderItems: [],
-    payments,
+    payments: [],
     currencies: [],
   });
 }
 
-const fakeProvider = (result: {
-  providerReference: string;
-  status: "paid" | "failed";
-  failureReason?: string;
-}): PaymentProviderAdapter => ({
-  name: "fake",
-  charge: async () => result,
-});
+function fakeAdapter(overrides: Partial<PaymentProviderAdapter> = {}): PaymentProviderAdapter {
+  return {
+    name: "fake",
+    initiate: async () => ({
+      providerReference: "track-1",
+      redirectUrl: "https://pesapal.test/checkout/track-1",
+    }),
+    verify: async () => ({ status: "paid" }),
+    ...overrides,
+  };
+}
 
 describe("guestOrderStatus", () => {
   it("reports the authoritative amount due, not anything the client could have sent", async () => {
@@ -155,92 +161,205 @@ describe("guestOrderStatus", () => {
 });
 
 describe("initiateGuestPayment", () => {
-  it("charges the server-derived amount, not a client-supplied one, and records it once paid", async () => {
+  it("starts checkout for the server-derived amount, not a client-supplied one", async () => {
     const db = seedFor({ total: 11000, paid_total: 0 });
     let chargedAmount: number | null = null;
-    const provider: PaymentProviderAdapter = {
-      name: "fake",
-      charge: async (input) => {
+    let chargedCurrency: string | null = null;
+    let merchantReference: string | null = null;
+    const adapter = fakeAdapter({
+      initiate: async (input) => {
         chargedAmount = input.amount;
-        return { providerReference: "ref-1", status: "paid" };
+        chargedCurrency = input.currency;
+        merchantReference = input.merchantReference;
+        return {
+          providerReference: "track-1",
+          redirectUrl: "https://pesapal.test/checkout/track-1",
+        };
       },
-    };
+    });
     const result = await initiateGuestPayment(
       db as any,
       { tableId: TABLE, orderId: ORDER, method: "mobile_money" },
-      provider,
+      RETURN_URL,
+      adapter,
     );
     expect(chargedAmount).toBe(11000);
-    expect(result).toMatchObject({ ok: true, status: "paid" });
-  });
-
-  it("does not mark the order paid when the provider declines", async () => {
-    const db = seedFor({ total: 11000, paid_total: 0 });
-    const result = await initiateGuestPayment(
-      db as any,
-      { tableId: TABLE, orderId: ORDER, method: "card" },
-      fakeProvider({
-        providerReference: "ref-2",
-        status: "failed",
-        failureReason: "insufficient_funds",
-      }),
-    );
+    expect(chargedCurrency).toBe("TZS");
+    // The order id, not the order number — a webhook has no tableId to
+    // scope by, so the merchant reference must resolve to the order alone.
+    expect(merchantReference).toBe(ORDER);
     expect(result).toEqual({
-      ok: false,
-      reason: "provider_declined",
-      detail: "insufficient_funds",
+      ok: true,
+      status: "redirect",
+      redirectUrl: "https://pesapal.test/checkout/track-1",
     });
-    const status = await guestOrderStatus(db as any, { tableId: TABLE, orderId: ORDER });
-    expect(status.paymentState).toBe("unpaid");
-    expect(status.paidTotal).toBe(0);
   });
 
-  it("reports provider_not_configured rather than fabricating a payment when no provider exists", async () => {
-    const db = seedFor({ total: 11000, paid_total: 0 });
-    const result = await initiateGuestPayment(
-      db as any,
-      { tableId: TABLE, orderId: ORDER, method: "mobile_money" },
-      null,
-    );
-    expect(result).toEqual({ ok: false, reason: "provider_not_configured" });
-  });
-
-  it("refuses to charge an order that is already fully paid", async () => {
+  it("does not start a checkout for an order that is already fully paid", async () => {
     const db = seedFor({ total: 11000, paid_total: 11000 });
     const result = await initiateGuestPayment(
       db as any,
       { tableId: TABLE, orderId: ORDER, method: "card" },
-      fakeProvider({ providerReference: "ref-3", status: "paid" }),
+      RETURN_URL,
+      fakeAdapter(),
     );
     expect(result).toEqual({ ok: false, reason: "already_paid" });
   });
 
-  it("refuses to charge an order that is closed/cancelled", async () => {
+  it("does not start a checkout for a closed/cancelled order", async () => {
     const db = seedFor({ total: 11000, paid_total: 0, status: "closed" });
     const result = await initiateGuestPayment(
       db as any,
       { tableId: TABLE, orderId: ORDER, method: "card" },
-      fakeProvider({ providerReference: "ref-4", status: "paid" }),
+      RETURN_URL,
+      fakeAdapter(),
     );
     expect(result).toEqual({ ok: false, reason: "not_payable", orderStatus: "closed" });
   });
 
-  it("a duplicate provider callback for the same reference is idempotent — one payment row, not two", async () => {
+  it("reports provider_not_configured rather than fabricating a checkout when no provider exists", async () => {
     const db = seedFor({ total: 11000, paid_total: 0 });
-    const provider = fakeProvider({ providerReference: "same-ref", status: "paid" });
-    await initiateGuestPayment(
+    const result = await initiateGuestPayment(
       db as any,
-      { tableId: TABLE, orderId: ORDER, method: "card" },
-      provider,
+      { tableId: TABLE, orderId: ORDER, method: "mobile_money" },
+      RETURN_URL,
+      null,
     );
-    // Order is now fully paid, so a second attempt is short-circuited by
-    // already_paid before ever reaching the provider/insert again — the
-    // stronger idempotency guarantee: it can't even be attempted twice.
-    const second = await initiateGuestPayment(
+    expect(result).toEqual({ ok: false, reason: "provider_not_configured" });
+  });
+});
+
+describe("confirmGuestPaymentFromBrowser / confirmPesapalCallback", () => {
+  it("marks the order paid only after independently re-verifying with the provider", async () => {
+    const db = seedFor({ total: 11000, paid_total: 0 });
+    let verifiedReference: string | null = null;
+    const adapter = fakeAdapter({
+      verify: async (input) => {
+        verifiedReference = input.providerReference;
+        return { status: "paid" };
+      },
+    });
+    const result = await confirmGuestPaymentFromBrowser(
       db as any,
-      { tableId: TABLE, orderId: ORDER, method: "card" },
-      provider,
+      { tableId: TABLE, orderId: ORDER, orderTrackingId: "track-1" },
+      adapter as any,
     );
+    expect(verifiedReference).toBe("track-1");
+    expect(result).toMatchObject({ ok: true, status: "paid" });
+    const status = await guestOrderStatus(db as any, { tableId: TABLE, orderId: ORDER });
+    expect(status.paidTotal).toBe(11000);
+    expect(status.amountDue).toBe(0);
+  });
+
+  it("does not mark the order paid when the provider reports a decline", async () => {
+    const db = seedFor({ total: 11000, paid_total: 0 });
+    const result = await confirmGuestPaymentFromBrowser(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, orderTrackingId: "track-1" },
+      fakeAdapter({ verify: async () => ({ status: "failed", failureReason: "Failed" }) }) as any,
+    );
+    expect(result).toEqual({ ok: false, reason: "declined", detail: "Failed" });
+    const status = await guestOrderStatus(db as any, { tableId: TABLE, orderId: ORDER });
+    expect(status.paidTotal).toBe(0);
+  });
+
+  it("does not mark the order paid for a cancelled payment", async () => {
+    const db = seedFor({ total: 11000, paid_total: 0 });
+    const result = await confirmGuestPaymentFromBrowser(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, orderTrackingId: "track-1" },
+      fakeAdapter({ verify: async () => ({ status: "failed", failureReason: "Invalid" }) }) as any,
+    );
+    expect(result).toEqual({ ok: false, reason: "declined", detail: "Invalid" });
+  });
+
+  it("does not mark the order paid for an expired payment attempt", async () => {
+    const db = seedFor({ total: 11000, paid_total: 0 });
+    const result = await confirmGuestPaymentFromBrowser(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, orderTrackingId: "track-1" },
+      fakeAdapter({ verify: async () => ({ status: "expired" }) }) as any,
+    );
+    expect(result).toEqual({ ok: false, reason: "expired", detail: undefined });
+  });
+
+  it("reports pending without recording anything while the provider is still deciding", async () => {
+    const db = seedFor({ total: 11000, paid_total: 0 });
+    const result = await confirmGuestPaymentFromBrowser(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, orderTrackingId: "track-1" },
+      fakeAdapter({ verify: async () => ({ status: "pending" }) }) as any,
+    );
+    expect(result).toEqual({ ok: true, status: "pending" });
+    const status = await guestOrderStatus(db as any, { tableId: TABLE, orderId: ORDER });
+    expect(status.paidTotal).toBe(0);
+  });
+
+  it("repeated browser refresh is safe — a second confirmation re-verifies but changes nothing once already paid", async () => {
+    const db = seedFor({ total: 11000, paid_total: 0 });
+    const adapter = fakeAdapter();
+    await confirmGuestPaymentFromBrowser(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, orderTrackingId: "track-1" },
+      adapter as any,
+    );
+    const second = await confirmGuestPaymentFromBrowser(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, orderTrackingId: "track-1" },
+      adapter as any,
+    );
+    // amountDue is now 0, so the second call short-circuits before ever
+    // calling verify() again — the strongest idempotency guarantee available.
     expect(second).toEqual({ ok: false, reason: "already_paid" });
+    const status = await guestOrderStatus(db as any, { tableId: TABLE, orderId: ORDER });
+    expect(status.paidTotal).toBe(11000);
+  });
+
+  it("a duplicate callback for the same provider reference does not double-record even if somehow re-attempted mid-flight", async () => {
+    // Simulates the IPN and the browser-return racing each other for the
+    // same order: recordGuestPayment's own client_request_id unique index
+    // (keyed on the provider reference) is the backstop even if the
+    // already_paid short-circuit above weren't there.
+    const db = seedFor({ total: 11000, paid_total: 0 });
+    const { recordGuestPayment } = await import("../sales/pos.server");
+    await recordGuestPayment(db as any, {
+      tenantId: TENANT,
+      orderId: ORDER,
+      method: "mobile_money",
+      amount: 11000,
+      currency: "TZS",
+      providerReference: "track-1",
+    });
+    const before = (db as any).from("restaurant_payments").filtered ?? undefined;
+    const secondInsert = await recordGuestPayment(db as any, {
+      tenantId: TENANT,
+      orderId: ORDER,
+      method: "mobile_money",
+      amount: 11000,
+      currency: "TZS",
+      providerReference: "track-1",
+    });
+    expect(secondInsert.duplicate).toBe(true);
+    void before;
+  });
+
+  it("the IPN path resolves the order from the provider's merchant reference alone, with no table or guest context", async () => {
+    const db = seedFor({ total: 11000, paid_total: 0 });
+    const result = await confirmPesapalCallback(
+      db as any,
+      { orderId: ORDER, providerReference: "track-1" },
+      fakeAdapter() as any,
+    );
+    expect(result).toMatchObject({ ok: true, status: "paid" });
+  });
+
+  it("the IPN path reports order_not_found for an unrecognized merchant reference, never guessing", async () => {
+    const db = seedFor();
+    const result = await confirmPesapalCallback(
+      db as any,
+      { orderId: "no-such-order", providerReference: "track-1" },
+      fakeAdapter() as any,
+    );
+    expect(result).toEqual({ ok: false, reason: "order_not_found" });
   });
 });

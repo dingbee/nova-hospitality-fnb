@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -27,6 +27,7 @@ import {
   submitGuestOrderFn,
 } from "@/modules/restaurant/selforder/selforder.functions";
 import {
+  confirmGuestPaymentFn,
   guestOrderStatusFn,
   initiateGuestPaymentFn,
 } from "@/modules/restaurant/selforder/selfpay.functions";
@@ -489,13 +490,17 @@ function ItemPicker({
 /**
  * The one payment surface a guest can reach without staff help. Polls the
  * server-authoritative order/bill status (never trusts the total this page
- * itself just showed) and, on request, asks the server to charge the
- * server-derived amount due — this component sends nothing but tableId,
- * orderId and a chosen method.
+ * itself just showed). "Pay now" starts a hosted checkout and navigates the
+ * browser there — nothing is marked paid by that call. On return from
+ * checkout (Pesapal appends ?OrderTrackingId=... to the URL this page gave
+ * it), the tracking id is sent back for server-side re-verification before
+ * anything is recorded; it is never trusted just because it's present in
+ * the URL.
  */
 function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: string }) {
   const statusFn = useServerFn(guestOrderStatusFn);
-  const payFn = useServerFn(initiateGuestPaymentFn);
+  const initiateFn = useServerFn(initiateGuestPaymentFn);
+  const confirmFn = useServerFn(confirmGuestPaymentFn);
   const [method, setMethod] = useState<(typeof GUEST_PAYMENT_METHODS)[number]>("mobile_money");
 
   const status = useQuery({
@@ -504,12 +509,34 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
     refetchInterval: 8_000,
   });
 
-  const pay = useMutation({
-    mutationFn: () => payFn({ data: { tableId, orderId, method } }),
-    onSuccess: () => status.refetch(),
+  const initiate = useMutation({
+    mutationFn: () => initiateFn({ data: { tableId, orderId, method } }),
+    onSuccess: (result) => {
+      if (result.ok) window.location.href = result.redirectUrl;
+    },
   });
 
-  if (status.isPending) return null;
+  const orderTrackingId = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("OrderTrackingId");
+  }, []);
+
+  const confirm = useMutation({
+    mutationFn: () => confirmFn({ data: { tableId, orderId, orderTrackingId: orderTrackingId! } }),
+    onSuccess: () => {
+      // Drop the provider's query params so a page refresh doesn't re-verify forever.
+      window.history.replaceState({}, "", window.location.pathname);
+      status.refetch();
+    },
+  });
+
+  const confirmMutate = confirm.mutate;
+  useEffect(() => {
+    if (orderTrackingId) confirmMutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire once per mount when a tracking id is present, not on every render
+  }, [orderTrackingId]);
+
+  if (status.isPending || (orderTrackingId && confirm.isPending)) return null;
   if (status.isError || !status.data) return null;
 
   const s = status.data;
@@ -526,7 +553,8 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
     );
   }
 
-  const result = pay.data;
+  const confirmResult = confirm.data;
+  const initiateResult = initiate.data;
 
   return (
     <div className="mt-2 w-full max-w-sm rounded-lg border bg-card p-4 text-left">
@@ -548,17 +576,30 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
         ))}
       </div>
 
-      {result && !result.ok && (
+      {confirmResult && !confirmResult.ok && (
         <p className="mt-3 text-xs text-muted-foreground">
-          {result.reason === "provider_not_configured" &&
+          {confirmResult.reason === "declined" &&
+            `Payment wasn't accepted${confirmResult.detail ? `: ${confirmResult.detail}` : "."} Please try again or pay a member of staff.`}
+          {confirmResult.reason === "expired" && "That payment attempt expired. Please try again."}
+          {confirmResult.reason === "provider_not_configured" &&
             "Online payment isn't available at this venue yet — please pay a member of staff."}
-          {result.reason === "provider_declined" &&
-            `Payment wasn't accepted${result.detail ? `: ${result.detail}` : "."} Please try again or pay a member of staff.`}
-          {result.reason === "not_payable" && "This order can no longer be paid online."}
-          {result.reason === "already_paid" && "This order is already settled."}
+          {confirmResult.reason === "already_paid" && "This order is already settled."}
         </p>
       )}
-      {pay.isError && (
+      {confirmResult?.ok && confirmResult.status === "pending" && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Still confirming your payment — this will update automatically.
+        </p>
+      )}
+      {initiateResult && !initiateResult.ok && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          {initiateResult.reason === "provider_not_configured" &&
+            "Online payment isn't available at this venue yet — please pay a member of staff."}
+          {initiateResult.reason === "not_payable" && "This order can no longer be paid online."}
+          {initiateResult.reason === "already_paid" && "This order is already settled."}
+        </p>
+      )}
+      {(initiate.isError || confirm.isError) && (
         <p className="mt-3 text-xs text-destructive">
           Couldn't reach the payment service. Please try again.
         </p>
@@ -566,10 +607,10 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
 
       <Button
         className="mt-3 min-h-11 w-full"
-        disabled={pay.isPending}
-        onClick={() => pay.mutate()}
+        disabled={initiate.isPending}
+        onClick={() => initiate.mutate()}
       >
-        {pay.isPending ? "Processing…" : "Pay now"}
+        {initiate.isPending ? "Redirecting…" : "Pay now"}
       </Button>
     </div>
   );

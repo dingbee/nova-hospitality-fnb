@@ -30,3 +30,15 @@ export const initiateGuestPaymentSchema = z.object({
   method: z.enum(GUEST_PAYMENT_METHODS),
 });
 export type InitiateGuestPaymentInput = z.infer<typeof initiateGuestPaymentSchema>;
+
+/**
+ * Read from the query string Pesapal appended when redirecting the guest's
+ * browser back — never trusted on its own. confirmGuestPayment always
+ * re-verifies orderTrackingId with Pesapal before recording anything.
+ */
+export const confirmGuestPaymentSchema = z.object({
+  tableId: uuid,
+  orderId: uuid,
+  orderTrackingId: z.string().min(1),
+});
+export type ConfirmGuestPaymentInput = z.infer<typeof confirmGuestPaymentSchema>;
