@@ -11,6 +11,9 @@
  *   2. What is the single next thing to do?
  */
 
+import { sendToStationLabel } from "../stationRouting";
+import { BAR_STATION_TYPES } from "../../bar/contracts";
+
 export const SERVICE_STAGES = [
   "table",
   "order",
@@ -45,6 +48,15 @@ export type LifecycleInput = {
   payments?: any[];
   /** Lines staged at the till but not yet accepted by the server. */
   stagedCount?: number;
+  /**
+   * Station type of each line staged at the till but not yet accepted by the
+   * server (parallel in spirit to `stagedCount`, not required to be the same
+   * length). Combined with `items`' own `station_type` (when the caller has
+   * joined it) to make the "send to kitchen" label name the actual pending
+   * station(s) instead of a hardcoded word. Omit this and no item carries
+   * `station_type` and the label falls back to the generic wording below.
+   */
+  stagedStationTypes?: (string | null | undefined)[];
   /** The issued receipt row, when one exists. */
   receipt?: any | null;
 };
@@ -110,17 +122,31 @@ export function deriveLifecycle({
   tickets = [],
   payments = [],
   stagedCount = 0,
+  stagedStationTypes = [],
   receipt = null,
 }: LifecycleInput): LifecycleState {
   const live = items.filter((i) => !VOID_STATES.includes(String(i?.status)));
   const unsent = live.filter((i) => String(i.status) === "ordered").length;
+  // Names the actual pending station(s) — bar, kitchen, or both — instead of
+  // a hardcoded word. Falls back to the generic label when no caller has
+  // supplied station-type data (e.g. a summary view with no item join).
+  const unsentItemStationTypes = live
+    .filter((i) => String(i.status) === "ordered")
+    .map((i) => (i?.station_type as string | null | undefined) ?? null);
+  const pendingStationTypes = [...unsentItemStationTypes, ...stagedStationTypes];
+  const sendToProductionLabel =
+    pendingStationTypes.length > 0
+      ? sendToStationLabel(pendingStationTypes, BAR_STATION_TYPES)
+      : NEXT_ACTION_LABEL["send-to-kitchen"];
   const openTickets = tickets.filter((t) => ["queued", "preparing"].includes(String(t?.status)));
   const readyTickets = tickets.filter((t) => String(t?.status) === "ready");
   const served = live.filter((i) => String(i.status) === "served").length;
   const delayed = tickets.some((t) => Boolean(t?.is_delayed) || Boolean(t?.breaching));
 
   const total = Number(order?.total ?? 0);
-  const paid = Number(order?.paid_total ?? payments.reduce((s, p) => s + Number(p?.amount ?? 0), 0));
+  const paid = Number(
+    order?.paid_total ?? payments.reduce((s, p) => s + Number(p?.amount ?? 0), 0),
+  );
   const balance = Number((total - paid).toFixed(2));
   const settled = SETTLED_PAYMENT_STATES.includes(String(order?.payment_state));
   const status = String(order?.status ?? "open");
@@ -137,7 +163,8 @@ export function deriveLifecycle({
     if (!receiptDelivered) {
       stage = "receipt";
       nextAction = "deliver-receipt";
-      reason = "Settled and closed. Give the guest their receipt, then record how it was delivered.";
+      reason =
+        "Settled and closed. Give the guest their receipt, then record how it was delivered.";
     } else if (tableAttached) {
       stage = "delivered";
       nextAction = "release-table";
@@ -202,7 +229,8 @@ export function deriveLifecycle({
     stage,
     stageIndex: SERVICE_STAGES.indexOf(stage),
     nextAction,
-    nextActionLabel: NEXT_ACTION_LABEL[nextAction],
+    nextActionLabel:
+      nextAction === "send-to-kitchen" ? sendToProductionLabel : NEXT_ACTION_LABEL[nextAction],
     reason,
     staged: stagedCount,
     unsent,
@@ -221,7 +249,8 @@ export function deriveLifecycle({
 }
 
 /** Floor colour semantics derived from the bill on the table, not the table row alone. */
-export type TableTone = "free" | "seated" | "production" | "ready" | "billing" | "attention" | "resting";
+export type TableTone =
+  "free" | "seated" | "production" | "ready" | "billing" | "attention" | "resting";
 
 export const TABLE_TONE_CLASS: Record<TableTone, string> = {
   free: "border-border bg-card",
@@ -284,7 +313,11 @@ export function orderTimeline({
     if (at) out.push({ at: String(at), label, detail });
   };
 
-  push(order?.opened_at, "Table opened", order?.table_id ? "Bill attached to a table" : "Walk-in / bar tab");
+  push(
+    order?.opened_at,
+    "Table opened",
+    order?.table_id ? "Bill attached to a table" : "Walk-in / bar tab",
+  );
   const firstFired = items
     .map((i) => i?.created_at)
     .filter(Boolean)
@@ -308,7 +341,9 @@ export function orderTimeline({
   for (const p of payments) {
     push(
       p?.captured_at,
-      Number(p?.amount ?? 0) < 0 ? `Refund ${p?.method ?? ""}`.trim() : `Payment ${p?.method ?? ""}`.trim(),
+      Number(p?.amount ?? 0) < 0
+        ? `Refund ${p?.method ?? ""}`.trim()
+        : `Payment ${p?.method ?? ""}`.trim(),
       `${p?.state ?? ""} ${p?.amount ?? ""} ${p?.refund_reason ?? ""}`.trim(),
     );
   }

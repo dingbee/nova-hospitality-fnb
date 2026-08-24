@@ -30,8 +30,16 @@ describe("resolveCataloguedLineStation — server authority over the product's o
   });
 
   it("mixed order: a beverage line and a food line resolve to different stations independently", () => {
-    const beverage = resolveCataloguedLineStation({ stationId: barStation.id, isBeverage: true }, tenantStations, BAR_STATION_TYPES);
-    const food = resolveCataloguedLineStation({ stationId: kitchenStation.id, isBeverage: false }, tenantStations, BAR_STATION_TYPES);
+    const beverage = resolveCataloguedLineStation(
+      { stationId: barStation.id, isBeverage: true },
+      tenantStations,
+      BAR_STATION_TYPES,
+    );
+    const food = resolveCataloguedLineStation(
+      { stationId: kitchenStation.id, isBeverage: false },
+      tenantStations,
+      BAR_STATION_TYPES,
+    );
     expect(beverage).toBe(barStation.id);
     expect(food).toBe(kitchenStation.id);
     expect(beverage).not.toBe(food);

@@ -18,7 +18,13 @@ import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { reverseMovementsForOrderItem } from "../inventory/reversal.server";
 import { REASON_CODES } from "../inventory/policy";
-import { createOrder, insertLines, recalcOrder, transitionOrder, type SalesLineInput } from "./sales.server";
+import {
+  createOrder,
+  insertLines,
+  recalcOrder,
+  transitionOrder,
+  type SalesLineInput,
+} from "./sales.server";
 import type {
   AddPosLinesInput,
   OpenPosOrderInput,
@@ -114,51 +120,74 @@ export async function posCatalog(
     .eq("tenant_id", input.tenantId)
     .eq("status", "published")
     .order("updated_at", { ascending: false });
-  if (input.locationId) menuQuery = menuQuery.or(`location_id.is.null,location_id.eq.${input.locationId}`);
+  if (input.locationId)
+    menuQuery = menuQuery.or(`location_id.is.null,location_id.eq.${input.locationId}`);
   const { data: menus } = await menuQuery;
   const menuIds = ((menus ?? []) as any[]).map((m) => m.id);
   const activeMenuId = input.menuId ?? menuIds[0] ?? null;
 
-  const [{ data: categories }, { data: items }, { data: products }, { data: variants }, { data: groups }, { data: modifiers }, { data: links }, { data: stations }] =
-    await Promise.all([
-      sb.from("restaurant_categories").select("id, name, slug, kind, sort_order").eq("tenant_id", input.tenantId).order("sort_order"),
-      activeMenuId
-        ? sb
-            .from("restaurant_menu_items")
-            .select("id, menu_id, category_id, name, description, price, currency, available, tags, allergens, sort_order")
-            .eq("tenant_id", input.tenantId)
-            .eq("menu_id", activeMenuId)
-            .order("sort_order")
-        : Promise.resolve({ data: [] }),
-      sb
-        .from("restaurant_products")
-        .select("id, name, menu_item_id, station_id, price, product_type, active")
-        .eq("tenant_id", input.tenantId)
-        .eq("active", true),
-      sb
-        .from("restaurant_product_variants")
-        .select("id, product_id, name, price, price_is_delta, active, sort_order")
-        .eq("tenant_id", input.tenantId)
-        .eq("active", true)
-        .order("sort_order"),
-      sb
-        .from("restaurant_modifier_groups")
-        .select("id, code, name, min_select, max_select, required, sort_order")
-        .eq("tenant_id", input.tenantId)
-        .eq("active", true)
-        .order("sort_order"),
-      sb
-        .from("restaurant_modifiers")
-        .select("id, group_id, name, price_delta, effect, sort_order")
-        .eq("tenant_id", input.tenantId)
-        .eq("active", true)
-        .order("sort_order"),
-      sb.from("restaurant_product_modifier_groups").select("product_id, group_id, sort_order").eq("tenant_id", input.tenantId),
-      sb.from("restaurant_stations").select("id, station_type").eq("tenant_id", input.tenantId).eq("active", true),
-    ]);
+  const [
+    { data: categories },
+    { data: items },
+    { data: products },
+    { data: variants },
+    { data: groups },
+    { data: modifiers },
+    { data: links },
+    { data: stations },
+  ] = await Promise.all([
+    sb
+      .from("restaurant_categories")
+      .select("id, name, slug, kind, sort_order")
+      .eq("tenant_id", input.tenantId)
+      .order("sort_order"),
+    activeMenuId
+      ? sb
+          .from("restaurant_menu_items")
+          .select(
+            "id, menu_id, category_id, name, description, price, currency, available, tags, allergens, sort_order",
+          )
+          .eq("tenant_id", input.tenantId)
+          .eq("menu_id", activeMenuId)
+          .order("sort_order")
+      : Promise.resolve({ data: [] }),
+    sb
+      .from("restaurant_products")
+      .select("id, name, menu_item_id, station_id, price, product_type, active")
+      .eq("tenant_id", input.tenantId)
+      .eq("active", true),
+    sb
+      .from("restaurant_product_variants")
+      .select("id, product_id, name, price, price_is_delta, active, sort_order")
+      .eq("tenant_id", input.tenantId)
+      .eq("active", true)
+      .order("sort_order"),
+    sb
+      .from("restaurant_modifier_groups")
+      .select("id, code, name, min_select, max_select, required, sort_order")
+      .eq("tenant_id", input.tenantId)
+      .eq("active", true)
+      .order("sort_order"),
+    sb
+      .from("restaurant_modifiers")
+      .select("id, group_id, name, price_delta, effect, sort_order")
+      .eq("tenant_id", input.tenantId)
+      .eq("active", true)
+      .order("sort_order"),
+    sb
+      .from("restaurant_product_modifier_groups")
+      .select("product_id, group_id, sort_order")
+      .eq("tenant_id", input.tenantId),
+    sb
+      .from("restaurant_stations")
+      .select("id, station_type")
+      .eq("tenant_id", input.tenantId)
+      .eq("active", true),
+  ]);
 
   const productByMenuItem = new Map<string, any>();
-  for (const p of ((products ?? []) as any[])) if (p.menu_item_id) productByMenuItem.set(p.menu_item_id, p);
+  for (const p of (products ?? []) as any[])
+    if (p.menu_item_id) productByMenuItem.set(p.menu_item_id, p);
 
   const groupList = ((groups ?? []) as any[]).map((g) => ({
     ...g,
@@ -181,7 +210,9 @@ export async function posCatalog(
         ...i,
         product_id: product?.id ?? null,
         station_id: product?.station_id ?? null,
-        variants: product ? ((variants ?? []) as any[]).filter((v) => v.product_id === product.id) : [],
+        variants: product
+          ? ((variants ?? []) as any[]).filter((v) => v.product_id === product.id)
+          : [],
         modifier_group_ids: groupIds,
       };
     }),
@@ -242,7 +273,11 @@ export async function openPosOrder(sb: Sb, userId: string, input: OpenPosOrderIn
     .eq("id", order.id);
 
   if (input.lines.length > 0) {
-    await addPosLines(sb, userId, { tenantId: input.tenantId, orderId: order.id, lines: input.lines });
+    await addPosLines(sb, userId, {
+      tenantId: input.tenantId,
+      orderId: order.id,
+      lines: input.lines,
+    });
   }
   const totals = await recalcOrder(sb, input.tenantId, order.id);
   return { ...order, ...totals, idempotent: false };
@@ -253,12 +288,15 @@ export async function addPosLines(sb: Sb, userId: string, input: AddPosLinesInpu
 
   const { data: order } = await sb
     .from("restaurant_orders")
-    .select("id, order_number, status, currency, property_id, location_id, order_type, exchange_rate")
+    .select(
+      "id, order_number, status, currency, property_id, location_id, order_type, exchange_rate",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("id", input.orderId)
     .single();
   if (!order) throw new Error("Order not found.");
-  if (!OPEN_STATES.includes(order.status)) throw new Error("This bill is closed and can no longer be modified.");
+  if (!OPEN_STATES.includes(order.status))
+    throw new Error("This bill is closed and can no longer be modified.");
 
   const inserted = await insertLines(sb, input.tenantId, input.orderId, toSalesLines(input.lines), {
     currency: order.currency ?? "TZS",
@@ -278,7 +316,11 @@ export async function addPosLines(sb: Sb, userId: string, input: AddPosLinesInpu
     entityType: "restaurant_order",
     entityId: order.id,
     source: "restaurant-pos",
-    payload: { order_number: order.order_number, lines: input.lines.length, order_total: Number(totals.total) },
+    payload: {
+      order_number: order.order_number,
+      lines: input.lines.length,
+      order_total: Number(totals.total),
+    },
   });
   return { items: inserted, order: totals };
 }
@@ -376,10 +418,18 @@ export async function transferPosOrder(sb: Sb, userId: string, input: TransferPo
 
   if (input.tableId !== undefined) {
     if (order.table_id && order.table_id !== input.tableId) {
-      await sb.from("restaurant_tables").update({ status: "cleaning" }).eq("id", order.table_id).eq("tenant_id", input.tenantId);
+      await sb
+        .from("restaurant_tables")
+        .update({ status: "cleaning" })
+        .eq("id", order.table_id)
+        .eq("tenant_id", input.tenantId);
     }
     if (input.tableId) {
-      await sb.from("restaurant_tables").update({ status: "occupied" }).eq("id", input.tableId).eq("tenant_id", input.tenantId);
+      await sb
+        .from("restaurant_tables")
+        .update({ status: "occupied" })
+        .eq("id", input.tableId)
+        .eq("tenant_id", input.tenantId);
     }
   }
 
@@ -391,7 +441,12 @@ export async function transferPosOrder(sb: Sb, userId: string, input: TransferPo
     entityType: "restaurant_order",
     entityId: order.id,
     source: "restaurant-pos",
-    payload: { order_number: order.order_number, from_table: order.table_id, to_table: input.tableId ?? null, reason: input.reason ?? null },
+    payload: {
+      order_number: order.order_number,
+      from_table: order.table_id,
+      to_table: input.tableId ?? null,
+      reason: input.reason ?? null,
+    },
   });
   return updated;
 }
@@ -420,7 +475,9 @@ export async function takePosPayment(sb: Sb, userId: string, input: PosPaymentIn
       amount: input.amount,
       tendered: input.tendered ?? null,
       change_due:
-        input.tendered != null ? Math.max(0, Number((input.tendered - input.amount).toFixed(2))) : 0,
+        input.tendered != null
+          ? Math.max(0, Number((input.tendered - input.amount).toFixed(2)))
+          : 0,
       reference: input.reference ?? null,
       booking_id: input.bookingId ?? null,
       created_by: userId,
@@ -446,7 +503,12 @@ export async function takePosPayment(sb: Sb, userId: string, input: PosPaymentIn
       entityType: "restaurant_order",
       entityId: input.orderId,
       source: "restaurant-pos",
-      payload: { method: input.method, amount: input.amount, state: input.state, order_total: Number(totals.total) },
+      payload: {
+        method: input.method,
+        amount: input.amount,
+        state: input.state,
+        order_total: Number(totals.total),
+      },
       dedupeKey: `pay:${input.clientRequestId}`,
     });
   }
@@ -456,7 +518,11 @@ export async function takePosPayment(sb: Sb, userId: string, input: PosPaymentIn
   if (input.closeWhenSettled && settled && totals.status !== "closed") {
     // Closing is the commercial commit point: it consumes stock, posts actual
     // cost and freezes the receipt. It lives in the sales core, not here.
-    await transitionOrder(sb, userId, { tenantId: input.tenantId, orderId: input.orderId, status: "closed" });
+    await transitionOrder(sb, userId, {
+      tenantId: input.tenantId,
+      orderId: input.orderId,
+      status: "closed",
+    });
     const { getReceipt } = await import("./receipts.server");
     receipt = await getReceipt(sb, userId, { tenantId: input.tenantId, orderId: input.orderId });
     totals = await recalcOrder(sb, input.tenantId, input.orderId);
@@ -494,7 +560,11 @@ export async function reopenPosOrder(sb: Sb, userId: string, input: ReopenPosOrd
   if (error) throw new Error(error.message);
 
   if (order.table_id) {
-    await sb.from("restaurant_tables").update({ status: "occupied" }).eq("id", order.table_id).eq("tenant_id", input.tenantId);
+    await sb
+      .from("restaurant_tables")
+      .update({ status: "occupied" })
+      .eq("id", order.table_id)
+      .eq("tenant_id", input.tenantId);
   }
 
   await emitRestaurantEvent(sb, userId, {

@@ -11,7 +11,12 @@ describe("groupItemsByStation — mixed-order ticket split", () => {
     ];
     const groups = groupItemsByStation(items);
     expect(groups.size).toBe(1);
-    expect(groups.get("bar-1")?.map((i) => i.id).sort()).toEqual(["i1", "i2"]);
+    expect(
+      groups
+        .get("bar-1")
+        ?.map((i) => i.id)
+        .sort(),
+    ).toEqual(["i1", "i2"]);
   });
 
   it("a pure food order produces exactly one KITCHEN group", () => {
@@ -31,8 +36,18 @@ describe("groupItemsByStation — mixed-order ticket split", () => {
     const groups = groupItemsByStation(items);
 
     expect(groups.size).toBe(2);
-    expect(groups.get("kitchen-1")?.map((i) => i.id).sort()).toEqual(["food-1", "food-2"]);
-    expect(groups.get("bar-1")?.map((i) => i.id).sort()).toEqual(["drink-1", "drink-2"]);
+    expect(
+      groups
+        .get("kitchen-1")
+        ?.map((i) => i.id)
+        .sort(),
+    ).toEqual(["food-1", "food-2"]);
+    expect(
+      groups
+        .get("bar-1")
+        ?.map((i) => i.id)
+        .sort(),
+    ).toEqual(["drink-1", "drink-2"]);
 
     // No duplication and no loss: every input item appears in exactly one group.
     const allGrouped = [...groups.values()].flat();

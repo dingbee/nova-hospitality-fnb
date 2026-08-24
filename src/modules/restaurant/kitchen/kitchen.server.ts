@@ -22,7 +22,11 @@ import { groupItemsByStation } from "./grouping";
 
 type Sb = any;
 
-export async function listStations(sb: Sb, userId: string, input: z.infer<typeof listStationsSchema>) {
+export async function listStations(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listStationsSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_stations")
@@ -35,7 +39,11 @@ export async function listStations(sb: Sb, userId: string, input: z.infer<typeof
   return data ?? [];
 }
 
-export async function upsertStation(sb: Sb, userId: string, input: z.infer<typeof upsertStationSchema>) {
+export async function upsertStation(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof upsertStationSchema>,
+) {
   await assertCapability(sb, userId, input.tenantId, "kitchen.manage");
   const row = {
     tenant_id: input.tenantId,
@@ -56,7 +64,11 @@ export async function upsertStation(sb: Sb, userId: string, input: z.infer<typeo
   return data;
 }
 
-export async function listTickets(sb: Sb, userId: string, input: z.infer<typeof listTicketsSchema>) {
+export async function listTickets(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listTicketsSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_kitchen_tickets")
@@ -80,7 +92,10 @@ export async function listTickets(sb: Sb, userId: string, input: z.infer<typeof 
     .from("restaurant_kitchen_ticket_items")
     .select("id, ticket_id, description, quantity, status, notes")
     .eq("tenant_id", input.tenantId)
-    .in("ticket_id", tickets.map((t) => t.id));
+    .in(
+      "ticket_id",
+      tickets.map((t) => t.id),
+    );
 
   const now = Date.now();
   return tickets.map((t) => {
@@ -89,7 +104,10 @@ export async function listTickets(sb: Sb, userId: string, input: z.infer<typeof 
       ...t,
       elapsed_seconds: elapsed,
       /** Live breach flag for open tickets; the stored flag covers closed ones. */
-      breaching: t.status === "queued" || t.status === "preparing" ? elapsed > t.target_minutes * 60 : t.is_delayed,
+      breaching:
+        t.status === "queued" || t.status === "preparing"
+          ? elapsed > t.target_minutes * 60
+          : t.is_delayed,
       items: ((items ?? []) as any[]).filter((i) => i.ticket_id === t.id),
     };
   });
@@ -125,7 +143,9 @@ export async function fireOrder(sb: Sb, userId: string, input: FireOrderInput) {
     .from("restaurant_stations")
     .select("id, target_prep_minutes")
     .eq("tenant_id", input.tenantId);
-  const targets = new Map<string, number>(((stations ?? []) as any[]).map((s) => [s.id, Number(s.target_prep_minutes)]));
+  const targets = new Map<string, number>(
+    ((stations ?? []) as any[]).map((s) => [s.id, Number(s.target_prep_minutes)]),
+  );
 
   const groups = groupItemsByStation(items);
 
@@ -167,7 +187,10 @@ export async function fireOrder(sb: Sb, userId: string, input: FireOrderInput) {
       .from("restaurant_order_items")
       .update({ status: "fired" })
       .eq("tenant_id", input.tenantId)
-      .in("id", group.map((i) => i.id));
+      .in(
+        "id",
+        group.map((i) => i.id),
+      );
 
     created.push(ticket);
   }
@@ -205,7 +228,9 @@ export async function advanceTicket(sb: Sb, userId: string, input: AdvanceTicket
 
   const { data: ticket } = await sb
     .from("restaurant_kitchen_tickets")
-    .select("id, ticket_number, order_id, station_id, location_id, status, target_minutes, queued_at, started_at, ready_at")
+    .select(
+      "id, ticket_number, order_id, station_id, location_id, status, target_minutes, queued_at, started_at, ready_at",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("id", input.ticketId)
     .single();
@@ -220,7 +245,10 @@ export async function advanceTicket(sb: Sb, userId: string, input: AdvanceTicket
   let prepSeconds: number | null = null;
   if (input.status === "ready") {
     patch.ready_at = now.toISOString();
-    prepSeconds = Math.max(0, Math.round((now.getTime() - new Date(ticket.queued_at).getTime()) / 1000));
+    prepSeconds = Math.max(
+      0,
+      Math.round((now.getTime() - new Date(ticket.queued_at).getTime()) / 1000),
+    );
     delaySeconds = Math.max(0, prepSeconds - ticket.target_minutes * 60);
     patch.prep_seconds = prepSeconds;
     patch.delay_seconds = delaySeconds;
@@ -245,7 +273,8 @@ export async function advanceTicket(sb: Sb, userId: string, input: AdvanceTicket
 
   if (input.status === "ready") {
     await emitRestaurantEvent(sb, userId, {
-      type: delaySeconds > 0 ? "restaurant.kitchen.ticket.delayed" : "restaurant.kitchen.ticket.ready",
+      type:
+        delaySeconds > 0 ? "restaurant.kitchen.ticket.delayed" : "restaurant.kitchen.ticket.ready",
       tenantId: input.tenantId,
       locationId: ticket.location_id ?? undefined,
       entityType: "restaurant_kitchen_ticket",
@@ -269,7 +298,10 @@ export async function advanceTicket(sb: Sb, userId: string, input: AdvanceTicket
         .eq("tenant_id", input.tenantId)
         .eq("id", ticket.station_id)
         .maybeSingle();
-      if (station && (BAR_STATION_TYPES as readonly string[]).includes(String(station.station_type))) {
+      if (
+        station &&
+        (BAR_STATION_TYPES as readonly string[]).includes(String(station.station_type))
+      ) {
         await emitRestaurantEvent(sb, userId, {
           type: "bar.ticket.delayed",
           tenantId: input.tenantId,
@@ -302,11 +334,14 @@ export async function stationPerformance(sb: Sb, userId: string, tenantId: strin
       .select("station_id, prep_seconds, delay_seconds, is_delayed, status")
       .eq("tenant_id", tenantId)
       .gte("queued_at", from),
-    sb.from("restaurant_stations").select("id, name, target_prep_minutes").eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_stations")
+      .select("id, name, target_prep_minutes")
+      .eq("tenant_id", tenantId),
   ]);
 
   const byStation = new Map<string, { total: number; delayed: number; prep: number[] }>();
-  for (const t of ((tickets ?? []) as any[])) {
+  for (const t of (tickets ?? []) as any[]) {
     if (t.prep_seconds == null) continue;
     const key = t.station_id ?? "unassigned";
     const agg = byStation.get(key) ?? { total: 0, delayed: 0, prep: [] };
@@ -325,7 +360,8 @@ export async function stationPerformance(sb: Sb, userId: string, tenantId: strin
       target_minutes: Number(s.target_prep_minutes),
       tickets: agg.total,
       delayed: agg.delayed,
-      on_time_percent: agg.total > 0 ? Number((((agg.total - agg.delayed) / agg.total) * 100).toFixed(1)) : null,
+      on_time_percent:
+        agg.total > 0 ? Number((((agg.total - agg.delayed) / agg.total) * 100).toFixed(1)) : null,
       avg_prep_minutes: Number((avg / 60).toFixed(1)),
     };
   });

@@ -2,7 +2,17 @@
 import { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { ChefHat, CreditCard, DoorOpen, Printer, ReceiptText, RotateCcw, Send, Trash2, Users } from "lucide-react";
+import {
+  ChefHat,
+  CreditCard,
+  DoorOpen,
+  Printer,
+  ReceiptText,
+  RotateCcw,
+  Send,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SectionCard } from "@/components/os/SectionCard";
@@ -40,7 +50,13 @@ import { PosPaymentDialog } from "./PosPaymentDialog";
 import { PosRoomChargeDialog } from "./PosRoomChargeDialog";
 import { PosReceiptDialog } from "./PosReceiptDialog";
 import { lineTotal, money, type CartLine } from "./pos-types";
-import { deriveLifecycle, tableTone, TABLE_TONE_CLASS, TABLE_TONE_LABEL, type TableTone } from "./lifecycle";
+import {
+  deriveLifecycle,
+  tableTone,
+  TABLE_TONE_CLASS,
+  TABLE_TONE_LABEL,
+  type TableTone,
+} from "./lifecycle";
 import { ServiceLifecycleBar } from "./ServiceLifecycleBar";
 import { OrderTimeline } from "./OrderTimeline";
 import { beverageCategories } from "@/modules/restaurant/bar/lens";
@@ -48,7 +64,9 @@ import { BAR_STATION_TYPES } from "@/modules/restaurant/bar/contracts";
 import { sendToStationLabel } from "../stationRouting";
 
 const newRequestId = () =>
-  typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `pos-${Date.now()}-${Math.random()}`;
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `pos-${Date.now()}-${Math.random()}`;
 
 const FLOOR_LEGEND: TableTone[] = ["free", "seated", "production", "ready", "billing", "attention"];
 
@@ -184,7 +202,10 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
           })),
         },
       }).then(async (res: any) => {
-        if (vars.fire) await fireFn({ data: { tenantId: tenantId!, orderId: orderId!, orderItemIds: [], priority: 0 } });
+        if (vars.fire)
+          await fireFn({
+            data: { tenantId: tenantId!, orderId: orderId!, orderItemIds: [], priority: 0 },
+          });
         return res;
       }),
     successMessage: "Sent",
@@ -196,7 +217,14 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
 
   const voidLine = useAdminMutation({
     mutationFn: (vars: { orderItemId: string; reason: string }) =>
-      voidFn({ data: { tenantId: tenantId!, orderId: orderId!, orderItemId: vars.orderItemId, reason: vars.reason } }),
+      voidFn({
+        data: {
+          tenantId: tenantId!,
+          orderId: orderId!,
+          orderItemId: vars.orderItemId,
+          reason: vars.reason,
+        },
+      }),
     successMessage: "Line voided",
     onSuccess: refresh,
   });
@@ -219,7 +247,12 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
           amount: vars.amount,
           tendered: vars.tendered,
           reference: vars.reference,
-          state: vars.method === "room_charge" ? "room_charged" : vars.method === "comp" ? "comped" : "paid",
+          state:
+            vars.method === "room_charge"
+              ? "room_charged"
+              : vars.method === "comp"
+                ? "comped"
+                : "paid",
           closeWhenSettled: true,
         },
       }),
@@ -286,7 +319,9 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
 
   const reopen = useAdminMutation({
     mutationFn: (vars: { orderId: string }) =>
-      reopenFn({ data: { tenantId: tenantId!, orderId: vars.orderId, reason: "Correction at the till" } }),
+      reopenFn({
+        data: { tenantId: tenantId!, orderId: vars.orderId, reason: "Correction at the till" },
+      }),
     successMessage: "Bill reopened",
     onSuccess: refresh,
   });
@@ -333,22 +368,35 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
   const live = serverItems.filter((i) => i.status !== "voided");
   const orderRow = (order.data as any)?.order;
   const stations = (catalog.data?.stations ?? []) as { id: string; stationType: string | null }[];
-  const stationTypeById = useMemo(() => new Map(stations.map((s) => [s.id, s.stationType])), [stations]);
-  const itemStationById = useMemo(() => new Map(items.map((i) => [i.id, i.station_id as string | null])), [items]);
+  const stationTypeById = useMemo(
+    () => new Map(stations.map((s) => [s.id, s.stationType])),
+    [stations],
+  );
+  const itemStationById = useMemo(
+    () => new Map(items.map((i) => [i.id, i.station_id as string | null])),
+    [items],
+  );
   /**
-   * "Send to production" label, computed from the actual stations of what is
-   * about to fire: staged cart lines (proposed, from the catalogue) plus
-   * already-added-but-unfired order items (resolved, from the server at
-   * insert time). Never hardcoded, so it can never claim a drink is headed
-   * to the kitchen.
+   * Station types of everything about to fire: staged cart lines (proposed,
+   * from the catalogue) plus already-added-but-unfired order items (resolved,
+   * from the server at insert time). Feeds both the till's own "Send to X"
+   * button below and `deriveLifecycle`'s "Next: X" action, so there is one
+   * computation, not two — neither can claim a drink is headed to the
+   * kitchen.
    */
-  const sendLabel = useMemo(() => {
+  const pendingStationTypes = useMemo(() => {
     const pending = [
       ...cart.map((l) => (l.menuItemId ? itemStationById.get(l.menuItemId) : l.stationId) ?? null),
       ...live.filter((i) => i.status === "ordered").map((i) => i.station_id ?? null),
-    ].map((stationId) => (stationId ? (stationTypeById.get(stationId) ?? null) : null));
-    return sendToStationLabel(pending, BAR_STATION_TYPES);
+    ];
+    return pending.map((stationId) =>
+      stationId ? (stationTypeById.get(stationId) ?? null) : null,
+    );
   }, [cart, live, itemStationById, stationTypeById]);
+  const sendLabel = useMemo(
+    () => sendToStationLabel(pendingStationTypes, BAR_STATION_TYPES),
+    [pendingStationTypes],
+  );
   const orderTickets = ((order.data as any)?.tickets ?? []) as any[];
   const orderPayments = ((order.data as any)?.payments ?? []) as any[];
   const billTotal = Number(orderRow?.total ?? 0) + cart.reduce((s, l) => s + lineTotal(l), 0);
@@ -363,10 +411,19 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
             tickets: orderTickets,
             payments: orderPayments,
             stagedCount: cart.length,
+            stagedStationTypes: pendingStationTypes,
             receipt: (bill.data as any)?.receipt ?? null,
           })
         : null,
-    [orderRow, serverItems, orderTickets, orderPayments, cart.length, bill.data],
+    [
+      orderRow,
+      serverItems,
+      orderTickets,
+      orderPayments,
+      cart.length,
+      pendingStationTypes,
+      bill.data,
+    ],
   );
 
   /** One primary action per state — the till never asks "what now?". */
@@ -403,16 +460,33 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
   };
 
   if (!tenantId) {
-    return <EmptyState title="No restaurant workspace" description="You are not a member of a restaurant tenant yet." />;
+    return (
+      <EmptyState
+        title="No restaurant workspace"
+        description="You are not a member of a restaurant tenant yet."
+      />
+    );
   }
 
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Open bills" value={String(stats?.openBills ?? 0)} icon={Users} />
-        <StatCard label="Open value" value={money(stats?.openValue ?? 0, currency)} icon={CreditCard} />
-        <StatCard label="Revenue today" value={money(stats?.revenueToday ?? 0, currency)} icon={CreditCard} />
-        <StatCard label="Average check" value={money(stats?.averageCheck ?? 0, currency)} icon={ChefHat} />
+        <StatCard
+          label="Open value"
+          value={money(stats?.openValue ?? 0, currency)}
+          icon={CreditCard}
+        />
+        <StatCard
+          label="Revenue today"
+          value={money(stats?.revenueToday ?? 0, currency)}
+          icon={CreditCard}
+        />
+        <StatCard
+          label="Average check"
+          value={money(stats?.averageCheck ?? 0, currency)}
+          icon={ChefHat}
+        />
       </div>
 
       {orderId && <GuestContextBanner tenantId={tenantId} orderId={orderId} />}
@@ -423,7 +497,11 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
         {/* Floor */}
         <SectionCard
           title={isBar ? "Bar floor & tabs" : "Floor"}
-          description={isBar ? "Counter, bar seats and tables — colour follows the tab." : "Colour follows the bill, not just the table row."}
+          description={
+            isBar
+              ? "Counter, bar seats and tables — colour follows the tab."
+              : "Colour follows the bill, not just the table row."
+          }
         >
           <div className="grid grid-cols-2 gap-2">
             {((board.data as any)?.tables ?? []).map((t: any) => {
@@ -434,7 +512,9 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                   key={t.id}
                   type="button"
                   onClick={() =>
-                    t.order ? setOrderId(t.order.id) : openBill.mutate({ tableId: t.id, guestCount: t.seats ?? 2 })
+                    t.order
+                      ? setOrderId(t.order.id)
+                      : openBill.mutate({ tableId: t.id, guestCount: t.seats ?? 2 })
                   }
                   className={`min-h-20 rounded-lg border p-3 text-left transition-colors hover:border-primary ${
                     TABLE_TONE_CLASS[tone]
@@ -445,7 +525,9 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                   <span className="mt-1 block text-xs">
                     {t.order ? money(Number(t.order.total ?? 0), currency) : `${t.seats} seats`}
                   </span>
-                  <span className="block text-[11px] text-muted-foreground">{TABLE_TONE_LABEL[tone]}</span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    {TABLE_TONE_LABEL[tone]}
+                  </span>
                 </button>
               );
             })}
@@ -480,7 +562,11 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
           }
         >
           <div className="mb-3 flex flex-wrap gap-2">
-            <Button variant={categoryId ? "outline" : "default"} className="min-h-10" onClick={() => setCategoryId(null)}>
+            <Button
+              variant={categoryId ? "outline" : "default"}
+              className="min-h-10"
+              onClick={() => setCategoryId(null)}
+            >
               All
             </Button>
             {categories.map((c) => (
@@ -497,7 +583,11 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
           {filtered.length === 0 ? (
             <EmptyState
               title={isBar ? "No drinks" : "No items"}
-              description={isBar ? "Publish a beverage menu to sell from the bar till." : "Publish a menu to sell from this till."}
+              description={
+                isBar
+                  ? "Publish a beverage menu to sell from the bar till."
+                  : "Publish a menu to sell from this till."
+              }
             />
           ) : (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -510,7 +600,9 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                   className="min-h-20 rounded-lg border bg-card p-3 text-left transition-colors hover:border-primary disabled:opacity-50"
                 >
                   <span className="block text-sm font-medium">{i.name}</span>
-                  <span className="block text-xs text-muted-foreground">{money(Number(i.price ?? 0), currency)}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {money(Number(i.price ?? 0), currency)}
+                  </span>
                   {(i.variants ?? []).length > 0 && (
                     <Badge variant="secondary" className="mt-1">
                       {i.variants.length} variants
@@ -525,10 +617,15 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
         {/* Bill */}
         <SectionCard
           title={orderRow ? `Bill ${orderRow.order_number}` : "Bill"}
-          description={orderRow ? `${orderRow.status} · ${orderRow.payment_state}` : "Open a table to start."}
+          description={
+            orderRow ? `${orderRow.status} · ${orderRow.payment_state}` : "Open a table to start."
+          }
         >
           {!orderId ? (
-            <EmptyState title="No bill selected" description="Tap a table or start a walk-in tab." />
+            <EmptyState
+              title="No bill selected"
+              description="Tap a table or start a walk-in tab."
+            />
           ) : (
             <div className="space-y-3">
               {life && (
@@ -538,11 +635,17 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                   <div className="flex flex-wrap gap-1 text-[11px]">
                     {life.staged > 0 && <Badge variant="outline">{life.staged} staged</Badge>}
                     {life.unsent > 0 && <Badge variant="outline">{life.unsent} unsent</Badge>}
-                    {life.inProduction > 0 && <Badge variant="secondary">{life.inProduction} in production</Badge>}
+                    {life.inProduction > 0 && (
+                      <Badge variant="secondary">{life.inProduction} in production</Badge>
+                    )}
                     {life.ready > 0 && <Badge>{life.ready} ready</Badge>}
-                    {life.balance > 0 && <Badge variant="outline">Balance {money(life.balance, currency)}</Badge>}
+                    {life.balance > 0 && (
+                      <Badge variant="outline">Balance {money(life.balance, currency)}</Badge>
+                    )}
                     {life.delayed && <Badge variant="destructive">Delayed</Badge>}
-                    {life.billRequestedAt && !life.billPresentedAt && <Badge variant="secondary">Bill asked for</Badge>}
+                    {life.billRequestedAt && !life.billPresentedAt && (
+                      <Badge variant="secondary">Bill asked for</Badge>
+                    )}
                     {life.receiptDelivered && <Badge variant="secondary">Receipt delivered</Badge>}
                   </div>
                   <Button
@@ -550,13 +653,16 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                     disabled={life.nextAction === "none" || life.blocked || sendLines.isPending}
                     onClick={runNextAction}
                   >
-                    Next: {life.nextAction === "send-to-kitchen" ? sendLabel : life.nextActionLabel}
+                    Next: {life.nextActionLabel}
                   </Button>
                 </div>
               )}
               <div className="space-y-2">
                 {live.map((i) => (
-                  <div key={i.id} className="flex items-start justify-between gap-2 rounded border bg-card p-2 text-sm">
+                  <div
+                    key={i.id}
+                    className="flex items-start justify-between gap-2 rounded border bg-card p-2 text-sm"
+                  >
                     <span className="min-w-0">
                       <span className="block font-medium">
                         {Number(i.quantity)} × {i.description}
@@ -572,7 +678,9 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                       </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-1">
-                      <span className="tabular-nums">{money(Number(i.line_total ?? 0), currency)}</span>
+                      <span className="tabular-nums">
+                        {money(Number(i.line_total ?? 0), currency)}
+                      </span>
                       {canVoid && (
                         <Button
                           size="icon"
@@ -593,7 +701,10 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                 ))}
 
                 {cart.map((l) => (
-                  <div key={l.key} className="flex items-start justify-between gap-2 rounded border border-dashed p-2 text-sm">
+                  <div
+                    key={l.key}
+                    className="flex items-start justify-between gap-2 rounded border border-dashed p-2 text-sm"
+                  >
                     <span className="min-w-0">
                       <span className="block font-medium">
                         {l.quantity} × {l.description}
@@ -650,7 +761,11 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                   <ReceiptText className="size-4" /> Bill &amp; payment
                 </Button>
                 {orderRow?.status === "closed" && orderRow?.table_id && (
-                  <Button variant="outline" className="min-h-11" onClick={() => releaseTable.mutate({ orderId })}>
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => releaseTable.mutate({ orderId })}
+                  >
                     <DoorOpen className="size-4" /> Release table
                   </Button>
                 )}
@@ -659,7 +774,9 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                     variant="ghost"
                     className="min-h-11"
                     onClick={() => {
-                      const code = window.prompt("Move to which table code? Leave blank to detach.");
+                      const code = window.prompt(
+                        "Move to which table code? Leave blank to detach.",
+                      );
                       if (code === null) return;
                       const match = ((board.data as any)?.tables ?? []).find(
                         (t: any) => String(t.code).toLowerCase() === code.trim().toLowerCase(),
@@ -678,7 +795,11 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                   </Button>
                 </div>
                 {canReopen && orderRow?.status === "closed" && (
-                  <Button variant="outline" className="min-h-11" onClick={() => reopen.mutate({ orderId })}>
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => reopen.mutate({ orderId })}
+                  >
                     <RotateCcw className="size-4" /> Reopen bill
                   </Button>
                 )}
@@ -689,36 +810,40 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                     disabled={cancelBill.isPending}
                     onClick={() => {
                       const reason = window.prompt("Cancel this whole bill. Reason?");
-                      if (reason && reason.trim().length >= 3) cancelBill.mutate({ orderId, reason: reason.trim() });
+                      if (reason && reason.trim().length >= 3)
+                        cancelBill.mutate({ orderId, reason: reason.trim() });
                     }}
                   >
                     Cancel bill
                   </Button>
                 )}
-                {canVoid && orderPayments.some((p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded") && (
-                  <Button
-                    variant="ghost"
-                    className="min-h-11 text-destructive"
-                    onClick={() => {
-                      const target = orderPayments.find(
-                        (p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded",
-                      );
-                      if (!target) return;
-                      const reason = window.prompt(
-                        `Refund ${money(Number(target.amount), currency)} taken by ${target.method}. Reason?`,
-                      );
-                      if (reason && reason.trim().length >= 3) {
-                        refund.mutate({
-                          paymentId: target.id,
-                          amount: Number(target.amount),
-                          reason: reason.trim(),
-                        });
-                      }
-                    }}
-                  >
-                    <CreditCard className="size-4" /> Refund a payment
-                  </Button>
-                )}
+                {canVoid &&
+                  orderPayments.some(
+                    (p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded",
+                  ) && (
+                    <Button
+                      variant="ghost"
+                      className="min-h-11 text-destructive"
+                      onClick={() => {
+                        const target = orderPayments.find(
+                          (p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded",
+                        );
+                        if (!target) return;
+                        const reason = window.prompt(
+                          `Refund ${money(Number(target.amount), currency)} taken by ${target.method}. Reason?`,
+                        );
+                        if (reason && reason.trim().length >= 3) {
+                          refund.mutate({
+                            paymentId: target.id,
+                            amount: Number(target.amount),
+                            reason: reason.trim(),
+                          });
+                        }
+                      }}
+                    >
+                      <CreditCard className="size-4" /> Refund a payment
+                    </Button>
+                  )}
               </div>
 
               <details className="rounded-lg border bg-card p-2">
@@ -805,7 +930,9 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
       <PosReceiptDialog
         receipt={receipt}
         onClose={() => setReceipt(null)}
-        onReprint={() => receipt && showReceipt.mutate({ orderId: receipt.order_id, reprint: true })}
+        onReprint={() =>
+          receipt && showReceipt.mutate({ orderId: receipt.order_id, reprint: true })
+        }
         tenantId={tenantId ?? undefined}
       />
     </div>
