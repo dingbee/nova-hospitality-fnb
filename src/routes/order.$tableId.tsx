@@ -2,9 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Check, CheckCircle2, Minus, Plus, ShoppingBag, UtensilsCrossed, X } from "lucide-react";
+import {
+  Check,
+  CheckCircle2,
+  Minus,
+  Plus,
+  ShoppingBag,
+  Star,
+  UtensilsCrossed,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -38,6 +48,10 @@ import {
   guestStaffRequestStatusFn,
   requestStaffFn,
 } from "@/modules/restaurant/selforder/selfstaff.functions";
+import {
+  guestFeedbackStatusFn,
+  submitGuestFeedbackFn,
+} from "@/modules/restaurant/selforder/selffeedback.functions";
 import {
   buildChosenModifiers,
   isMissingRequiredModifiers,
@@ -278,6 +292,7 @@ function GuestOrderPage() {
         <RequestStaffPanel tableId={tableId} orderId={confirmed.orderId} />
         <RequestBillPanel tableId={tableId} orderId={confirmed.orderId} />
         <GuestPaymentPanel tableId={tableId} orderId={confirmed.orderId} />
+        <GuestFeedbackPanel tableId={tableId} orderId={confirmed.orderId} />
         <Button
           variant="outline"
           className="mt-4 min-h-11"
@@ -1085,6 +1100,122 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
       >
         {initiate.isPending ? "Redirecting…" : "Pay now"}
       </Button>
+    </div>
+  );
+}
+
+const FEEDBACK_ACK: Record<
+  "service_recovery" | "thanks" | "advocacy_ready",
+  { title: string; body: string }
+> = {
+  service_recovery: {
+    title: "Thank you for telling us",
+    body: "We're sorry your visit fell short — a member of our team has been notified.",
+  },
+  thanks: {
+    title: "Thank you for your feedback",
+    body: "We appreciate you taking the time to let us know how it went.",
+  },
+  advocacy_ready: {
+    title: "Thank you — glad you enjoyed it!",
+    body: "We're so happy you had a great experience with us.",
+  },
+};
+
+/**
+ * Post-payment "How was your experience?" — only ever shown once
+ * guestFeedbackStatusFn reports the order as paid (server-derived, never
+ * the client's own belief about payment state). One rating per order:
+ * once submitted, the same server-authoritative record is shown back
+ * rather than letting the guest change it. No external review link is
+ * produced here — 4-5 stars only marks the moment a future phase could
+ * offer one.
+ */
+function GuestFeedbackPanel({ tableId, orderId }: { tableId: string; orderId: string }) {
+  const statusFn = useServerFn(guestFeedbackStatusFn);
+  const submitFn = useServerFn(submitGuestFeedbackFn);
+  const [rating, setRating] = useState<number | null>(null);
+  const [comment, setComment] = useState("");
+
+  const status = useQuery({
+    queryKey: ["selforder.feedbackStatus", tableId, orderId],
+    queryFn: () => statusFn({ data: { tableId, orderId } }),
+    refetchInterval: 8_000,
+  });
+
+  const submit = useMutation({
+    mutationFn: (vars: { rating: number; comment: string }) =>
+      submitFn({
+        data: { tableId, orderId, rating: vars.rating, comment: vars.comment || undefined },
+      }),
+    onSuccess: () => status.refetch(),
+  });
+
+  if (status.isPending || !status.data || !status.data.eligible) return null;
+
+  const submitted = status.data.submitted ? status.data : submit.data?.ok ? submit.data : null;
+  if (submitted) {
+    const ack = FEEDBACK_ACK[submitted.routing];
+    return (
+      <div className="mt-2 w-full max-w-sm rounded-2xl border border-primary/30 bg-primary/5 p-4 text-left">
+        <p className="flex items-center gap-1 text-sm font-semibold text-primary">
+          {Array.from({ length: 5 }, (_, i) => (
+            <Star
+              key={i}
+              className={`size-4 ${i < submitted.rating ? "fill-primary text-primary" : "text-muted-foreground/40"}`}
+            />
+          ))}
+        </p>
+        <p className="mt-2 text-sm font-semibold text-foreground">{ack.title}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{ack.body}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
+      <p className="text-sm font-semibold text-foreground">How was your experience?</p>
+      <div className="mt-2 flex items-center gap-1">
+        {Array.from({ length: 5 }, (_, i) => {
+          const value = i + 1;
+          return (
+            <button
+              key={value}
+              type="button"
+              aria-label={`${value} star${value === 1 ? "" : "s"}`}
+              className="min-h-11 min-w-11 flex items-center justify-center"
+              onClick={() => setRating(value)}
+            >
+              <Star
+                className={`size-7 ${rating !== null && value <= rating ? "fill-primary text-primary" : "text-muted-foreground/40"}`}
+              />
+            </button>
+          );
+        })}
+      </div>
+      {rating !== null && (
+        <>
+          <Textarea
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="Anything you'd like to add? (optional)"
+            className="mt-3 min-h-20"
+            maxLength={1000}
+          />
+          <Button
+            className="mt-3 min-h-11 w-full rounded-full"
+            disabled={submit.isPending}
+            onClick={() => submit.mutate({ rating, comment })}
+          >
+            {submit.isPending ? "Sending…" : "Submit feedback"}
+          </Button>
+          {submit.isError && (
+            <p className="mt-2 text-xs text-destructive">
+              Couldn't send feedback. Please try again.
+            </p>
+          )}
+        </>
+      )}
     </div>
   );
 }

@@ -276,17 +276,18 @@ describe("direct server-function bypass", () => {
   });
 
   /**
-   * Exactly six files may skip requireSupabaseAuth, and all six are held
-   * to the same rule as every other bypass surface in this describe block:
-   * no identity, only an unguessable id, and every other fact (tenant,
-   * property, location, price, station, payable amount, order status,
-   * timestamps, staff identity) re-derived server-side rather than trusted
-   * from the request. Adding a seventh entry here is a security review,
-   * not a formatting change.
+   * Exactly seven files may skip requireSupabaseAuth, and all seven are
+   * held to the same rule as every other bypass surface in this describe
+   * block: no identity, only an unguessable id, and every other fact
+   * (tenant, property, location, price, station, payable amount, order
+   * status, timestamps, staff identity) re-derived server-side rather
+   * than trusted from the request. Adding an eighth entry here is a
+   * security review, not a formatting change.
    */
   const ALLOWED_UNAUTHENTICATED = [
     join(ROOT, "src/modules/restaurant/receipts/delivery.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfbill.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selffeedback.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selforder.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfpay.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfstaff.functions.ts"),
@@ -409,6 +410,28 @@ describe("direct server-function bypass", () => {
     // reach the capability-gated acknowledge action.
     expect(server).not.toMatch(/acknowledgeServiceRequest/);
     expect(server).not.toMatch(/assertCapability/);
+  });
+
+  it("self-order feedback never accepts tenant/property/location/payment state from the client, is scoped to a paid order, and is distinct from the intelligence-core submitFeedbackSchema", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selffeedback.functions.ts"));
+    expect(fn).toMatch(/guestFeedbackStatusSchema\.parse/);
+    expect(fn).toMatch(/submitGuestFeedbackSchema\.parse/);
+    // The contract carries only tableId/orderId/rating/comment — payment
+    // state and eligibility are re-derived server-side, never accepted
+    // from the client. Matched as field definitions, not prose.
+    const contracts = read(
+      join(ROOT, "src/modules/restaurant/selforder/selffeedback.contracts.ts"),
+    );
+    expect(contracts).not.toMatch(/\n\s*(tenantId|propertyId|locationId|paymentState|status)\s*:/);
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selffeedback.server.ts"));
+    expect(server).toMatch(/resolveGuestTableContext/);
+    expect(server).not.toMatch(/input\.tenantId|input\.propertyId|input\.locationId/);
+    // This is a distinct guest-experience concept from the intelligence
+    // core's own submitFeedbackSchema (AI-recommendation usefulness) —
+    // neither file imports the other.
+    expect(server).not.toMatch(/intelligence\/core/);
+    const intelContracts = read(join(ROOT, "src/modules/intelligence/core/contracts.ts"));
+    expect(intelContracts).not.toMatch(/restaurant_guest_feedback/);
   });
 
   /**
