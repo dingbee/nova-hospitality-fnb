@@ -42,6 +42,12 @@ import {
   type ModifierSelection,
   type ProductVariant,
 } from "@/modules/restaurant/selforder/selforder-cart";
+import {
+  classifyRecoveredOrder,
+  clearStoredOrderId,
+  readStoredOrderId,
+  writeStoredOrderId,
+} from "@/modules/restaurant/selforder/selforder-recovery";
 import type { SalesLineModifier } from "@/modules/restaurant/sales/sales.server";
 
 export const Route = createFileRoute("/order/$tableId")({
@@ -104,6 +110,50 @@ function GuestOrderPage() {
     orderNumber: string;
     total: number;
   } | null>(null);
+
+  // Order recovery: read only after mount, never during the initial render,
+  // so a server-rendered "no stored order" pass never mismatches a client
+  // hydration pass that would otherwise see localStorage immediately. See
+  // selforder-recovery.ts for the full security model — this id is a hint,
+  // re-validated server-side below before anything is shown or resumed.
+  const [storedOrderId, setStoredOrderId] = useState<string | null>(null);
+  useEffect(() => {
+    setStoredOrderId(readStoredOrderId(tableId));
+  }, [tableId]);
+
+  const dismissRecovery = () => {
+    clearStoredOrderId(tableId);
+    setStoredOrderId(null);
+  };
+
+  const recoveryStatusFn = useServerFn(guestOrderStatusFn);
+  const recovery = useQuery({
+    queryKey: ["selforder.recovery", tableId, storedOrderId],
+    queryFn: () => recoveryStatusFn({ data: { tableId, orderId: storedOrderId! } }),
+    enabled: Boolean(storedOrderId),
+    retry: false,
+  });
+  // "Order not found for this table" (wrong table, nonexistent id, tenant
+  // mismatch) throws exactly like any other cross-table guest lookup —
+  // treated identically to "nothing to recover".
+  const recoveryOutcome = recovery.isError
+    ? "none"
+    : recovery.data
+      ? classifyRecoveredOrder(recovery.data)
+      : undefined;
+
+  useEffect(() => {
+    if (recoveryOutcome === "none") {
+      dismissRecovery();
+    } else if (recoveryOutcome === "paid" && recovery.data && storedOrderId) {
+      setConfirmed({
+        orderId: storedOrderId,
+        orderNumber: recovery.data.orderNumber,
+        total: recovery.data.total,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- act once when the outcome first resolves, not on every render
+  }, [recoveryOutcome]);
 
   const currency = menu.data?.table.currency ?? "USD";
   const items = (menu.data?.items ?? []) as MenuItem[];
@@ -173,6 +223,7 @@ function GuestOrderPage() {
         },
       }),
     onSuccess: (order: { id: string; order_number: string; total: number }) => {
+      writeStoredOrderId(tableId, order.id);
       setConfirmed({
         orderId: order.id,
         orderNumber: order.order_number,
@@ -218,10 +269,43 @@ function GuestOrderPage() {
           shortly.
         </p>
         <GuestPaymentPanel tableId={tableId} orderId={confirmed.orderId} />
-        <Button variant="outline" className="mt-4 min-h-11" onClick={() => setConfirmed(null)}>
+        <Button
+          variant="outline"
+          className="mt-4 min-h-11"
+          onClick={() => {
+            dismissRecovery();
+            setConfirmed(null);
+          }}
+        >
           Order more
         </Button>
       </div>
+    );
+  }
+
+  // A stored order exists and hasn't resolved to "paid" (which jumps
+  // straight into the confirmed screen above) or "none" (dismissed
+  // automatically) yet — still validating it server-side.
+  if (storedOrderId && recoveryOutcome === undefined) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <LoadingState label="Checking your order…" />
+      </div>
+    );
+  }
+
+  if (recoveryOutcome === "offer" && storedOrderId && recovery.data) {
+    return (
+      <RecoveryPrompt
+        onContinue={() =>
+          setConfirmed({
+            orderId: storedOrderId,
+            orderNumber: recovery.data!.orderNumber,
+            total: recovery.data!.total,
+          })
+        }
+        onStartNew={dismissRecovery}
+      />
     );
   }
 
@@ -395,6 +479,41 @@ function GuestOrderPage() {
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
+    </div>
+  );
+}
+
+/**
+ * Shown when a recoverable (still-active, unpaid) order was found for this
+ * table from a stored recovery hint. Deliberately a choice, not an
+ * automatic resume — a different guest picking up the same table's link
+ * (or the same guest starting a fresh round) must never be silently
+ * dropped into someone else's in-progress order.
+ */
+function RecoveryPrompt({
+  onContinue,
+  onStartNew,
+}: {
+  onContinue: () => void;
+  onStartNew: () => void;
+}) {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center pt-safe">
+      <span className="flex size-14 items-center justify-center rounded-full bg-primary/10">
+        <UtensilsCrossed className="size-7 text-primary" aria-hidden />
+      </span>
+      <h1 className="font-display text-2xl text-foreground">Welcome back</h1>
+      <p className="max-w-xs text-sm text-muted-foreground">
+        You have an order in progress at this table.
+      </p>
+      <div className="mt-3 flex w-full max-w-xs flex-col gap-2">
+        <Button className="min-h-12 rounded-full text-base" onClick={onContinue}>
+          Continue your order
+        </Button>
+        <Button variant="outline" className="min-h-11 rounded-full" onClick={onStartNew}>
+          Start a new order
+        </Button>
+      </div>
     </div>
   );
 }
