@@ -65,7 +65,12 @@ export async function posBoard(
   let orderQuery = sb
     .from("restaurant_orders")
     .select(
-      "id, order_number, order_type, status, payment_state, guest_count, guest_name, table_id, location_id, property_id, opened_at, closed_at, subtotal, total, paid_total, currency, terminal_id",
+      // bill_requested_at/bill_presented_at were missing here even though
+      // tableTone()/TABLE_TONE_LABEL.billing already fully support a
+      // "Billing" floor tile — the floor grid could never actually show it
+      // because this row never carried the fact. Same two columns
+      // bill.server.ts's requestBill/presentBill already write.
+      "id, order_number, order_type, status, payment_state, guest_count, guest_name, table_id, location_id, property_id, opened_at, closed_at, subtotal, total, paid_total, currency, terminal_id, bill_requested_at, bill_presented_at",
     )
     .eq("tenant_id", input.tenantId)
     .in("status", OPEN_STATES)
