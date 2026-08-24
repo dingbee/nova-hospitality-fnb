@@ -276,18 +276,19 @@ describe("direct server-function bypass", () => {
   });
 
   /**
-   * Exactly seven files may skip requireSupabaseAuth, and all seven are
+   * Exactly eight files may skip requireSupabaseAuth, and all eight are
    * held to the same rule as every other bypass surface in this describe
    * block: no identity, only an unguessable id, and every other fact
    * (tenant, property, location, price, station, payable amount, order
-   * status, timestamps, staff identity) re-derived server-side rather
-   * than trusted from the request. Adding an eighth entry here is a
-   * security review, not a formatting change.
+   * status, timestamps, staff identity, catalogue content) re-derived
+   * server-side rather than trusted from the request. Adding a ninth
+   * entry here is a security review, not a formatting change.
    */
   const ALLOWED_UNAUTHENTICATED = [
     join(ROOT, "src/modules/restaurant/receipts/delivery.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfbill.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selffeedback.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selfnova.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selforder.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfpay.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfstaff.functions.ts"),
@@ -432,6 +433,27 @@ describe("direct server-function bypass", () => {
     expect(server).not.toMatch(/intelligence\/core/);
     const intelContracts = read(join(ROOT, "src/modules/intelligence/core/contracts.ts"));
     expect(intelContracts).not.toMatch(/restaurant_guest_feedback/);
+  });
+
+  it("Ask NOVA never accepts tenant/property/location/catalogue content from the client, and grounds every reply in the real sellable catalogue", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selfnova.functions.ts"));
+    expect(fn).toMatch(/askNovaSchema\.parse/);
+    // The contract carries only tableId/message/history — the entire menu
+    // NOVA is grounded in comes from resolveGuestTableContext's own lookup
+    // (via guestMenu), never from anything the client sends. Matched as
+    // field definitions, not prose.
+    const contracts = read(join(ROOT, "src/modules/restaurant/selforder/selfnova.contracts.ts"));
+    expect(contracts).not.toMatch(
+      /\n\s*(tenantId|propertyId|locationId|items|categories|catalogue)\s*:/,
+    );
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selfnova.server.ts"));
+    expect(server).toMatch(/guestMenu\(/);
+    expect(server).not.toMatch(/input\.tenantId|input\.propertyId|input\.locationId/);
+    // Every recommended item is re-hydrated from the catalogue map, never
+    // read off the model's own response — this is what makes a fabricated
+    // price or an invented dish impossible to display, not just unlikely.
+    expect(server).toMatch(/validateNovaResponse/);
+    expect(server).toMatch(/itemById\.get\(id\)/);
   });
 
   /**

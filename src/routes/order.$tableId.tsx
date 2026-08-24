@@ -8,12 +8,14 @@ import {
   Minus,
   Plus,
   ShoppingBag,
+  Sparkles,
   Star,
   UtensilsCrossed,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -52,6 +54,8 @@ import {
   guestFeedbackStatusFn,
   submitGuestFeedbackFn,
 } from "@/modules/restaurant/selforder/selffeedback.functions";
+import { askNovaFn } from "@/modules/restaurant/selforder/selfnova.functions";
+import type { AskNovaRecommendedItem } from "@/modules/restaurant/selforder/selfnova.server";
 import {
   buildChosenModifiers,
   isMissingRequiredModifiers,
@@ -95,6 +99,8 @@ type MenuItem = {
   category_id: string | null;
   modifier_group_ids: string[];
   variants?: ProductVariant[];
+  /** Only present when set on the menu item itself — never inferred client-side. Used to decide whether "Vegetarian options" is a fair starter prompt for Ask NOVA. */
+  tags?: string[];
 };
 
 type CartLine = {
@@ -124,6 +130,7 @@ function GuestOrderPage() {
   const [pickerItem, setPickerItem] = useState<MenuItem | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
+  const [novaOpen, setNovaOpen] = useState(false);
   const [guestName, setGuestName] = useState("");
   const [confirmed, setConfirmed] = useState<{
     orderId: string;
@@ -375,6 +382,22 @@ function GuestOrderPage() {
         meantime — no placeholder rail is rendered without real data.
       */}
 
+      <button
+        type="button"
+        onClick={() => setNovaOpen(true)}
+        className="mx-4 mt-1 flex min-h-14 w-[calc(100%-2rem)] items-center gap-3 rounded-2xl border border-primary/30 bg-primary/5 px-4 text-left"
+      >
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
+          <Sparkles className="size-4" />
+        </span>
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold text-foreground">
+            Not sure what to order?
+          </span>
+          <span className="block text-xs text-muted-foreground">Ask NOVA</span>
+        </span>
+      </button>
+
       <main className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3">
         {filtered.length === 0 && (
           <div className="col-span-full">
@@ -407,6 +430,17 @@ function GuestOrderPage() {
           onAdd={(selection) => addToCart(pickerItem, selection)}
         />
       )}
+
+      <AskNovaDrawer
+        open={novaOpen}
+        onOpenChange={setNovaOpen}
+        tableId={tableId}
+        items={items}
+        onPickItem={(item) => {
+          setNovaOpen(false);
+          setPickerItem(item);
+        }}
+      />
 
       {cartCount > 0 && !cartOpen && (
         <button
@@ -1217,5 +1251,202 @@ function GuestFeedbackPanel({ tableId, orderId }: { tableId: string; orderId: st
         </>
       )}
     </div>
+  );
+}
+
+type NovaTurn =
+  | { id: string; role: "user"; content: string }
+  | { id: string; role: "assistant"; content: string; recommendedItems: AskNovaRecommendedItem[] }
+  | { id: string; role: "fallback"; categories: { id: string; name: string }[] };
+
+function newTurnId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random()}`;
+}
+
+const NOVA_STARTER_PROMPTS = ["Recommend something for me", "Something light", "Something filling"];
+
+/**
+ * "Not sure what to order?" — a compact chat over the exact same
+ * table-scoped sellable catalogue the ordering screen itself shows (see
+ * selfnova.server.ts). Recommending an item never opens a second cart
+ * mechanism: tapping one just opens the same ItemPicker the menu grid
+ * already uses (onPickItem), so the modifier -> cart -> order flow stays
+ * the only path to actually ordering anything.
+ */
+function AskNovaDrawer({
+  open,
+  onOpenChange,
+  tableId,
+  items,
+  onPickItem,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  tableId: string;
+  items: MenuItem[];
+  onPickItem: (item: MenuItem) => void;
+}) {
+  const askFn = useServerFn(askNovaFn);
+  const [turns, setTurns] = useState<NovaTurn[]>([]);
+  const [input, setInput] = useState("");
+
+  const ask = useMutation({
+    mutationFn: (message: string) => {
+      // Only real prior chat turns become history — a fallback notice was
+      // never something NOVA actually said, so it isn't replayed as if it
+      // were part of the conversation.
+      const history = turns
+        .filter(
+          (t): t is Extract<NovaTurn, { role: "user" | "assistant" }> =>
+            t.role === "user" || t.role === "assistant",
+        )
+        .map((t) => ({ role: t.role, content: t.content }));
+      return askFn({ data: { tableId, message, history } });
+    },
+    onSuccess: (result) => {
+      setTurns((t) => [
+        ...t,
+        result.ok
+          ? {
+              id: newTurnId(),
+              role: "assistant",
+              content: result.reply,
+              recommendedItems: result.recommendedItems,
+            }
+          : { id: newTurnId(), role: "fallback", categories: result.categories },
+      ]);
+    },
+  });
+
+  const send = (message: string) => {
+    const text = message.trim();
+    if (!text || ask.isPending) return;
+    setTurns((t) => [...t, { id: newTurnId(), role: "user", content: text }]);
+    setInput("");
+    ask.mutate(text);
+  };
+
+  const findItem = (id: string) => items.find((i) => i.id === id) ?? null;
+  const hasVegetarianTag = items.some((i) => (i.tags ?? []).includes("vegetarian"));
+  const starters = hasVegetarianTag
+    ? [...NOVA_STARTER_PROMPTS, "Vegetarian options"]
+    : NOVA_STARTER_PROMPTS;
+
+  return (
+    <Drawer open={open} onOpenChange={onOpenChange}>
+      <DrawerContent>
+        <DrawerHeader>
+          <DrawerTitle className="font-display flex items-center gap-1.5 text-xl">
+            <Sparkles className="size-4 text-primary" /> Ask NOVA
+          </DrawerTitle>
+        </DrawerHeader>
+
+        <div className="max-h-[50vh] space-y-3 overflow-y-auto px-4 pb-2">
+          {turns.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              Tell me what you're in the mood for, or tap a suggestion below.
+            </p>
+          )}
+          {turns.map((t) => {
+            if (t.role === "user") {
+              return (
+                <div
+                  key={t.id}
+                  className="ml-auto max-w-[85%] rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-sm text-primary-foreground"
+                >
+                  {t.content}
+                </div>
+              );
+            }
+            if (t.role === "assistant") {
+              return (
+                <div key={t.id} className="mr-auto max-w-[90%] space-y-2">
+                  <div className="rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm">
+                    {t.content}
+                  </div>
+                  {t.recommendedItems.map((r) => {
+                    const full = findItem(r.id);
+                    return (
+                      <button
+                        key={r.id}
+                        type="button"
+                        disabled={!full}
+                        onClick={() => full && onPickItem(full)}
+                        className="flex min-h-11 w-full items-center justify-between rounded-xl border bg-card px-3 py-2 text-left disabled:opacity-50"
+                      >
+                        <span className="text-sm font-medium">{r.name}</span>
+                        <span className="text-sm text-muted-foreground">
+                          {money(r.price, r.currency)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            }
+            return (
+              <div key={t.id} className="mr-auto max-w-[90%] space-y-2">
+                <div className="rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
+                  NOVA isn't available right now — here's the menu by category instead.
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {t.categories.map((c) => (
+                    <Badge key={c.id} variant="outline" className="rounded-full">
+                      {c.name}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {ask.isPending && (
+            <div className="mr-auto max-w-[90%] rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
+              Thinking…
+            </div>
+          )}
+        </div>
+
+        {turns.length === 0 && (
+          <div className="flex flex-wrap gap-1.5 px-4 pb-3">
+            {starters.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => send(s)}
+                className="min-h-9 rounded-full border px-3 text-xs text-foreground"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <DrawerFooter>
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              send(input);
+            }}
+          >
+            <Input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask about the menu…"
+              className="h-11"
+            />
+            <Button
+              type="submit"
+              disabled={ask.isPending || !input.trim()}
+              className="min-h-11 shrink-0"
+            >
+              Send
+            </Button>
+          </form>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
   );
 }
