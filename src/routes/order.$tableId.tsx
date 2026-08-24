@@ -33,6 +33,7 @@ import {
 } from "@/modules/restaurant/selforder/selfpay.functions";
 import { GUEST_PAYMENT_METHODS } from "@/modules/restaurant/selforder/selfpay.contracts";
 import { requestGuestBillFn } from "@/modules/restaurant/selforder/selfbill.functions";
+import { guestOrderProgressFn } from "@/modules/restaurant/selforder/selftrack.functions";
 import {
   buildChosenModifiers,
   isMissingRequiredModifiers,
@@ -269,6 +270,7 @@ function GuestOrderPage() {
           Your order is on its way to the kitchen and bar. A member of staff will bring it out
           shortly.
         </p>
+        <OrderProgressPanel tableId={tableId} orderId={confirmed.orderId} />
         <RequestBillPanel tableId={tableId} orderId={confirmed.orderId} />
         <GuestPaymentPanel tableId={tableId} orderId={confirmed.orderId} />
         <Button
@@ -745,6 +747,91 @@ function ItemPicker({
  * view just doesn't persist across a reload, since nothing here needs a
  * new read path to guarantee that safety property.
  */
+const GUEST_STAGE_STEPS = ["received", "preparing", "ready", "served"] as const;
+const GUEST_STAGE_LABEL: Record<(typeof GUEST_STAGE_STEPS)[number], string> = {
+  received: "Order received",
+  preparing: "Preparing",
+  ready: "Ready",
+  served: "Served",
+};
+
+/**
+ * Redacted, station-aware view of the guest's own order moving through the
+ * kitchen and bar. Reuses the canonical order/ticket lifecycle end to end
+ * (see selftrack.server.ts / selforder-tracking.ts) rather than a second
+ * workflow, and polls with the same safe pattern GuestPaymentPanel already
+ * uses below instead of a new realtime layer.
+ */
+function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: string }) {
+  const progressFn = useServerFn(guestOrderProgressFn);
+  const progress = useQuery({
+    queryKey: ["selforder.progress", tableId, orderId],
+    queryFn: () => progressFn({ data: { tableId, orderId } }),
+    refetchInterval: 8_000,
+  });
+
+  if (progress.isPending || progress.isError || !progress.data) return null;
+  const { overallStage, streams } = progress.data;
+
+  if (overallStage === "cancelled") {
+    return (
+      <div className="mt-2 w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
+        <p className="text-sm font-semibold text-foreground">Order cancelled</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Please speak to a member of staff if this doesn't look right.
+        </p>
+      </div>
+    );
+  }
+
+  const currentIndex = GUEST_STAGE_STEPS.indexOf(overallStage);
+
+  return (
+    <div className="mt-2 w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
+      <p className="text-sm font-semibold text-foreground">{GUEST_STAGE_LABEL[overallStage]}</p>
+
+      <div className="mt-3 flex items-center">
+        {GUEST_STAGE_STEPS.map((step, i) => (
+          <div key={step} className="flex flex-1 items-center last:flex-none">
+            <span
+              className={`flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${
+                i <= currentIndex
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground"
+              }`}
+            >
+              {i + 1}
+            </span>
+            {i < GUEST_STAGE_STEPS.length - 1 && (
+              <span
+                className={`mx-1 h-0.5 flex-1 rounded ${i < currentIndex ? "bg-primary" : "bg-muted"}`}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex text-[10px] text-muted-foreground">
+        {GUEST_STAGE_STEPS.map((step) => (
+          <span key={step} className="flex-1 text-center first:text-left last:text-right">
+            {GUEST_STAGE_LABEL[step]}
+          </span>
+        ))}
+      </div>
+
+      {streams.length > 1 && (
+        <div className="mt-3 space-y-1 border-t pt-3">
+          {streams.map((s) => (
+            <div key={s.station} className="flex items-center justify-between text-xs">
+              <span className="capitalize text-muted-foreground">{s.station}</span>
+              <span className="font-medium text-foreground">{GUEST_STAGE_LABEL[s.stage]}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RequestBillPanel({ tableId, orderId }: { tableId: string; orderId: string }) {
   const requestFn = useServerFn(requestGuestBillFn);
   const request = useMutation({

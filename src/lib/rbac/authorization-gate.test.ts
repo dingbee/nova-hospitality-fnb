@@ -276,12 +276,12 @@ describe("direct server-function bypass", () => {
   });
 
   /**
-   * Exactly four files may skip requireSupabaseAuth, and all four are held
+   * Exactly five files may skip requireSupabaseAuth, and all five are held
    * to the same rule as every other bypass surface in this describe block:
    * no identity, only an unguessable id, and every other fact (tenant,
    * property, location, price, station, payable amount, order status,
    * timestamps) re-derived server-side rather than trusted from the
-   * request. Adding a fifth entry here is a security review, not a
+   * request. Adding a sixth entry here is a security review, not a
    * formatting change.
    */
   const ALLOWED_UNAUTHENTICATED = [
@@ -289,6 +289,7 @@ describe("direct server-function bypass", () => {
     join(ROOT, "src/modules/restaurant/selforder/selfbill.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selforder.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfpay.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selftrack.functions.ts"),
   ].sort();
 
   it("every server function authenticates, except the token-scoped guest surfaces", () => {
@@ -365,6 +366,27 @@ describe("direct server-function bypass", () => {
     // is authorized to do.
     expect(server).not.toMatch(/\brequestBill\(/);
     expect(server).not.toMatch(/assertCapability/);
+  });
+
+  it("self-order tracking never accepts tenant/station/ticket status from the client, writes nothing, and never touches payment state", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selftrack.functions.ts"));
+    expect(fn).toMatch(/guestOrderProgressSchema\.parse/);
+    // The contract carries only tableId/orderId — station, ticket status and
+    // production stage are all re-derived server-side, never accepted from
+    // the client. Matched as field definitions, not prose.
+    const contracts = read(join(ROOT, "src/modules/restaurant/selforder/selftrack.contracts.ts"));
+    expect(contracts).not.toMatch(
+      /\n\s*(tenantId|propertyId|locationId|station|stationId|status|stage|overallStage)\s*:/,
+    );
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selftrack.server.ts"));
+    expect(server).toMatch(/resolveGuestTableContext/);
+    expect(server).not.toMatch(/input\.tenantId|input\.propertyId|input\.locationId/);
+    // This is a pure read — it must never call .update(/.insert(/.delete(
+    // against any table, unlike the write-side selfbill.server.ts/
+    // selfpay.server.ts, and it has no business with payment/payment_state
+    // at all — that stays authoritative in selfpay.server.ts alone.
+    expect(server).not.toMatch(/\.(update|insert|delete)\(/);
+    expect(server).not.toMatch(/payment_state|restaurant_payments/);
   });
 
   /**
