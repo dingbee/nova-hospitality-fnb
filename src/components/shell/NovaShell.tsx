@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Command as CommandIcon, LogOut, Menu, Search, ShieldAlert, UserCog, UtensilsCrossed, X } from "lucide-react";
+import { LogOut, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { PRODUCT } from "@/config/product";
 import { usePrincipal } from "@/lib/rbac/usePermissions";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
-import { ThemeToggle } from "@/components/os/ThemeToggle";
-import { ACCOUNT_ITEM, activeItem, groupOf, visibleGroups } from "./navigation";
+import { activeItem, groupOf, visibleGroups } from "./navigation";
 import { CommandPalette } from "./CommandPalette";
+import { TopBar } from "./TopBar";
+import { NavPanel } from "./NavPanel";
+import { MobileNavDrawer } from "./MobileNavDrawer";
+import { Breadcrumb } from "./Breadcrumb";
 
 export function NovaShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -16,17 +18,96 @@ export function NovaShell({ children }: { children: ReactNode }) {
   const { data: principal, error: principalError } = usePrincipal();
   const { data: workspace } = useRestaurantWorkspace();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const groups = useMemo(() => visibleGroups(principal?.permissions ?? []), [principal?.permissions]);
+
+  const groups = useMemo(
+    () => visibleGroups(principal?.permissions ?? []),
+    [principal?.permissions],
+  );
   const current = activeItem(pathname);
   const currentGroup = groupOf(current);
-  const roleSummary = useMemo(() => { const unique = Array.from(new Set(principal?.roles ?? [])); if (!unique.length) return ""; const shown = unique.slice(0, 2).join(", "); return unique.length > 2 ? `${shown} +${unique.length - 2}` : shown; }, [principal?.roles]);
+  const roleSummary = useMemo(() => {
+    const unique = Array.from(new Set(principal?.roles ?? []));
+    if (!unique.length) return "";
+    const shown = unique.slice(0, 2).join(", ");
+    return unique.length > 2 ? `${shown} +${unique.length - 2}` : shown;
+  }, [principal?.roles]);
+
   useEffect(() => setMobileOpen(false), [pathname]);
-  const signOut = async () => { await queryClient.cancelQueries(); queryClient.clear(); await supabase.auth.signOut(); navigate({ to: "/auth", replace: true }); };
-  const inactive = principalError instanceof Error && /disabled|enrolment/i.test(principalError.message ?? "");
-  if (inactive) return <div className="nova-os flex min-h-screen items-center justify-center px-4"><div className="nova-surface max-w-md p-8 text-center"><ShieldAlert className="mx-auto size-8 text-[color:var(--nova-danger)]" /><h1 className="nova-title mt-4 text-xl">Access unavailable</h1><p className="mt-2 text-sm text-muted-foreground">{principalError.message}</p><button type="button" onClick={signOut} className="nova-action mt-6 inline-flex min-h-11 items-center justify-center gap-2 bg-[color:var(--nova-accent)] px-5 text-sm font-medium text-white"><LogOut className="size-4" /> Sign out</button></div></div>;
-  const nav = <nav aria-label="Operations" className="flex flex-col gap-5 p-3">{groups.map((group) => { const isCollapsed = collapsed[group.label] ?? false; return <div key={group.label}><button type="button" data-nav-plain="true" aria-expanded={!isCollapsed} onClick={() => setCollapsed((c) => ({ ...c, [group.label]: !isCollapsed }))} className="nova-eyebrow flex w-full items-center justify-between rounded-lg px-2 py-1.5 hover:text-[color:var(--nova-ink)]">{group.label}<ChevronDown className={`size-3.5 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} /></button>{!isCollapsed && <ul className="mt-1.5 space-y-1">{group.items.map((item) => <li key={item.to}><Link to={item.to} title={item.hint} activeOptions={{ exact: item.exact ?? false }} activeProps={{ className: "nova-nav-active", "aria-current": "page" }} inactiveProps={{ className: "nova-nav-link" }} className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm outline-none transition-colors"><item.icon className="size-[17px] shrink-0" aria-hidden="true" /><span className="truncate">{item.label}</span></Link></li>)}</ul>}</div>; })}<div className="border-t border-[color:var(--nova-line)] pt-4"><Link to={ACCOUNT_ITEM.to} activeProps={{ className: "nova-nav-active" }} inactiveProps={{ className: "nova-nav-link" }} className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm"><UserCog className="size-[17px]" />{ACCOUNT_ITEM.label}</Link></div></nav>;
-  return <div className="nova-os min-h-screen"><a href="#nova-main" className="sr-only focus:not-sr-only">Skip to content</a><header className="sticky top-0 z-30 border-b border-[color:var(--nova-line)] bg-[color:var(--nova-surface)]/90 backdrop-blur-xl"><div className="flex h-16 items-center gap-3 px-3 sm:px-5"><button type="button" aria-label={mobileOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileOpen} onClick={() => setMobileOpen((o) => !o)} className="nova-action inline-flex size-11 items-center justify-center bg-[color:var(--nova-surface-2)] lg:hidden"><Menu className="size-5" /></button><Link to="/admin/restaurant" className="flex items-center gap-2.5"><span className="nova-logo flex size-9 items-center justify-center rounded-xl text-[color:var(--nova-accent)]"><UtensilsCrossed className="size-[18px]" /></span><span className="hidden leading-tight sm:block"><span className="block text-sm font-semibold tracking-tight text-[color:var(--nova-ink)]">{PRODUCT.shortName}</span><span className="block text-[0.68rem] text-[color:var(--nova-ink-3)]">{PRODUCT.tagline}</span></span></Link>{workspace?.tenant && <span className="nova-chip ml-2 hidden md:inline-flex">{workspace.tenant.name}{workspace.properties?.[0]?.name && <span>· {workspace.properties[0].name}</span>}{workspace.locations?.[0]?.name && <span>· {workspace.locations[0].name}</span>}</span>}<div className="ml-auto flex items-center gap-2"><button type="button" onClick={() => setPaletteOpen(true)} className="nova-action hidden min-h-10 items-center gap-2 bg-[color:var(--nova-sunken)] px-3 text-xs text-[color:var(--nova-ink-3)] md:inline-flex"><Search className="size-3.5" />Jump to…<kbd className="ml-1 rounded border px-1.5 py-0.5 text-[0.6rem]"><CommandIcon className="inline size-2.5" />K</kbd></button><ThemeToggle />{principal?.email && <span className="hidden max-w-[16rem] text-right text-xs leading-tight md:block"><span className="block truncate text-[color:var(--nova-ink)]">{principal.email}</span>{roleSummary && <span className="block truncate text-[color:var(--nova-ink-3)]">{roleSummary}</span>}</span>}<button type="button" onClick={signOut} aria-label="Sign out" className="nova-action inline-flex min-h-10 items-center gap-1.5 bg-[color:var(--nova-surface-2)] px-3 text-sm text-[color:var(--nova-ink-2)]"><LogOut className="size-4" /><span className="hidden sm:inline">Sign out</span></button></div></div></header><div className="flex"><aside aria-label="Primary navigation" className="sticky top-16 hidden h-[calc(100vh-4rem)] w-64 shrink-0 overflow-y-auto border-r border-[color:var(--nova-line)] bg-[color:var(--nova-surface)] lg:block">{nav}</aside>{mobileOpen && <div className="fixed inset-0 z-40 lg:hidden"><button type="button" aria-label="Close navigation" onClick={() => setMobileOpen(false)} className="absolute inset-0 bg-black/50 backdrop-blur-sm" /><div className="absolute inset-y-0 left-0 w-[19rem] overflow-y-auto border-r border-[color:var(--nova-line)] bg-[color:var(--nova-surface)] shadow-2xl"><div className="flex h-16 items-center justify-between border-b border-[color:var(--nova-line)] px-4"><span className="text-sm font-semibold">{PRODUCT.shortName}</span><button type="button" aria-label="Close navigation" onClick={() => setMobileOpen(false)} className="nova-action inline-flex size-10 items-center justify-center"><X className="size-4" /></button></div>{nav}</div></div>}<main id="nova-main" className="min-w-0 flex-1 p-4 sm:p-6">{current && <nav aria-label="Breadcrumb" className="mb-4 text-[0.7rem] text-[color:var(--nova-ink-3)]"><ol className="flex flex-wrap items-center gap-1.5"><li><Link to="/admin/restaurant" className="hover:text-[color:var(--nova-ink)]">{PRODUCT.shortName}</Link></li>{currentGroup && <><li aria-hidden="true">/</li><li>{currentGroup}</li></>}<li aria-hidden="true">/</li><li className="text-[color:var(--nova-ink)]">{current.label}</li></ol></nav>}<div className="mx-auto max-w-[1600px] space-y-6">{children}</div></main></div><CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={groups} /></div>;
+
+  const signOut = async () => {
+    await queryClient.cancelQueries();
+    queryClient.clear();
+    await supabase.auth.signOut();
+    navigate({ to: "/auth", replace: true });
+  };
+
+  const toggleGroup = (label: string) =>
+    setCollapsed((c) => ({ ...c, [label]: !(c[label] ?? false) }));
+
+  const inactive =
+    principalError instanceof Error && /disabled|enrolment/i.test(principalError.message ?? "");
+  if (inactive) {
+    return (
+      <div className="nova-os flex min-h-screen items-center justify-center px-4">
+        <div className="nova-surface max-w-md p-8 text-center">
+          <ShieldAlert className="mx-auto size-8 text-[color:var(--nova-danger)]" />
+          <h1 className="nova-title mt-4 text-xl">Access unavailable</h1>
+          <p className="mt-2 text-sm text-muted-foreground">{principalError.message}</p>
+          <button
+            type="button"
+            onClick={signOut}
+            className="nova-action mt-6 inline-flex min-h-11 items-center justify-center gap-2 bg-[color:var(--nova-accent)] px-5 text-sm font-medium text-white"
+          >
+            <LogOut className="size-4" /> Sign out
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="nova-os min-h-screen">
+      <a href="#nova-main" className="sr-only focus:not-sr-only">
+        Skip to content
+      </a>
+
+      <TopBar
+        mobileOpen={mobileOpen}
+        onToggleMobile={() => setMobileOpen((o) => !o)}
+        workspace={workspace}
+        principalEmail={principal?.email}
+        roleSummary={roleSummary}
+        onOpenPalette={() => setPaletteOpen(true)}
+        onSignOut={signOut}
+      />
+
+      <div className="flex">
+        <aside
+          aria-label="Primary navigation"
+          className="sticky top-16 hidden h-[calc(100vh-4rem)] w-64 shrink-0 overflow-y-auto border-r border-[color:var(--nova-line)] bg-[color:var(--nova-surface)] lg:block"
+        >
+          <NavPanel groups={groups} collapsed={collapsed} onToggleGroup={toggleGroup} />
+        </aside>
+
+        <MobileNavDrawer
+          open={mobileOpen}
+          onClose={() => setMobileOpen(false)}
+          groups={groups}
+          collapsed={collapsed}
+          onToggleGroup={toggleGroup}
+        />
+
+        <main id="nova-main" className="min-w-0 flex-1 p-4 sm:p-6">
+          {current && <Breadcrumb currentGroup={currentGroup} currentLabel={current.label} />}
+          <div className="mx-auto max-w-[1600px] space-y-6">{children}</div>
+        </main>
+      </div>
+
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={groups} />
+    </div>
+  );
 }
