@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { CheckCircle2, Minus, Plus, ShoppingBag, UtensilsCrossed, X } from "lucide-react";
+import { Check, CheckCircle2, Minus, Plus, ShoppingBag, UtensilsCrossed, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -32,6 +32,16 @@ import {
   initiateGuestPaymentFn,
 } from "@/modules/restaurant/selforder/selfpay.functions";
 import { GUEST_PAYMENT_METHODS } from "@/modules/restaurant/selforder/selfpay.contracts";
+import {
+  buildChosenModifiers,
+  isMissingRequiredModifiers,
+  resolveVariantUnitPrice,
+  toggleModifierSelection,
+  toGuestOrderLine,
+  type ModifierGroup,
+  type ModifierSelection,
+  type ProductVariant,
+} from "@/modules/restaurant/selforder/selforder-cart";
 import type { SalesLineModifier } from "@/modules/restaurant/sales/sales.server";
 
 export const Route = createFileRoute("/order/$tableId")({
@@ -47,15 +57,6 @@ function money(n: number, currency: string) {
   }
 }
 
-type ModifierGroup = {
-  id: string;
-  name: string;
-  min_select: number;
-  max_select: number;
-  required: boolean;
-  modifiers: { id: string; group_id: string; name: string; price_delta: number }[];
-};
-
 type MenuItem = {
   id: string;
   name: string;
@@ -67,6 +68,7 @@ type MenuItem = {
   image_url: string | null;
   category_id: string | null;
   modifier_group_ids: string[];
+  variants?: ProductVariant[];
 };
 
 type CartLine = {
@@ -76,6 +78,9 @@ type CartLine = {
   unitPrice: number;
   quantity: number;
   modifiers: SalesLineModifier[];
+  variantId?: string;
+  /** Kitchen-facing prep instruction ("no onions", "sauce on the side") — posLineSchema's `notes` field, printed on the ticket, not the receipt. */
+  notes?: string;
 };
 
 function GuestOrderPage() {
@@ -119,16 +124,30 @@ function GuestOrderPage() {
   );
   const cartCount = cart.reduce((s, l) => s + l.quantity, 0);
 
-  const addToCart = (item: MenuItem, modifiers: SalesLineModifier[]) => {
+  const addToCart = (
+    item: MenuItem,
+    selection: {
+      modifiers: SalesLineModifier[];
+      unitPrice: number;
+      variantId?: string;
+      variantName?: string;
+      notes?: string;
+    },
+  ) => {
     setCart((c) => [
       ...c,
       {
         key: `${item.id}:${Date.now()}`,
         menuItemId: item.id,
-        name: item.name,
-        unitPrice: Number(item.price ?? 0),
+        // Same convention PosItemDialog already uses: the variant name rides
+        // along in the line description, so the kitchen ticket says "Burger
+        // — Large" rather than just "Burger".
+        name: selection.variantName ? `${item.name} — ${selection.variantName}` : item.name,
+        unitPrice: selection.unitPrice,
         quantity: 1,
-        modifiers,
+        modifiers: selection.modifiers,
+        variantId: selection.variantId,
+        notes: selection.notes,
       },
     ]);
     setPickerItem(null);
@@ -150,14 +169,7 @@ function GuestOrderPage() {
         data: {
           tableId,
           guestName: guestName || undefined,
-          lines: cart.map((l) => ({
-            menuItemId: l.menuItemId,
-            description: l.name,
-            quantity: l.quantity,
-            unitPrice: 0,
-            discount: 0,
-            modifiers: l.modifiers,
-          })),
+          lines: cart.map(toGuestOrderLine),
         },
       }),
     onSuccess: (order: { id: string; order_number: string; total: number }) => {
@@ -284,7 +296,7 @@ function GuestOrderPage() {
               .filter(Boolean) as ModifierGroup[]
           }
           onClose={() => setPickerItem(null)}
-          onAdd={(mods) => addToCart(pickerItem, mods)}
+          onAdd={(selection) => addToCart(pickerItem, selection)}
         />
       )}
 
@@ -318,6 +330,9 @@ function GuestOrderPage() {
                       <p className="truncate text-xs text-muted-foreground">
                         {l.modifiers.map((m) => m.name).join(", ")}
                       </p>
+                    )}
+                    {l.notes && (
+                      <p className="truncate text-xs italic text-muted-foreground">"{l.notes}"</p>
                     )}
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {money(
@@ -423,14 +438,33 @@ function MenuItemCard({
         <span className="mt-auto pt-1 text-sm font-semibold text-primary">
           {money(Number(item.price ?? 0), currency)}
         </span>
-        {item.available === false && (
+        {item.available === false ? (
           <Badge variant="secondary" className="w-fit">
             Unavailable
           </Badge>
+        ) : (
+          (item.variants ?? []).length > 0 && (
+            <Badge variant="secondary" className="w-fit">
+              {item.variants!.length} options
+            </Badge>
+          )
         )}
       </div>
     </button>
   );
+}
+
+type ItemSelection = {
+  modifiers: SalesLineModifier[];
+  unitPrice: number;
+  variantId?: string;
+  variantName?: string;
+  notes?: string;
+};
+
+/** Selected-state marker shared by variant and modifier chips, so "chosen" reads identically everywhere in this dialog. */
+function ChipCheck() {
+  return <Check className="size-3.5" aria-hidden />;
 }
 
 function ItemPicker({
@@ -444,41 +478,25 @@ function ItemPicker({
   currency: string;
   groups: ModifierGroup[];
   onClose: () => void;
-  onAdd: (modifiers: SalesLineModifier[]) => void;
+  onAdd: (selection: ItemSelection) => void;
 }) {
-  const [selected, setSelected] = useState<Record<string, Set<string>>>({});
+  const [selected, setSelected] = useState<ModifierSelection>({});
+  // No restaurant_product_variants row carries a required/min/max-select
+  // column (unlike modifier groups, which do) — a variant is never
+  // mandatory here, matching the till's own PosItemDialog, which lets
+  // "Add" proceed with no variant chosen too.
+  const [variantId, setVariantId] = useState<string | undefined>(undefined);
+  const [note, setNote] = useState("");
 
-  const toggle = (group: ModifierGroup, modifierId: string) => {
-    setSelected((s) => {
-      const current = new Set(s[group.id] ?? []);
-      const single = group.max_select <= 1;
-      if (current.has(modifierId)) {
-        current.delete(modifierId);
-      } else {
-        if (single) current.clear();
-        else if (current.size >= group.max_select) return s;
-        current.add(modifierId);
-      }
-      return { ...s, [group.id]: current };
-    });
-  };
+  const variants: ProductVariant[] = item.variants ?? [];
+  const variant = variants.find((v) => v.id === variantId);
+  const unitPrice = resolveVariantUnitPrice(Number(item.price ?? 0), variant);
 
-  const missingRequired = groups.some(
-    (g) => g.required && (selected[g.id]?.size ?? 0) < Math.max(1, g.min_select),
-  );
+  const toggle = (group: ModifierGroup, modifierId: string) =>
+    setSelected((s) => toggleModifierSelection(s, group, modifierId));
 
-  const chosenModifiers: SalesLineModifier[] = groups.flatMap((g) =>
-    [...(selected[g.id] ?? [])].map((id) => {
-      const m = g.modifiers.find((mm) => mm.id === id)!;
-      return {
-        modifierId: m.id,
-        groupId: g.id,
-        name: m.name,
-        priceDelta: Number(m.price_delta ?? 0),
-        quantity: 1,
-      };
-    }),
-  );
+  const missingRequired = isMissingRequiredModifiers(groups, selected);
+  const chosenModifiers: SalesLineModifier[] = buildChosenModifiers(groups, selected);
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -487,14 +505,53 @@ function ItemPicker({
           <DialogTitle className="font-display text-xl">{item.name}</DialogTitle>
           {item.description && <DialogDescription>{item.description}</DialogDescription>}
         </DialogHeader>
-        <p className="text-lg font-semibold text-primary">
-          {money(Number(item.price ?? 0), currency)}
-        </p>
+        <p className="text-lg font-semibold text-primary">{money(unitPrice, currency)}</p>
+
+        {variants.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">
+              Choose an option
+              <span className="ml-1 text-xs font-normal text-muted-foreground">Optional</span>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {variants.map((v) => {
+                const active = v.id === variantId;
+                const vPrice = Number(v.price ?? 0);
+                // Two distinct ways a variant's own price row can read:
+                // a delta on top of the base price ("+2.00"), or a
+                // standalone absolute price ("— 8.00") — never both.
+                const priceLabel = v.price_is_delta
+                  ? vPrice !== 0
+                    ? ` (${vPrice > 0 ? "+" : ""}${money(vPrice, currency)})`
+                    : ""
+                  : ` — ${money(vPrice, currency)}`;
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => setVariantId(active ? undefined : v.id)}
+                    aria-pressed={active}
+                    className={`inline-flex min-h-10 items-center gap-1.5 rounded-full border px-3.5 text-sm transition-colors ${active ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground"}`}
+                  >
+                    {active && <ChipCheck />}
+                    {v.name}
+                    {priceLabel}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {groups.map((g) => (
           <div key={g.id} className="space-y-2">
             <p className="text-sm font-medium">
               {g.name}
-              {g.required && <span className="ml-1 text-xs text-destructive">Required</span>}
+              {g.required ? (
+                <span className="ml-1 text-xs font-semibold text-destructive">Required</span>
+              ) : (
+                <span className="ml-1 text-xs font-normal text-muted-foreground">Optional</span>
+              )}
             </p>
             <div className="flex flex-wrap gap-2">
               {g.modifiers.map((m) => {
@@ -504,8 +561,10 @@ function ItemPicker({
                     key={m.id}
                     type="button"
                     onClick={() => toggle(g, m.id)}
-                    className={`min-h-10 rounded-full border px-3.5 text-sm transition-colors ${active ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground"}`}
+                    aria-pressed={active}
+                    className={`inline-flex min-h-10 items-center gap-1.5 rounded-full border px-3.5 text-sm transition-colors ${active ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground"}`}
                   >
+                    {active && <ChipCheck />}
                     {m.name}
                     {Number(m.price_delta ?? 0) > 0 &&
                       ` +${money(Number(m.price_delta), currency)}`}
@@ -515,6 +574,23 @@ function ItemPicker({
             </div>
           </div>
         ))}
+
+        <div className="space-y-2">
+          <label htmlFor="item-note" className="text-sm font-medium">
+            Note for the kitchen
+            <span className="ml-1 text-xs font-normal text-muted-foreground">Optional</span>
+          </label>
+          <textarea
+            id="item-note"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="e.g. No onions, sauce on the side, mild"
+            rows={2}
+            maxLength={500}
+            className="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary"
+          />
+        </div>
+
         <div className="flex gap-2 pt-2">
           <Button variant="outline" className="min-h-11" onClick={onClose}>
             <X className="size-4" /> Cancel
@@ -522,7 +598,15 @@ function ItemPicker({
           <Button
             className="min-h-11 flex-1"
             disabled={missingRequired}
-            onClick={() => onAdd(chosenModifiers)}
+            onClick={() =>
+              onAdd({
+                modifiers: chosenModifiers,
+                unitPrice,
+                variantId,
+                variantName: variant?.name,
+                notes: note.trim() || undefined,
+              })
+            }
           >
             Add to order
           </Button>
