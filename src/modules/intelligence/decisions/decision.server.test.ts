@@ -28,6 +28,7 @@ const STEP_ID = "66666666-6666-6666-6666-666666666666";
 function decisionRow(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: DECISION_ID,
+    tenant_id: TENANT_A,
     module: "restaurant",
     domain: "operations",
     decision_key: "restaurant.tenant.finding",
@@ -73,8 +74,10 @@ function makeFakeSupabase(opts: {
   plans?: Record<string, any>;
   planSteps?: Record<string, any>;
   restaurantMembers: Array<{ tenant_id: string; user_id: string; role: string }>;
+  /** Simulate a not-yet-built table (e.g. intelligence_memory in I3, per its own scope) failing on insert. */
+  failInsertTables?: string[];
 }) {
-  const calls: Array<{ table: string; op: "update" | "insert" }> = [];
+  const calls: Array<{ table: string; op: "update" | "insert"; payload: any }> = [];
 
   function builder(table: string) {
     const filters: Record<string, unknown> = {};
@@ -90,13 +93,13 @@ function makeFakeSupabase(opts: {
       update: (patch: any) => {
         op = "update";
         payload = patch;
-        calls.push({ table, op: "update" });
+        calls.push({ table, op: "update", payload: patch });
         return api;
       },
       insert: (row: any) => {
         op = "insert";
         payload = row;
-        calls.push({ table, op: "insert" });
+        calls.push({ table, op: "insert", payload: row });
         return api;
       },
       single: () => resolve(true),
@@ -135,7 +138,12 @@ function makeFakeSupabase(opts: {
       }
       // update/insert: acknowledge without mutating fixture state — the test
       // only needs to prove whether the call happened, not persist it.
-      if (op === "insert") return { data: { id: "generated" }, error: null };
+      if (op === "insert") {
+        if (opts.failInsertTables?.includes(table)) {
+          return { data: null, error: { message: `relation "${table}" does not exist` } };
+        }
+        return { data: { id: "generated" }, error: null };
+      }
       return { data: null, error: null };
     }
 
@@ -184,6 +192,40 @@ describe("decideDecision — tenant isolation", () => {
     expect(calls.some((c) => c.table === "intelligence_decisions" && c.op === "update")).toBe(true);
   });
 
+  it("approving a decision creates an action with a real decision_id FK, not just payload.decision_id", async () => {
+    const { supabase, calls } = makeFakeSupabase({
+      decisions: { [DECISION_ID]: decisionRow() },
+      restaurantMembers: [{ tenant_id: TENANT_A, user_id: USER, role: "restaurant_manager" }],
+    });
+
+    await expect(
+      decideDecision(supabase, USER, { id: DECISION_ID, decision: "approved" }),
+    ).resolves.toMatchObject({ ok: true });
+
+    const actionInsert = calls.find((c) => c.table === "intelligence_actions" && c.op === "insert");
+    expect(actionInsert).toBeDefined();
+    expect(actionInsert!.payload.decision_id).toBe(DECISION_ID);
+  });
+
+  it("completing a decision still succeeds even though intelligence_memory does not exist yet (I3 defers Learn)", async () => {
+    const { supabase } = makeFakeSupabase({
+      decisions: { [DECISION_ID]: decisionRow() },
+      restaurantMembers: [{ tenant_id: TENANT_A, user_id: USER, role: "restaurant_manager" }],
+      failInsertTables: ["intelligence_memory", "intelligence_feedback"],
+    });
+
+    // Without the try/catch around remember()/the feedback insert, this
+    // would throw here and the decision would never transition to
+    // "completed" even though the governance action itself is what matters.
+    await expect(
+      decideDecision(supabase, USER, {
+        id: DECISION_ID,
+        decision: "completed",
+        outcomeSummary: "Reordered.",
+      }),
+    ).resolves.toMatchObject({ ok: true });
+  });
+
   it("refuses when the decision's module has no registered tenant scope checker", async () => {
     const { supabase } = makeFakeSupabase({
       decisions: {
@@ -199,7 +241,7 @@ describe("decideDecision — tenant isolation", () => {
 
   it("refuses when the decision has no recorded tenant scope at all", async () => {
     const { supabase } = makeFakeSupabase({
-      decisions: { [DECISION_ID]: decisionRow({ context: {} }) },
+      decisions: { [DECISION_ID]: decisionRow({ tenant_id: null }) },
       restaurantMembers: [{ tenant_id: TENANT_A, user_id: USER, role: "owner" }],
     });
 

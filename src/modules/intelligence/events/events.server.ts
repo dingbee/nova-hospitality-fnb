@@ -5,25 +5,66 @@
  */
 import type { ListEventsInput, RecordEventInput } from "../core/contracts";
 import { assertIntelRead, visibleModules } from "../core/access.server";
+import { getTenantScopeChecker } from "../core/registry";
 
 type Sb = any;
 
-/** Idempotent: a repeated `dedupeKey` returns the existing event. */
+/**
+ * Tenant isolation for an observed event — mirrors decision.server.ts's
+ * assertDecisionScope exactly (same registry, same fail-closed shape). When
+ * a caller provides a tenantId, the owning module MUST have a registered
+ * TenantScopeChecker and that check MUST pass; there is no fallback to the
+ * coarse, cross-tenant assertIntelRead once a tenant is named. A module that
+ * never names a tenant (nothing does today — emitRestaurantEvent always
+ * does) keeps the old, coarse global-permission gate.
+ */
+async function assertEventScope(
+  supabase: Sb,
+  userId: string,
+  module: string,
+  scope: { tenantId?: string; propertyId?: string | null; locationId?: string | null },
+): Promise<void> {
+  if (!scope.tenantId) {
+    await assertIntelRead(supabase, userId);
+    return;
+  }
+  const checker = getTenantScopeChecker(module as any);
+  if (!checker) {
+    throw new Error(
+      `No tenant scope authorization is registered for module "${module}" — refusing to record this event.`,
+    );
+  }
+  await checker(supabase, userId, {
+    tenantId: scope.tenantId,
+    propertyId: scope.propertyId,
+    locationId: scope.locationId,
+  });
+}
+
+/** Idempotent: a repeated `dedupeKey` (scoped to the same tenant) returns the existing event. */
 export async function recordEvent(supabase: Sb, userId: string, input: RecordEventInput) {
-  await assertIntelRead(supabase, userId);
+  await assertEventScope(supabase, userId, input.module, {
+    tenantId: input.tenantId,
+    propertyId: input.propertyId,
+    locationId: input.locationId,
+  });
 
   if (input.dedupeKey) {
-    const { data: existing } = await supabase
+    let dupeQuery = supabase
       .from("intelligence_events")
       .select("id")
-      .eq("dedupe_key", input.dedupeKey)
-      .maybeSingle();
+      .eq("dedupe_key", input.dedupeKey);
+    if (input.tenantId) dupeQuery = dupeQuery.eq("tenant_id", input.tenantId);
+    const { data: existing } = await dupeQuery.maybeSingle();
     if (existing) return { id: existing.id as string, duplicate: true };
   }
 
   const { data, error } = await supabase
     .from("intelligence_events")
     .insert({
+      tenant_id: input.tenantId ?? null,
+      property_id: input.propertyId ?? null,
+      location_id: input.locationId ?? null,
       module: input.module,
       event_type: input.eventType,
       entity_type: input.entityType ?? null,
@@ -52,7 +93,9 @@ export async function listEvents(supabase: Sb, userId: string, input: ListEvents
 
   let q = supabase
     .from("intelligence_events")
-    .select("id, module, event_type, entity_type, entity_id, severity, source, payload, occurred_at, processed_at")
+    .select(
+      "id, module, event_type, entity_type, entity_id, severity, source, payload, occurred_at, processed_at",
+    )
     .in("module", input.module ? modules.filter((m) => m === input.module) : modules)
     .order("occurred_at", { ascending: false })
     .limit(input.limit);

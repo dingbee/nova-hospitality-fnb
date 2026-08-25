@@ -75,6 +75,16 @@ const uuid = z.string().uuid();
 
 export const recordEventSchema = z.object({
   module: moduleEnum,
+  /**
+   * First-class scope, used for authorization — see registry.ts's
+   * TenantScopeChecker. When present, the module's registered checker MUST
+   * pass before the event is recorded; a module with no registered checker
+   * is refused rather than silently allowed. Never derive authorization
+   * from payload fields — payload is opaque event-specific data only.
+   */
+  tenantId: uuid.optional(),
+  propertyId: uuid.optional(),
+  locationId: uuid.optional(),
   eventType: z.string().min(2).max(120),
   entityType: z.string().max(60).optional(),
   entityId: uuid.optional(),

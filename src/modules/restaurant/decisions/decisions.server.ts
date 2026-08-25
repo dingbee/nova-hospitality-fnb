@@ -58,7 +58,7 @@ async function loadStored(sb: Sb, tenantId: string): Promise<StoredDecision[]> {
     .from("intelligence_decisions")
     .select("*")
     .eq("module", "restaurant")
-    .like("decision_key", `restaurant.${tenantId}.%`)
+    .eq("tenant_id", tenantId)
     .order("created_at", { ascending: false })
     .limit(25);
   const rows = (data ?? []) as any[];
@@ -67,19 +67,26 @@ async function loadStored(sb: Sb, tenantId: string): Promise<StoredDecision[]> {
   const { data: plans } = await sb
     .from("intelligence_plans")
     .select("id, decision_id, objective, status")
-    .in("decision_id", rows.map((r) => r.id));
+    .in(
+      "decision_id",
+      rows.map((r) => r.id),
+    );
   const planRows = (plans ?? []) as any[];
 
   const { data: steps } = planRows.length
     ? await sb
         .from("intelligence_plan_steps")
         .select("*")
-        .in("plan_id", planRows.map((p) => p.id))
+        .in(
+          "plan_id",
+          planRows.map((p) => p.id),
+        )
         .order("sequence", { ascending: true })
     : { data: [] as any[] };
 
   const byPlan = new Map<string, any[]>();
-  for (const s of (steps ?? []) as any[]) byPlan.set(s.plan_id, [...(byPlan.get(s.plan_id) ?? []), s]);
+  for (const s of (steps ?? []) as any[])
+    byPlan.set(s.plan_id, [...(byPlan.get(s.plan_id) ?? []), s]);
 
   return rows.map((row) => {
     const plan = planRows.find((p) => p.decision_id === row.id);
@@ -169,6 +176,7 @@ export async function runRestaurantDecisionPass(
       .from("intelligence_decisions")
       .select("id")
       .eq("module", "restaurant")
+      .eq("tenant_id", tenantId)
       .eq("decision_key", d.key)
       .maybeSingle();
     if (existing) continue;
@@ -176,6 +184,7 @@ export async function runRestaurantDecisionPass(
     const { data: row, error } = await sb
       .from("intelligence_decisions")
       .insert({
+        tenant_id: tenantId,
         module: "restaurant",
         domain: d.domain,
         decision_key: d.key,

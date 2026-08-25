@@ -297,7 +297,7 @@ export async function decideDecision(supabase: Sb, userId: string, input: Decide
     .eq("id", input.id)
     .single();
   if (loadError || !row) throw new Error(loadError?.message ?? "Decision not found.");
-  await assertDecisionScope(supabase, userId, row.module, (row.context as any)?.tenant_id);
+  await assertDecisionScope(supabase, userId, row.module, row.tenant_id);
 
   const now = new Date().toISOString();
   const selectedKey = input.selectedOptionKey ?? row.recommended_option_key;
@@ -328,6 +328,7 @@ export async function decideDecision(supabase: Sb, userId: string, input: Decide
       const { data: action } = await supabase
         .from("intelligence_actions")
         .insert({
+          decision_id: row.id,
           module: row.module,
           action_type: selected.option.actionType,
           title: `${row.title} → ${selected.option.title}`,
@@ -376,34 +377,56 @@ export async function decideDecision(supabase: Sb, userId: string, input: Decide
       .eq("decision_id", input.id);
   }
 
-  /* ---- Learn: feedback always, memory only for closed outcomes ---- */
-  await supabase.from("intelligence_feedback").insert({
-    subject_type: "recommendation",
-    subject_id: row.id,
-    module: row.module,
-    stage: "act",
-    useful: input.decision === "approved" || input.decision === "completed",
-    comment: `Decision ${input.decision}${selectedKey ? ` — option ${selectedKey}` : ""}${input.note ? `: ${input.note}` : ""}`,
-    correction: input.decision === "rejected" ? (input.note ?? null) : null,
-    created_by: userId,
-  });
+  /*
+   * ---- Learn: feedback always, memory only for closed outcomes ----
+   * intelligence_feedback / intelligence_memory are explicitly out of
+   * scope for I3 (I2's locked plan defers Learn to a later phase) and do
+   * not exist yet. The governance transition above (decision status, plan
+   * status, action creation) is the actual outcome of this call and must
+   * still succeed — best-effort here, exactly like emitRestaurantEvent
+   * treats Observe: never let a not-yet-built stage break a working one.
+   */
+  try {
+    await supabase.from("intelligence_feedback").insert({
+      subject_type: "recommendation",
+      subject_id: row.id,
+      module: row.module,
+      stage: "act",
+      useful: input.decision === "approved" || input.decision === "completed",
+      comment: `Decision ${input.decision}${selectedKey ? ` — option ${selectedKey}` : ""}${input.note ? `: ${input.note}` : ""}`,
+      correction: input.decision === "rejected" ? (input.note ?? null) : null,
+      created_by: userId,
+    });
+  } catch (err) {
+    console.warn(
+      "[intelligence-core] decision feedback not recorded (intelligence_feedback not yet built)",
+      err,
+    );
+  }
 
   if (input.decision === "completed" || input.decision === "failed") {
-    const { remember } = await import("../memory/memory.server");
-    // Observed tier only — promotion to learned/strategic stays human-curated.
-    await remember(supabase, userId, {
-      scope: "property",
-      module: row.module,
-      memoryKey: `decision_outcome.${row.domain}.${selectedKey ?? "none"}`,
-      memoryValue:
-        input.outcomeSummary ??
-        `${row.title}: "${selected?.option?.title ?? selectedKey ?? "selected option"}" ${input.decision === "completed" ? "was executed and closed" : "failed during execution"}.`,
-      memoryType: "outcome",
-      memoryTier: "observed",
-      confidence: input.decision === "completed" ? 0.6 : 0.4,
-      source: "decision_engine",
-      metadata: { decision_id: row.id, decision_key: row.decision_key, status: input.decision },
-    } as any);
+    try {
+      const { remember } = await import("../memory/memory.server");
+      // Observed tier only — promotion to learned/strategic stays human-curated.
+      await remember(supabase, userId, {
+        scope: "property",
+        module: row.module,
+        memoryKey: `decision_outcome.${row.domain}.${selectedKey ?? "none"}`,
+        memoryValue:
+          input.outcomeSummary ??
+          `${row.title}: "${selected?.option?.title ?? selectedKey ?? "selected option"}" ${input.decision === "completed" ? "was executed and closed" : "failed during execution"}.`,
+        memoryType: "outcome",
+        memoryTier: "observed",
+        confidence: input.decision === "completed" ? 0.6 : 0.4,
+        source: "decision_engine",
+        metadata: { decision_id: row.id, decision_key: row.decision_key, status: input.decision },
+      } as any);
+    } catch (err) {
+      console.warn(
+        "[intelligence-core] decision outcome memory not recorded (intelligence_memory not yet built)",
+        err,
+      );
+    }
   }
 
   return { ok: true as const, actionId };
@@ -429,16 +452,11 @@ export async function updatePlanStep(supabase: Sb, userId: string, input: Update
 
   const { data: decision, error: decisionError } = await supabase
     .from("intelligence_decisions")
-    .select("module, context")
+    .select("module, tenant_id")
     .eq("id", plan.decision_id)
     .single();
   if (decisionError || !decision) throw new Error(decisionError?.message ?? "Decision not found.");
-  await assertDecisionScope(
-    supabase,
-    userId,
-    decision.module,
-    (decision.context as any)?.tenant_id,
-  );
+  await assertDecisionScope(supabase, userId, decision.module, decision.tenant_id);
 
   const patch: Record<string, unknown> = { status: input.status };
   if (input.note) patch.note = input.note;
