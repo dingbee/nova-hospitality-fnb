@@ -9,6 +9,8 @@
  * The Intelligence Core still never mutates another module's data.
  */
 import { assertIntelDecide, assertIntelRead, visibleModules } from "../core/access.server";
+import { getTenantScopeChecker } from "../core/registry";
+import type { IntelModule } from "../core/contracts";
 import { gatherForecasts } from "../predictions/forecast.server";
 import { buildDecisions, decisionHeadline } from "./decisionEngine";
 import type {
@@ -22,6 +24,32 @@ import type {
 } from "./decision.types";
 
 type Sb = any;
+
+/**
+ * Tenant isolation for a stored decision/plan. The Intelligence Core spans
+ * modules with different tenant ID spaces (see registry.ts's
+ * TenantScopeChecker doc) so there is no single check this file can perform
+ * on its own — it defers to whatever the owning module registered, and
+ * refuses to act (fails closed) rather than allow a module with no
+ * registered check to bypass tenant isolation entirely.
+ */
+async function assertDecisionScope(
+  supabase: Sb,
+  userId: string,
+  module: string,
+  tenantId: string | null | undefined,
+): Promise<void> {
+  const checker = getTenantScopeChecker(module as IntelModule);
+  if (!checker) {
+    throw new Error(
+      `No tenant scope authorization is registered for module "${module}" — refusing to act on it.`,
+    );
+  }
+  if (!tenantId) {
+    throw new Error("This record has no recorded tenant scope — refusing to act on it.");
+  }
+  await checker(supabase, userId, { tenantId });
+}
 
 function rowToStored(row: any, steps: any[]): StoredDecision {
   return {
@@ -88,14 +116,20 @@ async function loadStored(supabase: Sb, modules: string[]): Promise<StoredDecisi
   const { data: plans } = await supabase
     .from("intelligence_plans")
     .select("id, decision_id, objective, status")
-    .in("decision_id", rows.map((r) => r.id));
+    .in(
+      "decision_id",
+      rows.map((r) => r.id),
+    );
   const planRows = (plans ?? []) as any[];
 
   const { data: steps } = planRows.length
     ? await supabase
         .from("intelligence_plan_steps")
         .select("*")
-        .in("plan_id", planRows.map((p) => p.id))
+        .in(
+          "plan_id",
+          planRows.map((p) => p.id),
+        )
         .order("sequence", { ascending: true })
     : { data: [] as any[] };
 
@@ -263,6 +297,7 @@ export async function decideDecision(supabase: Sb, userId: string, input: Decide
     .eq("id", input.id)
     .single();
   if (loadError || !row) throw new Error(loadError?.message ?? "Decision not found.");
+  await assertDecisionScope(supabase, userId, row.module, (row.context as any)?.tenant_id);
 
   const now = new Date().toISOString();
   const selectedKey = input.selectedOptionKey ?? row.recommended_option_key;
@@ -314,19 +349,31 @@ export async function decideDecision(supabase: Sb, userId: string, input: Decide
         .single();
       if (action) {
         actionId = action.id as string;
-        await supabase.from("intelligence_decisions").update({ action_id: actionId }).eq("id", input.id);
+        await supabase
+          .from("intelligence_decisions")
+          .update({ action_id: actionId })
+          .eq("id", input.id);
       }
     }
   }
 
   if (input.decision === "rejected") {
-    await supabase.from("intelligence_plans").update({ status: "cancelled" }).eq("decision_id", input.id);
+    await supabase
+      .from("intelligence_plans")
+      .update({ status: "cancelled" })
+      .eq("decision_id", input.id);
   }
   if (input.decision === "executing") {
-    await supabase.from("intelligence_plans").update({ status: "in_progress" }).eq("decision_id", input.id);
+    await supabase
+      .from("intelligence_plans")
+      .update({ status: "in_progress" })
+      .eq("decision_id", input.id);
   }
   if (input.decision === "completed") {
-    await supabase.from("intelligence_plans").update({ status: "completed" }).eq("decision_id", input.id);
+    await supabase
+      .from("intelligence_plans")
+      .update({ status: "completed" })
+      .eq("decision_id", input.id);
   }
 
   /* ---- Learn: feedback always, memory only for closed outcomes ---- */
@@ -365,10 +412,41 @@ export async function decideDecision(supabase: Sb, userId: string, input: Decide
 /** Plan step progress — any staff member may move a step they are working on. */
 export async function updatePlanStep(supabase: Sb, userId: string, input: UpdatePlanStepInput) {
   await assertIntelRead(supabase, userId);
+
+  const { data: step, error: stepError } = await supabase
+    .from("intelligence_plan_steps")
+    .select("id, plan_id")
+    .eq("id", input.stepId)
+    .single();
+  if (stepError || !step) throw new Error(stepError?.message ?? "Plan step not found.");
+
+  const { data: plan, error: planError } = await supabase
+    .from("intelligence_plans")
+    .select("id, decision_id")
+    .eq("id", step.plan_id)
+    .single();
+  if (planError || !plan) throw new Error(planError?.message ?? "Plan not found.");
+
+  const { data: decision, error: decisionError } = await supabase
+    .from("intelligence_decisions")
+    .select("module, context")
+    .eq("id", plan.decision_id)
+    .single();
+  if (decisionError || !decision) throw new Error(decisionError?.message ?? "Decision not found.");
+  await assertDecisionScope(
+    supabase,
+    userId,
+    decision.module,
+    (decision.context as any)?.tenant_id,
+  );
+
   const patch: Record<string, unknown> = { status: input.status };
   if (input.note) patch.note = input.note;
   if (input.status === "done") patch.completed_at = new Date().toISOString();
-  const { error } = await supabase.from("intelligence_plan_steps").update(patch).eq("id", input.stepId);
+  const { error } = await supabase
+    .from("intelligence_plan_steps")
+    .update(patch)
+    .eq("id", input.stepId);
   if (error) throw new Error(error.message);
   return { ok: true as const };
 }
