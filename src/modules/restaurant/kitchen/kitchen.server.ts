@@ -88,14 +88,47 @@ export async function listTickets(
 
   const tickets = (data ?? []) as any[];
   if (tickets.length === 0) return [];
-  const { data: items } = await sb
-    .from("restaurant_kitchen_ticket_items")
-    .select("id, ticket_id, description, quantity, status, notes")
-    .eq("tenant_id", input.tenantId)
-    .in(
-      "ticket_id",
-      tickets.map((t) => t.id),
-    );
+  const orderIds = [...new Set(tickets.map((t) => t.order_id).filter(Boolean))];
+  const [{ data: items }, { data: orders }] = await Promise.all([
+    sb
+      .from("restaurant_kitchen_ticket_items")
+      .select("id, ticket_id, description, quantity, status, notes")
+      .eq("tenant_id", input.tenantId)
+      .in(
+        "ticket_id",
+        tickets.map((t) => t.id),
+      ),
+    // A ticket carries order_id but nothing an operator can actually place
+    // on the floor with — "table 12" is what matters at the pass, not the
+    // order id. One extra lookup, not one per ticket.
+    orderIds.length > 0
+      ? sb
+          .from("restaurant_orders")
+          .select("id, order_number, table_id")
+          .eq("tenant_id", input.tenantId)
+          .in("id", orderIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+  const orderRows = (orders ?? []) as any[];
+  const tableIds = [...new Set(orderRows.map((o) => o.table_id).filter(Boolean))];
+  const { data: tables } =
+    tableIds.length > 0
+      ? await sb
+          .from("restaurant_tables")
+          .select("id, code")
+          .eq("tenant_id", input.tenantId)
+          .in("id", tableIds)
+      : { data: [] };
+  const tableCodeById = new Map(((tables ?? []) as any[]).map((tb) => [tb.id, tb.code]));
+  const orderById = new Map(
+    orderRows.map((o) => [
+      o.id,
+      {
+        order_number: o.order_number,
+        table_code: o.table_id ? (tableCodeById.get(o.table_id) ?? null) : null,
+      },
+    ]),
+  );
 
   const now = Date.now();
   return tickets.map((t) => {
@@ -109,6 +142,8 @@ export async function listTickets(
           ? elapsed > t.target_minutes * 60
           : t.is_delayed,
       items: ((items ?? []) as any[]).filter((i) => i.ticket_id === t.id),
+      order_number: orderById.get(t.order_id)?.order_number ?? null,
+      table_code: orderById.get(t.order_id)?.table_code ?? null,
     };
   });
 }

@@ -3,10 +3,17 @@
  * location / station / ledger / recipe architecture, beverage lens only.
  */
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, ArrowLeftRight, ClipboardList, GlassWater, Timer, Wine } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeftRight,
+  ClipboardList,
+  GlassWater,
+  Timer,
+  Wine,
+} from "lucide-react";
 import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { StatCard } from "@/components/os/StatCard";
@@ -15,10 +22,19 @@ import { StatusChip } from "@/components/os/StatusChip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import { getBarSnapshotFn, listBarBeveragesFn, barBeverageVarianceFn } from "../bar.functions";
+import { advanceRestaurantTicketFn } from "@/modules/restaurant/kitchen/kitchen.functions";
 import type { BarBeverage, BarSnapshot, BarVarianceRow } from "../contracts";
 import { PourConfigSheet } from "./PourConfigSheet";
+
+/** Same one-step-forward map the Kitchen board already uses — no second lifecycle. */
+const NEXT_TICKET_STATUS: Record<string, "preparing" | "ready" | "served"> = {
+  queued: "preparing",
+  preparing: "ready",
+  ready: "served",
+};
 
 function money(currency: string, n: number | null | undefined) {
   return `${currency} ${Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -29,9 +45,11 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
   const tenantId = ws.data?.tenant?.id;
   const currency = ws.data?.properties?.[0]?.currency ?? "TZS";
 
+  const qc = useQueryClient();
   const snapshotFn = useServerFn(getBarSnapshotFn);
   const beveragesFn = useServerFn(listBarBeveragesFn);
   const varianceFn = useServerFn(barBeverageVarianceFn);
+  const advanceFn = useServerFn(advanceRestaurantTicketFn);
 
   const [tab, setTab] = React.useState(initialTab ?? "service");
   const [search, setSearch] = React.useState("");
@@ -48,7 +66,14 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
   const beverages = useQuery({
     queryKey: ["bar.beverages", tenantId, search],
     queryFn: () =>
-      beveragesFn({ data: { tenantId: tenantId!, search: search || undefined, includeNonBeverage: false, limit: 200 } }),
+      beveragesFn({
+        data: {
+          tenantId: tenantId!,
+          search: search || undefined,
+          includeNonBeverage: false,
+          limit: 200,
+        },
+      }),
     enabled: Boolean(tenantId) && (tab === "pours" || tab === "stock"),
   });
 
@@ -58,8 +83,26 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
     enabled: Boolean(tenantId) && tab === "variance",
   });
 
+  // Reuses the exact same advance-ticket action the Kitchen board already
+  // calls — this is not a second KDU workflow, just the same one mutation
+  // reachable from the surface bar staff actually work from.
+  const advance = useAdminMutation({
+    mutationFn: (vars: { ticketId: string; status: "preparing" | "ready" | "served" }) =>
+      advanceFn({ data: { tenantId: tenantId!, ticketId: vars.ticketId, status: vars.status } }),
+    successMessage: "Ticket updated",
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["bar.snapshot"] });
+      void qc.invalidateQueries({ queryKey: ["restaurant.tickets"] });
+    },
+  });
+
   if (!ws.isLoading && !ws.data?.tenant) {
-    return <EmptyState title="No restaurant tenant" description="You are not a member of a Restaurant & Bar OS tenant." />;
+    return (
+      <EmptyState
+        title="No restaurant tenant"
+        description="You are not a member of a Restaurant & Bar OS tenant."
+      />
+    );
   }
 
   const snap = snapshot.data as BarSnapshot | undefined;
@@ -100,7 +143,11 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Open drink tickets" value={String(snap?.openTicketCount ?? 0)} icon={GlassWater} />
+        <StatCard
+          label="Open drink tickets"
+          value={String(snap?.openTicketCount ?? 0)}
+          icon={GlassWater}
+        />
         <StatCard
           label="Delayed tickets"
           value={String(snap?.delayedTicketCount ?? 0)}
@@ -131,16 +178,27 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
         </TabsList>
 
         <TabsContent value="service" className="space-y-4 pt-4">
-          <SectionCard title="Prep board" description="Beverage tickets awaiting the bar, oldest first.">
+          <SectionCard
+            title="Prep board"
+            description="Beverage tickets awaiting the bar, oldest first."
+          >
             {(snap?.tickets ?? []).length === 0 ? (
-              <EmptyState title="No open drink tickets" description="Tickets appear here as soon as a drink is sent to the bar." />
+              <EmptyState
+                title="No open drink tickets"
+                description="Tickets appear here as soon as a drink is sent to the bar."
+              />
             ) : (
               <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 {(snap?.tickets ?? []).map((t) => (
-                  <li key={t.id} className="rounded-xl border p-3">
+                  <li
+                    key={t.id}
+                    className={`rounded-xl border p-3 ${t.isDelayed ? "border-destructive/40 bg-destructive/5" : ""}`}
+                  >
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-medium">{t.ticketNumber ?? "Ticket"}</span>
-                      <StatusChip tone={t.isDelayed ? "danger" : t.status === "ready" ? "success" : "info"}>
+                      <StatusChip
+                        tone={t.isDelayed ? "danger" : t.status === "ready" ? "success" : "info"}
+                      >
                         {t.status.replace(/_/g, " ")}
                       </StatusChip>
                     </div>
@@ -148,7 +206,21 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
                       {t.stationName} · waiting {Math.round(t.waitingSeconds / 60)} min
                       {t.targetMinutes ? ` of ${t.targetMinutes} min` : ""}
                     </p>
-                    {t.notes ? <p className="mt-1 text-xs text-muted-foreground">{t.notes}</p> : null}
+                    {t.notes ? (
+                      <p className="mt-1 text-xs text-muted-foreground">{t.notes}</p>
+                    ) : null}
+                    {NEXT_TICKET_STATUS[t.status] && (
+                      <Button
+                        className="mt-2 min-h-11 w-full"
+                        variant={t.status === "ready" ? "outline" : "secondary"}
+                        disabled={advance.isPending}
+                        onClick={() =>
+                          advance.mutate({ ticketId: t.id, status: NEXT_TICKET_STATUS[t.status]! })
+                        }
+                      >
+                        Mark {NEXT_TICKET_STATUS[t.status]}
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -156,9 +228,15 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
           </SectionCard>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <SectionCard title="Pending requisitions" description="Bar stock requested from a store.">
+            <SectionCard
+              title="Pending requisitions"
+              description="Bar stock requested from a store."
+            >
               {(snap?.pendingRequisitions ?? []).length === 0 ? (
-                <EmptyState title="Nothing pending" description="Raise a requisition to replenish the bar." />
+                <EmptyState
+                  title="Nothing pending"
+                  description="Raise a requisition to replenish the bar."
+                />
               ) : (
                 <ul className="divide-y text-sm">
                   {(snap?.pendingRequisitions ?? []).map((r) => (
@@ -176,7 +254,10 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
 
             <SectionCard title="Low and expiring" description="Replenish before the pour runs out.">
               {(snap?.lowStock ?? []).length === 0 && (snap?.expiring ?? []).length === 0 ? (
-                <EmptyState title="Bar stock healthy" description="No items below reorder point or nearing expiry." />
+                <EmptyState
+                  title="Bar stock healthy"
+                  description="No items below reorder point or nearing expiry."
+                />
               ) : (
                 <ul className="divide-y text-sm">
                   {(snap?.lowStock ?? []).map((l) => (
@@ -194,7 +275,8 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
                     <li key={e.batchId} className="flex items-center justify-between gap-2 py-2">
                       <span>{e.itemName}</span>
                       <span className="text-xs text-muted-foreground">
-                        {e.batchNumber ?? "batch"} · expires {new Date(e.expiryDate).toLocaleDateString()}
+                        {e.batchNumber ?? "batch"} · expires{" "}
+                        {new Date(e.expiryDate).toLocaleDateString()}
                       </span>
                     </li>
                   ))}
@@ -205,7 +287,10 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
         </TabsContent>
 
         <TabsContent value="stock" className="space-y-4 pt-4">
-          <SectionCard title="Beverage stock" description="Pours available are derived from stock on hand and the configured serving.">
+          <SectionCard
+            title="Beverage stock"
+            description="Pours available are derived from stock on hand and the configured serving."
+          >
             <Input
               className="mb-3 max-w-sm"
               value={search}
@@ -213,11 +298,17 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
               placeholder="Search beverages…"
             />
             {rows.length === 0 ? (
-              <EmptyState title="No beverages yet" description="Mark inventory items as beverages in pour setup." />
+              <EmptyState
+                title="No beverages yet"
+                description="Mark inventory items as beverages in pour setup."
+              />
             ) : (
               <ul className="divide-y text-sm">
                 {rows.map((b) => (
-                  <li key={b.itemId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <li
+                    key={b.itemId}
+                    className="flex flex-wrap items-center justify-between gap-2 py-2"
+                  >
                     <div className="min-w-0">
                       <span className="font-medium">{b.name}</span>
                       <p className="text-xs text-muted-foreground">
@@ -226,7 +317,9 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
                       </p>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      {b.pourCost != null ? <span>{money(b.currency, b.pourCost)} / pour</span> : null}
+                      {b.pourCost != null ? (
+                        <span>{money(b.currency, b.pourCost)} / pour</span>
+                      ) : null}
                       {b.low ? <StatusChip tone="warning">low</StatusChip> : null}
                     </div>
                   </li>
@@ -237,7 +330,10 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
         </TabsContent>
 
         <TabsContent value="pours" className="space-y-4 pt-4">
-          <SectionCard title="Pour setup" description="One serving definition per beverage drives cost, margin and variance.">
+          <SectionCard
+            title="Pour setup"
+            description="One serving definition per beverage drives cost, margin and variance."
+          >
             <Input
               className="mb-3 max-w-sm"
               value={search}
@@ -245,11 +341,17 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
               placeholder="Search beverages…"
             />
             {rows.length === 0 ? (
-              <EmptyState title="Nothing to configure" description="Create inventory items first, then define their pours." />
+              <EmptyState
+                title="Nothing to configure"
+                description="Create inventory items first, then define their pours."
+              />
             ) : (
               <ul className="divide-y text-sm">
                 {rows.map((b) => (
-                  <li key={b.itemId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <li
+                    key={b.itemId}
+                    className="flex flex-wrap items-center justify-between gap-2 py-2"
+                  >
                     <div className="min-w-0">
                       <span className="font-medium">{b.name}</span>
                       <p className="text-xs text-muted-foreground">
@@ -275,21 +377,32 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
             description={`Ledger-derived expected closing compared with the latest count, since ${from}.`}
           >
             {varianceRows.length === 0 ? (
-              <EmptyState title="No variance data" description="Record sales and a stocktake to reconcile beverage stock." />
+              <EmptyState
+                title="No variance data"
+                description="Record sales and a stocktake to reconcile beverage stock."
+              />
             ) : (
               <ul className="divide-y text-sm">
                 {varianceRows.map((v) => (
-                  <li key={v.itemId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <li
+                    key={v.itemId}
+                    className="flex flex-wrap items-center justify-between gap-2 py-2"
+                  >
                     <div className="min-w-0">
                       <span className="font-medium">{v.name}</span>
                       <p className="text-xs text-muted-foreground">
                         expected {v.expectedClosing.toFixed(2)} {v.unitCode ?? ""} · actual{" "}
-                        {v.actualClosing != null ? v.actualClosing.toFixed(2) : "—"} ({v.actualSource})
+                        {v.actualClosing != null ? v.actualClosing.toFixed(2) : "—"} (
+                        {v.actualSource})
                       </p>
                     </div>
                     <div className="flex items-center gap-2 text-xs">
-                      <span className="text-muted-foreground">{money(v.currency, v.varianceValue)}</span>
-                      <StatusChip tone={Math.abs(v.variancePercent ?? 0) > 5 ? "danger" : "success"}>
+                      <span className="text-muted-foreground">
+                        {money(v.currency, v.varianceValue)}
+                      </span>
+                      <StatusChip
+                        tone={Math.abs(v.variancePercent ?? 0) > 5 ? "danger" : "success"}
+                      >
                         {v.variancePercent != null ? `${v.variancePercent.toFixed(1)}%` : "—"}
                       </StatusChip>
                     </div>

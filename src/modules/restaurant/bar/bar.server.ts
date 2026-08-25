@@ -71,7 +71,9 @@ export async function resolveBarScope(sb: Sb, tenantId: string, propertyId?: str
   const { data: stationRows } = await stationQuery;
   const stationTypes = new Set<string>(BAR_STATION_TYPES as readonly string[]);
   const stations = ((stationRows ?? []) as any[]).filter(
-    (s) => stationTypes.has(String(s.station_type)) || (s.location_id && scopeIds.includes(s.location_id)),
+    (s) =>
+      stationTypes.has(String(s.station_type)) ||
+      (s.location_id && scopeIds.includes(s.location_id)),
   );
 
   return {
@@ -96,7 +98,11 @@ export async function resolveBarScope(sb: Sb, tenantId: string, propertyId?: str
   };
 }
 
-export async function getBarSnapshot(sb: Sb, userId: string, input: BarSnapshotInput): Promise<BarSnapshot> {
+export async function getBarSnapshot(
+  sb: Sb,
+  userId: string,
+  input: BarSnapshotInput,
+): Promise<BarSnapshot> {
   await assertTenantRead(sb, userId, input.tenantId);
   const scope = await resolveBarScope(sb, input.tenantId, input.propertyId);
   const stationIds = scope.stationIds;
@@ -108,7 +114,9 @@ export async function getBarSnapshot(sb: Sb, userId: string, input: BarSnapshotI
   if (stationIds.length > 0) {
     const { data } = await sb
       .from("restaurant_kitchen_tickets")
-      .select("id, ticket_number, station_id, status, queued_at, started_at, ready_at, served_at, is_delayed, target_minutes, notes")
+      .select(
+        "id, ticket_number, station_id, status, queued_at, started_at, ready_at, served_at, is_delayed, target_minutes, notes",
+      )
       .eq("tenant_id", input.tenantId)
       .in("station_id", stationIds)
       .in("status", OPEN_TICKET_STATUSES)
@@ -216,10 +224,26 @@ export async function getBarSnapshot(sb: Sb, userId: string, input: BarSnapshotI
     net += Number(r.line_total ?? 0);
   }
 
+  // Live breach for open tickets, same formula kitchen.server.ts's
+  // listTickets already uses — the stored is_delayed flag is only ever set
+  // when a ticket is marked ready, so relying on it alone (as this used to)
+  // meant a queued/preparing drink already past its target never showed as
+  // delayed until it was too late to matter. Kitchen and Bar now agree.
+  const ticketsWithLiveDelay = tickets.map((t) => {
+    const waitingSeconds = t.queued_at
+      ? Math.max(0, Math.round((now - new Date(t.queued_at).getTime()) / 1000))
+      : 0;
+    const isDelayed =
+      t.status === "queued" || t.status === "preparing"
+        ? t.target_minutes != null && waitingSeconds > t.target_minutes * 60
+        : Boolean(t.is_delayed);
+    return { ...t, waitingSeconds, isDelayed };
+  });
+
   return {
     locations: scope.locations,
     stations: scope.stations,
-    tickets: tickets.map((t) => ({
+    tickets: ticketsWithLiveDelay.map((t) => ({
       id: t.id,
       ticketNumber: t.ticket_number ?? null,
       stationId: t.station_id ?? null,
@@ -228,13 +252,13 @@ export async function getBarSnapshot(sb: Sb, userId: string, input: BarSnapshotI
       queuedAt: t.queued_at ?? null,
       startedAt: t.started_at ?? null,
       readyAt: t.ready_at ?? null,
-      isDelayed: Boolean(t.is_delayed),
+      isDelayed: t.isDelayed,
       targetMinutes: t.target_minutes ?? null,
-      waitingSeconds: t.queued_at ? Math.max(0, Math.round((now - new Date(t.queued_at).getTime()) / 1000)) : 0,
+      waitingSeconds: t.waitingSeconds,
       notes: t.notes ?? null,
     })),
     openTicketCount: tickets.length,
-    delayedTicketCount: tickets.filter((t) => t.is_delayed).length,
+    delayedTicketCount: ticketsWithLiveDelay.filter((t) => t.isDelayed).length,
     pendingRequisitions: ((reqs ?? []) as any[]).map((r) => ({
       id: r.id,
       reference: r.reference,
@@ -271,7 +295,11 @@ export async function getBarSnapshot(sb: Sb, userId: string, input: BarSnapshotI
 
 /* ---------------- Pour configuration ---------------- */
 
-export async function listBeverages(sb: Sb, userId: string, input: ListBeveragesInput): Promise<BarBeverage[]> {
+export async function listBeverages(
+  sb: Sb,
+  userId: string,
+  input: ListBeveragesInput,
+): Promise<BarBeverage[]> {
   await assertTenantRead(sb, userId, input.tenantId);
   const units = await unitMap(sb, input.tenantId);
 
@@ -378,7 +406,9 @@ export async function beverageVariance(
   /* Movements inside the window — the ledger is the only source of truth. */
   let mq = sb
     .from("restaurant_stock_movements")
-    .select("inventory_item_id, movement_type, quantity, occurred_at, location_id, destination_location_id")
+    .select(
+      "inventory_item_id, movement_type, quantity, occurred_at, location_id, destination_location_id",
+    )
     .eq("tenant_id", input.tenantId)
     .in("inventory_item_id", ids)
     .gte("occurred_at", input.from)
@@ -404,8 +434,19 @@ export async function beverageVariance(
     opening.set(id, Number((data ?? [])[0]?.balance_after ?? 0));
   }
 
-  const agg = new Map<string, { received: number; inQty: number; outQty: number; consumption: number; wastage: number; net: number }>();
-  for (const id of ids) agg.set(id, { received: 0, inQty: 0, outQty: 0, consumption: 0, wastage: 0, net: 0 });
+  const agg = new Map<
+    string,
+    {
+      received: number;
+      inQty: number;
+      outQty: number;
+      consumption: number;
+      wastage: number;
+      net: number;
+    }
+  >();
+  for (const id of ids)
+    agg.set(id, { received: 0, inQty: 0, outQty: 0, consumption: 0, wastage: 0, net: 0 });
   for (const m of (movements ?? []) as any[]) {
     const a = agg.get(m.inventory_item_id);
     if (!a) continue;

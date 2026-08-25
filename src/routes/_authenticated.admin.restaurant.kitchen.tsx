@@ -151,7 +151,8 @@ function KitchenPage() {
                   <StatusChip tone={ticketStatusTone(t.status)}>{t.status}</StatusChip>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {stationNameById.get(t.station_id) ?? "Station"} · fired{" "}
+                  {t.table_code ? `Table ${t.table_code}` : (t.order_number ?? "Walk-in / bar tab")}{" "}
+                  · {stationNameById.get(t.station_id) ?? "Station"} · fired{" "}
                   {new Date(t.queued_at).toLocaleTimeString([], {
                     hour: "2-digit",
                     minute: "2-digit",
@@ -165,10 +166,15 @@ function KitchenPage() {
                     of {t.target_minutes}m target
                   </span>
                 </p>
-                <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                  {t.items.map((i: any) => `${Number(i.quantity)}× ${i.description}`).join(", ") ||
-                    "No items"}
-                </p>
+                <ul className="mt-1 line-clamp-3 text-xs text-muted-foreground">
+                  {t.items.length === 0 && <li>No items</li>}
+                  {t.items.map((i: any) => (
+                    <li key={i.id}>
+                      {Number(i.quantity)}× {i.description}
+                      {i.notes ? <span className="italic"> — {i.notes}</span> : null}
+                    </li>
+                  ))}
+                </ul>
                 {NEXT[t.status] && (
                   <Button
                     className="mt-2 min-h-11 w-full"
