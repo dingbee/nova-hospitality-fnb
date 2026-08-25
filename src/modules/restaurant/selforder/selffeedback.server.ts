@@ -138,6 +138,11 @@ export async function submitGuestFeedback(
     throw new Error(error.message);
   }
 
+  // Not routed through emitRestaurantEvent/recordEvent: that path calls
+  // assertIntelRead(supabase, userId), which requires a real staff
+  // principal, and there is none here — the same, already-made decision
+  // documented on requestGuestBill in selfbill.server.ts. Guest-originated
+  // self-order actions do not emit into the Intelligence Core.
   return {
     ok: true,
     routing: classifyFeedbackRouting(inserted.rating),
