@@ -243,6 +243,8 @@ export interface StoredDecision extends Decision {
   id: string;
   planId: string | null;
   planSteps: Array<PlanStep & { id: string }>;
+  /** Set once the decision has been approved and an action proposal exists for it. */
+  actionId: string | null;
 }
 
 export interface DecisionBoard {

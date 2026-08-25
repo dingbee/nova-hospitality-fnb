@@ -118,6 +118,7 @@ async function loadStored(sb: Sb, tenantId: string): Promise<StoredDecision[]> {
       updatedAt: row.updated_at,
       decisionNote: row.decision_note,
       outcome: row.outcome,
+      actionId: row.action_id ?? null,
       planId: plan?.id ?? null,
       plan: {
         objective: plan?.objective ?? row.title,

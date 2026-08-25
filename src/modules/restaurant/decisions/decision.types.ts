@@ -94,3 +94,8 @@ export const runRestaurantDecisionPassSchema = z.object({
   persist: z.boolean().default(true),
 });
 export type RunRestaurantDecisionPassInput = z.infer<typeof runRestaurantDecisionPassSchema>;
+
+export const executeRestaurantActionSchema = z.object({
+  actionId: z.string().uuid(),
+});
+export type ExecuteRestaurantActionInput = z.infer<typeof executeRestaurantActionSchema>;

@@ -79,6 +79,7 @@ function rowToStored(row: any, steps: any[]): StoredDecision {
     updatedAt: row.updated_at,
     decisionNote: row.decision_note,
     outcome: row.outcome,
+    actionId: row.action_id ?? null,
     planId: steps[0]?.plan_id ?? null,
     plan: {
       objective: row.reasoning?.selectedOption ?? row.title,

@@ -64,7 +64,9 @@ export function menuFindings(m: MenuIntelligence): RestaurantFinding[] {
         { label: "Actual cost", value: money(m.currency, item.cost) },
         { label: "Gross profit", value: money(m.currency, item.grossProfit) },
         { label: "Classification", value: item.classification },
-        ...(item.price != null ? [{ label: "Menu price", value: money(m.currency, item.price) }] : []),
+        ...(item.price != null
+          ? [{ label: "Menu price", value: money(m.currency, item.price) }]
+          : []),
         ...(item.costReviewReason ? [{ label: "Cost review", value: item.costReviewReason }] : []),
       ],
       prediction: {
@@ -98,7 +100,9 @@ export function menuFindings(m: MenuIntelligence): RestaurantFinding[] {
 export function inventoryFindings(inv: InventoryIntelligence): RestaurantFinding[] {
   const out: RestaurantFinding[] = [];
 
-  for (const row of inv.atRisk.filter((r) => r.daysOfCover != null && r.daysOfCover <= SHORTAGE_DAYS).slice(0, 5)) {
+  for (const row of inv.atRisk
+    .filter((r) => r.daysOfCover != null && r.daysOfCover <= SHORTAGE_DAYS)
+    .slice(0, 5)) {
     const days = row.daysOfCover as number;
     out.push({
       key: `finding.inventory.${row.inventoryItemId}`,
@@ -111,7 +115,9 @@ export function inventoryFindings(inv: InventoryIntelligence): RestaurantFinding
       evidence: [
         { label: "On hand", value: String(row.currentQuantity) },
         { label: "Daily consumption", value: `${row.dailyVelocity}/day` },
-        ...(row.reorderPoint != null ? [{ label: "Reorder point", value: String(row.reorderPoint) }] : []),
+        ...(row.reorderPoint != null
+          ? [{ label: "Reorder point", value: String(row.reorderPoint) }]
+          : []),
       ],
       prediction: {
         key: `prediction.inventory.${row.inventoryItemId}`,
@@ -139,7 +145,12 @@ export function inventoryFindings(inv: InventoryIntelligence): RestaurantFinding
       severity: wasteChange >= 40 ? "high" : "medium",
       subject: "Kitchen wastage",
       headline: `Wastage rose ${wasteChange}% against the previous window`,
-      detail: `${money(inv.currency, inv.wastage.currentCost)} written off versus ${money(inv.currency, inv.wastage.previousCost)}. Largest contributors: ${inv.wastage.topItems.map((t) => t.name).slice(0, 3).join(", ") || "not attributed"}.`,
+      detail: `${money(inv.currency, inv.wastage.currentCost)} written off versus ${money(inv.currency, inv.wastage.previousCost)}. Largest contributors: ${
+        inv.wastage.topItems
+          .map((t) => t.name)
+          .slice(0, 3)
+          .join(", ") || "not attributed"
+      }.`,
       metric: `+${wasteChange}%`,
       evidence: [
         { label: "Wastage this window", value: money(inv.currency, inv.wastage.currentCost) },
@@ -164,7 +175,9 @@ export function inventoryFindings(inv: InventoryIntelligence): RestaurantFinding
 
   for (const threat of inv.priceThreats.slice(0, 3)) {
     out.push({
-      key: `finding.inventory.price.${threat.supplierName}.${threat.itemName}`.toLowerCase().replace(/\s+/g, "_"),
+      key: `finding.inventory.price.${threat.supplierName}.${threat.itemName}`
+        .toLowerCase()
+        .replace(/\s+/g, "_"),
       kind: "supplier_risk",
       severity: threat.increasePercent >= 25 ? "high" : "medium",
       subject: `${threat.itemName} — ${threat.supplierName}`,
@@ -196,7 +209,9 @@ export function inventoryFindings(inv: InventoryIntelligence): RestaurantFinding
 export function kitchenFindings(k: KitchenIntelligence): RestaurantFinding[] {
   const out: RestaurantFinding[] = [];
 
-  for (const s of k.stations.filter((x) => x.overTarget || (x.delayedPercent ?? 0) >= 20).slice(0, 3)) {
+  for (const s of k.stations
+    .filter((x) => x.overTarget || (x.delayedPercent ?? 0) >= 20)
+    .slice(0, 3)) {
     const over =
       s.targetMinutes && s.averagePrepMinutes
         ? round(((s.averagePrepMinutes - s.targetMinutes) / s.targetMinutes) * 100, 1)
@@ -204,10 +219,15 @@ export function kitchenFindings(k: KitchenIntelligence): RestaurantFinding[] {
     out.push({
       key: `finding.kitchen.${s.stationId}`,
       kind: "kitchen_capacity",
-      severity: (over ?? 0) >= KITCHEN_OVER_TARGET_PERCENT || (s.delayedPercent ?? 0) >= 35 ? "high" : "medium",
+      severity:
+        (over ?? 0) >= KITCHEN_OVER_TARGET_PERCENT || (s.delayedPercent ?? 0) >= 35
+          ? "high"
+          : "medium",
       subject: s.name,
       headline:
-        s.dinnerPeakMinutes != null && s.averagePrepMinutes != null && s.dinnerPeakMinutes > s.averagePrepMinutes
+        s.dinnerPeakMinutes != null &&
+        s.averagePrepMinutes != null &&
+        s.dinnerPeakMinutes > s.averagePrepMinutes
           ? `${s.name} exceeds acceptable preparation time during dinner peak`
           : `${s.name} is running over its preparation target`,
       detail: [
@@ -219,11 +239,18 @@ export function kitchenFindings(k: KitchenIntelligence): RestaurantFinding[] {
       ]
         .filter(Boolean)
         .join(" · "),
-      metric: over != null ? `${over > 0 ? "+" : ""}${over}% vs target` : `${s.delayedPercent ?? 0}% delayed`,
+      metric:
+        over != null
+          ? `${over > 0 ? "+" : ""}${over}% vs target`
+          : `${s.delayedPercent ?? 0}% delayed`,
       evidence: [
         { label: "Tickets", value: String(s.tickets) },
-        ...(s.averagePrepMinutes != null ? [{ label: "Average prep", value: `${s.averagePrepMinutes} min` }] : []),
-        ...(s.peakPrepMinutes != null ? [{ label: "Peak prep", value: `${s.peakPrepMinutes} min` }] : []),
+        ...(s.averagePrepMinutes != null
+          ? [{ label: "Average prep", value: `${s.averagePrepMinutes} min` }]
+          : []),
+        ...(s.peakPrepMinutes != null
+          ? [{ label: "Peak prep", value: `${s.peakPrepMinutes} min` }]
+          : []),
         ...(s.targetMinutes != null ? [{ label: "Target", value: `${s.targetMinutes} min` }] : []),
         { label: "Delayed tickets", value: `${s.delayedTickets}` },
       ],
@@ -286,6 +313,16 @@ export function purchasingFindings(p: PurchasingIntelligence): RestaurantFinding
         unreliableSupplier: Boolean(weak),
         estimatedCost: s.estimatedCost,
         leadTimeDays: s.leadTimeDays,
+        // Structured identifiers a downstream executor needs to raise a real
+        // procurement request line — previously only available embedded in
+        // `key` (a string, not meant for parsing) or as human-readable
+        // evidence. Additive: nothing reads facts by exact key set.
+        inventoryItemId: s.inventoryItemId,
+        recommendedQuantity: s.recommendedQuantity,
+        supplierId: s.supplierId,
+        estimatedUnitCost:
+          s.recommendedQuantity > 0 ? round(s.estimatedCost / s.recommendedQuantity, 4) : null,
+        currency: p.currency,
       },
     });
   }

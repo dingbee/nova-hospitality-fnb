@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { CheckCircle2, Play, Scale, XCircle } from "lucide-react";
+import { CheckCircle2, Play, Scale, ShoppingCart, XCircle } from "lucide-react";
 import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { EmptyState } from "@/components/os/EmptyState";
@@ -12,10 +12,14 @@ import { Button } from "@/components/ui/button";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import {
+  executeRestaurantActionFn,
   getRestaurantDecisionBoardFn,
   runRestaurantDecisionPassFn,
 } from "@/modules/restaurant/decisions/decisions.functions";
-import { decideDecisionFn, updatePlanStepFn } from "@/modules/intelligence/decisions/decision.functions";
+import {
+  decideDecisionFn,
+  updatePlanStepFn,
+} from "@/modules/intelligence/decisions/decision.functions";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/decisions")({
   head: () => ({
@@ -120,11 +124,13 @@ function RestaurantDecisionsPage() {
   const passFn = useServerFn(runRestaurantDecisionPassFn);
   const decideFn = useServerFn(decideDecisionFn);
   const stepFn = useServerFn(updatePlanStepFn);
+  const executeFn = useServerFn(executeRestaurantActionFn);
 
   const queryKey = ["restaurant", "decisions", tenantId, windowDays];
   const board = useQuery({
     queryKey,
-    queryFn: () => boardFn({ data: { tenantId: tenantId as string, windowDays, includeStored: true } }),
+    queryFn: () =>
+      boardFn({ data: { tenantId: tenantId as string, windowDays, includeStored: true } }),
     enabled: Boolean(tenantId),
   });
   const invalidate = () => qc.invalidateQueries({ queryKey });
@@ -141,8 +147,14 @@ function RestaurantDecisionsPage() {
     onSuccess: invalidate,
   });
   const advanceStep = useAdminMutation({
-    mutationFn: (vars: { stepId: string; status: "in_progress" | "done" }) => stepFn({ data: vars }),
+    mutationFn: (vars: { stepId: string; status: "in_progress" | "done" }) =>
+      stepFn({ data: vars }),
     successMessage: "Plan step updated",
+    onSuccess: invalidate,
+  });
+  const executeAction = useAdminMutation({
+    mutationFn: (vars: { actionId: string }) => executeFn({ data: vars }),
+    successMessage: "Procurement draft created — it still needs its own submission and approval.",
     onSuccess: invalidate,
   });
 
@@ -165,7 +177,11 @@ function RestaurantDecisionsPage() {
                 {w}d
               </Button>
             ))}
-            <Button size="sm" onClick={() => runPass.mutate(undefined)} disabled={!tenantId || runPass.isPending}>
+            <Button
+              size="sm"
+              onClick={() => runPass.mutate(undefined)}
+              disabled={!tenantId || runPass.isPending}
+            >
               <Play className="mr-1.5 size-4" /> Run decision pass
             </Button>
           </div>
@@ -173,7 +189,9 @@ function RestaurantDecisionsPage() {
       />
 
       {data?.headline ? (
-        <p className="rounded-lg border bg-card/40 p-3 text-sm text-muted-foreground">{data.headline}</p>
+        <p className="rounded-lg border bg-card/40 p-3 text-sm text-muted-foreground">
+          {data.headline}
+        </p>
       ) : null}
 
       <SectionCard
@@ -204,7 +222,10 @@ function RestaurantDecisionsPage() {
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">{finding.prediction.statement}</p>
                 <div className="mt-3">
-                  <OptionRows options={decision.options} selectedKey={decision.recommendedOptionKey} />
+                  <OptionRows
+                    options={decision.options}
+                    selectedKey={decision.recommendedOptionKey}
+                  />
                 </div>
                 <div className="mt-3">
                   <Reasoning d={decision} />
@@ -228,7 +249,10 @@ function RestaurantDecisionsPage() {
         description="Persisted in the Intelligence Core ledger. Approving creates an action for the owning module; completing records the outcome and feeds learning."
       >
         {(data?.stored ?? []).length === 0 ? (
-          <EmptyState title="No recorded decisions" description="Run a decision pass to record the proposals above." />
+          <EmptyState
+            title="No recorded decisions"
+            description="Run a decision pass to record the proposals above."
+          />
         ) : (
           <div className="space-y-4">
             {(data.stored as any[]).map((d) => (
@@ -240,7 +264,9 @@ function RestaurantDecisionsPage() {
                   </div>
                   <span className="flex items-center gap-2">
                     <StatusChip tone={STATUS_TONE[d.status] ?? "neutral"}>{d.status}</StatusChip>
-                    <StatusChip tone={RISK_TONE[d.riskLevel] ?? "neutral"}>{d.riskLevel} risk</StatusChip>
+                    <StatusChip tone={RISK_TONE[d.riskLevel] ?? "neutral"}>
+                      {d.riskLevel} risk
+                    </StatusChip>
                   </span>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">{d.reasoning?.whySelected}</p>
@@ -253,7 +279,9 @@ function RestaurantDecisionsPage() {
                           {s.sequence}. {s.title}
                         </span>
                         <span className="flex items-center gap-1">
-                          <StatusChip tone={s.status === "done" ? "success" : "neutral"}>{s.status}</StatusChip>
+                          <StatusChip tone={s.status === "done" ? "success" : "neutral"}>
+                            {s.status}
+                          </StatusChip>
                           {s.status !== "done" ? (
                             <Button
                               size="sm"
@@ -294,6 +322,16 @@ function RestaurantDecisionsPage() {
                         <XCircle className="mr-1.5 size-4" /> Reject
                       </Button>
                     </>
+                  ) : null}
+                  {(d.status === "approved" || d.status === "executing") && d.actionId ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={executeAction.isPending}
+                      onClick={() => executeAction.mutate({ actionId: d.actionId })}
+                    >
+                      <ShoppingCart className="mr-1.5 size-4" /> Create procurement draft
+                    </Button>
                   ) : null}
                   {d.status === "approved" || d.status === "executing" ? (
                     <Button
