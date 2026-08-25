@@ -2,10 +2,20 @@
  * Create / edit a menu item — always attached to a menu, optionally to a category.
  */
 import * as React from "react";
+import { ImageOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { EntitySheet, Field, FieldRow, SearchSelect, QuantityField, type SearchOption } from "../../ui/forms";
+import { Button } from "@/components/ui/button";
+import {
+  EntitySheet,
+  Field,
+  FieldRow,
+  SearchSelect,
+  QuantityField,
+  type SearchOption,
+} from "../../ui/forms";
+import { MENU_IMAGE_MIME_TYPES } from "../menu-image.contracts";
 
 export interface MenuItemFormValue {
   id?: string;
@@ -18,10 +28,84 @@ export interface MenuItemFormValue {
   currency: string;
   available: boolean;
   sortOrder: number;
+  imageUrl?: string | null;
+}
+
+const ACCEPTED_IMAGE_TYPES = MENU_IMAGE_MIME_TYPES.join(",");
+
+function ImageField({
+  imageUrl,
+  itemId,
+  onUpload,
+  onRemove,
+  uploadPending,
+  removePending,
+}: {
+  imageUrl: string | null | undefined;
+  itemId: string | undefined;
+  onUpload: (file: File) => void;
+  onRemove: () => void;
+  uploadPending?: boolean;
+  removePending?: boolean;
+}) {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  return (
+    <Field label="Image" hint={itemId ? undefined : "Save the item first, then add a photo."}>
+      <div className="flex items-center gap-3">
+        <div className="flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted">
+          {imageUrl ? (
+            <img src={imageUrl} alt="" className="size-full object-cover" />
+          ) : (
+            <ImageOff className="size-6 text-muted-foreground" aria-hidden="true" />
+          )}
+        </div>
+        {itemId && (
+          <div className="flex flex-col gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPTED_IMAGE_TYPES}
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) onUpload(file);
+              }}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={uploadPending || removePending}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {imageUrl ? "Replace image" : "Upload image"}
+            </Button>
+            {imageUrl && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={uploadPending || removePending}
+                onClick={onRemove}
+              >
+                Remove image
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+    </Field>
+  );
 }
 
 function slugify(s: string) {
-  return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  return s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
 }
 
 export function MenuItemSheet({
@@ -33,6 +117,10 @@ export function MenuItemSheet({
   defaultMenuId,
   onSubmit,
   pending,
+  onUploadImage,
+  onRemoveImage,
+  uploadImagePending,
+  removeImagePending,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -42,6 +130,10 @@ export function MenuItemSheet({
   defaultMenuId?: string;
   onSubmit: (value: MenuItemFormValue) => void;
   pending?: boolean;
+  onUploadImage?: (file: File) => void;
+  onRemoveImage?: () => void;
+  uploadImagePending?: boolean;
+  removeImagePending?: boolean;
 }) {
   const empty: MenuItemFormValue = {
     menuId: defaultMenuId ?? "",
@@ -53,6 +145,7 @@ export function MenuItemSheet({
     currency: "TZS",
     available: true,
     sortOrder: 0,
+    imageUrl: null,
   };
   const [value, setValue] = React.useState<MenuItemFormValue>(empty);
   React.useEffect(() => {
@@ -99,23 +192,55 @@ export function MenuItemSheet({
         />
       </Field>
       <Field label="Slug" required>
-        <Input className="h-11" value={value.slug} onChange={(e) => setValue((v) => ({ ...v, slug: e.target.value }))} />
+        <Input
+          className="h-11"
+          value={value.slug}
+          onChange={(e) => setValue((v) => ({ ...v, slug: e.target.value }))}
+        />
       </Field>
       <FieldRow>
         <Field label="Price" required>
-          <QuantityField value={value.price} onChange={(n) => setValue((v) => ({ ...v, price: n }))} step={100} suffix={value.currency} />
+          <QuantityField
+            value={value.price}
+            onChange={(n) => setValue((v) => ({ ...v, price: n }))}
+            step={100}
+            suffix={value.currency}
+          />
         </Field>
         <Field label="Sort order">
-          <QuantityField value={value.sortOrder} onChange={(n) => setValue((v) => ({ ...v, sortOrder: n }))} step={1} />
+          <QuantityField
+            value={value.sortOrder}
+            onChange={(n) => setValue((v) => ({ ...v, sortOrder: n }))}
+            step={1}
+          />
         </Field>
       </FieldRow>
       <Field label="Description">
-        <Textarea rows={3} value={value.description} onChange={(e) => setValue((v) => ({ ...v, description: e.target.value }))} />
+        <Textarea
+          rows={3}
+          value={value.description}
+          onChange={(e) => setValue((v) => ({ ...v, description: e.target.value }))}
+        />
       </Field>
+      {onUploadImage && onRemoveImage && (
+        <ImageField
+          imageUrl={value.imageUrl}
+          itemId={initial?.id}
+          onUpload={onUploadImage}
+          onRemove={onRemoveImage}
+          uploadPending={uploadImagePending}
+          removePending={removeImagePending}
+        />
+      )}
       <Field label="Available for sale">
         <div className="flex h-11 items-center gap-3">
-          <Switch checked={value.available} onCheckedChange={(c) => setValue((v) => ({ ...v, available: c }))} />
-          <span className="text-sm text-muted-foreground">{value.available ? "On menu" : "Off menu"}</span>
+          <Switch
+            checked={value.available}
+            onCheckedChange={(c) => setValue((v) => ({ ...v, available: c }))}
+          />
+          <span className="text-sm text-muted-foreground">
+            {value.available ? "On menu" : "Off menu"}
+          </span>
         </div>
       </Field>
     </EntitySheet>

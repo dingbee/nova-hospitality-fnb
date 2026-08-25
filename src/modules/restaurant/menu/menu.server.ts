@@ -16,7 +16,9 @@ export async function listMenus(sb: Sb, userId: string, input: z.infer<typeof li
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_menus")
-    .select("id, name, slug, version, status, currency, description, valid_from, valid_to, property_id, location_id, updated_at")
+    .select(
+      "id, name, slug, version, status, currency, description, valid_from, valid_to, property_id, location_id, updated_at",
+    )
     .eq("tenant_id", input.tenantId)
     .order("updated_at", { ascending: false })
     .limit(input.limit);
@@ -67,11 +69,17 @@ export async function upsertMenu(sb: Sb, userId: string, input: UpsertMenuInput)
   return data;
 }
 
-export async function listMenuItems(sb: Sb, userId: string, input: z.infer<typeof listMenuItemsSchema>) {
+export async function listMenuItems(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listMenuItemsSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_menu_items")
-    .select("id, menu_id, category_id, name, slug, description, price, currency, available, tags, allergens, sort_order")
+    .select(
+      "id, menu_id, category_id, name, slug, description, price, currency, available, tags, allergens, sort_order, image_url",
+    )
     .eq("tenant_id", input.tenantId)
     .order("sort_order")
     .limit(input.limit);
@@ -99,7 +107,11 @@ export async function upsertMenuItem(sb: Sb, userId: string, input: UpsertMenuIt
     updated_at: new Date().toISOString(),
   };
   const q = input.id
-    ? sb.from("restaurant_menu_items").update(row).eq("id", input.id).eq("tenant_id", input.tenantId)
+    ? sb
+        .from("restaurant_menu_items")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
     : sb.from("restaurant_menu_items").insert(row);
   const { data, error } = await q.select("id").single();
   if (error) throw new Error(error.message);
@@ -115,7 +127,11 @@ export async function upsertMenuItem(sb: Sb, userId: string, input: UpsertMenuIt
   return data;
 }
 
-export async function listCategories(sb: Sb, userId: string, input: z.infer<typeof listCategoriesSchema>) {
+export async function listCategories(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listCategoriesSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   const { data, error } = await sb
     .from("restaurant_categories")

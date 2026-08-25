@@ -19,22 +19,47 @@ import {
   upsertRestaurantMenuFn,
   upsertRestaurantMenuItemFn,
 } from "@/modules/restaurant/menu/menu.functions";
+import {
+  removeMenuItemImageFn,
+  uploadMenuItemImageFn,
+} from "@/modules/restaurant/menu/menu-image.functions";
+import { validateMenuImageFile } from "@/modules/restaurant/menu/menu-image.contracts";
 import { MenuSheet, type MenuFormValue } from "@/modules/restaurant/menu/ui/MenuSheet";
 import { MenuItemSheet, type MenuItemFormValue } from "@/modules/restaurant/menu/ui/MenuItemSheet";
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      // "data:image/png;base64,AAAA..." — keep only the payload.
+      resolve(result.slice(result.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read the selected file."));
+    reader.readAsDataURL(file);
+  });
+}
 import { MenuLifecycleBoard } from "@/modules/restaurant/menu/ui/MenuLifecycleBoard";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/menu")({
   head: () => ({
     meta: [
       { title: "Menu Management — Restaurant & Bar OS" },
-      { name: "description", content: "Menus, versions and items for every outlet in the restaurant tenant." },
+      {
+        name: "description",
+        content: "Menus, versions and items for every outlet in the restaurant tenant.",
+      },
       { name: "robots", content: "noindex,nofollow" },
     ],
   }),
   component: MenuPage,
 });
 
-const MENU_TONE: Record<string, StatusTone> = { draft: "neutral", published: "success", archived: "warning" };
+const MENU_TONE: Record<string, StatusTone> = {
+  draft: "neutral",
+  published: "success",
+  archived: "warning",
+};
 
 function MenuPage() {
   const ws = useRestaurantWorkspace();
@@ -49,6 +74,8 @@ function MenuPage() {
   const categoriesFn = useServerFn(listRestaurantCategoriesFn);
   const upsertMenuFn = useServerFn(upsertRestaurantMenuFn);
   const upsertItemFn = useServerFn(upsertRestaurantMenuItemFn);
+  const uploadImageFn = useServerFn(uploadMenuItemImageFn);
+  const removeImageFn = useServerFn(removeMenuItemImageFn);
 
   const menus = useQuery({
     queryKey: ["restaurant.menus", tenantId],
@@ -137,14 +164,53 @@ function MenuPage() {
     },
   });
 
+  const uploadImage = useAdminMutation({
+    mutationFn: async (file: File) => {
+      const validationError = validateMenuImageFile(file);
+      if (validationError) throw new Error(validationError);
+      const fileBase64 = await fileToBase64(file);
+      return uploadImageFn({
+        data: {
+          tenantId: tenantId!,
+          menuItemId: editingItem!.id!,
+          mimeType: file.type as any,
+          fileBase64,
+        },
+      });
+    },
+    successMessage: "Image updated",
+    onSuccess: (result) => {
+      setEditingItem((prev) => (prev ? { ...prev, imageUrl: result.imageUrl } : prev));
+      invalidate();
+    },
+  });
+
+  const removeImage = useAdminMutation({
+    mutationFn: () =>
+      removeImageFn({ data: { tenantId: tenantId!, menuItemId: editingItem!.id! } }),
+    successMessage: "Image removed",
+    onSuccess: () => {
+      setEditingItem((prev) => (prev ? { ...prev, imageUrl: null } : prev));
+      invalidate();
+    },
+  });
+
   if (!ws.isLoading && !ws.data?.tenant) {
-    return <EmptyState title="No restaurant tenant" description="You are not a member of a Restaurant & Bar OS tenant." />;
+    return (
+      <EmptyState
+        title="No restaurant tenant"
+        description="You are not a member of a Restaurant & Bar OS tenant."
+      />
+    );
   }
 
   const menuRows = (menus.data ?? []) as any[];
   const itemRows = (items.data ?? []) as any[];
   const menuOptions = menuRows.map((m) => ({ value: m.id, label: m.name, hint: m.status }));
-  const categoryOptions = ((categories.data ?? []) as any[]).map((c) => ({ value: c.id, label: c.name }));
+  const categoryOptions = ((categories.data ?? []) as any[]).map((c) => ({
+    value: c.id,
+    label: c.name,
+  }));
   const menuNameById = new Map(menuRows.map((m) => [m.id, m.name]));
 
   return (
@@ -172,11 +238,17 @@ function MenuPage() {
         }
       >
         {menuRows.length === 0 ? (
-          <EmptyState title="No menus yet" description="Create a menu to start building your offer." />
+          <EmptyState
+            title="No menus yet"
+            description="Create a menu to start building your offer."
+          />
         ) : (
           <ul className="divide-y text-sm">
             {menuRows.map((m) => (
-              <li key={m.id} className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-3">
+              <li
+                key={m.id}
+                className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-3"
+              >
                 <button
                   type="button"
                   className="min-w-0 text-left hover:underline"
@@ -199,12 +271,22 @@ function MenuPage() {
                   <StatusChip tone={MENU_TONE[m.status] ?? "neutral"}>{m.status}</StatusChip>
                   <span className="text-xs text-muted-foreground">{m.currency}</span>
                   {canManage && m.status !== "draft" && (
-                    <Button size="sm" variant="outline" className="h-9" onClick={() => statusMutation.mutate(m)}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-9"
+                      onClick={() => statusMutation.mutate(m)}
+                    >
                       {m.status === "published" ? "Archive" : "Publish"}
                     </Button>
                   )}
                   {canManage && m.status === "draft" && (
-                    <Button size="sm" variant="outline" className="h-9" onClick={() => statusMutation.mutate(m)}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-9"
+                      onClick={() => statusMutation.mutate(m)}
+                    >
                       Publish
                     </Button>
                   )}
@@ -234,11 +316,17 @@ function MenuPage() {
         }
       >
         {itemRows.length === 0 ? (
-          <EmptyState title="No menu items" description="Items appear here once a menu has been populated." />
+          <EmptyState
+            title="No menu items"
+            description="Items appear here once a menu has been populated."
+          />
         ) : (
           <ul className="divide-y text-sm">
             {itemRows.map((i) => (
-              <li key={i.id} className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-2">
+              <li
+                key={i.id}
+                className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-2"
+              >
                 <button
                   type="button"
                   className="min-w-0 text-left hover:underline"
@@ -255,15 +343,19 @@ function MenuPage() {
                       currency: i.currency,
                       available: Boolean(i.available),
                       sortOrder: Number(i.sort_order ?? 0),
+                      imageUrl: i.image_url ?? null,
                     });
                     setItemSheetOpen(true);
                   }}
                 >
                   {i.name}
-                  <span className="ml-2 text-xs text-muted-foreground">{menuNameById.get(i.menu_id) ?? ""}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    {menuNameById.get(i.menu_id) ?? ""}
+                  </span>
                 </button>
                 <span className="text-xs text-muted-foreground">
-                  {i.currency} {Number(i.price).toLocaleString()} · {i.available ? "available" : "off menu"}
+                  {i.currency} {Number(i.price).toLocaleString()} ·{" "}
+                  {i.available ? "available" : "off menu"}
                 </span>
               </li>
             ))}
@@ -287,6 +379,10 @@ function MenuPage() {
         defaultMenuId={menuRows[0]?.id}
         pending={saveItem.isPending}
         onSubmit={(v) => saveItem.mutate(v)}
+        onUploadImage={(file) => uploadImage.mutate(file)}
+        onRemoveImage={() => removeImage.mutate()}
+        uploadImagePending={uploadImage.isPending}
+        removeImagePending={removeImage.isPending}
       />
 
       {tenantId && <MenuLifecycleBoard tenantId={tenantId} canManage={canManage} />}
