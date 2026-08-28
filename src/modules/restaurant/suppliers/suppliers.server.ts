@@ -9,7 +9,11 @@ type Sb = any;
 
 const uuid = z.string().uuid();
 
-export async function listSuppliers(sb: Sb, userId: string, input: z.infer<typeof listSuppliersSchema>) {
+export async function listSuppliers(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listSuppliersSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   const { data, error } = await sb
     .from("restaurant_suppliers")
@@ -23,7 +27,12 @@ export async function listSuppliers(sb: Sb, userId: string, input: z.infer<typeo
   return data ?? [];
 }
 
-export async function listSupplierProducts(sb: Sb, userId: string, tenantId: string, supplierId?: string) {
+export async function listSupplierProducts(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  supplierId?: string,
+) {
   await assertTenantRead(sb, userId, tenantId);
   let q = sb
     .from("restaurant_supplier_products")
@@ -104,6 +113,8 @@ export const upsertSupplierProductSchema = z.object({
   inventoryItemId: uuid.optional(),
   unitId: uuid.optional(),
   supplierSku: z.string().max(80).optional(),
+  /** The supplier's own barcode for this pack — distinct from supplierSku, optional. */
+  barcode: z.string().max(64).optional(),
   name: z.string().min(2).max(160),
   packSize: z.number().min(0).optional(),
   unitPrice: z.number().min(0),
@@ -126,7 +137,11 @@ export const deactivateSupplierProductSchema = z.object({
  * `last_price_at`); the durable record lives in the price-history ledger
  * (procurement/pricing.server.ts), which we append to on every price change.
  */
-export async function upsertSupplierProduct(sb: Sb, userId: string, input: UpsertSupplierProductInput) {
+export async function upsertSupplierProduct(
+  sb: Sb,
+  userId: string,
+  input: UpsertSupplierProductInput,
+) {
   await assertCapability(sb, userId, input.tenantId, "supplier.manage");
 
   let priceChanged = true;
@@ -147,6 +162,7 @@ export async function upsertSupplierProduct(sb: Sb, userId: string, input: Upser
     inventory_item_id: input.inventoryItemId ?? null,
     unit_id: input.unitId ?? null,
     supplier_sku: input.supplierSku ?? null,
+    ...(input.barcode === undefined ? {} : { barcode: input.barcode || null }),
     name: input.name,
     pack_size: input.packSize ?? null,
     unit_price: input.unitPrice,
@@ -157,7 +173,11 @@ export async function upsertSupplierProduct(sb: Sb, userId: string, input: Upser
     ...(priceChanged ? { last_price_at: now } : {}),
   };
   const q = input.id
-    ? sb.from("restaurant_supplier_products").update(row).eq("id", input.id).eq("tenant_id", input.tenantId)
+    ? sb
+        .from("restaurant_supplier_products")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
     : sb.from("restaurant_supplier_products").insert(row);
   const { data, error } = await q
     .select("id, supplier_id, name, unit_price, currency, last_price_at")
@@ -186,7 +206,11 @@ export async function upsertSupplierProduct(sb: Sb, userId: string, input: Upser
     entityType: "restaurant_supplier_product",
     entityId: data.id,
     source: "restaurant-os",
-    payload: { supplier_id: data.supplier_id, name: data.name, unit_price: Number(data.unit_price) },
+    payload: {
+      supplier_id: data.supplier_id,
+      name: data.name,
+      unit_price: Number(data.unit_price),
+    },
   });
   return data;
 }

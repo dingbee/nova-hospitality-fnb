@@ -73,6 +73,7 @@ export const RESTAURANT_CAPABILITIES = [
   "requisition.approve",
   "requisition.issue",
   "documents.audit.read",
+  "import.manage",
 ] as const;
 export type RestaurantCapability = (typeof RESTAURANT_CAPABILITIES)[number];
 
@@ -92,7 +93,13 @@ const CAPABILITY_ROLES: Record<RestaurantCapability, readonly RestaurantRole[]> 
     "kitchen_manager",
     "bartender",
   ],
-  "guest.context.manage": ["owner", "general_manager", "restaurant_manager", "chef", "kitchen_manager"],
+  "guest.context.manage": [
+    "owner",
+    "general_manager",
+    "restaurant_manager",
+    "chef",
+    "kitchen_manager",
+  ],
   "recipe.manage": ["owner", "general_manager", "restaurant_manager", "chef", "kitchen_manager"],
   "product.manage": ["owner", "general_manager", "restaurant_manager", "chef", "kitchen_manager"],
   "production.manage": [
@@ -147,9 +154,28 @@ const CAPABILITY_ROLES: Record<RestaurantCapability, readonly RestaurantRole[]> 
     "kitchen_manager",
     "chef",
   ],
-  "invoice.manage": ["owner", "general_manager", "restaurant_manager", "accountant", "purchasing_officer"],
-  "variance.manage": ["owner", "general_manager", "restaurant_manager", "accountant", "purchasing_officer"],
-  "costing.manage": ["owner", "general_manager", "restaurant_manager", "chef", "kitchen_manager", "accountant"],
+  "invoice.manage": [
+    "owner",
+    "general_manager",
+    "restaurant_manager",
+    "accountant",
+    "purchasing_officer",
+  ],
+  "variance.manage": [
+    "owner",
+    "general_manager",
+    "restaurant_manager",
+    "accountant",
+    "purchasing_officer",
+  ],
+  "costing.manage": [
+    "owner",
+    "general_manager",
+    "restaurant_manager",
+    "chef",
+    "kitchen_manager",
+    "accountant",
+  ],
   "transfer.manage": [
     "owner",
     "general_manager",
@@ -169,7 +195,13 @@ const CAPABILITY_ROLES: Record<RestaurantCapability, readonly RestaurantRole[]> 
     "chef",
     "bartender",
   ],
-  "stocktake.approve": ["owner", "general_manager", "restaurant_manager", "inventory_manager", "accountant"],
+  "stocktake.approve": [
+    "owner",
+    "general_manager",
+    "restaurant_manager",
+    "inventory_manager",
+    "accountant",
+  ],
   "waste.record": [
     "owner",
     "general_manager",
@@ -204,7 +236,13 @@ const CAPABILITY_ROLES: Record<RestaurantCapability, readonly RestaurantRole[]> 
     "chef",
     "purchasing_officer",
   ],
-  "reconciliation.run": ["owner", "general_manager", "restaurant_manager", "inventory_manager", "accountant"],
+  "reconciliation.run": [
+    "owner",
+    "general_manager",
+    "restaurant_manager",
+    "inventory_manager",
+    "accountant",
+  ],
   // Declaring is a floor activity; closing and reopening the day are not.
   "reconciliation.declare": [
     "owner",
@@ -232,8 +270,21 @@ const CAPABILITY_ROLES: Record<RestaurantCapability, readonly RestaurantRole[]> 
   "sales.discount": ["owner", "general_manager", "restaurant_manager"],
   // Charging a guest room moves money outside the outlet: it stays with
   // supervisors and the bar/floor staff trusted to identify a guest.
-  "sales.room_charge": ["owner", "general_manager", "restaurant_manager", "bartender", "accountant"],
-  "kitchen.manage": ["owner", "general_manager", "restaurant_manager", "chef", "kitchen_manager", "bartender"],
+  "sales.room_charge": [
+    "owner",
+    "general_manager",
+    "restaurant_manager",
+    "bartender",
+    "accountant",
+  ],
+  "kitchen.manage": [
+    "owner",
+    "general_manager",
+    "restaurant_manager",
+    "chef",
+    "kitchen_manager",
+    "bartender",
+  ],
   "stock.manage": [
     "owner",
     "general_manager",
@@ -277,6 +328,10 @@ const CAPABILITY_ROLES: Record<RestaurantCapability, readonly RestaurantRole[]> 
   ],
   "requisition.approve": ["owner", "general_manager", "restaurant_manager", "inventory_manager"],
   "requisition.issue": ["owner", "general_manager", "restaurant_manager", "inventory_manager"],
+  // Import touches every canonical domain (menu, inventory, suppliers,
+  // recipes) at once — narrower than any single domain's own edit
+  // capability, restricted to the tenant's senior operating roles.
+  "import.manage": ["owner", "general_manager", "restaurant_manager"],
 };
 
 export function rolesForCapability(capability: RestaurantCapability): readonly RestaurantRole[] {

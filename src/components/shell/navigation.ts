@@ -22,6 +22,7 @@ import {
   ShoppingCart,
   Tags,
   Truck,
+  Upload,
   UserCog,
   Wine,
   Wrench,
@@ -43,6 +44,18 @@ export interface NavGroup {
 }
 
 export const NAV_GROUPS: NavGroup[] = [
+  {
+    label: "Onboarding",
+    items: [
+      {
+        to: "/admin/restaurant/import-studio",
+        label: "Import Studio",
+        icon: Upload,
+        permission: "SETTINGS:READ",
+        hint: "Bring existing menu, inventory, supplier and recipe data in",
+      },
+    ],
+  },
   {
     label: "Service",
     items: [

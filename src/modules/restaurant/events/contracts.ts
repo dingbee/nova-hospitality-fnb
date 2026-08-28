@@ -139,6 +139,9 @@ export const RESTAURANT_EVENT_TYPES = [
   "restaurant.reconciliation.exception.resolved",
   "restaurant.day.closed",
   "restaurant.day.reopened",
+  /* --- Import Studio (O7): migration workspaces, staged not autonomous. --- */
+  "restaurant.import.workspace.created",
+  "restaurant.import.committed",
 ] as const;
 export type RestaurantEventType = (typeof RESTAURANT_EVENT_TYPES)[number];
 
@@ -275,6 +278,8 @@ export const RESTAURANT_EVENT_SEVERITY: Record<
   "restaurant.day.closed": "low",
   // Reopening a closed day rewrites financial evidence after the fact.
   "restaurant.day.reopened": "high",
+  "restaurant.import.workspace.created": "info",
+  "restaurant.import.committed": "low",
 };
 
 export const restaurantEventSchema = z.object({
