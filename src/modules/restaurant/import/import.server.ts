@@ -18,6 +18,13 @@ import { upsertInventoryItem } from "../inventory/inventory.server";
 import { upsertSupplier, upsertSupplierProduct } from "../suppliers/suppliers.server";
 import { upsertMenu, upsertMenuItem } from "../menu/menu.server";
 import { upsertRecipeComponent } from "../costing/costing.server";
+import {
+  attachModifierGroup,
+  upsertModifier,
+  upsertModifierGroup,
+  upsertProduct,
+  upsertVariant,
+} from "../products/products.server";
 import { parseCsv, parseJson, parsePasted, parseXlsxBase64, type ParsedSource } from "./parsers";
 import {
   CANONICAL_FIELDS,
@@ -30,10 +37,15 @@ import { applyMapping } from "./normalize";
 import {
   stageInventoryItemRow,
   stageMenuItemRow,
+  stageModifierGroupRow,
+  stageModifierRow,
   stageOpeningStockRow,
+  stageProductModifierGroupRow,
+  stageProductStationRow,
   stageRecipeComponentRow,
   stageSupplierProductRow,
   stageSupplierRow,
+  stageVariantRow,
   type StageResult,
 } from "./stage";
 import type {
@@ -359,6 +371,12 @@ async function fetchRefData(sb: Sb, tenantId: string) {
     { data: menuItems },
     { data: supplierProducts },
     { data: locations },
+    { data: stations },
+    { data: products },
+    { data: variants },
+    { data: modifierGroups },
+    { data: modifiers },
+    { data: productModifierGroups },
   ] = await Promise.all([
     sb.from("restaurant_suppliers").select("id, code, name").eq("tenant_id", tenantId),
     sb
@@ -381,6 +399,15 @@ async function fetchRefData(sb: Sb, tenantId: string) {
       .select("id, supplier_id, supplier_sku, barcode")
       .eq("tenant_id", tenantId),
     sb.from("restaurant_locations").select("id, name").eq("tenant_id", tenantId),
+    sb.from("restaurant_stations").select("id, code, name").eq("tenant_id", tenantId),
+    sb.from("restaurant_products").select("id, menu_item_id, station_id").eq("tenant_id", tenantId),
+    sb.from("restaurant_product_variants").select("id, product_id, name").eq("tenant_id", tenantId),
+    sb.from("restaurant_modifier_groups").select("id, code, name").eq("tenant_id", tenantId),
+    sb.from("restaurant_modifiers").select("id, group_id, name").eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_product_modifier_groups")
+      .select("product_id, group_id")
+      .eq("tenant_id", tenantId),
   ]);
   return {
     suppliers: suppliers ?? [],
@@ -391,6 +418,12 @@ async function fetchRefData(sb: Sb, tenantId: string) {
     menuItems: menuItems ?? [],
     supplierProducts: supplierProducts ?? [],
     locations: locations ?? [],
+    stations: stations ?? [],
+    products: products ?? [],
+    variants: variants ?? [],
+    modifierGroups: modifierGroups ?? [],
+    modifiers: modifiers ?? [],
+    productModifierGroups: productModifierGroups ?? [],
   };
 }
 
@@ -418,6 +451,34 @@ function stageRow(
       return stageMenuItemRow(mappedRaw, {
         menuItems: ref.menuItems,
         categories: ref.menuCategories,
+      });
+    case "product_station":
+      return stageProductStationRow(mappedRaw, {
+        menuItems: ref.menuItems,
+        stations: ref.stations,
+        existingProducts: ref.products,
+      });
+    case "variant":
+      return stageVariantRow(mappedRaw, {
+        menuItems: ref.menuItems,
+        products: ref.products,
+        existingVariants: ref.variants,
+      });
+    case "modifier_group":
+      return stageModifierGroupRow(mappedRaw, { modifierGroups: ref.modifierGroups });
+    case "modifier":
+      return stageModifierRow(mappedRaw, {
+        modifierGroups: ref.modifierGroups,
+        inventoryItems: ref.inventoryItems,
+        units: ref.units,
+        existingModifiers: ref.modifiers,
+      });
+    case "product_modifier_group":
+      return stageProductModifierGroupRow(mappedRaw, {
+        menuItems: ref.menuItems,
+        products: ref.products,
+        modifierGroups: ref.modifierGroups,
+        existingLinks: ref.productModifierGroups,
       });
     case "recipe_component":
       return stageRecipeComponentRow(mappedRaw, {
@@ -755,6 +816,164 @@ async function commitMenuItemRow(
   return result.id as string;
 }
 
+async function commitProductStationRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+): Promise<string> {
+  const m = record.mapped_data;
+  if (!m.menuItemId) {
+    throw new Error(
+      "Dish was never resolved for this row — re-stage the sheet after importing it.",
+    );
+  }
+  if (!m.stationId) {
+    throw new Error(
+      "Station was never resolved for this row — check the station code and re-stage.",
+    );
+  }
+  const result = await upsertProduct(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    sku: m.sku ?? `PROD-${slugify(m.menuItemName ?? "item")}-${record.source_row}`,
+    name: m.menuItemName,
+    productType: "standard",
+    menuItemId: m.menuItemId,
+    stationId: m.stationId,
+    price: Number(m.price ?? 0),
+    currency: "TZS",
+    active: m.active ?? true,
+    servicePeriodIds: [],
+    sortOrder: 0,
+    taxRate: 0,
+  });
+  return result.id as string;
+}
+
+async function commitVariantRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+): Promise<string> {
+  const m = record.mapped_data;
+  if (!m.productId) {
+    throw new Error(
+      "Product/station link was never resolved for this row — import the product/station relationship first, then re-stage this sheet.",
+    );
+  }
+  const result = await upsertVariant(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    productId: m.productId,
+    sku: m.sku ?? undefined,
+    name: m.name,
+    price: Number(m.price ?? 0),
+    priceIsDelta: Boolean(m.priceIsDelta),
+    yieldFactor: 1,
+    active: m.active ?? true,
+    sortOrder: 0,
+  });
+  return result.id as string;
+}
+
+async function commitModifierGroupRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+): Promise<string> {
+  const m = record.mapped_data;
+  const result = await upsertModifierGroup(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    code: m.code,
+    name: m.name,
+    minSelect: Number(m.minSelect ?? 0),
+    maxSelect: Number(m.maxSelect ?? 1),
+    required: Boolean(m.required),
+    active: m.active ?? true,
+    sortOrder: 0,
+  });
+  return result.id as string;
+}
+
+async function commitModifierRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+): Promise<string> {
+  const m = record.mapped_data;
+  if (!m.groupId) {
+    throw new Error(
+      "Modifier group was never resolved for this row — import the modifier group first, then re-stage this sheet.",
+    );
+  }
+  // Belt-and-braces: staging already blocks "recipe" (see stage.ts), but a
+  // human can still force-approve a row that still carries a validation
+  // error — this must never fall through to writing a wrong effect.
+  if (m.effect === "recipe") {
+    throw new Error(
+      "Recipe-effect modifiers are not supported by import — create this modifier manually.",
+    );
+  }
+  if (m.effect === "inventory" && !m.inventoryItemId) {
+    throw new Error(
+      "Ingredient was never resolved for this row — re-stage the sheet after importing it.",
+    );
+  }
+  const result = await upsertModifier(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    groupId: m.groupId,
+    name: m.name,
+    priceDelta: Number(m.priceDelta ?? 0),
+    effect: m.effect === "inventory" ? "inventory" : "none",
+    inventoryItemId: m.inventoryItemId ?? undefined,
+    quantity: Number(m.quantity ?? 0),
+    unitId: m.unitId ?? undefined,
+    active: m.active ?? true,
+    sortOrder: 0,
+  });
+  return result.id as string;
+}
+
+async function commitProductModifierGroupRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+): Promise<string | null> {
+  const m = record.mapped_data;
+  if (!m.productId) {
+    throw new Error(
+      "Product/station link was never resolved for this row — import it first, then re-stage this sheet.",
+    );
+  }
+  if (!m.groupId) {
+    throw new Error(
+      "Modifier group was never resolved for this row — import it first, then re-stage this sheet.",
+    );
+  }
+  await attachModifierGroup(sb, userId, {
+    tenantId,
+    productId: m.productId,
+    groupId: m.groupId,
+    sortOrder: Number(m.sortOrder ?? 0),
+    attached: true,
+  });
+  const { data } = await sb
+    .from("restaurant_product_modifier_groups")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("product_id", m.productId)
+    .eq("group_id", m.groupId)
+    .maybeSingle();
+  return (data as any)?.id ?? null;
+}
+
 async function commitRecipeComponentRow(
   sb: Sb,
   userId: string,
@@ -956,6 +1175,26 @@ export async function commitImportWorkspace(
               userId,
               input.tenantId,
               targetMenuId!,
+              record,
+            );
+            break;
+          case "product_station":
+            committedEntityId = await commitProductStationRow(sb, userId, input.tenantId, record);
+            break;
+          case "variant":
+            committedEntityId = await commitVariantRow(sb, userId, input.tenantId, record);
+            break;
+          case "modifier_group":
+            committedEntityId = await commitModifierGroupRow(sb, userId, input.tenantId, record);
+            break;
+          case "modifier":
+            committedEntityId = await commitModifierRow(sb, userId, input.tenantId, record);
+            break;
+          case "product_modifier_group":
+            committedEntityId = await commitProductModifierGroupRow(
+              sb,
+              userId,
+              input.tenantId,
               record,
             );
             break;

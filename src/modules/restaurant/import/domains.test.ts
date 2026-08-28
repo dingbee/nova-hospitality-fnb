@@ -29,6 +29,21 @@ describe("detectDomains", () => {
     expect(guesses[0]!.domain).toBe("menu_item");
   });
 
+  it("detects a variant sheet from its headers", () => {
+    const guesses = detectDomains(["Menu Item", "Variant Name", "Price Is Delta", "Price"]);
+    expect(guesses[0]!.domain).toBe("variant");
+  });
+
+  it("detects a modifier group sheet from its headers", () => {
+    const guesses = detectDomains(["Group Code", "Modifier Group", "Min Select", "Max Select"]);
+    expect(guesses[0]!.domain).toBe("modifier_group");
+  });
+
+  it("detects a modifier sheet from its headers", () => {
+    const guesses = detectDomains(["Modifier", "Price Delta", "Stock Effect"]);
+    expect(guesses[0]!.domain).toBe("modifier");
+  });
+
   it("returns nothing for headers with no domain signal at all", () => {
     const guesses = detectDomains(["Column A", "Column B"]);
     expect(guesses).toEqual([]);

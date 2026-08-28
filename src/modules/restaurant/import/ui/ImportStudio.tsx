@@ -730,7 +730,23 @@ function StagedRecordsList({
       {rows.map((r) => {
         const meta = SEVERITY_META[r.severity] ?? SEVERITY_META.new_entity!;
         const label =
-          r.mapped_data.name ?? r.mapped_data.menuItemName ?? r.mapped_data.itemName ?? "Row";
+          r.mapped_data.name ??
+          r.mapped_data.menuItemName ??
+          r.mapped_data.itemName ??
+          r.mapped_data.productMenuItemName ??
+          r.mapped_data.code ??
+          "Row";
+        // For a variant/modifier/link row, the dish or group it attaches to
+        // is the fact a reviewer actually needs to see — not just the row's
+        // own name, which may otherwise look identical across many rows
+        // (e.g. every size variant sheet has a "name" of "Small"/"Large").
+        const linkedTo =
+          r.mapped_data.productMenuItemName ??
+          (r.domain === "product_station" ? r.mapped_data.menuItemName : null) ??
+          r.mapped_data.groupCode ??
+          r.mapped_data.modifierGroupCode ??
+          r.mapped_data.stationCode ??
+          null;
         return (
           <li key={r.id} className="flex flex-wrap items-start justify-between gap-2 py-2">
             <span className="min-w-0">
@@ -742,6 +758,7 @@ function StagedRecordsList({
                 {r.match_confidence != null
                   ? ` · ${Math.round(r.match_confidence * 100)}% match`
                   : ""}
+                {linkedTo && linkedTo !== label ? ` · linked to "${linkedTo}"` : ""}
               </span>
               {r.validation_errors?.length > 0 && (
                 <span className="block text-xs text-muted-foreground">

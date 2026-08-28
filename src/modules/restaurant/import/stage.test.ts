@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   stageInventoryItemRow,
   stageMenuItemRow,
+  stageModifierGroupRow,
+  stageModifierRow,
   stageOpeningStockRow,
+  stageProductModifierGroupRow,
+  stageProductStationRow,
   stageRecipeComponentRow,
   stageSupplierProductRow,
   stageSupplierRow,
+  stageVariantRow,
 } from "./stage";
 import type { UnitRow } from "../inventory/units";
 
@@ -171,6 +176,254 @@ describe("stageMenuItemRow", () => {
       { menuItems: [], categories: [] },
     );
     expect(r.mappedData.available).toBe(false);
+  });
+});
+
+describe("stageProductStationRow", () => {
+  const menuItems = [{ id: "mi-1", name: "Grilled Chicken", menu_id: "menu-1" }];
+  const stations = [{ id: "st-1", code: "KITCHEN", name: "Main Kitchen" }];
+
+  it("links a dish to a station and stages a new product", () => {
+    const r = stageProductStationRow(
+      { menuItemName: "Grilled Chicken", stationCode: "KITCHEN" },
+      { menuItems, stations, existingProducts: [] },
+    );
+    expect(r.mappedData.menuItemId).toBe("mi-1");
+    expect(r.mappedData.stationId).toBe("st-1");
+    expect(r.matchStatus).toBe("new_entity");
+    expect(r.severity).toBe("new_entity");
+  });
+
+  it("recognises a product that already links this dish to a station", () => {
+    const r = stageProductStationRow(
+      { menuItemName: "Grilled Chicken", stationCode: "KITCHEN" },
+      {
+        menuItems,
+        stations,
+        existingProducts: [{ id: "prod-1", menu_item_id: "mi-1", station_id: "st-1" }],
+      },
+    );
+    expect(r.matchStatus).toBe("exact_match");
+    expect(r.matchedEntityId).toBe("prod-1");
+    expect(r.severity).toBe("auto_ok");
+  });
+
+  it("blocks when the dish has not been imported/matched yet", () => {
+    const r = stageProductStationRow(
+      { menuItemName: "Not Yet Imported Dish", stationCode: "KITCHEN" },
+      { menuItems, stations, existingProducts: [] },
+    );
+    expect(r.matchStatus).toBe("unmatched");
+    expect(r.severity).toBe("cannot_map");
+  });
+
+  it("blocks when the station does not exist", () => {
+    const r = stageProductStationRow(
+      { menuItemName: "Grilled Chicken", stationCode: "BAR" },
+      { menuItems, stations, existingProducts: [] },
+    );
+    expect(r.matchStatus).toBe("unmatched");
+    expect(r.severity).toBe("cannot_map");
+    expect(r.validationErrors.some((e) => e.includes("BAR"))).toBe(true);
+  });
+});
+
+describe("stageVariantRow", () => {
+  const menuItems = [{ id: "mi-1", name: "Grilled Chicken", menu_id: "menu-1" }];
+  const products = [{ id: "prod-1", menu_item_id: "mi-1", station_id: "st-1" }];
+
+  it("stages a new variant once the product/station link exists", () => {
+    const r = stageVariantRow(
+      { productMenuItemName: "Grilled Chicken", name: "Half portion", price: "9000" },
+      { menuItems, products, existingVariants: [] },
+    );
+    expect(r.mappedData.productId).toBe("prod-1");
+    expect(r.matchStatus).toBe("new_entity");
+  });
+
+  it("blocks when no product/station link exists yet for the dish — never guesses one", () => {
+    const r = stageVariantRow(
+      { productMenuItemName: "Grilled Chicken", name: "Half portion", price: "9000" },
+      { menuItems, products: [], existingVariants: [] },
+    );
+    expect(r.matchStatus).toBe("unmatched");
+    expect(r.severity).toBe("cannot_map");
+    expect(r.validationErrors.some((e) => /product\/station/i.test(e))).toBe(true);
+  });
+
+  it("recognises an existing variant of the same name on the same product", () => {
+    const r = stageVariantRow(
+      { productMenuItemName: "Grilled Chicken", name: "Half portion", price: "9000" },
+      {
+        menuItems,
+        products,
+        existingVariants: [{ id: "var-1", product_id: "prod-1", name: "Half Portion" }],
+      },
+    );
+    expect(r.matchStatus).toBe("exact_match");
+    expect(r.matchedEntityId).toBe("var-1");
+  });
+
+  it("requires a price", () => {
+    const r = stageVariantRow(
+      { productMenuItemName: "Grilled Chicken", name: "Half portion" },
+      { menuItems, products, existingVariants: [] },
+    );
+    expect(r.severity).toBe("cannot_map");
+  });
+});
+
+describe("stageModifierGroupRow", () => {
+  it("stages a new modifier group", () => {
+    const r = stageModifierGroupRow(
+      { code: "SPICE", name: "Spice level", minSelect: "1", maxSelect: "1", required: "yes" },
+      { modifierGroups: [] },
+    );
+    expect(r.matchStatus).toBe("new_entity");
+    expect(r.mappedData.required).toBe(true);
+    expect(r.mappedData.minSelect).toBe(1);
+  });
+
+  it("matches an existing group by code", () => {
+    const r = stageModifierGroupRow(
+      { code: "SPICE", name: "Spice level" },
+      { modifierGroups: [{ id: "mg-1", code: "SPICE", name: "Spice Level" }] },
+    );
+    expect(r.matchStatus).toBe("exact_match");
+    expect(r.matchedEntityId).toBe("mg-1");
+  });
+
+  it("rejects a min select greater than max select", () => {
+    const r = stageModifierGroupRow(
+      { code: "SPICE", name: "Spice level", minSelect: "3", maxSelect: "1" },
+      { modifierGroups: [] },
+    );
+    expect(r.severity).toBe("cannot_map");
+    expect(r.validationErrors.some((e) => /min select/i.test(e))).toBe(true);
+  });
+
+  it("requires a code and a name", () => {
+    const r = stageModifierGroupRow({}, { modifierGroups: [] });
+    expect(r.severity).toBe("cannot_map");
+  });
+});
+
+describe("stageModifierRow", () => {
+  const modifierGroups = [{ id: "mg-1", code: "SPICE", name: "Spice level" }];
+  const items = [{ id: "item-1", sku: "ITM-1", name: "Chili Flakes", barcode: null, brand: null }];
+
+  it("stages a plain (no stock effect) modifier", () => {
+    const r = stageModifierRow(
+      { groupCode: "SPICE", name: "Extra hot", priceDelta: "0" },
+      { modifierGroups, inventoryItems: items, units: UNITS, existingModifiers: [] },
+    );
+    expect(r.mappedData.groupId).toBe("mg-1");
+    expect(r.mappedData.effect).toBe("none");
+    expect(r.matchStatus).toBe("new_entity");
+  });
+
+  it("resolves the ingredient for a stock-affecting modifier", () => {
+    const r = stageModifierRow(
+      {
+        groupCode: "SPICE",
+        name: "Extra chili",
+        effect: "inventory",
+        ingredientSku: "ITM-1",
+        quantity: "0.01",
+        unitCode: "kg",
+      },
+      { modifierGroups, inventoryItems: items, units: UNITS, existingModifiers: [] },
+    );
+    expect(r.mappedData.inventoryItemId).toBe("item-1");
+    expect(r.mappedData.unitId).toBe("u-kg");
+    expect(r.validationErrors).toEqual([]);
+  });
+
+  it("blocks a stock-affecting modifier with no ingredient named", () => {
+    const r = stageModifierRow(
+      { groupCode: "SPICE", name: "Extra chili", effect: "inventory" },
+      { modifierGroups, inventoryItems: items, units: UNITS, existingModifiers: [] },
+    );
+    expect(r.severity).toBe("cannot_map");
+  });
+
+  it("blocks the unsupported recipe effect rather than silently downgrading it", () => {
+    const r = stageModifierRow(
+      { groupCode: "SPICE", name: "House sauce", effect: "recipe" },
+      { modifierGroups, inventoryItems: items, units: UNITS, existingModifiers: [] },
+    );
+    expect(r.severity).toBe("cannot_map");
+    expect(r.validationErrors.some((e) => /recipe-effect/i.test(e))).toBe(true);
+  });
+
+  it("blocks when the modifier group has not been imported yet", () => {
+    const r = stageModifierRow(
+      { groupCode: "UNKNOWN", name: "Extra hot" },
+      { modifierGroups, inventoryItems: items, units: UNITS, existingModifiers: [] },
+    );
+    expect(r.matchStatus).toBe("unmatched");
+    expect(r.severity).toBe("cannot_map");
+  });
+
+  it("recognises an existing modifier in the same group", () => {
+    const r = stageModifierRow(
+      { groupCode: "SPICE", name: "Extra hot" },
+      {
+        modifierGroups,
+        inventoryItems: items,
+        units: UNITS,
+        existingModifiers: [{ id: "mod-1", group_id: "mg-1", name: "Extra Hot" }],
+      },
+    );
+    expect(r.matchStatus).toBe("exact_match");
+    expect(r.matchedEntityId).toBe("mod-1");
+  });
+});
+
+describe("stageProductModifierGroupRow", () => {
+  const menuItems = [{ id: "mi-1", name: "Grilled Chicken", menu_id: "menu-1" }];
+  const products = [{ id: "prod-1", menu_item_id: "mi-1", station_id: "st-1" }];
+  const modifierGroups = [{ id: "mg-1", code: "SPICE", name: "Spice level" }];
+
+  it("links an existing product to an existing modifier group", () => {
+    const r = stageProductModifierGroupRow(
+      { productMenuItemName: "Grilled Chicken", modifierGroupCode: "SPICE" },
+      { menuItems, products, modifierGroups, existingLinks: [] },
+    );
+    expect(r.mappedData.productId).toBe("prod-1");
+    expect(r.mappedData.groupId).toBe("mg-1");
+    expect(r.matchStatus).toBe("new_entity");
+  });
+
+  it("recognises an already-attached link as a safe no-op", () => {
+    const r = stageProductModifierGroupRow(
+      { productMenuItemName: "Grilled Chicken", modifierGroupCode: "SPICE" },
+      {
+        menuItems,
+        products,
+        modifierGroups,
+        existingLinks: [{ product_id: "prod-1", group_id: "mg-1" }],
+      },
+    );
+    expect(r.matchStatus).toBe("exact_match");
+  });
+
+  it("blocks when the product/station link does not exist yet", () => {
+    const r = stageProductModifierGroupRow(
+      { productMenuItemName: "Grilled Chicken", modifierGroupCode: "SPICE" },
+      { menuItems, products: [], modifierGroups, existingLinks: [] },
+    );
+    expect(r.matchStatus).toBe("unmatched");
+    expect(r.severity).toBe("cannot_map");
+  });
+
+  it("blocks when the modifier group does not exist yet", () => {
+    const r = stageProductModifierGroupRow(
+      { productMenuItemName: "Grilled Chicken", modifierGroupCode: "UNKNOWN" },
+      { menuItems, products, modifierGroups, existingLinks: [] },
+    );
+    expect(r.matchStatus).toBe("unmatched");
+    expect(r.severity).toBe("cannot_map");
   });
 });
 

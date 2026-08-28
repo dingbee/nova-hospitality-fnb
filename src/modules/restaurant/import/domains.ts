@@ -1,16 +1,21 @@
 /**
- * O7 Import Studio — the canonical import map.
+ * O7/O8 Import Studio — the canonical import map.
  *
  * One domain = one kind of staged record = one existing write-path service
  * function it eventually becomes, at commit time only:
  *
- *   supplier          -> suppliers.server.ts#upsertSupplier
- *   inventory_item     -> inventory/inventory.server.ts#upsertInventoryItem
- *   supplier_product   -> suppliers.server.ts#upsertSupplierProduct
- *   menu_item           -> menu/menu.server.ts#upsertMenuItem
- *   recipe_component   -> costing/costing.server.ts#upsertRecipeComponent
- *   opening_stock       -> inventory/movements.server.ts#insertMovement
- *                          (movementType: "opening_balance")
+ *   supplier                -> suppliers.server.ts#upsertSupplier
+ *   inventory_item           -> inventory/inventory.server.ts#upsertInventoryItem
+ *   supplier_product         -> suppliers.server.ts#upsertSupplierProduct
+ *   menu_item                 -> menu/menu.server.ts#upsertMenuItem
+ *   product_station           -> products/products.server.ts#upsertProduct
+ *   variant                   -> products/products.server.ts#upsertVariant
+ *   modifier_group             -> products/products.server.ts#upsertModifierGroup
+ *   modifier                   -> products/products.server.ts#upsertModifier
+ *   product_modifier_group     -> products/products.server.ts#attachModifierGroup
+ *   recipe_component           -> costing/costing.server.ts#upsertRecipeComponent
+ *   opening_stock               -> inventory/movements.server.ts#insertMovement
+ *                                  (movementType: "opening_balance")
  *
  * recipe_component targets restaurant_recipe_components (menu_item_id
  * direct), not restaurant_recipes/restaurant_recipe_lines — that second,
@@ -22,6 +27,17 @@
  * live end-to-end, so it is the one this importer targets. See the O7 final
  * report for the full architecture note.
  *
+ * O8 adds the five domains a guest actually sees on the ordering screen:
+ * `restaurant_products` is the bridge a menu item needs before it can carry a
+ * variant, a modifier group or a station — see pos.server.ts#fetchSellable
+ * Catalog, which only surfaces variants/modifiers for a menu item once a
+ * `restaurant_products` row with that menu_item_id exists. `product_station`
+ * creates/matches that bridge row (and its station); `variant`, `modifier_
+ * group`, `modifier` and `product_modifier_group` all depend on it existing
+ * first. A modifier's optional `effect: "recipe"` is deliberately not
+ * supported here — that would require staging against restaurant_recipes,
+ * the other (non-live) recipe model this importer does not touch.
+ *
  * No canonical field here is invented: every one is a field an existing
  * upsert* function already accepts.
  */
@@ -31,6 +47,11 @@ export const IMPORT_DOMAINS = [
   "inventory_item",
   "supplier_product",
   "menu_item",
+  "product_station",
+  "variant",
+  "modifier_group",
+  "modifier",
+  "product_modifier_group",
   "recipe_component",
   "opening_stock",
 ] as const;
@@ -41,16 +62,31 @@ export const IMPORT_DOMAIN_LABELS: Record<ImportDomain, string> = {
   inventory_item: "Inventory items",
   supplier_product: "Supplier products",
   menu_item: "Menu items",
+  product_station: "Products (menu item ↔ station)",
+  variant: "Variants",
+  modifier_group: "Modifier groups",
+  modifier: "Modifiers",
+  product_modifier_group: "Product ↔ modifier group links",
   recipe_component: "Recipe ingredients",
   opening_stock: "Opening stock",
 };
 
-/** Commit dependency order — a later domain may reference an entity resolved by an earlier one. */
+/**
+ * Commit dependency order — a later domain may reference an entity resolved
+ * by an earlier one. `product_station` must land before `variant`,
+ * `modifier`/`product_modifier_group` must land after `modifier_group`, and
+ * `product_modifier_group` must land after `product_station` too.
+ */
 export const IMPORT_DOMAIN_COMMIT_ORDER: readonly ImportDomain[] = [
   "supplier",
   "inventory_item",
   "supplier_product",
   "menu_item",
+  "product_station",
+  "variant",
+  "modifier_group",
+  "modifier",
+  "product_modifier_group",
   "recipe_component",
   "opening_stock",
 ];
@@ -279,6 +315,196 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       aliases: alias("Available", "Active", "In Stock", "On Menu"),
     },
   ],
+  product_station: [
+    {
+      field: "menuItemName",
+      label: "Dish/drink (to match)",
+      required: true,
+      aliases: alias("Menu Item", "Item Name", "Dish", "Name", "Product"),
+    },
+    {
+      field: "stationCode",
+      label: "Station (to match)",
+      required: true,
+      aliases: alias("Station", "Station Code", "Production Station", "Destination"),
+    },
+    {
+      field: "sku",
+      label: "Product SKU",
+      required: false,
+      aliases: alias("SKU", "Product Code", "Item Code"),
+    },
+    {
+      field: "price",
+      label: "Price",
+      required: false,
+      aliases: alias("Price", "Product Price"),
+    },
+    {
+      field: "active",
+      label: "Active",
+      required: false,
+      aliases: alias("Active", "Available"),
+    },
+  ],
+  variant: [
+    {
+      field: "productMenuItemName",
+      label: "Dish/drink (to match)",
+      required: true,
+      aliases: alias("Menu Item", "Product", "Item Name", "Dish"),
+    },
+    {
+      field: "name",
+      label: "Variant name",
+      required: true,
+      aliases: alias("Variant", "Variant Name", "Size", "Option"),
+    },
+    {
+      field: "sku",
+      label: "Variant SKU",
+      required: false,
+      aliases: alias("SKU", "Variant Code"),
+    },
+    {
+      field: "price",
+      label: "Price",
+      required: true,
+      aliases: alias("Price", "Variant Price"),
+    },
+    {
+      field: "priceIsDelta",
+      label: "Price is a delta",
+      required: false,
+      aliases: alias("Price Is Delta", "Is Delta", "Delta"),
+    },
+    {
+      field: "active",
+      label: "Active",
+      required: false,
+      aliases: alias("Active", "Available"),
+    },
+  ],
+  modifier_group: [
+    {
+      field: "code",
+      label: "Group code",
+      required: true,
+      aliases: alias("Code", "Group Code"),
+    },
+    {
+      field: "name",
+      label: "Group name",
+      required: true,
+      aliases: alias("Modifier Group", "Group Name", "Name"),
+    },
+    {
+      field: "minSelect",
+      label: "Min select",
+      required: false,
+      aliases: alias("Min Select", "Minimum", "Min"),
+    },
+    {
+      field: "maxSelect",
+      label: "Max select",
+      required: false,
+      aliases: alias("Max Select", "Maximum", "Max"),
+    },
+    {
+      field: "required",
+      label: "Required",
+      required: false,
+      aliases: alias("Required", "Mandatory"),
+    },
+    {
+      field: "active",
+      label: "Active",
+      required: false,
+      aliases: alias("Active", "Available"),
+    },
+  ],
+  modifier: [
+    {
+      field: "groupCode",
+      label: "Modifier group (to match)",
+      required: true,
+      aliases: alias("Group", "Group Code", "Modifier Group"),
+    },
+    {
+      field: "name",
+      label: "Modifier name",
+      required: true,
+      aliases: alias("Modifier", "Modifier Name", "Name", "Option"),
+    },
+    {
+      field: "priceDelta",
+      label: "Price delta",
+      required: false,
+      aliases: alias("Price", "Price Delta", "Extra Cost", "Surcharge"),
+    },
+    {
+      field: "effect",
+      label: "Stock effect",
+      required: false,
+      aliases: alias("Effect", "Stock Effect"),
+    },
+    {
+      field: "ingredientName",
+      label: "Ingredient (to match, if stock-affecting)",
+      required: false,
+      aliases: alias("Ingredient", "Ingredient Name"),
+    },
+    {
+      field: "ingredientSku",
+      label: "Ingredient SKU",
+      required: false,
+      aliases: alias("Ingredient SKU", "SKU"),
+    },
+    {
+      field: "ingredientBarcode",
+      label: "Ingredient barcode",
+      required: false,
+      aliases: alias("Ingredient Barcode", "Barcode", "EAN", "UPC"),
+    },
+    {
+      field: "quantity",
+      label: "Quantity consumed",
+      required: false,
+      aliases: alias("Quantity", "Qty"),
+    },
+    {
+      field: "unitCode",
+      label: "Unit",
+      required: false,
+      aliases: alias("Unit", "UOM", "Uom"),
+    },
+    {
+      field: "active",
+      label: "Active",
+      required: false,
+      aliases: alias("Active", "Available"),
+    },
+  ],
+  product_modifier_group: [
+    {
+      field: "productMenuItemName",
+      label: "Dish/drink (to match)",
+      required: true,
+      aliases: alias("Menu Item", "Product", "Item Name", "Dish"),
+    },
+    {
+      field: "modifierGroupCode",
+      label: "Modifier group (to match)",
+      required: true,
+      aliases: alias("Modifier Group", "Group Code", "Group"),
+    },
+    {
+      field: "sortOrder",
+      label: "Sort order",
+      required: false,
+      aliases: alias("Sort Order", "Order", "Position"),
+    },
+  ],
   recipe_component: [
     {
       field: "menuItemName",
@@ -385,6 +611,11 @@ const DOMAIN_SIGNAL_WORDS: Record<ImportDomain, readonly string[]> = {
   ),
   supplier_product: alias("Supplier SKU", "MOQ", "Min Order", "Case Size", "Vendor SKU"),
   menu_item: alias("Menu Item", "Selling Price", "Menu Price", "Menu Section", "On Menu", "Dish"),
+  product_station: alias("Station", "Station Code", "Production Station", "Destination"),
+  variant: alias("Variant", "Variant Name", "Price Is Delta", "Size", "Option"),
+  modifier_group: alias("Modifier Group", "Min Select", "Max Select", "Group Code"),
+  modifier: alias("Modifier", "Price Delta", "Extra Cost", "Stock Effect"),
+  product_modifier_group: alias("Modifier Group", "Group Code", "Sort Order"),
   recipe_component: alias("Recipe", "Ingredient", "Yield", "Component", "Method"),
   opening_stock: alias("Opening Qty", "Opening Quantity", "Opening Balance", "Qty On Hand"),
 };

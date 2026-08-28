@@ -38,6 +38,14 @@ function resetDb() {
   db.restaurant_menu_items = [];
   db.restaurant_supplier_products = [];
   db.restaurant_locations = [{ id: "loc-1", name: "Dry Store", tenant_id: TENANT }];
+  db.restaurant_stations = [
+    { id: "st-1", code: "KITCHEN", name: "Main Kitchen", tenant_id: TENANT },
+  ];
+  db.restaurant_products = [];
+  db.restaurant_product_variants = [];
+  db.restaurant_modifier_groups = [];
+  db.restaurant_modifiers = [];
+  db.restaurant_product_modifier_groups = [];
   db.restaurant_import_workspaces = [];
   db.restaurant_import_sources = [];
   db.restaurant_import_field_mappings = [];
@@ -295,6 +303,106 @@ vi.mock("../menu/menu.server", () => ({
   }),
 }));
 
+vi.mock("../products/products.server", () => ({
+  upsertProduct: vi.fn(async (_sb: any, _u: string, input: any) => {
+    const row = {
+      id: input.id ?? nextId("prod"),
+      tenant_id: input.tenantId,
+      sku: input.sku,
+      name: input.name,
+      menu_item_id: input.menuItemId ?? null,
+      station_id: input.stationId ?? null,
+      price: input.price,
+      active: input.active,
+    };
+    const existingIdx = db.restaurant_products!.findIndex((r) => r.id === row.id);
+    if (existingIdx >= 0)
+      db.restaurant_products![existingIdx] = { ...db.restaurant_products![existingIdx], ...row };
+    else db.restaurant_products!.push(row);
+    return row;
+  }),
+  upsertVariant: vi.fn(async (_sb: any, _u: string, input: any) => {
+    const row = {
+      id: input.id ?? nextId("var"),
+      tenant_id: input.tenantId,
+      product_id: input.productId,
+      sku: input.sku ?? null,
+      name: input.name,
+      price: input.price,
+      price_is_delta: input.priceIsDelta,
+      active: input.active,
+    };
+    const existingIdx = db.restaurant_product_variants!.findIndex((r) => r.id === row.id);
+    if (existingIdx >= 0)
+      db.restaurant_product_variants![existingIdx] = {
+        ...db.restaurant_product_variants![existingIdx],
+        ...row,
+      };
+    else db.restaurant_product_variants!.push(row);
+    return row;
+  }),
+  upsertModifierGroup: vi.fn(async (_sb: any, _u: string, input: any) => {
+    const row = {
+      id: input.id ?? nextId("mg"),
+      tenant_id: input.tenantId,
+      code: input.code,
+      name: input.name,
+      min_select: input.minSelect,
+      max_select: input.maxSelect,
+      required: input.required,
+      active: input.active,
+    };
+    const existingIdx = db.restaurant_modifier_groups!.findIndex((r) => r.id === row.id);
+    if (existingIdx >= 0)
+      db.restaurant_modifier_groups![existingIdx] = {
+        ...db.restaurant_modifier_groups![existingIdx],
+        ...row,
+      };
+    else db.restaurant_modifier_groups!.push(row);
+    return row;
+  }),
+  upsertModifier: vi.fn(async (_sb: any, _u: string, input: any) => {
+    const row = {
+      id: input.id ?? nextId("mod"),
+      tenant_id: input.tenantId,
+      group_id: input.groupId,
+      name: input.name,
+      price_delta: input.priceDelta,
+      effect: input.effect,
+      inventory_item_id: input.inventoryItemId ?? null,
+      quantity: input.quantity,
+      unit_id: input.unitId ?? null,
+      active: input.active,
+    };
+    const existingIdx = db.restaurant_modifiers!.findIndex((r) => r.id === row.id);
+    if (existingIdx >= 0)
+      db.restaurant_modifiers![existingIdx] = { ...db.restaurant_modifiers![existingIdx], ...row };
+    else db.restaurant_modifiers!.push(row);
+    return row;
+  }),
+  attachModifierGroup: vi.fn(async (_sb: any, _u: string, input: any) => {
+    if (!input.attached) {
+      db.restaurant_product_modifier_groups = db.restaurant_product_modifier_groups!.filter(
+        (r) => !(r.product_id === input.productId && r.group_id === input.groupId),
+      );
+      return { attached: false };
+    }
+    const existing = db.restaurant_product_modifier_groups!.find(
+      (r) => r.product_id === input.productId && r.group_id === input.groupId,
+    );
+    if (!existing) {
+      db.restaurant_product_modifier_groups!.push({
+        id: nextId("pmg"),
+        tenant_id: input.tenantId,
+        product_id: input.productId,
+        group_id: input.groupId,
+        sort_order: input.sortOrder,
+      });
+    }
+    return { attached: true };
+  }),
+}));
+
 const recipeComponents: any[] = [];
 vi.mock("../costing/costing.server", () => ({
   upsertRecipeComponent: vi.fn(async (_sb: any, _u: string, input: any) => {
@@ -386,6 +494,11 @@ function mapHeader(domain: string, header: string): string | null {
       SupplierSku: "supplierSku",
     },
     menu_item: { Name: "name", Price: "price" },
+    product_station: { Dish: "menuItemName", Station: "stationCode" },
+    variant: { Dish: "productMenuItemName", Name: "name", Price: "price" },
+    modifier_group: { Code: "code", Name: "name" },
+    modifier: { Group: "groupCode", Name: "name" },
+    product_modifier_group: { Dish: "productMenuItemName", Group: "modifierGroupCode" },
     recipe_component: {
       Dish: "menuItemName",
       IngredientSku: "ingredientSku",
@@ -577,6 +690,118 @@ describe("commit: dependency order and cross-domain resolution", () => {
     } as any);
     expect(staged[0]!.severity).toBe("cannot_map");
     expect(staged[0]!.decision).toBe("pending");
+  });
+});
+
+describe("commit: product/station, variants, modifier groups and modifiers", () => {
+  it("stages and commits the full O8 chain once the dish it all hangs off exists", async () => {
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Menu build-out",
+    } as any);
+
+    // Pass 1: the dish itself must exist before a product/station link can
+    // reference it — same two-pass shape the recipe_component test above
+    // already establishes for this importer.
+    await stageCsv(TENANT, ws.id, "Name,Price\nGrilled Chicken,18000\n", "menu_item");
+    await approveAllPending(TENANT, ws.id);
+    const pass1 = await commitImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    } as any);
+    expect(pass1.failed).toBe(0);
+    expect(db.restaurant_menu_items).toHaveLength(1);
+
+    // Pass 2: product/station and modifier_group are independent of each
+    // other, but both must be *committed* — not merely staged — before a
+    // variant, a modifier or a product<->modifier-group link can resolve
+    // against them (the same "stage it as an exception, never fabricate the
+    // relationship" rule the recipe_component test above already proves).
+    await stageCsv(TENANT, ws.id, "Dish,Station\nGrilled Chicken,KITCHEN\n", "product_station");
+    await stageCsv(TENANT, ws.id, "Code,Name\nSPICE,Spice level\n", "modifier_group");
+    await approveAllPending(TENANT, ws.id);
+    const pass2 = await commitImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    } as any);
+    expect(pass2.failed).toBe(0);
+    expect(db.restaurant_products).toHaveLength(1);
+    expect(db.restaurant_products![0]!.station_id).toBe("st-1");
+    expect(db.restaurant_modifier_groups).toHaveLength(1);
+
+    // Pass 3: variant, modifier and the product<->modifier-group link all
+    // resolve now that their references were actually committed.
+    await stageCsv(
+      TENANT,
+      ws.id,
+      "Dish,Name,Price\nGrilled Chicken,Half portion,9000\n",
+      "variant",
+    );
+    await stageCsv(TENANT, ws.id, "Group,Name\nSPICE,Extra hot\n", "modifier");
+    await stageCsv(TENANT, ws.id, "Dish,Group\nGrilled Chicken,SPICE\n", "product_modifier_group");
+    await approveAllPending(TENANT, ws.id);
+
+    const pass3 = await commitImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    } as any);
+    expect(pass3.status).toBe("committed");
+    expect(pass3.failed).toBe(0);
+    expect(db.restaurant_product_variants).toHaveLength(1);
+    expect(db.restaurant_modifiers).toHaveLength(1);
+    expect(db.restaurant_product_modifier_groups).toHaveLength(1);
+    expect(db.restaurant_product_modifier_groups![0]!.product_id).toBe(
+      db.restaurant_products![0]!.id,
+    );
+  });
+
+  it("blocks a variant that references a dish with no product/station link yet, without fabricating one", async () => {
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Variants only",
+    } as any);
+    db.restaurant_menu_items!.push({
+      id: "mi-1",
+      tenant_id: TENANT,
+      menu_id: "menu-1",
+      name: "Grilled Chicken",
+      price: 18000,
+    });
+    await stageCsv(
+      TENANT,
+      ws.id,
+      "Dish,Name,Price\nGrilled Chicken,Half portion,9000\n",
+      "variant",
+    );
+    const staged = await listStagedRecords(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      limit: 100,
+    } as any);
+    expect(staged[0]!.severity).toBe("cannot_map");
+    expect(staged[0]!.decision).toBe("pending");
+  });
+
+  it("blocks an unrecognised station code without silently attaching a wrong one", async () => {
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Bad station",
+    } as any);
+    db.restaurant_menu_items!.push({
+      id: "mi-1",
+      tenant_id: TENANT,
+      menu_id: "menu-1",
+      name: "Grilled Chicken",
+      price: 18000,
+    });
+    await stageCsv(TENANT, ws.id, "Dish,Station\nGrilled Chicken,BAR\n", "product_station");
+    const staged = await listStagedRecords(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      limit: 100,
+    } as any);
+    expect(staged[0]!.severity).toBe("cannot_map");
+    expect(staged[0]!.match_status).toBe("unmatched");
   });
 });
 

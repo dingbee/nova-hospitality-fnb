@@ -29,6 +29,21 @@ export interface MenuItemRow {
   name: string;
   menu_id: string;
 }
+export interface StationRow {
+  id: string;
+  code: string;
+  name: string;
+}
+export interface ProductRow {
+  id: string;
+  menu_item_id: string | null;
+  station_id: string | null;
+}
+export interface ModifierGroupRow {
+  id: string;
+  code: string;
+  name: string;
+}
 
 export function supplierCandidates(rows: readonly SupplierRow[]): CatalogMatchCandidate[] {
   return rows.map((r) => ({ id: r.id, sku: r.code ?? r.id, name: r.name }));
@@ -48,6 +63,18 @@ export function inventoryItemCandidates(
 
 export function menuItemCandidates(rows: readonly MenuItemRow[]): CatalogMatchCandidate[] {
   return rows.map((r) => ({ id: r.id, sku: r.id, name: r.name }));
+}
+
+/** Stations are matched by their tenant-unique code — the same identity a client proposes/never overrides (stationRouting.ts). */
+export function stationCandidates(rows: readonly StationRow[]): CatalogMatchCandidate[] {
+  return rows.map((r) => ({ id: r.id, sku: r.code, name: r.name }));
+}
+
+/** Modifier groups are matched by their tenant-unique code, same as a supplier's own code. */
+export function modifierGroupCandidates(
+  rows: readonly ModifierGroupRow[],
+): CatalogMatchCandidate[] {
+  return rows.map((r) => ({ id: r.id, sku: r.code, name: r.name }));
 }
 
 /** Best match, or null when nothing scores above the floor — never a forced pick. */
