@@ -13,6 +13,7 @@ import type { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { insertMovement } from "../inventory/movements.server";
+import { purchaseToStock, convertUnits, type UnitRow } from "../inventory/units";
 import {
   assertPurchaseOrderReceivable,
   resolveFulfilmentTransition,
@@ -20,18 +21,18 @@ import {
 import { nextDocumentNumber, recordProcurementAudit } from "./audit.server";
 import { recordPriceObservation } from "./pricing.server";
 import { raiseVariance } from "./variances.server";
-import {
-  DOCUMENT_PREFIX,
-  type CreateReceiptInput,
-  type listReceiptsSchema,
-} from "./contracts";
+import { DOCUMENT_PREFIX, type CreateReceiptInput, type listReceiptsSchema } from "./contracts";
 
 type Sb = any;
 
 const RECEIPT_SELECT =
   "id, document_number, status, purchase_order_id, supplier_id, delivery_note_ref, received_at, expected_at, posted_at, currency, subtotal, accepted_value, notes, property_id, location_id, created_at";
 
-export async function listGoodsReceipts(sb: Sb, userId: string, input: z.infer<typeof listReceiptsSchema>) {
+export async function listGoodsReceipts(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listReceiptsSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_goods_receipts")
@@ -49,7 +50,12 @@ export async function listGoodsReceipts(sb: Sb, userId: string, input: z.infer<t
 export async function getGoodsReceipt(sb: Sb, userId: string, tenantId: string, id: string) {
   await assertTenantRead(sb, userId, tenantId);
   const [{ data: receipt, error }, { data: lines }, { data: variances }] = await Promise.all([
-    sb.from("restaurant_goods_receipts").select(RECEIPT_SELECT).eq("tenant_id", tenantId).eq("id", id).single(),
+    sb
+      .from("restaurant_goods_receipts")
+      .select(RECEIPT_SELECT)
+      .eq("tenant_id", tenantId)
+      .eq("id", id)
+      .single(),
     sb
       .from("restaurant_goods_receipt_items")
       .select(
@@ -60,7 +66,9 @@ export async function getGoodsReceipt(sb: Sb, userId: string, tenantId: string, 
       .order("created_at"),
     sb
       .from("restaurant_procurement_variances")
-      .select("id, variance_type, severity, status, label, expected_value, actual_value, variance_pct")
+      .select(
+        "id, variance_type, severity, status, label, expected_value, actual_value, variance_pct",
+      )
       .eq("tenant_id", tenantId)
       .eq("receipt_id", id),
   ]);
@@ -90,17 +98,26 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
 
   for (const l of input.lines) {
     if (l.acceptedQuantity + l.rejectedQuantity + l.damagedQuantity > l.receivedQuantity + 0.0001) {
-      throw new Error(`"${l.description}": accepted + rejected + damaged cannot exceed the received quantity.`);
+      throw new Error(
+        `"${l.description}": accepted + rejected + damaged cannot exceed the received quantity.`,
+      );
     }
     if ((l.rejectedQuantity > 0 || l.damagedQuantity > 0) && !l.rejectionReason) {
-      throw new Error(`"${l.description}": a reason is required when quantities are rejected or damaged.`);
+      throw new Error(
+        `"${l.description}": a reason is required when quantities are rejected or damaged.`,
+      );
     }
   }
 
   // ---- over-receipt control ----------------------------------------------
   // Cumulative deliveries may never silently enlarge the order. Over-delivery
   // is allowed only as an explicitly authorised, reasoned exception.
-  const overReceipts: Array<{ description: string; ordered: number; alreadyReceived: number; now: number }> = [];
+  const overReceipts: Array<{
+    description: string;
+    ordered: number;
+    alreadyReceived: number;
+    now: number;
+  }> = [];
   if (po) {
     const orderItemIds = input.lines.map((l) => l.purchaseOrderItemId).filter(Boolean) as string[];
     if (orderItemIds.length > 0) {
@@ -114,7 +131,8 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
       for (const l of input.lines) {
         if (!l.purchaseOrderItemId) continue;
         const poi = byId.get(l.purchaseOrderItemId);
-        if (!poi) throw new Error(`"${l.description}": order line does not belong to this purchase order.`);
+        if (!poi)
+          throw new Error(`"${l.description}": order line does not belong to this purchase order.`);
         const ordered = Number(poi.quantity ?? 0);
         const already = Number(poi.received_quantity ?? 0);
         if (already + l.receivedQuantity > ordered + 0.0001) {
@@ -234,7 +252,10 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
     action: "created",
     newState: "draft",
     correlationId: po?.correlation_id ?? null,
-    metadata: { purchase_order: po?.document_number ?? po?.reference ?? null, lines: input.lines.length },
+    metadata: {
+      purchase_order: po?.document_number ?? po?.reference ?? null,
+      lines: input.lines.length,
+    },
   });
 
   if (input.post) return postGoodsReceipt(sb, userId, input.tenantId, receipt.id);
@@ -245,7 +266,12 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
  * Post a receipt: accepted quantities enter the inventory ledger, variances are
  * raised, price history is written and the order's fulfilment state advances.
  */
-export async function postGoodsReceipt(sb: Sb, userId: string, tenantId: string, receiptId: string) {
+export async function postGoodsReceipt(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  receiptId: string,
+) {
   await assertCapability(sb, userId, tenantId, "receiving.manage");
 
   const { data: receipt, error } = await sb
@@ -259,7 +285,12 @@ export async function postGoodsReceipt(sb: Sb, userId: string, tenantId: string,
   if (error || !receipt) throw new Error("Goods receipt not found.");
   if (receipt.status === "cancelled") throw new Error("A cancelled receipt cannot be posted.");
   if (receipt.status === "posted") {
-    return { id: receipt.id, documentNumber: receipt.document_number, status: "posted" as const, posted: true };
+    return {
+      id: receipt.id,
+      documentNumber: receipt.document_number,
+      status: "posted" as const,
+      posted: true,
+    };
   }
 
   // The order's right to receive is re-checked at posting time, before any
@@ -287,12 +318,81 @@ export async function postGoodsReceipt(sb: Sb, userId: string, tenantId: string,
     .eq("receipt_id", receipt.id);
 
   const rows = (lines ?? []) as any[];
+
+  // ---- unit conversion: what was captured -> what the ledger holds -------
+  // A receipt line is captured in whatever unit the delivery note actually
+  // used (often the purchase unit — a carton — not the stock unit a bottle
+  // is counted in). Resolved and validated for every line before any
+  // movement is written, so a receipt never partially posts one line's
+  // stock and then aborts on the next: an unconvertible unit refuses the
+  // whole post rather than silently writing the wrong stock-unit quantity.
+  const itemIds = [...new Set(rows.map((l) => l.inventory_item_id).filter(Boolean))] as string[];
+  const { data: items } = itemIds.length
+    ? await sb
+        .from("restaurant_inventory_items")
+        .select("id, unit_id, purchase_unit_id, pack_size")
+        .eq("tenant_id", tenantId)
+        .in("id", itemIds)
+    : { data: [] as any[] };
+  const itemById = new Map(((items ?? []) as any[]).map((i) => [i.id, i]));
+
+  const unitIds = [
+    ...new Set(
+      [...rows.map((l) => l.unit_id), ...((items ?? []) as any[]).map((i) => i.unit_id)].filter(
+        Boolean,
+      ),
+    ),
+  ] as string[];
+  const { data: unitRows } = unitIds.length
+    ? await sb
+        .from("restaurant_inventory_units")
+        .select("id, code, name, dimension, factor, base_unit_id")
+        .in("id", unitIds)
+    : { data: [] as any[] };
+  const unitById = new Map(((unitRows ?? []) as UnitRow[]).map((u) => [u.id, u]));
+
+  const converted = new Map<string, { quantity: number; unitCost: number }>();
+  for (const l of rows) {
+    const accepted = Number(l.accepted_quantity ?? 0);
+    const unitCost = Number(l.unit_cost ?? 0);
+    if (accepted <= 0 || !l.inventory_item_id) {
+      converted.set(l.id, { quantity: accepted, unitCost });
+      continue;
+    }
+    const item = itemById.get(l.inventory_item_id);
+    // No stock unit recorded on the item, or the line was captured directly
+    // in it — nothing to convert.
+    if (!item?.unit_id || !l.unit_id || l.unit_id === item.unit_id) {
+      converted.set(l.id, { quantity: accepted, unitCost });
+      continue;
+    }
+    if (l.unit_id === item.purchase_unit_id) {
+      const result = purchaseToStock(accepted, item.pack_size);
+      converted.set(l.id, {
+        quantity: result.quantity,
+        unitCost: (accepted * unitCost) / result.quantity,
+      });
+      continue;
+    }
+    const result = convertUnits(accepted, unitById.get(l.unit_id), unitById.get(item.unit_id));
+    if (!result.exact) {
+      throw new Error(
+        `"${l.description}": received in a unit that cannot be converted to this item's stock unit (${result.reason ?? "unknown conversion"}). Fix the unit on this line, or the item's purchase unit/pack size, before posting.`,
+      );
+    }
+    converted.set(l.id, {
+      quantity: result.quantity,
+      unitCost: (accepted * unitCost) / result.quantity,
+    });
+  }
+
   let acceptedValue = 0;
 
   for (const l of rows) {
     const accepted = Number(l.accepted_quantity ?? 0);
     const unitCost = Number(l.unit_cost ?? 0);
     acceptedValue += accepted * unitCost;
+    const stockQuantity = converted.get(l.id) ?? { quantity: accepted, unitCost };
 
     if (accepted > 0 && l.inventory_item_id) {
       const moved = await insertMovement(sb, userId, {
@@ -300,10 +400,10 @@ export async function postGoodsReceipt(sb: Sb, userId: string, tenantId: string,
         propertyId: receipt.property_id,
         locationId: l.storage_location_id ?? receipt.location_id,
         inventoryItemId: l.inventory_item_id,
-        unitId: l.unit_id,
+        unitId: itemById.get(l.inventory_item_id)?.unit_id ?? l.unit_id,
         movementType: "purchase_receipt",
-        quantity: Math.abs(accepted),
-        unitCost,
+        quantity: Math.abs(stockQuantity.quantity),
+        unitCost: stockQuantity.unitCost,
         currency: receipt.currency ?? "TZS",
         reason: `Goods receipt ${receipt.document_number}`,
         referenceType: "restaurant_goods_receipt",
@@ -321,13 +421,15 @@ export async function postGoodsReceipt(sb: Sb, userId: string, tenantId: string,
 
       // Lot traceability: the batch code and expiry captured at the door are
       // only useful if they survive into stock. Without this, a recall or an
-      // expiry sweep has nothing to work from.
+      // expiry sweep has nothing to work from. Recorded in stock units, same
+      // as the ledger movement it traces, so FIFO/expiry consumption later
+      // reconciles against the same quantity the ledger holds.
       await persistReceiptBatch(sb, userId, {
         tenantId,
         receipt,
         line: l,
-        accepted,
-        unitCost,
+        accepted: stockQuantity.quantity,
+        unitCost: stockQuantity.unitCost,
       });
     }
 
@@ -472,7 +574,10 @@ export async function postGoodsReceipt(sb: Sb, userId: string, tenantId: string,
     if (next) {
       await sb
         .from("restaurant_purchase_orders")
-        .update({ status: next, received_at: next === "received" ? new Date().toISOString() : null })
+        .update({
+          status: next,
+          received_at: next === "received" ? new Date().toISOString() : null,
+        })
         .eq("tenant_id", tenantId)
         .eq("id", receipt.purchase_order_id)
         // Optimistic guard: only move the order we actually evaluated.
@@ -556,7 +661,8 @@ async function persistReceiptBatch(
   if (existing) return;
 
   const batchNumber =
-    (line.batch_code as string | null) ?? `${receipt.document_number ?? "GRN"}-${String(line.id).slice(0, 8)}`;
+    (line.batch_code as string | null) ??
+    `${receipt.document_number ?? "GRN"}-${String(line.id).slice(0, 8)}`;
 
   const { data: batch, error } = await sb
     .from("restaurant_inventory_batches")

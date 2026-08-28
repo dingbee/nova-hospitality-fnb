@@ -6,7 +6,7 @@
  * blended: on hand, reserved, available, incoming. Every mutating surface here
  * writes through the ledger; nothing edits a balance directly.
  */
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import { StatusChip } from "@/components/os/StatusChip";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "../../ui/useRestaurantWorkspace";
 import { BatchSheet } from "./BatchSheet";
+import { BarcodeScanButton } from "./BarcodeScanButton";
 import { stocktakeBadge, transferBadge, type StockPosition } from "../contracts";
 import {
   approveStockTransferFn,
@@ -195,6 +196,7 @@ function NewItemForm({ tenantId, onCreated }: { tenantId: string; onCreated: () 
 
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
+  const [barcode, setBarcode] = useState("");
   const [itemType, setItemType] = useState<(typeof INVENTORY_ITEM_TYPES)[number]>("ingredient");
   const [unitId, setUnitId] = useState("");
   const [locationId, setLocationId] = useState("");
@@ -218,6 +220,7 @@ function NewItemForm({ tenantId, onCreated }: { tenantId: string; onCreated: () 
           tenantId,
           name,
           sku: sku || undefined,
+          barcode: barcode || undefined,
           itemType,
           unitId: unitId || undefined,
           locationId: locationId || undefined,
@@ -233,6 +236,7 @@ function NewItemForm({ tenantId, onCreated }: { tenantId: string; onCreated: () 
     onSuccess: () => {
       setName("");
       setSku("");
+      setBarcode("");
       setOpeningQuantity("0");
       setReorderPoint("");
       setAverageCost("0");
@@ -251,7 +255,16 @@ function NewItemForm({ tenantId, onCreated }: { tenantId: string; onCreated: () 
           onChange={(e) => setName(e.target.value)}
           placeholder="Name (e.g. Tomato)"
         />
-        <Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="SKU (optional)" />
+        <Input
+          value={sku}
+          onChange={(e) => setSku(e.target.value)}
+          placeholder="SKU (leave blank to auto-generate)"
+        />
+        <Input
+          value={barcode}
+          onChange={(e) => setBarcode(e.target.value)}
+          placeholder="Barcode (optional — scan or type)"
+        />
         <select
           className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
           value={itemType}
@@ -976,6 +989,8 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [locationId, setLocationId] = useState("");
   const [counts, setCounts] = useState<Record<string, string>>({});
+  const [scanMessage, setScanMessage] = useState<string | null>(null);
+  const countInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const locations = useQuery({
     queryKey: ["restaurant.inventory.locations", tenantId],
@@ -1013,6 +1028,25 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
   });
 
   const d = detail.data as any;
+
+  /**
+   * A stocktake's lines are fixed by the ledger snapshot taken when counting
+   * started — scanning can never add or remove an item here, only jump the
+   * counter to the line a scanned barcode already belongs to.
+   */
+  const handleScan = (code: string) => {
+    const lines = (d?.lines ?? []) as any[];
+    const match = lines.find((l) => l.item_barcode === code || l.item_sku === code);
+    if (!match) {
+      setScanMessage(`No item on this stocktake matches "${code}". Count it by hand below.`);
+      return;
+    }
+    setScanMessage(null);
+    const el = countInputRefs.current[match.id];
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    el?.focus();
+  };
+
   const dirtyLines = useMemo(
     () =>
       Object.entries(counts)
@@ -1102,6 +1136,15 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
 
                   {openId === s.id && d && (
                     <div className="mt-3 space-y-3 rounded-md bg-muted/40 p-3">
+                      {d.status !== "posted" && d.status !== "cancelled" && (
+                        <div className="flex items-center gap-2">
+                          <BarcodeScanButton onScan={handleScan} />
+                          <span className="text-xs text-muted-foreground">
+                            Scan an item's barcode to jump to its count.
+                          </span>
+                        </div>
+                      )}
+                      {scanMessage && <p className="text-xs text-destructive">{scanMessage}</p>}
                       <ul className="space-y-2 text-xs">
                         {(d.lines ?? []).map((l: any) => {
                           const counted =
@@ -1124,6 +1167,9 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
                               </span>
                               <span className="flex items-center gap-2">
                                 <Input
+                                  ref={(el) => {
+                                    countInputRefs.current[l.id] = el;
+                                  }}
                                   className="h-10 w-28"
                                   type="number"
                                   step="0.001"

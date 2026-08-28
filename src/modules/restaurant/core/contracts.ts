@@ -125,7 +125,11 @@ export const listMenusSchema = tenantScopeSchema.extend({
 export const upsertMenuSchema = tenantScopeSchema.extend({
   id: uuid.optional(),
   name: z.string().min(2).max(160),
-  slug: z.string().min(2).max(120).regex(/^[a-z0-9-]+$/),
+  slug: z
+    .string()
+    .min(2)
+    .max(120)
+    .regex(/^[a-z0-9-]+$/),
   version: z.number().int().min(1).default(1),
   status: z.enum(MENU_STATUSES).default("draft"),
   currency: z.string().min(3).max(3).default("TZS"),
@@ -147,7 +151,11 @@ export const upsertMenuItemSchema = z.object({
   menuId: uuid,
   categoryId: uuid.optional(),
   name: z.string().min(2).max(160),
-  slug: z.string().min(2).max(120).regex(/^[a-z0-9-]+$/),
+  slug: z
+    .string()
+    .min(2)
+    .max(120)
+    .regex(/^[a-z0-9-]+$/),
   description: z.string().max(2000).optional(),
   price: z.number().min(0).default(0),
   currency: z.string().min(3).max(3).default("TZS"),
@@ -175,7 +183,11 @@ export const upsertInventoryItemSchema = tenantScopeSchema.extend({
   id: uuid.optional(),
   categoryId: uuid.optional(),
   unitId: uuid.optional(),
+  /** Omit to auto-generate a deterministic NOVA SKU — never invented to replace a real one already on file. */
   sku: z.string().max(60).optional(),
+  /** A distinct identifier from sku/id: what a barcode scanner reads. Optional, unique per tenant when set. */
+  barcode: z.string().max(64).optional(),
+  brand: z.string().max(120).optional(),
   name: z.string().min(2).max(160),
   itemType: z.enum(INVENTORY_ITEM_TYPES).default("ingredient"),
   currentQuantity: z.number().default(0),
@@ -302,7 +314,14 @@ export type ComputeRecipeCostInput = z.infer<typeof computeRecipeCostSchema>;
 export const ORDER_STATUSES = ["open", "sent", "served", "closed", "cancelled", "voided"] as const;
 export type RestaurantOrderStatus = (typeof ORDER_STATUSES)[number];
 
-export const ORDER_TYPES = ["dine_in", "bar", "takeaway", "room_service", "delivery", "banquet"] as const;
+export const ORDER_TYPES = [
+  "dine_in",
+  "bar",
+  "takeaway",
+  "room_service",
+  "delivery",
+  "banquet",
+] as const;
 export type RestaurantOrderType = (typeof ORDER_TYPES)[number];
 
 export const PAYMENT_STATES = [
@@ -315,7 +334,13 @@ export const PAYMENT_STATES = [
 ] as const;
 export type RestaurantPaymentState = (typeof PAYMENT_STATES)[number];
 
-export const TABLE_STATUSES = ["available", "occupied", "reserved", "cleaning", "out_of_service"] as const;
+export const TABLE_STATUSES = [
+  "available",
+  "occupied",
+  "reserved",
+  "cleaning",
+  "out_of_service",
+] as const;
 export type RestaurantTableStatus = (typeof TABLE_STATUSES)[number];
 
 export const TICKET_STATUSES = ["queued", "preparing", "ready", "served", "cancelled"] as const;

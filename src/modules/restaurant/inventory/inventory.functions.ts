@@ -26,3 +26,22 @@ export const upsertRestaurantInventoryItemFn = createServerFn({ method: "POST" }
     const mod = await import("./inventory.server");
     return mod.upsertInventoryItem(context.supabase, context.userId, data);
   });
+
+const matchInventoryItemsSchema = z.object({
+  tenantId: z.string().uuid(),
+  query: z.object({
+    barcode: z.string().optional(),
+    sku: z.string().optional(),
+    supplierSku: z.string().optional(),
+    name: z.string().optional(),
+  }),
+  limit: z.number().int().min(1).max(20).optional(),
+});
+
+export const matchRestaurantInventoryItemsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => matchInventoryItemsSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./inventory.server");
+    return mod.matchInventoryItems(context.supabase, context.userId, data);
+  });

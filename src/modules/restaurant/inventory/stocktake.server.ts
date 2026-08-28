@@ -11,7 +11,11 @@ import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { insertMovement } from "./movements.server";
 import { locationNameMap } from "./locations.server";
-import type { SaveStocktakeCountsInput, StartStocktakeInput, listStocktakesSchema } from "./contracts";
+import type {
+  SaveStocktakeCountsInput,
+  StartStocktakeInput,
+  listStocktakesSchema,
+} from "./contracts";
 
 type Sb = any;
 
@@ -25,7 +29,11 @@ async function nextStocktakeNumber(sb: Sb, tenantId: string): Promise<string> {
   return data as string;
 }
 
-export async function listStocktakes(sb: Sb, userId: string, input: z.infer<typeof listStocktakesSchema>) {
+export async function listStocktakes(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listStocktakesSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_stocktakes")
@@ -53,20 +61,34 @@ export async function getStocktake(sb: Sb, userId: string, tenantId: string, sto
     .single();
   if (error || !head) throw new Error("Stocktake not found.");
   const [{ data: lines }, { data: items }, locations] = await Promise.all([
-    sb.from("restaurant_stocktake_lines").select("*").eq("tenant_id", tenantId).eq("stocktake_id", stocktakeId),
-    sb.from("restaurant_inventory_items").select("id, name, sku").eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_stocktake_lines")
+      .select("*")
+      .eq("tenant_id", tenantId)
+      .eq("stocktake_id", stocktakeId),
+    sb
+      .from("restaurant_inventory_items")
+      .select("id, name, sku, barcode")
+      .eq("tenant_id", tenantId),
     locationNameMap(sb, tenantId),
   ]);
-  const names = new Map(((items ?? []) as any[]).map((i) => [i.id, i.name]));
+  const itemsById = new Map(((items ?? []) as any[]).map((i) => [i.id, i]));
   return {
     ...head,
-    location_name: head.location_id ? (locations.get(head.location_id) ?? "Unknown") : "All locations",
+    location_name: head.location_id
+      ? (locations.get(head.location_id) ?? "Unknown")
+      : "All locations",
     lines: ((lines ?? []) as any[])
-      .map((l) => ({
-        ...l,
-        item_name: names.get(l.inventory_item_id) ?? "Item",
-        location_name: l.location_id ? (locations.get(l.location_id) ?? "Unknown") : "Unassigned",
-      }))
+      .map((l) => {
+        const item = itemsById.get(l.inventory_item_id);
+        return {
+          ...l,
+          item_name: item?.name ?? "Item",
+          item_sku: item?.sku ?? null,
+          item_barcode: item?.barcode ?? null,
+          location_name: l.location_id ? (locations.get(l.location_id) ?? "Unknown") : "Unassigned",
+        };
+      })
       .sort((a, b) => String(a.item_name).localeCompare(String(b.item_name))),
   };
 }
@@ -80,9 +102,11 @@ export async function startStocktake(sb: Sb, userId: string, input: StartStockta
     .select("id, name, category_id, unit_id, average_cost, current_quantity, location_id, currency")
     .eq("tenant_id", input.tenantId)
     .eq("status", "active");
-  if (input.scope === "category" && input.categoryId) itemQuery = itemQuery.eq("category_id", input.categoryId);
+  if (input.scope === "category" && input.categoryId)
+    itemQuery = itemQuery.eq("category_id", input.categoryId);
   if (input.scope === "selected") {
-    if (input.itemIds.length === 0) throw new Error("Select at least one item for a selected-item stocktake.");
+    if (input.itemIds.length === 0)
+      throw new Error("Select at least one item for a selected-item stocktake.");
     itemQuery = itemQuery.in("id", input.itemIds);
   }
   const { data: items, error: itemErr } = await itemQuery;
@@ -194,7 +218,11 @@ export async function saveStocktakeCounts(sb: Sb, userId: string, input: SaveSto
     );
     await sb
       .from("restaurant_stocktakes")
-      .update({ status: "review", counted_at: now, variance_value: Number(varianceValue.toFixed(2)) })
+      .update({
+        status: "review",
+        counted_at: now,
+        variance_value: Number(varianceValue.toFixed(2)),
+      })
       .eq("id", input.stocktakeId)
       .eq("tenant_id", input.tenantId);
   }
@@ -240,7 +268,7 @@ export async function postStocktake(
   let posted = 0;
   let varianceValue = 0;
 
-  for (const line of ((lines ?? []) as any[])) {
+  for (const line of (lines ?? []) as any[]) {
     if (line.counted_quantity == null) continue;
     const variance = Number(line.variance_quantity ?? 0);
     if (Math.abs(variance) < 1e-9) continue;

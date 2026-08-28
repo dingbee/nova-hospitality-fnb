@@ -18,7 +18,7 @@ const TENANT = "11111111-1111-1111-1111-111111111111";
 const USER = "22222222-2222-2222-2222-222222222222";
 const LOCATION = "33333333-3333-3333-3333-333333333333";
 
-function makeFakeSupabase() {
+function makeFakeSupabase(opts: { existingBarcode?: string } = {}) {
   const items: Record<string, any> = {};
   const movements: any[] = [];
   let seq = 0;
@@ -58,6 +58,15 @@ function makeFakeSupabase() {
 
       if (table === "restaurant_inventory_items") {
         if (op === "insert") {
+          if (opts.existingBarcode && payload.barcode === opts.existingBarcode) {
+            return {
+              data: null,
+              error: {
+                message:
+                  'duplicate key value violates unique constraint "idx_restaurant_inv_items_barcode"',
+              },
+            };
+          }
           seq += 1;
           const id = `item-${seq}`;
           items[id] = { id, ...payload };
@@ -93,8 +102,12 @@ function makeFakeSupabase() {
   return {
     supabase: {
       from: (table: string) => builder(table),
-      rpc: async (fn: string) =>
-        fn === "has_any_role" ? { data: false, error: null } : { data: null, error: null },
+      rpc: async (fn: string) => {
+        if (fn === "has_any_role") return { data: false, error: null };
+        if (fn === "restaurant_next_document_number")
+          return { data: "ITM-2026-00001", error: null };
+        return { data: null, error: null };
+      },
     },
     items,
     movements,
@@ -213,5 +226,101 @@ describe("upsertInventoryItem — opening balance goes through the ledger", () =
     });
     expect(retry).toBeNull();
     expect(fake.items[created.id].current_quantity).toBe(12); // unchanged
+  });
+});
+
+describe("upsertInventoryItem — SKU generation and barcode identity", () => {
+  it("auto-generates a deterministic SKU via the shared document sequence when none is supplied", async () => {
+    const fake = makeFakeSupabase();
+    const result = await upsertInventoryItem(fake.supabase, USER, {
+      tenantId: TENANT,
+      name: "Olive oil",
+      itemType: "ingredient",
+      currentQuantity: 0,
+      averageCost: 0,
+      currency: "TZS",
+      trackBatches: false,
+      allowNegative: false,
+    } as any);
+    expect(fake.items[result.id].sku).toBe("ITM-2026-00001");
+  });
+
+  it("never overwrites a caller-supplied SKU with a generated one", async () => {
+    const fake = makeFakeSupabase();
+    const result = await upsertInventoryItem(fake.supabase, USER, {
+      tenantId: TENANT,
+      name: "Olive oil",
+      sku: "SUPPLIER-CODE-42",
+      itemType: "ingredient",
+      currentQuantity: 0,
+      averageCost: 0,
+      currency: "TZS",
+      trackBatches: false,
+      allowNegative: false,
+    } as any);
+    expect(fake.items[result.id].sku).toBe("SUPPLIER-CODE-42");
+  });
+
+  it("never generates a SKU when editing an existing item that already has one", async () => {
+    const fake = makeFakeSupabase();
+    const created = await upsertInventoryItem(fake.supabase, USER, {
+      tenantId: TENANT,
+      name: "Olive oil",
+      itemType: "ingredient",
+      currentQuantity: 0,
+      averageCost: 0,
+      currency: "TZS",
+      trackBatches: false,
+      allowNegative: false,
+    } as any);
+    const originalSku = fake.items[created.id].sku;
+
+    await upsertInventoryItem(fake.supabase, USER, {
+      tenantId: TENANT,
+      id: created.id,
+      name: "Olive oil (extra virgin)",
+      itemType: "ingredient",
+      currentQuantity: 0,
+      averageCost: 0,
+      currency: "TZS",
+      trackBatches: false,
+      allowNegative: false,
+    } as any);
+    expect(fake.items[created.id].sku).toBe(originalSku); // untouched by the edit
+  });
+
+  it("persists a barcode distinct from sku and internal id", async () => {
+    const fake = makeFakeSupabase();
+    const result = await upsertInventoryItem(fake.supabase, USER, {
+      tenantId: TENANT,
+      name: "Coca-Cola 500ml",
+      barcode: "5449000000996",
+      itemType: "beverage",
+      currentQuantity: 0,
+      averageCost: 0,
+      currency: "TZS",
+      trackBatches: false,
+      allowNegative: false,
+    } as any);
+    expect(fake.items[result.id].barcode).toBe("5449000000996");
+    expect(fake.items[result.id].barcode).not.toBe(fake.items[result.id].sku);
+    expect(fake.items[result.id].barcode).not.toBe(result.id);
+  });
+
+  it("reports a duplicate barcode as an operator-facing error, not a raw constraint violation", async () => {
+    const fake = makeFakeSupabase({ existingBarcode: "5449000000996" });
+    await expect(
+      upsertInventoryItem(fake.supabase, USER, {
+        tenantId: TENANT,
+        name: "Coca-Cola 500ml (duplicate scan)",
+        barcode: "5449000000996",
+        itemType: "beverage",
+        currentQuantity: 0,
+        averageCost: 0,
+        currency: "TZS",
+        trackBatches: false,
+        allowNegative: false,
+      } as any),
+    ).rejects.toThrow(/barcode.*already on file/i);
   });
 });

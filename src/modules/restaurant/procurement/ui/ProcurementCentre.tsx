@@ -44,6 +44,8 @@ import {
   getRestaurantPurchaseOrderDetailFn,
   listRestaurantPurchaseOrdersFn,
 } from "../../purchasing/purchasing.functions";
+import { matchRestaurantInventoryItemsFn } from "../../inventory/inventory.functions";
+import { BarcodeScanButton } from "../../inventory/ui/BarcodeScanButton";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -63,14 +65,16 @@ function Chip({ status }: { status?: string | null }) {
 
 /** Touch-first row: generous target height, no hover-only affordances. */
 function Row({ children }: { children: React.ReactNode }) {
-  return <li className="flex flex-wrap items-center justify-between gap-3 py-3 min-h-14">{children}</li>;
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-3 py-3 min-h-14">{children}</li>
+  );
 }
 
 export function ProcurementCentre({ initialTab }: { initialTab?: string } = {}) {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
   const [tab, setTab] = useState<TabId>(
-    (TABS.some((t) => t.id === initialTab) ? (initialTab as TabId) : "overview"),
+    TABS.some((t) => t.id === initialTab) ? (initialTab as TabId) : "overview",
   );
 
   return (
@@ -86,7 +90,9 @@ export function ProcurementCentre({ initialTab }: { initialTab?: string } = {}) 
             type="button"
             onClick={() => setTab(t.id)}
             className={`min-h-11 rounded px-4 py-2 ${
-              tab === t.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+              tab === t.id
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-muted"
             }`}
           >
             {t.label}
@@ -96,7 +102,10 @@ export function ProcurementCentre({ initialTab }: { initialTab?: string } = {}) 
 
       {!tenantId ? (
         <SectionCard title="No restaurant workspace">
-          <EmptyState title="No tenant" description="Set up a restaurant tenant to use procurement." />
+          <EmptyState
+            title="No tenant"
+            description="Set up a restaurant tenant to use procurement."
+          />
         </SectionCard>
       ) : tab === "overview" ? (
         <OverviewTab tenantId={tenantId} />
@@ -130,16 +139,38 @@ function OverviewTab({ tenantId }: { tenantId: string }) {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Awaiting approval" value={String(o?.needed?.awaitingApproval ?? 0)} hint={`${o?.needed?.draft ?? 0} draft requests`} />
-        <StatCard label="Open orders" value={String(o?.ordered?.open ?? 0)} hint={`${o?.ordered?.overdue ?? 0} past expected date`} />
-        <StatCard label="Accepted into stock" value={formatMoney(o?.received?.acceptedValue ?? 0)} hint={`${o?.received?.draft ?? 0} receipts not posted`} />
-        <StatCard label="Outstanding to suppliers" value={formatMoney(o?.invoiced?.outstandingValue ?? 0)} hint={`${o?.invoiced?.overdue ?? 0} overdue invoices`} />
+        <StatCard
+          label="Awaiting approval"
+          value={String(o?.needed?.awaitingApproval ?? 0)}
+          hint={`${o?.needed?.draft ?? 0} draft requests`}
+        />
+        <StatCard
+          label="Open orders"
+          value={String(o?.ordered?.open ?? 0)}
+          hint={`${o?.ordered?.overdue ?? 0} past expected date`}
+        />
+        <StatCard
+          label="Accepted into stock"
+          value={formatMoney(o?.received?.acceptedValue ?? 0)}
+          hint={`${o?.received?.draft ?? 0} receipts not posted`}
+        />
+        <StatCard
+          label="Outstanding to suppliers"
+          value={formatMoney(o?.invoiced?.outstandingValue ?? 0)}
+          hint={`${o?.invoiced?.overdue ?? 0} overdue invoices`}
+        />
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
-        <SectionCard title="Lifecycle position" description="Distinct stages, deliberately not collapsed into one status.">
+        <SectionCard
+          title="Lifecycle position"
+          description="Distinct stages, deliberately not collapsed into one status."
+        >
           <dl className="grid grid-cols-2 gap-3 text-sm">
             {[
-              ["Needed (approved, not ordered)", `${o?.needed?.approved ?? 0} · ${formatMoney(o?.needed?.approvedValue ?? 0)}`],
+              [
+                "Needed (approved, not ordered)",
+                `${o?.needed?.approved ?? 0} · ${formatMoney(o?.needed?.approvedValue ?? 0)}`,
+              ],
               ["Awaiting supplier confirmation", String(o?.ordered?.awaitingConfirmation ?? 0)],
               ["Open order value", formatMoney(o?.ordered?.openValue ?? 0)],
               ["Receipts posted", String(o?.received?.posted ?? 0)],
@@ -153,7 +184,10 @@ function OverviewTab({ tenantId }: { tenantId: string }) {
             ))}
           </dl>
         </SectionCard>
-        <SectionCard title="Control" description="Discrepancies are recorded and resolved by a person, never auto-approved.">
+        <SectionCard
+          title="Control"
+          description="Discrepancies are recorded and resolved by a person, never auto-approved."
+        >
           <div className="grid grid-cols-3 gap-3 text-sm">
             <div className="rounded-md border p-3">
               <div className="text-xs text-muted-foreground">Open variances</div>
@@ -226,8 +260,11 @@ function RequestsTab({ tenantId }: { tenantId: string }) {
   });
 
   const transition = useAdminMutation({
-    mutationFn: (vars: { id: string; action: "submit" | "approve" | "reject" | "cancel"; reason?: string }) =>
-      transitionFn({ data: { tenantId, ...vars } }),
+    mutationFn: (vars: {
+      id: string;
+      action: "submit" | "approve" | "reject" | "cancel";
+      reason?: string;
+    }) => transitionFn({ data: { tenantId, ...vars } }),
     successMessage: "Request updated",
     onSuccess: invalidate,
   });
@@ -245,30 +282,63 @@ function RequestsTab({ tenantId }: { tenantId: string }) {
     queryKey: ["restaurant.procurement.performance", tenantId, 90],
     queryFn: () => fnPerf({ data: { tenantId, sinceDays: 90 } }),
   });
-  const firstSupplier = (suppliersQuery.data as any[] | undefined)?.[0]?.supplierId as string | undefined;
+  const firstSupplier = (suppliersQuery.data as any[] | undefined)?.[0]?.supplierId as
+    string | undefined;
 
   return (
     <div className="space-y-4">
-      <SectionCard title="Raise a need" description="A request records what the business needs. It is not an order.">
+      <SectionCard
+        title="Raise a need"
+        description="A request records what the business needs. It is not an order."
+      >
         <div className="grid gap-3 md:grid-cols-4">
           <div className="md:col-span-2">
             <Label htmlFor="pr-desc">What is needed</Label>
-            <Input id="pr-desc" className="mt-1 h-11" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Beef fillet, 5kg boxes" />
+            <Input
+              id="pr-desc"
+              className="mt-1 h-11"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="e.g. Beef fillet, 5kg boxes"
+            />
           </div>
           <div>
             <Label htmlFor="pr-qty">Quantity</Label>
-            <Input id="pr-qty" className="mt-1 h-11" inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+            <Input
+              id="pr-qty"
+              className="mt-1 h-11"
+              inputMode="decimal"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+            />
           </div>
           <div>
             <Label htmlFor="pr-cost">Est. unit cost</Label>
-            <Input id="pr-cost" className="mt-1 h-11" inputMode="decimal" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} />
+            <Input
+              id="pr-cost"
+              className="mt-1 h-11"
+              inputMode="decimal"
+              value={unitCost}
+              onChange={(e) => setUnitCost(e.target.value)}
+            />
           </div>
           <div className="md:col-span-3">
             <Label htmlFor="pr-reason">Why</Label>
-            <Textarea id="pr-reason" className="mt-1" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Operational justification" />
+            <Textarea
+              id="pr-reason"
+              className="mt-1"
+              rows={2}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Operational justification"
+            />
           </div>
           <div className="flex items-end">
-            <Button className="h-11 w-full" disabled={!description || save.isPending} onClick={() => save.mutate()}>
+            <Button
+              className="h-11 w-full"
+              disabled={!description || save.isPending}
+              onClick={() => save.mutate()}
+            >
               Create draft
             </Button>
           </div>
@@ -283,19 +353,28 @@ function RequestsTab({ tenantId }: { tenantId: string }) {
                 <div className="min-w-0">
                   <div className="font-medium">{r.document_number}</div>
                   <div className="text-xs text-muted-foreground">
-                    {formatMoney(r.estimated_total, r.currency)} · {r.priority} · {r.reason ?? "no reason given"}
+                    {formatMoney(r.estimated_total, r.currency)} · {r.priority} ·{" "}
+                    {r.reason ?? "no reason given"}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Chip status={r.status} />
                   {r.status === "draft" && (
-                    <Button size="sm" className="h-10" onClick={() => transition.mutate({ id: r.id, action: "submit" })}>
+                    <Button
+                      size="sm"
+                      className="h-10"
+                      onClick={() => transition.mutate({ id: r.id, action: "submit" })}
+                    >
                       Submit
                     </Button>
                   )}
                   {r.status === "submitted" && (
                     <>
-                      <Button size="sm" className="h-10" onClick={() => transition.mutate({ id: r.id, action: "approve" })}>
+                      <Button
+                        size="sm"
+                        className="h-10"
+                        onClick={() => transition.mutate({ id: r.id, action: "approve" })}
+                      >
                         Approve
                       </Button>
                       <Button
@@ -312,7 +391,11 @@ function RequestsTab({ tenantId }: { tenantId: string }) {
                     </>
                   )}
                   {r.status === "approved" && firstSupplier && (
-                    <Button size="sm" className="h-10" onClick={() => convert.mutate({ requestId: r.id, supplierId: firstSupplier })}>
+                    <Button
+                      size="sm"
+                      className="h-10"
+                      onClick={() => convert.mutate({ requestId: r.id, supplierId: firstSupplier })}
+                    >
                       Create order
                     </Button>
                   )}
@@ -321,7 +404,10 @@ function RequestsTab({ tenantId }: { tenantId: string }) {
             ))}
           </ul>
         ) : (
-          <EmptyState title="No purchase requests" description="Raise a need above to start the procurement lifecycle." />
+          <EmptyState
+            title="No purchase requests"
+            description="Raise a need above to start the procurement lifecycle."
+          />
         )}
       </SectionCard>
     </div>
@@ -337,6 +423,17 @@ interface LineEdit {
   unitCost: string;
   batchCode: string;
   expiryDate: string;
+}
+
+/** One line of a fast-capture receiving basket: matched to a catalog item, or free text. */
+interface BasketLine {
+  key: string;
+  inventoryItemId?: string;
+  description: string;
+  quantity: string;
+  unitCost: string;
+  rejectedQuantity: string;
+  rejectionReason: string;
 }
 
 function ReceivingTab({ tenantId }: { tenantId: string }) {
@@ -447,45 +544,58 @@ function ReceivingTab({ tenantId }: { tenantId: string }) {
     },
   });
 
-  const [description, setDescription] = useState("");
-  const [received, setReceived] = useState("0");
-  const [accepted, setAccepted] = useState("0");
-  const [rejected, setRejected] = useState("0");
-  const [unitCost, setUnitCost] = useState("0");
-  const [rejectionReason, setRejectionReason] = useState("");
   const [deliveryNote, setDeliveryNote] = useState("");
 
-  const create = useAdminMutation({
+  /* --- Fast capture: search/scan an item, build a basket, post once --- */
+  const matchFn = useServerFn(matchRestaurantInventoryItemsFn);
+  const [searchText, setSearchText] = useState("");
+  const [basket, setBasket] = useState<BasketLine[]>([]);
+
+  const searchQ = useQuery({
+    queryKey: ["restaurant.inventory.match", tenantId, searchText],
+    queryFn: () =>
+      matchFn({ data: { tenantId, query: { name: searchText, barcode: searchText } } }),
+    enabled: searchText.trim().length >= 2,
+  });
+  const candidates = (searchQ.data as any[] | undefined) ?? [];
+
+  const addToBasket = (line: Omit<BasketLine, "key">) => {
+    setBasket((prev) => [...prev, { key: `${Date.now()}-${prev.length}`, ...line }]);
+    setSearchText("");
+  };
+  const updateBasketLine = (key: string, patch: Partial<BasketLine>) =>
+    setBasket((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  const removeBasketLine = (key: string) => setBasket((prev) => prev.filter((l) => l.key !== key));
+
+  const postBasket = useAdminMutation({
     mutationFn: () =>
       createFn({
         data: {
           tenantId,
           deliveryNoteRef: deliveryNote || undefined,
           currency: "TZS",
-          post: false,
-          lines: [
-            {
-              description,
+          post: true,
+          lines: basket.map((l) => {
+            const rejectedQty = Number(l.rejectedQuantity) || 0;
+            return {
+              inventoryItemId: l.inventoryItemId,
+              description: l.description,
               orderedQuantity: 0,
-              receivedQuantity: Number(received) || 0,
-              acceptedQuantity: Number(accepted) || 0,
-              rejectedQuantity: Number(rejected) || 0,
+              receivedQuantity: (Number(l.quantity) || 0) + rejectedQty,
+              acceptedQuantity: Number(l.quantity) || 0,
+              rejectedQuantity: rejectedQty,
               damagedQuantity: 0,
               orderedUnitCost: 0,
-              unitCost: Number(unitCost) || 0,
-              rejectionReason: rejectionReason || undefined,
-            },
-          ],
+              unitCost: Number(l.unitCost) || 0,
+              rejectionReason:
+                rejectedQty > 0 ? l.rejectionReason || "Rejected on arrival" : undefined,
+            };
+          }),
         },
       }),
-    successMessage: "Delivery recorded",
+    successMessage: `Receiving posted — ${basket.length} item${basket.length === 1 ? "" : "s"} entered stock`,
     onSuccess: () => {
-      setDescription("");
-      setReceived("0");
-      setAccepted("0");
-      setRejected("0");
-      setUnitCost("0");
-      setRejectionReason("");
+      setBasket([]);
       setDeliveryNote("");
       invalidate();
     },
@@ -543,7 +653,8 @@ function ReceivingTab({ tenantId }: { tenantId: string }) {
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium">{i.description}</span>
                     <span className="text-xs text-muted-foreground">
-                      Ordered {formatQty(i.quantity)} @ {formatMoney(i.unit_price, detail?.order?.currency)}
+                      Ordered {formatQty(i.quantity)} @{" "}
+                      {formatMoney(i.unit_price, detail?.order?.currency)}
                     </span>
                   </div>
                   <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
@@ -630,7 +741,10 @@ function ReceivingTab({ tenantId }: { tenantId: string }) {
 
             <Button
               className="h-11"
-              disabled={receiveAgainstOrder.isPending || (hasOverReceipt && overReceiptReason.trim().length < 10)}
+              disabled={
+                receiveAgainstOrder.isPending ||
+                (hasOverReceipt && overReceiptReason.trim().length < 10)
+              }
               onClick={() => receiveAgainstOrder.mutate()}
             >
               Record delivery against order
@@ -641,41 +755,162 @@ function ReceivingTab({ tenantId }: { tenantId: string }) {
 
       <SectionCard
         title="Record a delivery"
-        description="Unlinked delivery, for goods that arrived without a purchase order. Received, accepted and rejected are separate facts. Only accepted quantities enter inventory, and only when you post."
+        description="Unlinked delivery, for goods that arrived without a purchase order. Search for the item by name or scan/type its barcode, add it to the basket, repeat for every item on the delivery note, then post once — all lines enter stock together."
       >
-        <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
-          <div className="lg:col-span-2">
-            <Label htmlFor="gr-desc">Item delivered</Label>
-            <Input id="gr-desc" className="mt-1 h-11" value={description} onChange={(e) => setDescription(e.target.value)} />
-          </div>
+        <div className="space-y-3">
           <div>
-            <Label htmlFor="gr-recv">Received</Label>
-            <Input id="gr-recv" className="mt-1 h-11" inputMode="decimal" value={received} onChange={(e) => setReceived(e.target.value)} />
+            <Label htmlFor="gr-search">Find item (name or barcode)</Label>
+            <div className="mt-1 flex gap-2">
+              <Input
+                id="gr-search"
+                className="h-11"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                placeholder="Start typing a name, SKU or barcode…"
+              />
+              <BarcodeScanButton onScan={(code) => setSearchText(code)} />
+            </div>
+            {searchText.trim().length >= 2 && (
+              <div className="mt-2 divide-y rounded-md border">
+                {candidates.length ? (
+                  candidates.map((c: any) => (
+                    <button
+                      key={c.candidate.id}
+                      type="button"
+                      className="flex min-h-11 w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-muted"
+                      onClick={() =>
+                        addToBasket({
+                          inventoryItemId: c.item.id,
+                          description: c.item.name,
+                          quantity: "1",
+                          unitCost: String(c.item.average_cost ?? 0),
+                          rejectedQuantity: "0",
+                          rejectionReason: "",
+                        })
+                      }
+                    >
+                      <span>
+                        {c.item.name}{" "}
+                        <span className="text-xs text-muted-foreground">· {c.item.sku}</span>
+                      </span>
+                      <StatusChip tone={c.confidence === "exact" ? "success" : "neutral"}>
+                        {c.confidence}
+                      </StatusChip>
+                    </button>
+                  ))
+                ) : (
+                  <button
+                    type="button"
+                    className="flex min-h-11 w-full items-center px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted"
+                    onClick={() =>
+                      addToBasket({
+                        description: searchText,
+                        quantity: "1",
+                        unitCost: "0",
+                        rejectedQuantity: "0",
+                        rejectionReason: "",
+                      })
+                    }
+                  >
+                    No catalog match — add "{searchText}" as a new delivery line
+                  </button>
+                )}
+              </div>
+            )}
           </div>
-          <div>
-            <Label htmlFor="gr-acc">Accepted</Label>
-            <Input id="gr-acc" className="mt-1 h-11" inputMode="decimal" value={accepted} onChange={(e) => setAccepted(e.target.value)} />
-          </div>
-          <div>
-            <Label htmlFor="gr-rej">Rejected</Label>
-            <Input id="gr-rej" className="mt-1 h-11" inputMode="decimal" value={rejected} onChange={(e) => setRejected(e.target.value)} />
-          </div>
-          <div>
-            <Label htmlFor="gr-cost">Unit cost</Label>
-            <Input id="gr-cost" className="mt-1 h-11" inputMode="decimal" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} />
-          </div>
-          <div className="lg:col-span-2">
-            <Label htmlFor="gr-note">Delivery note ref</Label>
-            <Input id="gr-note" className="mt-1 h-11" value={deliveryNote} onChange={(e) => setDeliveryNote(e.target.value)} />
-          </div>
-          <div className="lg:col-span-3">
-            <Label htmlFor="gr-why">Rejection reason (required if anything is refused)</Label>
-            <Input id="gr-why" className="mt-1 h-11" value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} />
-          </div>
-          <div className="flex items-end">
-            <Button className="h-11 w-full" disabled={!description || create.isPending} onClick={() => create.mutate()}>
-              Save delivery
-            </Button>
+
+          {basket.length > 0 && (
+            <ul className="divide-y rounded-md border text-sm">
+              {basket.map((l) => (
+                <li key={l.key} className="grid gap-2 p-3 md:grid-cols-5 md:items-end">
+                  <div className="md:col-span-2">
+                    <Label>{l.description}</Label>
+                    {!l.inventoryItemId && (
+                      <p className="text-xs text-muted-foreground">New item — not yet in catalog</p>
+                    )}
+                  </div>
+                  <div>
+                    <Label htmlFor={`bq-${l.key}`}>Accepted qty</Label>
+                    <Input
+                      id={`bq-${l.key}`}
+                      className="mt-1 h-11"
+                      inputMode="decimal"
+                      value={l.quantity}
+                      onChange={(e) => updateBasketLine(l.key, { quantity: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor={`bc-${l.key}`}>Unit cost</Label>
+                    <Input
+                      id={`bc-${l.key}`}
+                      className="mt-1 h-11"
+                      inputMode="decimal"
+                      value={l.unitCost}
+                      onChange={(e) => updateBasketLine(l.key, { unitCost: e.target.value })}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      variant="outline"
+                      className="h-11 w-full"
+                      onClick={() => removeBasketLine(l.key)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                  <div>
+                    <Label htmlFor={`br-${l.key}`}>Rejected qty</Label>
+                    <Input
+                      id={`br-${l.key}`}
+                      className="mt-1 h-11"
+                      inputMode="decimal"
+                      value={l.rejectedQuantity}
+                      onChange={(e) =>
+                        updateBasketLine(l.key, { rejectedQuantity: e.target.value })
+                      }
+                    />
+                  </div>
+                  {Number(l.rejectedQuantity) > 0 && (
+                    <div className="md:col-span-3">
+                      <Label htmlFor={`bx-${l.key}`}>Rejection reason (required)</Label>
+                      <Input
+                        id={`bx-${l.key}`}
+                        className="mt-1 h-11"
+                        value={l.rejectionReason}
+                        onChange={(e) =>
+                          updateBasketLine(l.key, { rejectionReason: e.target.value })
+                        }
+                      />
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <div>
+              <Label htmlFor="gr-note">Delivery note ref</Label>
+              <Input
+                id="gr-note"
+                className="mt-1 h-11"
+                value={deliveryNote}
+                onChange={(e) => setDeliveryNote(e.target.value)}
+              />
+            </div>
+            <div className="flex items-end md:col-span-2">
+              <Button
+                className="h-11 w-full"
+                disabled={
+                  basket.length === 0 ||
+                  postBasket.isPending ||
+                  basket.some((l) => Number(l.rejectedQuantity) > 0 && !l.rejectionReason.trim())
+                }
+                onClick={() => postBasket.mutate()}
+              >
+                Post receiving — {basket.length} item{basket.length === 1 ? "" : "s"}
+              </Button>
+            </div>
           </div>
         </div>
       </SectionCard>
@@ -688,24 +923,38 @@ function ReceivingTab({ tenantId }: { tenantId: string }) {
                 <div className="min-w-0">
                   <div className="font-medium">{r.document_number}</div>
                   <div className="text-xs text-muted-foreground">
-                    {new Date(r.received_at).toLocaleDateString()} · accepted {formatMoney(r.accepted_value, r.currency)}
+                    {new Date(r.received_at).toLocaleDateString()} · accepted{" "}
+                    {formatMoney(r.accepted_value, r.currency)}
                     {r.delivery_note_ref ? ` · DN ${r.delivery_note_ref}` : ""}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Chip status={r.status} />
                   {r.status === "draft" && (
-                    <Button size="sm" className="h-10" disabled={post.isPending} onClick={() => post.mutate(r.id)}>
+                    <Button
+                      size="sm"
+                      className="h-10"
+                      disabled={post.isPending}
+                      onClick={() => post.mutate(r.id)}
+                    >
                       Post to stock
                     </Button>
                   )}
-                  <DocumentActions tenantId={tenantId} type="goods_receipt" recordId={r.id} documentNumber={r.document_number} />
+                  <DocumentActions
+                    tenantId={tenantId}
+                    type="goods_receipt"
+                    recordId={r.id}
+                    documentNumber={r.document_number}
+                  />
                 </div>
               </Row>
             ))}
           </ul>
         ) : (
-          <EmptyState title="No deliveries recorded" description="Record a delivery when goods physically arrive." />
+          <EmptyState
+            title="No deliveries recorded"
+            description="Record a delivery when goods physically arrive."
+          />
         )}
       </SectionCard>
     </div>
@@ -732,12 +981,16 @@ function InvoicesTab({ tenantId }: { tenantId: string }) {
 
   const match = useAdminMutation({
     mutationFn: (invoiceId: string) => matchFn({ data: { tenantId, invoiceId } }),
-    onSuccessToast: (d: any) => `Three-way match: ${String(d?.matchStatus ?? "checked").replace(/_/g, " ")}`,
+    onSuccessToast: (d: any) =>
+      `Three-way match: ${String(d?.matchStatus ?? "checked").replace(/_/g, " ")}`,
     onSuccess: invalidate,
   });
   const pay = useAdminMutation({
-    mutationFn: (vars: { invoiceId: string; paymentStatus: "paid" | "partially_paid" | "disputed"; reason?: string }) =>
-      payFn({ data: { tenantId, ...vars } }),
+    mutationFn: (vars: {
+      invoiceId: string;
+      paymentStatus: "paid" | "partially_paid" | "disputed";
+      reason?: string;
+    }) => payFn({ data: { tenantId, ...vars } }),
     successMessage: "Payment status updated",
     onSuccess: invalidate,
   });
@@ -758,16 +1011,23 @@ function InvoicesTab({ tenantId }: { tenantId: string }) {
             <Row key={i.id}>
               <div className="min-w-0">
                 <div className="font-medium">
-                  {i.supplier_invoice_number} <span className="text-muted-foreground">· {i.supplier_name}</span>
+                  {i.supplier_invoice_number}{" "}
+                  <span className="text-muted-foreground">· {i.supplier_name}</span>
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  {formatMoney(i.total, i.currency)} · due {i.due_date ?? "—"} · paid {formatMoney(i.amount_paid, i.currency)}
+                  {formatMoney(i.total, i.currency)} · due {i.due_date ?? "—"} · paid{" "}
+                  {formatMoney(i.amount_paid, i.currency)}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Chip status={i.match_status} />
                 <Chip status={i.payment_status} />
-                <Button size="sm" variant="outline" className="h-10" onClick={() => match.mutate(i.id)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-10"
+                  onClick={() => match.mutate(i.id)}
+                >
                   Re-match
                 </Button>
                 {i.payment_status !== "paid" && (
@@ -777,7 +1037,9 @@ function InvoicesTab({ tenantId }: { tenantId: string }) {
                     onClick={() => {
                       const reason =
                         i.match_status === "mismatched"
-                          ? window.prompt("This invoice does not match. Reason for paying anyway?") ?? undefined
+                          ? (window.prompt(
+                              "This invoice does not match. Reason for paying anyway?",
+                            ) ?? undefined)
                           : undefined;
                       if (i.match_status === "mismatched" && !reason) return;
                       pay.mutate({ invoiceId: i.id, paymentStatus: "paid", reason });
@@ -791,7 +1053,10 @@ function InvoicesTab({ tenantId }: { tenantId: string }) {
           ))}
         </ul>
       ) : (
-        <EmptyState title="No supplier invoices" description="Invoices appear here once recorded against a supplier." />
+        <EmptyState
+          title="No supplier invoices"
+          description="Invoices appear here once recorded against a supplier."
+        />
       )}
       <SupplierInvoiceSheet open={entryOpen} onOpenChange={setEntryOpen} tenantId={tenantId} />
     </SectionCard>
@@ -809,8 +1074,11 @@ function VariancesTab({ tenantId }: { tenantId: string }) {
     queryFn: () => listFn({ data: { tenantId, limit: 100 } }),
   });
   const resolve = useAdminMutation({
-    mutationFn: (vars: { id: string; status: "accepted" | "resolved" | "escalated"; notes?: string }) =>
-      resolveFn({ data: { tenantId, ...vars } }),
+    mutationFn: (vars: {
+      id: string;
+      status: "accepted" | "resolved" | "escalated";
+      notes?: string;
+    }) => resolveFn({ data: { tenantId, ...vars } }),
     successMessage: "Variance decision recorded",
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["restaurant.procurement.variances", tenantId] });
@@ -819,7 +1087,10 @@ function VariancesTab({ tenantId }: { tenantId: string }) {
   });
 
   return (
-    <SectionCard title="Variance control" description="Every discrepancy is recorded. A person decides what happens next.">
+    <SectionCard
+      title="Variance control"
+      description="Every discrepancy is recorded. A person decides what happens next."
+    >
       {(q.data as any[] | undefined)?.length ? (
         <ul className="divide-y text-sm">
           {(q.data as any[]).map((v) => (
@@ -827,8 +1098,8 @@ function VariancesTab({ tenantId }: { tenantId: string }) {
               <div className="min-w-0">
                 <div className="font-medium">{v.label}</div>
                 <div className="text-xs text-muted-foreground">
-                  {VARIANCE_LABELS[v.variance_type] ?? v.variance_type} · expected {formatQty(v.expected_value)} · actual{" "}
-                  {formatQty(v.actual_value)}
+                  {VARIANCE_LABELS[v.variance_type] ?? v.variance_type} · expected{" "}
+                  {formatQty(v.expected_value)} · actual {formatQty(v.actual_value)}
                   {v.variance_pct != null ? ` · ${Number(v.variance_pct).toFixed(1)}%` : ""}
                   {v.supplier_name ? ` · ${v.supplier_name}` : ""}
                 </div>
@@ -838,10 +1109,19 @@ function VariancesTab({ tenantId }: { tenantId: string }) {
                 <Chip status={v.status} />
                 {v.status === "open" && (
                   <>
-                    <Button size="sm" variant="outline" className="h-10" onClick={() => resolve.mutate({ id: v.id, status: "accepted" })}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-10"
+                      onClick={() => resolve.mutate({ id: v.id, status: "accepted" })}
+                    >
                       Accept
                     </Button>
-                    <Button size="sm" className="h-10" onClick={() => resolve.mutate({ id: v.id, status: "resolved" })}>
+                    <Button
+                      size="sm"
+                      className="h-10"
+                      onClick={() => resolve.mutate({ id: v.id, status: "resolved" })}
+                    >
                       Resolve
                     </Button>
                     <Button
@@ -862,7 +1142,10 @@ function VariancesTab({ tenantId }: { tenantId: string }) {
           ))}
         </ul>
       ) : (
-        <EmptyState title="No variances" description="Orders, deliveries and invoices currently agree." />
+        <EmptyState
+          title="No variances"
+          description="Orders, deliveries and invoices currently agree."
+        />
       )}
     </SectionCard>
   );
@@ -876,7 +1159,10 @@ function SuppliersTab({ tenantId }: { tenantId: string }) {
     queryKey: ["restaurant.procurement.performance", tenantId, 90],
     queryFn: () => fn({ data: { tenantId, sinceDays: 90 } }),
   });
-  const rows = useMemo(() => ((q.data as any[]) ?? []).filter((r) => r.orders > 0 || r.receipts > 0), [q.data]);
+  const rows = useMemo(
+    () => ((q.data as any[]) ?? []).filter((r) => r.orders > 0 || r.receipts > 0),
+    [q.data],
+  );
 
   return (
     <SectionCard
@@ -884,7 +1170,10 @@ function SuppliersTab({ tenantId }: { tenantId: string }) {
       description="Evidence from the last 90 days. The Intelligence Core interprets this; procurement only reports it."
     >
       {rows.length === 0 ? (
-        <EmptyState title="No supplier history yet" description="Performance builds up as orders are received." />
+        <EmptyState
+          title="No supplier history yet"
+          description="Performance builds up as orders are received."
+        />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-sm">
@@ -904,9 +1193,15 @@ function SuppliersTab({ tenantId }: { tenantId: string }) {
                 <tr key={r.supplierId} className="h-14">
                   <td className="py-2 font-medium">{r.supplierName}</td>
                   <td>{r.orders}</td>
-                  <td>{r.fulfilmentRate == null ? "—" : `${(r.fulfilmentRate * 100).toFixed(0)}%`}</td>
-                  <td>{r.rejectionRate == null ? "—" : `${(r.rejectionRate * 100).toFixed(1)}%`}</td>
-                  <td>{r.averagePriceVariancePct == null ? "—" : `${r.averagePriceVariancePct}%`}</td>
+                  <td>
+                    {r.fulfilmentRate == null ? "—" : `${(r.fulfilmentRate * 100).toFixed(0)}%`}
+                  </td>
+                  <td>
+                    {r.rejectionRate == null ? "—" : `${(r.rejectionRate * 100).toFixed(1)}%`}
+                  </td>
+                  <td>
+                    {r.averagePriceVariancePct == null ? "—" : `${r.averagePriceVariancePct}%`}
+                  </td>
                   <td>
                     {r.onTimeReceipts}/{r.receipts}
                   </td>
@@ -931,7 +1226,10 @@ function AuditTab({ tenantId }: { tenantId: string }) {
   });
 
   return (
-    <SectionCard title="Audit trail" description="Append-only. Procurement history is added to, never rewritten.">
+    <SectionCard
+      title="Audit trail"
+      description="Append-only. Procurement history is added to, never rewritten."
+    >
       {(q.data as any[] | undefined)?.length ? (
         <ul className="divide-y text-sm">
           {(q.data as any[]).map((a) => (
@@ -946,12 +1244,17 @@ function AuditTab({ tenantId }: { tenantId: string }) {
                   {a.reason ? ` · ${a.reason}` : ""}
                 </div>
               </div>
-              <span className="text-xs text-muted-foreground">{new Date(a.created_at).toLocaleString()}</span>
+              <span className="text-xs text-muted-foreground">
+                {new Date(a.created_at).toLocaleString()}
+              </span>
             </Row>
           ))}
         </ul>
       ) : (
-        <EmptyState title="No activity yet" description="Procurement actions will be recorded here." />
+        <EmptyState
+          title="No activity yet"
+          description="Procurement actions will be recorded here."
+        />
       )}
     </SectionCard>
   );
