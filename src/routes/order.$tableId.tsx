@@ -120,10 +120,22 @@ function GuestOrderPage() {
   const menuFn = useServerFn(guestMenuFn);
   const submitFn = useServerFn(submitGuestOrderFn);
 
+  // networkMode: "always" here and on every other query/mutation on this
+  // page: React Query's default ("online") never even calls queryFn while
+  // it believes the browser is offline, and only resumes on a window
+  // 'online' event — it never times out, so isPending simply never
+  // resolves. A guest's phone on restaurant wifi routinely fires a
+  // spurious 'offline' event with no matching 'online' one (captive
+  // portals, AP roaming between routers), which is exactly what left this
+  // screen stuck on "Loading the menu…" with no error to show for it. The
+  // fetch itself already handles a real network failure correctly
+  // (isError); this only stops the browser's own online/offline guess from
+  // pre-empting that fetch.
   const menu = useQuery({
     queryKey: ["selforder.menu", tableId],
     queryFn: () => menuFn({ data: { tableId } }),
     retry: false,
+    networkMode: "always",
   });
 
   const [categoryId, setCategoryId] = useState<string | null>(null);
@@ -159,6 +171,7 @@ function GuestOrderPage() {
     queryFn: () => recoveryStatusFn({ data: { tableId, orderId: storedOrderId! } }),
     enabled: Boolean(storedOrderId),
     retry: false,
+    networkMode: "always",
   });
   // "Order not found for this table" (wrong table, nonexistent id, tenant
   // mismatch) throws exactly like any other cross-table guest lookup —
@@ -249,6 +262,7 @@ function GuestOrderPage() {
           lines: cart.map(toGuestOrderLine),
         },
       }),
+    networkMode: "always",
     onSuccess: (order: { id: string; order_number: string; total: number }) => {
       writeStoredOrderId(tableId, order.id);
       setConfirmed({
@@ -275,6 +289,7 @@ function GuestOrderPage() {
         <ErrorState
           title="This table isn't available"
           description="Please ask a member of staff for help ordering."
+          onRetry={() => menu.refetch()}
         />
       </div>
     );
@@ -822,6 +837,7 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
     queryKey: ["selforder.progress", tableId, orderId],
     queryFn: () => progressFn({ data: { tableId, orderId } }),
     refetchInterval: 8_000,
+    networkMode: "always",
   });
 
   if (progress.isPending || progress.isError || !progress.data) return null;
@@ -900,6 +916,7 @@ function RequestStaffPanel({ tableId, orderId }: { tableId: string; orderId: str
     queryKey: ["selforder.staffRequest", tableId, orderId],
     queryFn: () => statusFn({ data: { tableId, orderId } }),
     refetchInterval: 8_000,
+    networkMode: "always",
   });
 
   const request = useMutation({
@@ -911,6 +928,7 @@ function RequestStaffPanel({ tableId, orderId }: { tableId: string; orderId: str
       await status.refetch();
       return result;
     },
+    networkMode: "always",
   });
 
   if (status.isPending || !status.data) return null;
@@ -967,6 +985,7 @@ function RequestBillPanel({ tableId, orderId }: { tableId: string; orderId: stri
   const requestFn = useServerFn(requestGuestBillFn);
   const request = useMutation({
     mutationFn: () => requestFn({ data: { tableId, orderId } }),
+    networkMode: "always",
   });
 
   if (request.data?.ok) {
@@ -1029,10 +1048,12 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
     queryKey: ["selforder.paymentStatus", tableId, orderId],
     queryFn: () => statusFn({ data: { tableId, orderId } }),
     refetchInterval: 8_000,
+    networkMode: "always",
   });
 
   const initiate = useMutation({
     mutationFn: () => initiateFn({ data: { tableId, orderId, method } }),
+    networkMode: "always",
     onSuccess: (result) => {
       if (result.ok) window.location.href = result.redirectUrl;
     },
@@ -1045,6 +1066,7 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
 
   const confirm = useMutation({
     mutationFn: () => confirmFn({ data: { tableId, orderId, orderTrackingId: orderTrackingId! } }),
+    networkMode: "always",
     onSuccess: () => {
       // Drop the provider's query params so a page refresh doesn't re-verify forever.
       window.history.replaceState({}, "", window.location.pathname);
@@ -1175,6 +1197,7 @@ function GuestFeedbackPanel({ tableId, orderId }: { tableId: string; orderId: st
     queryKey: ["selforder.feedbackStatus", tableId, orderId],
     queryFn: () => statusFn({ data: { tableId, orderId } }),
     refetchInterval: 8_000,
+    networkMode: "always",
   });
 
   const submit = useMutation({
@@ -1182,6 +1205,7 @@ function GuestFeedbackPanel({ tableId, orderId }: { tableId: string; orderId: st
       submitFn({
         data: { tableId, orderId, rating: vars.rating, comment: vars.comment || undefined },
       }),
+    networkMode: "always",
     onSuccess: () => status.refetch(),
   });
 
@@ -1305,6 +1329,7 @@ function AskNovaDrawer({
         .map((t) => ({ role: t.role, content: t.content }));
       return askFn({ data: { tableId, message, history } });
     },
+    networkMode: "always",
     onSuccess: (result) => {
       setTurns((t) => [
         ...t,
