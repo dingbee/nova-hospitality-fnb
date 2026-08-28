@@ -21,15 +21,25 @@ import {
 import { PO_TRANSITIONS, PO_MANUAL_STATUSES } from "@/modules/restaurant/purchasing/state-machine";
 import { listRestaurantSuppliersFn } from "@/modules/restaurant/suppliers/suppliers.functions";
 import { listRestaurantInventoryFn } from "@/modules/restaurant/inventory/inventory.functions";
-import { PurchaseOrderSheet, type PurchaseOrderFormValue } from "@/modules/restaurant/purchasing/ui/PurchaseOrderSheet";
+import {
+  PurchaseOrderSheet,
+  type PurchaseOrderFormValue,
+} from "@/modules/restaurant/purchasing/ui/PurchaseOrderSheet";
+import { PurchaseOrderDeliverySheet } from "@/modules/restaurant/purchasing/ui/PurchaseOrderDeliverySheet";
 import { SupplierConfirmationSheet } from "@/modules/restaurant/procurement/ui/SupplierConfirmationSheet";
 import { SupplierInvoiceSheet } from "@/modules/restaurant/procurement/ui/SupplierInvoiceSheet";
+
+/** A PO must have cleared approval before it can be handed to a supplier. */
+const PO_SENDABLE_STATUSES = new Set(["approved", "partially_received"]);
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/purchasing")({
   head: () => ({
     meta: [
       { title: "Purchasing — Restaurant & Bar OS" },
-      { name: "description", content: "Purchase orders, approvals and receiving for restaurant supply." },
+      {
+        name: "description",
+        content: "Purchase orders, approvals and receiving for restaurant supply.",
+      },
       { name: "robots", content: "noindex,nofollow" },
     ],
   }),
@@ -78,12 +88,18 @@ function PurchasingPage() {
   const [open, setOpen] = useState(false);
   const [confirmFor, setConfirmFor] = useState<string | null>(null);
   const [invoiceFor, setInvoiceFor] = useState<string | null>(null);
+  const [sendFor, setSendFor] = useState<string | null>(null);
 
   const transition = useAdminMutation({
-    mutationFn: (v: { id: string; status: "submitted" | "approved" | "cancelled"; reason?: string }) =>
+    mutationFn: (v: {
+      id: string;
+      status: "submitted" | "approved" | "cancelled";
+      reason?: string;
+    }) =>
       transitionFn({ data: { tenantId: tenantId!, id: v.id, status: v.status, reason: v.reason } }),
     successMessage: "Purchase order updated",
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["restaurant.purchase-orders", tenantId] }),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: ["restaurant.purchase-orders", tenantId] }),
   });
 
   const create = useAdminMutation({
@@ -112,8 +128,15 @@ function PurchasingPage() {
     },
   });
 
-  const supplierOptions = ((suppliers.data ?? []) as any[]).map((s) => ({ value: s.id, label: s.name }));
-  const itemOptions = ((items.data ?? []) as any[]).map((i) => ({ value: i.id, label: i.name, hint: i.sku ?? undefined }));
+  const supplierOptions = ((suppliers.data ?? []) as any[]).map((s) => ({
+    value: s.id,
+    label: s.name,
+  }));
+  const itemOptions = ((items.data ?? []) as any[]).map((i) => ({
+    value: i.id,
+    label: i.name,
+    hint: i.sku ?? undefined,
+  }));
 
   return (
     <div className="space-y-4">
@@ -133,24 +156,37 @@ function PurchasingPage() {
       >
         <p className="mb-3 text-xs text-muted-foreground">
           Need to negotiate against a request first? Use the{" "}
-          <Link to="/admin/restaurant/procurement" search={{ tab: "requests" }} className="underline">
+          <Link
+            to="/admin/restaurant/procurement"
+            search={{ tab: "requests" }}
+            className="underline"
+          >
             Procurement Centre
           </Link>{" "}
           for the request → approval → conversion lifecycle.
         </p>
         {(q.data ?? []).length === 0 ? (
-          <EmptyState title="No purchase orders" description="Create a purchase order from a supplier catalogue." />
+          <EmptyState
+            title="No purchase orders"
+            description="Create a purchase order from a supplier catalogue."
+          />
         ) : (
           <ul className="divide-y text-sm">
             {(q.data ?? []).map((o: any) => (
-              <li key={o.id} className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-2">
+              <li
+                key={o.id}
+                className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-2"
+              >
                 <span>{o.document_number ?? o.reference ?? o.id.slice(0, 8)}</span>
                 <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <StatusChip tone={PO_TONE[o.status] ?? "neutral"}>{o.status}</StatusChip>
                   {o.currency} {Number(o.total ?? 0).toLocaleString()}
                   {canManage ? (
                     <>
-                      {((PO_TRANSITIONS[o.status as keyof typeof PO_TRANSITIONS] ?? []) as readonly string[])
+                      {(
+                        (PO_TRANSITIONS[o.status as keyof typeof PO_TRANSITIONS] ??
+                          []) as readonly string[]
+                      )
                         .filter((s): s is "submitted" | "approved" | "cancelled" =>
                           (PO_MANUAL_STATUSES as readonly string[]).includes(s),
                         )
@@ -163,7 +199,9 @@ function PurchasingPage() {
                             disabled={transition.isPending}
                             onClick={() => {
                               if (s === "cancelled") {
-                                const reason = window.prompt("Reason for cancelling this purchase order?");
+                                const reason = window.prompt(
+                                  "Reason for cancelling this purchase order?",
+                                );
                                 if (!reason) return;
                                 transition.mutate({ id: o.id, status: s, reason });
                                 return;
@@ -171,16 +209,45 @@ function PurchasingPage() {
                               transition.mutate({ id: o.id, status: s });
                             }}
                           >
-                            {s === "submitted" ? "Issue to supplier" : s === "approved" ? "Approve" : "Cancel"}
+                            {s === "submitted"
+                              ? "Issue to supplier"
+                              : s === "approved"
+                                ? "Approve"
+                                : "Cancel"}
                           </Button>
                         ))}
-                      <Button size="sm" variant="outline" className="h-10" onClick={() => setConfirmFor(o.id)}>
+                      {PO_SENDABLE_STATUSES.has(o.status) ? (
+                        <Button
+                          size="sm"
+                          variant="default"
+                          className="h-10"
+                          onClick={() => setSendFor(o.id)}
+                        >
+                          Send to supplier
+                        </Button>
+                      ) : null}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-10"
+                        onClick={() => setConfirmFor(o.id)}
+                      >
                         Supplier confirmation
                       </Button>
-                      <Button size="sm" variant="outline" className="h-10" onClick={() => setInvoiceFor(o.id)}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-10"
+                        onClick={() => setInvoiceFor(o.id)}
+                      >
                         Record invoice
                       </Button>
-                      <DocumentActions tenantId={tenantId!} type="purchase_order" recordId={o.id} documentNumber={o.document_number} />
+                      <DocumentActions
+                        tenantId={tenantId!}
+                        type="purchase_order"
+                        recordId={o.id}
+                        documentNumber={o.document_number}
+                      />
                     </>
                   ) : null}
                 </span>
@@ -212,6 +279,12 @@ function PurchasingPage() {
             onOpenChange={(v) => !v && setInvoiceFor(null)}
             tenantId={tenantId}
             purchaseOrderId={invoiceFor}
+          />
+          <PurchaseOrderDeliverySheet
+            open={Boolean(sendFor)}
+            onOpenChange={(v) => !v && setSendFor(null)}
+            tenantId={tenantId}
+            purchaseOrderId={sendFor}
           />
         </>
       ) : null}

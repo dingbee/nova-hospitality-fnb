@@ -238,6 +238,8 @@ export const upsertSupplierSchema = z.object({
   minimumOrderValue: z.number().min(0).optional(),
   preferred: z.boolean().default(false),
   suppliedCategoryIds: z.array(uuid).default([]),
+  /** Which channel to default to when sending this supplier a purchase order. */
+  preferredChannel: z.enum(["email", "whatsapp"]).optional(),
 });
 export type UpsertSupplierInput = z.infer<typeof upsertSupplierSchema>;
 

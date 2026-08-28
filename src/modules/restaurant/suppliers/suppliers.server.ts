@@ -71,6 +71,10 @@ export async function upsertSupplier(sb: Sb, userId: string, input: UpsertSuppli
     minimumOrderValue: input.minimumOrderValue ?? null,
     preferred: input.preferred,
     suppliedCategoryIds: input.suppliedCategoryIds,
+    preferredChannel:
+      input.preferredChannel ??
+      (existingMetadata["preferredChannel"] as string | undefined) ??
+      null,
   };
 
   const row = {
