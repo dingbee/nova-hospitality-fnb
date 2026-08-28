@@ -51,18 +51,102 @@ export const listStaffUsers = createServerFn({ method: "GET" })
     return (users ?? []).map((u: any) => ({ ...u, roles: byUser.get(u.user_id) ?? [] }));
   });
 
-export const assignRole = createServerFn({ method: "POST" })
+/**
+ * Provisions a brand-new person: no existing account, no `app_users` row —
+ * the gap `listStaffUsers`'s dropdown-only selection left, since every
+ * other flow here (assignRole, TeamPanel's tenant role grant) assumes a
+ * user already exists to pick from. Creates the `auth.users` account via
+ * the service-role admin API (the only way to do this — there is no public
+ * self-signup route in this app) and mirrors it into `app_users` so the
+ * person appears in the staff directory immediately, `status: "pending"`
+ * until they actually sign in.
+ *
+ * Email delivery depends on SMTP being configured for this Supabase
+ * project (Authentication → Emails in the dashboard). Without it the
+ * account is still created — inviteUserByEmail always succeeds at that —
+ * but no invite email is sent, so an admin needs another way to get the
+ * person a sign-in link (e.g. Supabase's dashboard "reset password" action
+ * for that user, or the "magic link" flow) until SMTP is set up.
+ *
+ * Pulled out of the createServerFn handler so it's callable directly
+ * against a fake service-role client in tests, matching how the rest of
+ * this codebase separates DB logic from the createServerFn wiring around it.
+ */
+export async function provisionInvitedStaffUser(
+  adminClient: any,
+  input: { email: string; fullName?: string },
+): Promise<{ userId: string; email: string }> {
+  const { data: invited, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
+    input.email,
+    input.fullName ? { data: { full_name: input.fullName } } : undefined,
+  );
+  if (inviteError) {
+    // A person invited twice is a normal operator mistake, not a bug —
+    // surface it as one rather than a raw Supabase auth error.
+    if (/already been registered|already exists/i.test(inviteError.message)) {
+      throw new Error(`${input.email} already has an account.`);
+    }
+    throw new Error(inviteError.message);
+  }
+  const newUserId = invited.user.id as string;
+
+  const { error: profileError } = await adminClient.from("app_users").insert({
+    user_id: newUserId,
+    email: input.email,
+    full_name: input.fullName ?? null,
+    status: "pending",
+  });
+  if (profileError) throw new Error(profileError.message);
+
+  return { userId: newUserId, email: input.email };
+}
+
+export const inviteStaffUser = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { userId: string; role: string; tenantId?: string | null; propertyId?: string | null; outletId?: string | null }) =>
+  .inputValidator((input: { email: string; fullName?: string }) =>
     z
       .object({
-        userId: z.string().uuid(),
-        role: z.enum(ROLES),
-        tenantId: z.string().uuid().nullable().optional(),
-        propertyId: z.string().uuid().nullable().optional(),
-        outletId: z.string().uuid().nullable().optional(),
+        email: z.string().email(),
+        fullName: z.string().max(200).optional(),
       })
       .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context as { supabase: any; userId: string };
+    await assertPermission(supabase, userId, "STAFF:ADMIN");
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const result = await provisionInvitedStaffUser(supabaseAdmin, data);
+
+    await logActivity(supabase, {
+      actorId: userId,
+      action: "staff.user.invited",
+      entityType: "app_users",
+      entityId: result.userId,
+      metadata: { email: data.email },
+    });
+    return result;
+  });
+
+export const assignRole = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: {
+      userId: string;
+      role: string;
+      tenantId?: string | null;
+      propertyId?: string | null;
+      outletId?: string | null;
+    }) =>
+      z
+        .object({
+          userId: z.string().uuid(),
+          role: z.enum(ROLES),
+          tenantId: z.string().uuid().nullable().optional(),
+          propertyId: z.string().uuid().nullable().optional(),
+          outletId: z.string().uuid().nullable().optional(),
+        })
+        .parse(input),
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context as { supabase: any; userId: string };

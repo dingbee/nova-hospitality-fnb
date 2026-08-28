@@ -45,10 +45,14 @@ async function loadTransfer(sb: Sb, tenantId: string, transferId: string) {
     .select("*")
     .eq("tenant_id", tenantId)
     .eq("transfer_id", transferId);
-  return { transfer: data as any, lines: ((lines ?? []) as any[]) };
+  return { transfer: data as any, lines: (lines ?? []) as any[] };
 }
 
-export async function listTransfers(sb: Sb, userId: string, input: z.infer<typeof listTransfersSchema>) {
+export async function listTransfers(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listTransfersSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_stock_transfers")
@@ -62,7 +66,8 @@ export async function listTransfers(sb: Sb, userId: string, input: z.infer<typeo
   let rows = (data ?? []) as any[];
   if (input.locationId) {
     rows = rows.filter(
-      (t) => t.source_location_id === input.locationId || t.destination_location_id === input.locationId,
+      (t) =>
+        t.source_location_id === input.locationId || t.destination_location_id === input.locationId,
     );
   }
   const ids = rows.map((r) => r.id);
@@ -97,13 +102,21 @@ export async function createTransfer(sb: Sb, userId: string, input: CreateTransf
   if (input.sourceLocationId === input.destinationLocationId) {
     throw new Error("Source and destination must be different locations.");
   }
-  await assertLocationInTenant(sb, input.tenantId, input.sourceLocationId, input.destinationLocationId);
+  await assertLocationInTenant(
+    sb,
+    input.tenantId,
+    input.sourceLocationId,
+    input.destinationLocationId,
+  );
 
   const { data: items } = await sb
     .from("restaurant_inventory_items")
     .select("id, average_cost, currency, unit_id")
     .eq("tenant_id", input.tenantId)
-    .in("id", input.lines.map((l) => l.inventoryItemId));
+    .in(
+      "id",
+      input.lines.map((l) => l.inventoryItemId),
+    );
   const meta = new Map(((items ?? []) as any[]).map((i) => [i.id, i]));
   if (meta.size !== new Set(input.lines.map((l) => l.inventoryItemId)).size) {
     throw new Error("One or more inventory items do not belong to this tenant.");
@@ -199,7 +212,9 @@ export async function approveTransfer(
   if (error) throw new Error(error.message);
 
   await emitRestaurantEvent(sb, userId, {
-    type: input.approve ? "restaurant.inventory.transfer.approved" : "restaurant.inventory.transfer.rejected",
+    type: input.approve
+      ? "restaurant.inventory.transfer.approved"
+      : "restaurant.inventory.transfer.rejected",
     tenantId: input.tenantId,
     propertyId: transfer.property_id ?? undefined,
     locationId: transfer.source_location_id,
@@ -221,6 +236,10 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
   }
   if (transfer.requires_approval && transfer.status !== "approved") {
     throw new Error("This transfer requires approval before dispatch.");
+  }
+
+  if (input.lines.every((l) => l.dispatchedQuantity <= 0)) {
+    throw new Error("At least one line must have a dispatched quantity greater than zero.");
   }
 
   const byId = new Map(lines.map((l) => [l.id, l]));
@@ -301,6 +320,16 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
     throw new Error(`Transfer cannot be received from status "${transfer.status}".`);
   }
 
+  if (
+    input.lines.every(
+      (l) => l.receivedQuantity <= 0 && l.rejectedQuantity <= 0 && l.damagedQuantity <= 0,
+    )
+  ) {
+    throw new Error(
+      "At least one line must account for a received, rejected or damaged quantity greater than zero.",
+    );
+  }
+
   const byId = new Map(lines.map((l) => [l.id, l]));
   const stamp = new Date().toISOString();
   let variance = 0;
@@ -312,7 +341,9 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
     const dispatched = Number(line.dispatched_quantity ?? 0);
     const total = l.receivedQuantity + l.rejectedQuantity + l.damagedQuantity;
     if (total > dispatched + 1e-9) {
-      throw new Error("Received, rejected and damaged quantities cannot exceed the dispatched quantity.");
+      throw new Error(
+        "Received, rejected and damaged quantities cannot exceed the dispatched quantity.",
+      );
     }
     if (l.receivedQuantity > 0) {
       await insertMovement(sb, userId, {

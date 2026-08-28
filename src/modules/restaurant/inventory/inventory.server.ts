@@ -3,10 +3,15 @@ import { z } from "zod";
 import { listInventorySchema, type UpsertInventoryItemInput } from "../core/contracts";
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
+import { insertMovement } from "./movements.server";
 
 type Sb = any;
 
-export async function listInventory(sb: Sb, userId: string, input: z.infer<typeof listInventorySchema>) {
+export async function listInventory(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listInventorySchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_inventory_items")
@@ -43,6 +48,7 @@ export async function listUnits(sb: Sb, userId: string, tenantId: string) {
 
 export async function upsertInventoryItem(sb: Sb, userId: string, input: UpsertInventoryItemInput) {
   await assertCapability(sb, userId, input.tenantId, "inventory.manage");
+  const isCreate = !input.id;
   const row = {
     tenant_id: input.tenantId,
     property_id: input.propertyId ?? null,
@@ -52,7 +58,13 @@ export async function upsertInventoryItem(sb: Sb, userId: string, input: UpsertI
     sku: input.sku ?? null,
     name: input.name,
     item_type: input.itemType,
-    current_quantity: input.currentQuantity,
+    // Quantity is never written directly here past creation — every change
+    // afterward is a movement, so the ledger and the balance can never
+    // diverge (see movements.server.ts). On create, the opening quantity is
+    // posted as a real opening_balance movement below instead of being
+    // stamped onto the row, so restaurant_stock_positions_v — the per-
+    // location read model — has something to derive from.
+    ...(isCreate ? { current_quantity: 0 } : {}),
     par_level: input.parLevel ?? null,
     reorder_point: input.reorderPoint ?? null,
     average_cost: input.averageCost,
@@ -69,12 +81,37 @@ export async function upsertInventoryItem(sb: Sb, userId: string, input: UpsertI
     updated_at: new Date().toISOString(),
   };
   const q = input.id
-    ? sb.from("restaurant_inventory_items").update(row).eq("id", input.id).eq("tenant_id", input.tenantId)
+    ? sb
+        .from("restaurant_inventory_items")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
     : sb.from("restaurant_inventory_items").insert(row);
   const { data, error } = await q
-    .select("id, name, current_quantity, reorder_point, average_cost")
+    .select(
+      "id, name, current_quantity, reorder_point, average_cost, unit_id, currency, location_id, property_id",
+    )
     .single();
   if (error) throw new Error(error.message);
+
+  if (isCreate && input.currentQuantity > 0) {
+    const moved = await insertMovement(sb, userId, {
+      tenantId: input.tenantId,
+      propertyId: input.propertyId ?? null,
+      locationId: input.locationId ?? null,
+      inventoryItemId: data.id,
+      unitId: data.unit_id,
+      movementType: "opening_balance",
+      quantity: input.currentQuantity,
+      unitCost: input.averageCost,
+      currency: data.currency,
+      reason: "Opening balance",
+      referenceType: "restaurant_inventory_item",
+      referenceId: data.id,
+      dedupeKey: `opening_balance:${data.id}`,
+    });
+    if (moved) data.current_quantity = moved.balance_after ?? input.currentQuantity;
+  }
 
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.inventory.adjusted",

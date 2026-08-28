@@ -14,6 +14,7 @@
  */
 import { fetchSellableCatalog } from "../sales/pos.server";
 import { createGuestOrder, type SalesLineInput } from "../sales/sales.server";
+import { fireGuestOrder } from "../kitchen/kitchen.server";
 import type { GuestLineInput } from "./selforder.contracts";
 
 type Sb = any;
@@ -166,7 +167,7 @@ export async function submitGuestOrder(
     modifiers: l.modifiers,
   }));
 
-  return createGuestOrder(sb, {
+  const order = await createGuestOrder(sb, {
     tenantId: table.tenantId,
     propertyId: table.propertyId,
     locationId: table.locationId,
@@ -175,4 +176,17 @@ export async function submitGuestOrder(
     currency: table.currency,
     lines: salesLines,
   });
+
+  // A guest tapping "Send order" IS the send-to-kitchen action — there is no
+  // separate staff review step in this flow, and the confirmation screen
+  // already tells the guest their order is on its way. Without this, the
+  // order sat at "open" until a staff member happened to notice and fire it
+  // by hand, and the guest's own tracker never advanced past "received".
+  // Best-effort: the order itself is already the record that matters, so a
+  // firing hiccup here must never fail an order the guest already placed
+  // successfully — it just leaves the order for a staff member to fire
+  // manually, exactly like every order this path doesn't reach.
+  await fireGuestOrder(sb, { tenantId: table.tenantId, orderId: order.id });
+
+  return order;
 }

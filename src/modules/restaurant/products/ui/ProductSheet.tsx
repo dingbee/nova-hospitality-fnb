@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- server function rows are untyped at this boundary. */
 /**
  * Create/edit a sellable product.
  */
@@ -10,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { EntitySheet, Field, FieldRow, SearchSelect } from "@/modules/restaurant/ui/forms";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { upsertRestaurantProductFn, listRestaurantRecipesFn } from "../catalog.functions";
+import { listRestaurantStationsFn } from "../../kitchen/kitchen.functions";
 import { PRODUCT_TYPES } from "../contracts";
 
 interface ProductSheetProps {
@@ -23,12 +25,14 @@ export function ProductSheet({ open, onOpenChange, tenantId, product }: ProductS
   const qc = useQueryClient();
   const upsertFn = useServerFn(upsertRestaurantProductFn);
   const recipesFn = useServerFn(listRestaurantRecipesFn);
+  const stationsFn = useServerFn(listRestaurantStationsFn);
 
   const [sku, setSku] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [productType, setProductType] = useState<(typeof PRODUCT_TYPES)[number]>("standard");
   const [recipeId, setRecipeId] = useState<string | null>(null);
+  const [stationId, setStationId] = useState<string | null>(null);
   const [price, setPrice] = useState("0");
   const [taxRate, setTaxRate] = useState("0");
   const [active, setActive] = useState(true);
@@ -40,6 +44,7 @@ export function ProductSheet({ open, onOpenChange, tenantId, product }: ProductS
     setDescription(product?.description ?? "");
     setProductType(product?.product_type ?? "standard");
     setRecipeId(product?.recipe_id ?? null);
+    setStationId(product?.station_id ?? null);
     setPrice(String(product?.price ?? 0));
     setTaxRate(String(product?.tax_rate ?? 0));
     setActive(product?.active ?? true);
@@ -48,6 +53,11 @@ export function ProductSheet({ open, onOpenChange, tenantId, product }: ProductS
   const recipes = useQuery({
     queryKey: ["restaurant.recipes", tenantId],
     queryFn: () => recipesFn({ data: { tenantId, latestOnly: true, limit: 200 } }),
+    enabled: open,
+  });
+  const stations = useQuery({
+    queryKey: ["restaurant.stations", tenantId],
+    queryFn: () => stationsFn({ data: { tenantId } }),
     enabled: open,
   });
 
@@ -62,6 +72,7 @@ export function ProductSheet({ open, onOpenChange, tenantId, product }: ProductS
           description: description || undefined,
           productType,
           recipeId: recipeId ?? undefined,
+          stationId: stationId ?? undefined,
           price: Number(price) || 0,
           taxRate: Number(taxRate) || 0,
           active,
@@ -105,25 +116,58 @@ export function ProductSheet({ open, onOpenChange, tenantId, product }: ProductS
             onChange={(e) => setProductType(e.target.value as (typeof PRODUCT_TYPES)[number])}
           >
             {PRODUCT_TYPES.map((t) => (
-              <option key={t} value={t}>{t.replace("_", " ")}</option>
+              <option key={t} value={t}>
+                {t.replace("_", " ")}
+              </option>
             ))}
           </select>
         </Field>
         <Field label="Recipe (optional)" hint="Leave blank for retail lines with no recipe.">
           <SearchSelect
-            options={((recipes.data ?? []) as any[]).map((r) => ({ value: r.id, label: r.name, hint: r.code }))}
+            options={((recipes.data ?? []) as any[]).map((r) => ({
+              value: r.id,
+              label: r.name,
+              hint: r.code,
+            }))}
             value={recipeId}
             onChange={setRecipeId}
             placeholder="No recipe"
           />
         </Field>
       </FieldRow>
+      <Field
+        label="Production destination"
+        hint="Where this item is made — decides kitchen vs. bar routing on every ticket, the POS, and self-order. Leave blank to fall back to the item's category (e.g. a category named 'Cocktails' or 'Bar' routes to the bar automatically)."
+      >
+        <select
+          className="h-11 w-full rounded-md border bg-transparent px-2 text-sm"
+          value={stationId ?? ""}
+          onChange={(e) => setStationId(e.target.value || null)}
+        >
+          <option value="">Use category default</option>
+          {((stations.data ?? []) as any[]).map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+      </Field>
       <FieldRow>
         <Field label="Price">
-          <Input className="h-11" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} />
+          <Input
+            className="h-11"
+            inputMode="decimal"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+          />
         </Field>
         <Field label="Tax rate %">
-          <Input className="h-11" inputMode="decimal" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} />
+          <Input
+            className="h-11"
+            inputMode="decimal"
+            value={taxRate}
+            onChange={(e) => setTaxRate(e.target.value)}
+          />
         </Field>
       </FieldRow>
       <Field label="Active">

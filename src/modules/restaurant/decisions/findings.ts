@@ -100,18 +100,30 @@ export function menuFindings(m: MenuIntelligence): RestaurantFinding[] {
 export function inventoryFindings(inv: InventoryIntelligence): RestaurantFinding[] {
   const out: RestaurantFinding[] = [];
 
+  // A row belongs here for either of two independent reasons: consumption
+  // velocity projects a stock-out inside the window, or the item is already
+  // below its own reorder point right now — e.g. stock just left via a
+  // transfer or adjustment rather than a sale, so there is no consumption
+  // velocity to project from (daysOfCover is null) but the shortage is just
+  // as real. Dropping belowReorder rows with no velocity here was the exact
+  // gap that let a genuinely below-reorder item raise no finding at all.
   for (const row of inv.atRisk
-    .filter((r) => r.daysOfCover != null && r.daysOfCover <= SHORTAGE_DAYS)
+    .filter((r) => (r.daysOfCover != null && r.daysOfCover <= SHORTAGE_DAYS) || r.belowReorder)
     .slice(0, 5)) {
-    const days = row.daysOfCover as number;
+    const days = row.daysOfCover;
+    const severity =
+      days != null ? (days <= 1 ? "critical" : days <= 2 ? "high" : "medium") : "medium";
     out.push({
       key: `finding.inventory.${row.inventoryItemId}`,
       kind: "inventory_shortage",
-      severity: days <= 1 ? "critical" : days <= 2 ? "high" : "medium",
+      severity,
       subject: row.name,
-      headline: `${row.name} is forecast to run out in ${days} day${days === 1 ? "" : "s"}`,
+      headline:
+        days != null
+          ? `${row.name} is forecast to run out in ${days} day${days === 1 ? "" : "s"}`
+          : `${row.name} is already below its reorder point`,
       detail: `${row.currentQuantity} on hand against ${row.dailyVelocity}/day consumption${row.belowReorder ? ", already below the reorder point" : ""}.`,
-      metric: `${days} days of cover`,
+      metric: days != null ? `${days} days of cover` : "below reorder point",
       evidence: [
         { label: "On hand", value: String(row.currentQuantity) },
         { label: "Daily consumption", value: `${row.dailyVelocity}/day` },
@@ -121,17 +133,20 @@ export function inventoryFindings(inv: InventoryIntelligence): RestaurantFinding
       ],
       prediction: {
         key: `prediction.inventory.${row.inventoryItemId}`,
-        statement: `Stock reaches zero in about ${days} day${days === 1 ? "" : "s"} if consumption holds at ${row.dailyVelocity}/day.`,
+        statement:
+          days != null
+            ? `Stock reaches zero in about ${days} day${days === 1 ? "" : "s"} if consumption holds at ${row.dailyVelocity}/day.`
+            : `${row.name} is already below its reorder point with no measured consumption to project from — replenish before demand resumes.`,
         value: days,
         unit: " days",
-        horizonDays: Math.max(1, Math.ceil(days)),
+        horizonDays: days != null ? Math.max(1, Math.ceil(days)) : 7,
         confidence: row.dailyVelocity > 0 ? 0.75 : 0.45,
         direction: "down",
       },
       facts: {
         daysOfCover: days,
         belowReorder: row.belowReorder,
-        urgent: days <= 2,
+        urgent: days != null ? days <= 2 : row.belowReorder,
         velocity: row.dailyVelocity,
       },
     });

@@ -44,6 +44,8 @@ import {
   saveStocktakeCountsFn,
   startStocktakeFn,
 } from "../control.functions";
+import { listRestaurantUnitsFn, upsertRestaurantInventoryItemFn } from "../inventory.functions";
+import { INVENTORY_ITEM_TYPES } from "../../core/contracts";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -62,18 +64,25 @@ const money = (n: number, currency = "TZS") =>
 const qty = (n: number) => Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 3 });
 
 function Row({ children }: { children: React.ReactNode }) {
-  return <li className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-3">{children}</li>;
+  return (
+    <li className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-3">{children}</li>
+  );
 }
 
 export function InventoryCentre({ initialTab }: { initialTab?: string } = {}) {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
   const [tab, setTab] = useState<TabId>(
-    (TABS.some((t) => t.id === initialTab) ? (initialTab as TabId) : "overview"),
+    TABS.some((t) => t.id === initialTab) ? (initialTab as TabId) : "overview",
   );
 
   if (!ws.isLoading && !ws.data?.tenant) {
-    return <EmptyState title="No restaurant tenant" description="You are not a member of a Restaurant & Bar OS tenant." />;
+    return (
+      <EmptyState
+        title="No restaurant tenant"
+        description="You are not a member of a Restaurant & Bar OS tenant."
+      />
+    );
   }
 
   return (
@@ -89,7 +98,9 @@ export function InventoryCentre({ initialTab }: { initialTab?: string } = {}) {
             type="button"
             onClick={() => setTab(t.id)}
             className={`min-h-11 rounded px-4 py-2 ${
-              tab === t.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+              tab === t.id
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-muted"
             }`}
           >
             {t.label}
@@ -126,19 +137,40 @@ function OverviewTab({ tenantId }: { tenantId: string }) {
     queryFn: () => fn({ data: { tenantId } }),
   });
   const o = q.data;
-  if (!o) return <SectionCard title="Inventory position"><p className="text-sm text-muted-foreground">Loading…</p></SectionCard>;
+  if (!o)
+    return (
+      <SectionCard title="Inventory position">
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </SectionCard>
+    );
 
   return (
     <>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Stock value" value={money(o.totalStockValue, o.currency)} />
-        <StatCard label="Below reorder" value={String(o.itemsBelowReorder)} tone={o.itemsBelowReorder > 0 ? "warn" : "green"} />
-        <StatCard label="Out of stock" value={String(o.criticalItems)} tone={o.criticalItems > 0 ? "warn" : "green"} />
+        <StatCard
+          label="Below reorder"
+          value={String(o.itemsBelowReorder)}
+          tone={o.itemsBelowReorder > 0 ? "warn" : "green"}
+        />
+        <StatCard
+          label="Out of stock"
+          value={String(o.criticalItems)}
+          tone={o.criticalItems > 0 ? "warn" : "green"}
+        />
         <StatCard label="Storage locations" value={String(o.locations)} />
         <StatCard label="Transfers in flight" value={String(o.transfersPending)} />
         <StatCard label="Incoming units" value={qty(o.incomingToday)} />
-        <StatCard label="Expiring within 7 days" value={String(o.expiringSoon)} tone={o.expiringSoon > 0 ? "warn" : "green"} />
-        <StatCard label="Waste (7 days)" value={money(o.recentWasteValue, o.currency)} tone={o.recentWasteValue > 0 ? "warn" : "green"} />
+        <StatCard
+          label="Expiring within 7 days"
+          value={String(o.expiringSoon)}
+          tone={o.expiringSoon > 0 ? "warn" : "green"}
+        />
+        <StatCard
+          label="Waste (7 days)"
+          value={money(o.recentWasteValue, o.currency)}
+          tone={o.recentWasteValue > 0 ? "warn" : "green"}
+        />
       </div>
       <SectionCard
         title="How stock changes here"
@@ -154,11 +186,148 @@ function OverviewTab({ tenantId }: { tenantId: string }) {
   );
 }
 
+/* ---------------- New item ---------------- */
+
+function NewItemForm({ tenantId, onCreated }: { tenantId: string; onCreated: () => void }) {
+  const locFn = useServerFn(listInventoryLocationsFn);
+  const unitFn = useServerFn(listRestaurantUnitsFn);
+  const createFn = useServerFn(upsertRestaurantInventoryItemFn);
+
+  const [name, setName] = useState("");
+  const [sku, setSku] = useState("");
+  const [itemType, setItemType] = useState<(typeof INVENTORY_ITEM_TYPES)[number]>("ingredient");
+  const [unitId, setUnitId] = useState("");
+  const [locationId, setLocationId] = useState("");
+  const [openingQuantity, setOpeningQuantity] = useState("0");
+  const [reorderPoint, setReorderPoint] = useState("");
+  const [averageCost, setAverageCost] = useState("0");
+
+  const locations = useQuery({
+    queryKey: ["restaurant.inventory.locations", tenantId],
+    queryFn: () => locFn({ data: { tenantId, storageOnly: false, includeInactive: false } }),
+  });
+  const units = useQuery({
+    queryKey: ["restaurant.inventory.units", tenantId],
+    queryFn: () => unitFn({ data: { tenantId } }),
+  });
+
+  const create = useAdminMutation({
+    mutationFn: () =>
+      createFn({
+        data: {
+          tenantId,
+          name,
+          sku: sku || undefined,
+          itemType,
+          unitId: unitId || undefined,
+          locationId: locationId || undefined,
+          currentQuantity: Number(openingQuantity) || 0,
+          reorderPoint: reorderPoint ? Number(reorderPoint) : undefined,
+          averageCost: Number(averageCost) || 0,
+          currency: "TZS",
+          trackBatches: false,
+          allowNegative: false,
+        },
+      }),
+    successMessage: "Item created",
+    onSuccess: () => {
+      setName("");
+      setSku("");
+      setOpeningQuantity("0");
+      setReorderPoint("");
+      setAverageCost("0");
+      onCreated();
+    },
+  });
+
+  return (
+    <SectionCard
+      title="New item"
+      description="Create an ingredient, beverage, consumable or packaging item. Opening stock is posted as a real ledger movement, not stamped onto the item."
+    >
+      <div className="grid gap-2 sm:grid-cols-4">
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name (e.g. Tomato)"
+        />
+        <Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="SKU (optional)" />
+        <select
+          className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
+          value={itemType}
+          onChange={(e) => setItemType(e.target.value as (typeof INVENTORY_ITEM_TYPES)[number])}
+        >
+          {INVENTORY_ITEM_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        <select
+          className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
+          value={unitId}
+          onChange={(e) => setUnitId(e.target.value)}
+        >
+          <option value="">Unit…</option>
+          {((units.data ?? []) as any[]).map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.name} ({u.code})
+            </option>
+          ))}
+        </select>
+        <select
+          className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
+          value={locationId}
+          onChange={(e) => setLocationId(e.target.value)}
+        >
+          <option value="">Starting location…</option>
+          {((locations.data ?? []) as any[]).map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+            </option>
+          ))}
+        </select>
+        <Input
+          type="number"
+          step="0.001"
+          value={openingQuantity}
+          onChange={(e) => setOpeningQuantity(e.target.value)}
+          placeholder="Opening quantity"
+        />
+        <Input
+          type="number"
+          step="0.001"
+          value={reorderPoint}
+          onChange={(e) => setReorderPoint(e.target.value)}
+          placeholder="Reorder point (optional)"
+        />
+        <Input
+          type="number"
+          step="0.01"
+          value={averageCost}
+          onChange={(e) => setAverageCost(e.target.value)}
+          placeholder="Cost per unit"
+        />
+      </div>
+      <div className="mt-3">
+        <Button
+          size="sm"
+          disabled={!name || create.isPending}
+          onClick={() => create.mutate(undefined)}
+        >
+          Create item
+        </Button>
+      </div>
+    </SectionCard>
+  );
+}
+
 /* ---------------- Positions ---------------- */
 
 function PositionsTab({ tenantId }: { tenantId: string }) {
   const fn = useServerFn(listStockPositionsFn);
   const locFn = useServerFn(listInventoryLocationsFn);
+  const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [locationId, setLocationId] = useState("");
   const [lowOnly, setLowOnly] = useState(false);
@@ -182,74 +351,107 @@ function PositionsTab({ tenantId }: { tenantId: string }) {
       }),
   });
   const rows = (q.data ?? []) as StockPosition[];
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ["restaurant.inventory.positions"] });
+    void qc.invalidateQueries({ queryKey: ["restaurant.inventory.overview"] });
+  };
 
   return (
-    <SectionCard
-      title="Stock positions"
-      description="On hand is physical. Reserved is committed. Available is what an operation can actually use. Incoming is approved procurement not yet received."
-    >
-      <div className="mb-3 grid gap-2 sm:grid-cols-4">
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search item or SKU" />
-        <select
-          className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
-          value={locationId}
-          onChange={(e) => setLocationId(e.target.value)}
-        >
-          <option value="">All locations</option>
-          {((locations.data ?? []) as any[]).map((l) => (
-            <option key={l.id} value={l.id}>{l.name}</option>
-          ))}
-        </select>
-        <label className="flex min-h-11 items-center gap-2 text-sm">
-          <input type="checkbox" checked={lowOnly} onChange={(e) => setLowOnly(e.target.checked)} />
-          Below reorder only
-        </label>
-      </div>
+    <>
+      <NewItemForm tenantId={tenantId} onCreated={invalidate} />
+      <SectionCard
+        title="Stock positions"
+        description="On hand is physical. Reserved is committed. Available is what an operation can actually use. Incoming is approved procurement not yet received."
+      >
+        <div className="mb-3 grid gap-2 sm:grid-cols-4">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search item or SKU"
+          />
+          <select
+            className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
+            value={locationId}
+            onChange={(e) => setLocationId(e.target.value)}
+          >
+            <option value="">All locations</option>
+            {((locations.data ?? []) as any[]).map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+          <label className="flex min-h-11 items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={lowOnly}
+              onChange={(e) => setLowOnly(e.target.checked)}
+            />
+            Below reorder only
+          </label>
+        </div>
 
-      {rows.length === 0 ? (
-        <EmptyState title="No stock items" description="Add inventory items or adjust the filters." />
-      ) : (
-        <ul className="divide-y text-sm">
-          {rows.map((p) => (
-            <li key={p.itemId} className="py-3">
-              <button
-                type="button"
-                className="flex w-full flex-wrap items-center justify-between gap-3 text-left"
-                onClick={() => setExpanded(expanded === p.itemId ? null : p.itemId)}
-              >
-                <span className="min-w-0">
-                  <span className={`font-medium ${p.critical ? "text-destructive" : ""}`}>{p.name}</span>
-                  {p.sku && <span className="ml-2 text-xs text-muted-foreground">{p.sku}</span>}
-                  <span className="block text-xs text-muted-foreground">
-                    on hand {qty(p.onHand)} · reserved {qty(p.reserved)} · available {qty(p.available)} · incoming {qty(p.incoming)}
+        {rows.length === 0 ? (
+          <EmptyState
+            title="No stock items"
+            description="Add inventory items or adjust the filters."
+          />
+        ) : (
+          <ul className="divide-y text-sm">
+            {rows.map((p) => (
+              <li key={p.itemId} className="py-3">
+                <button
+                  type="button"
+                  className="flex w-full flex-wrap items-center justify-between gap-3 text-left"
+                  onClick={() => setExpanded(expanded === p.itemId ? null : p.itemId)}
+                >
+                  <span className="min-w-0">
+                    <span className={`font-medium ${p.critical ? "text-destructive" : ""}`}>
+                      {p.name}
+                    </span>
+                    {p.sku && <span className="ml-2 text-xs text-muted-foreground">{p.sku}</span>}
+                    <span className="block text-xs text-muted-foreground">
+                      on hand {qty(p.onHand)} · reserved {qty(p.reserved)} · available{" "}
+                      {qty(p.available)} · incoming {qty(p.incoming)}
+                    </span>
                   </span>
-                </span>
-                <span className="flex items-center gap-2 text-xs">
-                  {p.critical ? <StatusChip tone="danger">out of stock</StatusChip> : p.low ? <StatusChip tone="warning">low</StatusChip> : null}
-                  <span className="text-muted-foreground">{money(p.value, p.currency)}</span>
-                </span>
-              </button>
-              {expanded === p.itemId && (
-                <ul className="mt-2 space-y-1 rounded-md bg-muted/40 p-3 text-xs">
-                  {p.locations.length === 0 ? (
-                    <li className="text-muted-foreground">No location-level movements recorded yet.</li>
-                  ) : (
-                    p.locations.map((l) => (
-                      <li key={`${p.itemId}:${l.locationId ?? "none"}`} className="flex justify-between gap-3">
-                        <span>{l.locationName}</span>
-                        <span className="text-muted-foreground">
-                          on hand {qty(l.onHand)} · reserved {qty(l.reserved)} · available {qty(l.available)}
-                        </span>
+                  <span className="flex items-center gap-2 text-xs">
+                    {p.critical ? (
+                      <StatusChip tone="danger">out of stock</StatusChip>
+                    ) : p.low ? (
+                      <StatusChip tone="warning">low</StatusChip>
+                    ) : null}
+                    <span className="text-muted-foreground">{money(p.value, p.currency)}</span>
+                  </span>
+                </button>
+                {expanded === p.itemId && (
+                  <ul className="mt-2 space-y-1 rounded-md bg-muted/40 p-3 text-xs">
+                    {p.locations.length === 0 ? (
+                      <li className="text-muted-foreground">
+                        No location-level movements recorded yet.
                       </li>
-                    ))
-                  )}
-                </ul>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </SectionCard>
+                    ) : (
+                      p.locations.map((l) => (
+                        <li
+                          key={`${p.itemId}:${l.locationId ?? "none"}`}
+                          className="flex justify-between gap-3"
+                        >
+                          <span>{l.locationName}</span>
+                          <span className="text-muted-foreground">
+                            on hand {qty(l.onHand)} · reserved {qty(l.reserved)} · available{" "}
+                            {qty(l.available)}
+                          </span>
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </SectionCard>
+    </>
   );
 }
 
@@ -311,9 +513,14 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
           lines: [{ inventoryItemId: itemId, requestedQuantity: Number(quantity) }],
         },
       }),
-    successMessage: "Transfer requested",
-    onSuccess: () => {
+    successMessage:
+      "Transfer requested — stock has NOT moved yet. Dispatch it below, then receive it at the destination.",
+    onSuccess: (result: any) => {
       setNotes("");
+      // Nothing has left the source yet — a request is a document, not a
+      // move. Open the transfer immediately so the still-required Dispatch
+      // step is the obvious next action instead of a silent dead end.
+      setOpenId(result?.id ?? null);
       invalidate();
     },
   });
@@ -326,8 +533,10 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
   });
 
   const dispatch = useAdminMutation({
-    mutationFn: (vars: { transferId: string; lines: Array<{ lineId: string; dispatchedQuantity: number }> }) =>
-      dispatchFn({ data: { tenantId, transferId: vars.transferId, lines: vars.lines } }),
+    mutationFn: (vars: {
+      transferId: string;
+      lines: Array<{ lineId: string; dispatchedQuantity: number }>;
+    }) => dispatchFn({ data: { tenantId, transferId: vars.transferId, lines: vars.lines } }),
     successMessage: "Dispatched — stock left the source location",
     onSuccess: invalidate,
   });
@@ -335,7 +544,12 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
   const receive = useAdminMutation({
     mutationFn: (vars: {
       transferId: string;
-      lines: Array<{ lineId: string; receivedQuantity: number; rejectedQuantity: number; damagedQuantity: number }>;
+      lines: Array<{
+        lineId: string;
+        receivedQuantity: number;
+        rejectedQuantity: number;
+        damagedQuantity: number;
+      }>;
     }) => receiveFn({ data: { tenantId, transferId: vars.transferId, lines: vars.lines } }),
     successMessage: "Received — stock entered the destination",
     onSuccess: invalidate,
@@ -351,27 +565,63 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
         description="Stock leaves the source at dispatch and enters the destination at receipt — never both at once, so goods in transit are visible."
       >
         <div className="grid gap-2 sm:grid-cols-5">
-          <select className="min-h-11 rounded-md border bg-transparent px-2 text-sm" value={source} onChange={(e) => setSource(e.target.value)}>
+          <select
+            className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+          >
             <option value="">From location…</option>
-            {((locations.data ?? []) as any[]).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
-          <select className="min-h-11 rounded-md border bg-transparent px-2 text-sm" value={destination} onChange={(e) => setDestination(e.target.value)}>
-            <option value="">To location…</option>
-            {((locations.data ?? []) as any[]).filter((l) => l.id !== source).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
-          <select className="min-h-11 rounded-md border bg-transparent px-2 text-sm" value={itemId} onChange={(e) => setItemId(e.target.value)}>
-            <option value="">Item…</option>
-            {((items.data ?? []) as StockPosition[]).map((i) => (
-              <option key={i.itemId} value={i.itemId}>{i.name} ({qty(i.available)} available)</option>
+            {((locations.data ?? []) as any[]).map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
             ))}
           </select>
-          <Input type="number" step="0.001" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="Quantity" />
-          <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes (optional)" />
+          <select
+            className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
+            value={destination}
+            onChange={(e) => setDestination(e.target.value)}
+          >
+            <option value="">To location…</option>
+            {((locations.data ?? []) as any[])
+              .filter((l) => l.id !== source)
+              .map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+          </select>
+          <select
+            className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
+            value={itemId}
+            onChange={(e) => setItemId(e.target.value)}
+          >
+            <option value="">Item…</option>
+            {((items.data ?? []) as StockPosition[]).map((i) => (
+              <option key={i.itemId} value={i.itemId}>
+                {i.name} ({qty(i.available)} available)
+              </option>
+            ))}
+          </select>
+          <Input
+            type="number"
+            step="0.001"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            placeholder="Quantity"
+          />
+          <Input
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Notes (optional)"
+          />
         </div>
         <div className="mt-3">
           <Button
             size="sm"
-            disabled={!source || !destination || !itemId || Number(quantity) <= 0 || create.isPending}
+            disabled={
+              !source || !destination || !itemId || Number(quantity) <= 0 || create.isPending
+            }
             onClick={() => create.mutate(undefined)}
           >
             Request transfer
@@ -381,7 +631,10 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
 
       <SectionCard title="Transfers" description="Requested → approved → dispatched → received.">
         {rows.length === 0 ? (
-          <EmptyState title="No transfers" description="Move stock between outlets and stores to see them here." />
+          <EmptyState
+            title="No transfers"
+            description="Move stock between outlets and stores to see them here."
+          />
         ) : (
           <ul className="divide-y text-sm">
             {rows.map((t) => {
@@ -396,12 +649,26 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
                     <span className="min-w-0">
                       <span className="font-medium">{t.transfer_number ?? "Transfer"}</span>
                       <span className="block text-xs text-muted-foreground">
-                        {t.source_location_name ?? "Source"} → {t.destination_location_name ?? "Destination"} ·{" "}
+                        {t.source_location_name ?? "Source"} →{" "}
+                        {t.destination_location_name ?? "Destination"} ·{" "}
                         {new Date(t.created_at).toLocaleString()}
                       </span>
                     </span>
                     <StatusChip tone={b.tone}>{b.label}</StatusChip>
                   </button>
+
+                  {["draft", "requested", "approved"].includes(t.status) && (
+                    <p className="mt-1 text-xs text-[color:var(--os-warning)]">
+                      Stock has not moved yet — dispatch this transfer to move it out of{" "}
+                      {t.source_location_name ?? "the source"}.
+                    </p>
+                  )}
+                  {["dispatched", "partially_received"].includes(t.status) && (
+                    <p className="mt-1 text-xs text-[color:var(--os-warning)]">
+                      In transit — left {t.source_location_name ?? "the source"}, not yet received
+                      at {t.destination_location_name ?? "the destination"}.
+                    </p>
+                  )}
 
                   {openId === t.id && d && (
                     <div className="mt-3 space-y-3 rounded-md bg-muted/40 p-3">
@@ -410,7 +677,8 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
                           <li key={l.id} className="flex justify-between gap-3">
                             <span>{l.item_name ?? "Item"}</span>
                             <span className="text-muted-foreground">
-                              requested {qty(l.requested_quantity)} · dispatched {qty(l.dispatched_quantity)} · received {qty(l.received_quantity)}
+                              requested {qty(l.requested_quantity)} · dispatched{" "}
+                              {qty(l.dispatched_quantity)} · received {qty(l.received_quantity)}
                             </span>
                           </li>
                         ))}
@@ -418,8 +686,19 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
                       <div className="flex flex-wrap gap-2">
                         {d.status === "requested" && (
                           <>
-                            <Button size="sm" onClick={() => approve.mutate({ transferId: d.id, approve: true })}>Approve</Button>
-                            <Button size="sm" variant="outline" onClick={() => approve.mutate({ transferId: d.id, approve: false })}>Reject</Button>
+                            <Button
+                              size="sm"
+                              onClick={() => approve.mutate({ transferId: d.id, approve: true })}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => approve.mutate({ transferId: d.id, approve: false })}
+                            >
+                              Reject
+                            </Button>
                           </>
                         )}
                         {(d.status === "approved" || d.status === "requested") && (
@@ -556,7 +835,10 @@ function WasteTab({ tenantId }: { tenantId: string }) {
             <button
               key={m}
               type="button"
-              onClick={() => { setMode(m); setReasonCode(""); }}
+              onClick={() => {
+                setMode(m);
+                setReasonCode("");
+              }}
               className={`min-h-11 rounded px-4 py-2 capitalize ${mode === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
             >
               {m}
@@ -565,15 +847,29 @@ function WasteTab({ tenantId }: { tenantId: string }) {
         </div>
 
         <div className="grid gap-2 sm:grid-cols-5">
-          <select className="min-h-11 rounded-md border bg-transparent px-2 text-sm sm:col-span-2" value={itemId} onChange={(e) => setItemId(e.target.value)}>
+          <select
+            className="min-h-11 rounded-md border bg-transparent px-2 text-sm sm:col-span-2"
+            value={itemId}
+            onChange={(e) => setItemId(e.target.value)}
+          >
             <option value="">Item…</option>
             {((items.data ?? []) as StockPosition[]).map((i) => (
-              <option key={i.itemId} value={i.itemId}>{i.name} ({qty(i.onHand)} on hand)</option>
+              <option key={i.itemId} value={i.itemId}>
+                {i.name} ({qty(i.onHand)} on hand)
+              </option>
             ))}
           </select>
-          <select className="min-h-11 rounded-md border bg-transparent px-2 text-sm" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+          <select
+            className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
+            value={locationId}
+            onChange={(e) => setLocationId(e.target.value)}
+          >
             <option value="">Default location</option>
-            {((locations.data ?? []) as any[]).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            {((locations.data ?? []) as any[]).map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
           </select>
           {mode === "adjustment" && (
             <select
@@ -585,17 +881,37 @@ function WasteTab({ tenantId }: { tenantId: string }) {
               <option value="increase">Increase stock</option>
             </select>
           )}
-          <Input type="number" step="0.001" min="0" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="Quantity" />
-          <select className="min-h-11 rounded-md border bg-transparent px-2 text-sm" value={reasonCode} onChange={(e) => setReasonCode(e.target.value)}>
+          <Input
+            type="number"
+            step="0.001"
+            min="0"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            placeholder="Quantity"
+          />
+          <select
+            className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
+            value={reasonCode}
+            onChange={(e) => setReasonCode(e.target.value)}
+          >
             <option value="">Reason…</option>
-            {((reasons.data ?? []) as any[]).map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
+            {((reasons.data ?? []) as any[]).map((r) => (
+              <option key={r.code} value={r.code}>
+                {r.label}
+              </option>
+            ))}
           </select>
         </div>
         <div className="mt-2">
           <Label htmlFor="inv-notes" className="text-xs text-muted-foreground">
             {selectedReason?.requires_note ? "Note (required for this reason)" : "Note (optional)"}
           </Label>
-          <Textarea id="inv-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
+          <Textarea
+            id="inv-notes"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={2}
+          />
         </div>
         <div className="mt-3">
           <Button
@@ -614,17 +930,26 @@ function WasteTab({ tenantId }: { tenantId: string }) {
         </div>
       </SectionCard>
 
-      <SectionCard title="Active reservations" description="Stock committed to an operation but not yet consumed. Reservations reduce availability, never the balance.">
+      <SectionCard
+        title="Active reservations"
+        description="Stock committed to an operation but not yet consumed. Reservations reduce availability, never the balance."
+      >
         {((reservations.data ?? []) as any[]).length === 0 ? (
-          <EmptyState title="No active reservations" description="Nothing is currently committed against stock." />
+          <EmptyState
+            title="No active reservations"
+            description="Nothing is currently committed against stock."
+          />
         ) : (
           <ul className="divide-y text-sm">
             {((reservations.data ?? []) as any[]).map((r) => (
               <Row key={r.id}>
                 <span className="min-w-0">
-                  <span className="font-medium capitalize">{String(r.purpose).replace(/_/g, " ")}</span>
+                  <span className="font-medium capitalize">
+                    {String(r.purpose).replace(/_/g, " ")}
+                  </span>
                   <span className="block text-xs text-muted-foreground">
-                    {qty(r.quantity)} units{r.needed_at ? ` · needed ${new Date(r.needed_at).toLocaleDateString()}` : ""}
+                    {qty(r.quantity)} units
+                    {r.needed_at ? ` · needed ${new Date(r.needed_at).toLocaleDateString()}` : ""}
                   </span>
                 </span>
                 <StatusChip tone="info">{r.status}</StatusChip>
@@ -698,9 +1023,14 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
 
   const save = useAdminMutation({
     mutationFn: (vars: { submit: boolean }) =>
-      saveFn({ data: { tenantId, stocktakeId: openId!, submitForReview: vars.submit, lines: dirtyLines } }),
+      saveFn({
+        data: { tenantId, stocktakeId: openId!, submitForReview: vars.submit, lines: dirtyLines },
+      }),
     successMessage: "Counts saved",
-    onSuccess: () => { setCounts({}); invalidate(); },
+    onSuccess: () => {
+      setCounts({});
+      invalidate();
+    },
   });
 
   const post = useAdminMutation({
@@ -712,19 +1042,38 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
 
   return (
     <>
-      <SectionCard title="Start a stocktake" description="Expected quantities are snapshotted from the ledger the moment counting starts.">
+      <SectionCard
+        title="Start a stocktake"
+        description="Expected quantities are snapshotted from the ledger the moment counting starts."
+      >
         <div className="grid gap-2 sm:grid-cols-3">
-          <select className="min-h-11 rounded-md border bg-transparent px-2 text-sm" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+          <select
+            className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
+            value={locationId}
+            onChange={(e) => setLocationId(e.target.value)}
+          >
             <option value="">Full inventory</option>
-            {((locations.data ?? []) as any[]).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            {((locations.data ?? []) as any[]).map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
           </select>
-          <Button size="sm" disabled={start.isPending} onClick={() => start.mutate(undefined)}>Start counting</Button>
+          <Button size="sm" disabled={start.isPending} onClick={() => start.mutate(undefined)}>
+            Start counting
+          </Button>
         </div>
       </SectionCard>
 
-      <SectionCard title="Stocktakes" description="Count → review → approve → post. Approval is what writes adjustments.">
+      <SectionCard
+        title="Stocktakes"
+        description="Count → review → approve → post. Approval is what writes adjustments."
+      >
         {((list.data ?? []) as any[]).length === 0 ? (
-          <EmptyState title="No stocktakes yet" description="Start a count to reconcile physical stock against the ledger." />
+          <EmptyState
+            title="No stocktakes yet"
+            description="Start a count to reconcile physical stock against the ledger."
+          />
         ) : (
           <ul className="divide-y text-sm">
             {((list.data ?? []) as any[]).map((s) => {
@@ -734,13 +1083,18 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
                   <button
                     type="button"
                     className="flex w-full flex-wrap items-center justify-between gap-3 text-left"
-                    onClick={() => { setOpenId(openId === s.id ? null : s.id); setCounts({}); }}
+                    onClick={() => {
+                      setOpenId(openId === s.id ? null : s.id);
+                      setCounts({});
+                    }}
                   >
                     <span className="min-w-0">
                       <span className="font-medium">{s.stocktake_number}</span>
                       <span className="block text-xs text-muted-foreground">
                         {s.location_name} · {new Date(s.created_at).toLocaleString()}
-                        {Number(s.variance_value ?? 0) > 0 ? ` · variance ${money(Number(s.variance_value))}` : ""}
+                        {Number(s.variance_value ?? 0) > 0
+                          ? ` · variance ${money(Number(s.variance_value))}`
+                          : ""}
                       </span>
                     </span>
                     <StatusChip tone={b.tone}>{b.label}</StatusChip>
@@ -750,10 +1104,18 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
                     <div className="mt-3 space-y-3 rounded-md bg-muted/40 p-3">
                       <ul className="space-y-2 text-xs">
                         {(d.lines ?? []).map((l: any) => {
-                          const counted = counts[l.id] ?? (l.counted_quantity != null ? String(l.counted_quantity) : "");
-                          const variance = counted === "" ? null : Number(counted) - Number(l.expected_quantity ?? 0);
+                          const counted =
+                            counts[l.id] ??
+                            (l.counted_quantity != null ? String(l.counted_quantity) : "");
+                          const variance =
+                            counted === ""
+                              ? null
+                              : Number(counted) - Number(l.expected_quantity ?? 0);
                           return (
-                            <li key={l.id} className="flex flex-wrap items-center justify-between gap-2">
+                            <li
+                              key={l.id}
+                              className="flex flex-wrap items-center justify-between gap-2"
+                            >
                               <span className="min-w-0">
                                 {l.item_name}
                                 <span className="block text-muted-foreground">
@@ -767,12 +1129,15 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
                                   step="0.001"
                                   value={counted}
                                   disabled={d.status === "posted" || d.status === "cancelled"}
-                                  onChange={(e) => setCounts((c) => ({ ...c, [l.id]: e.target.value }))}
+                                  onChange={(e) =>
+                                    setCounts((c) => ({ ...c, [l.id]: e.target.value }))
+                                  }
                                   placeholder="Counted"
                                 />
                                 {variance != null && Math.abs(variance) > 1e-9 && (
                                   <StatusChip tone={variance > 0 ? "info" : "warning"}>
-                                    {variance > 0 ? "+" : ""}{qty(variance)}
+                                    {variance > 0 ? "+" : ""}
+                                    {qty(variance)}
                                   </StatusChip>
                                 )}
                               </span>
@@ -783,18 +1148,36 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
                       <div className="flex flex-wrap gap-2">
                         {["draft", "counting", "review"].includes(d.status) && (
                           <>
-                            <Button size="sm" variant="outline" disabled={dirtyLines.length === 0} onClick={() => save.mutate({ submit: false })}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={dirtyLines.length === 0}
+                              onClick={() => save.mutate({ submit: false })}
+                            >
                               Save counts
                             </Button>
-                            <Button size="sm" variant="outline" disabled={dirtyLines.length === 0} onClick={() => save.mutate({ submit: true })}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={dirtyLines.length === 0}
+                              onClick={() => save.mutate({ submit: true })}
+                            >
                               Submit for review
                             </Button>
                           </>
                         )}
                         {["counting", "review", "approved"].includes(d.status) && (
                           <>
-                            <Button size="sm" onClick={() => post.mutate({ approve: true })}>Approve & post</Button>
-                            <Button size="sm" variant="outline" onClick={() => post.mutate({ approve: false })}>Cancel stocktake</Button>
+                            <Button size="sm" onClick={() => post.mutate({ approve: true })}>
+                              Approve & post
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => post.mutate({ approve: false })}
+                            >
+                              Cancel stocktake
+                            </Button>
                           </>
                         )}
                       </div>
@@ -840,7 +1223,10 @@ function BatchesTab({ tenantId }: { tenantId: string }) {
       }
     >
       {rows.length === 0 ? (
-        <EmptyState title="No tracked batches" description="Enable batch tracking on an item and record lots at receiving." />
+        <EmptyState
+          title="No tracked batches"
+          description="Enable batch tracking on an item and record lots at receiving."
+        />
       ) : (
         <ul className="divide-y text-sm">
           {rows.map((b) => (
@@ -871,7 +1257,12 @@ function BatchesTab({ tenantId }: { tenantId: string }) {
           ))}
         </ul>
       )}
-      <BatchSheet open={sheetOpen} onOpenChange={setSheetOpen} tenantId={tenantId} batch={editing} />
+      <BatchSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        tenantId={tenantId}
+        batch={editing}
+      />
     </SectionCard>
   );
 }
@@ -897,7 +1288,10 @@ function LocationsTab({ tenantId }: { tenantId: string }) {
       description="One location tree per property. Service outlets and storage rooms differ only by whether they hold stock."
     >
       {rows.length === 0 ? (
-        <EmptyState title="No locations" description="Add outlets and storage rooms to track stock by place." />
+        <EmptyState
+          title="No locations"
+          description="Add outlets and storage rooms to track stock by place."
+        />
       ) : (
         <ul className="divide-y text-sm">
           {tree.map(({ node, children }) => (
@@ -906,18 +1300,23 @@ function LocationsTab({ tenantId }: { tenantId: string }) {
                 <span className="min-w-0">
                   <span className="font-medium">{node.name}</span>
                   <span className="block text-xs text-muted-foreground">
-                    {node.code ? `${node.code} · ` : ""}{String(node.location_type).replace(/_/g, " ")}
+                    {node.code ? `${node.code} · ` : ""}
+                    {String(node.location_type).replace(/_/g, " ")}
                   </span>
                 </span>
                 <span className="flex gap-2">
                   {node.is_storage && <StatusChip tone="info">storage</StatusChip>}
-                  <StatusChip tone={node.status === "active" ? "success" : "neutral"}>{node.status}</StatusChip>
+                  <StatusChip tone={node.status === "active" ? "success" : "neutral"}>
+                    {node.status}
+                  </StatusChip>
                 </span>
               </div>
               {children.length > 0 && (
                 <ul className="mt-2 space-y-1 border-l pl-4 text-xs text-muted-foreground">
                   {children.map((c) => (
-                    <li key={c.id}>{c.name} · {String(c.location_type).replace(/_/g, " ")}</li>
+                    <li key={c.id}>
+                      {c.name} · {String(c.location_type).replace(/_/g, " ")}
+                    </li>
                   ))}
                 </ul>
               )}
@@ -947,20 +1346,26 @@ function ReconciliationTab({ tenantId }: { tenantId: string }) {
       {!data ? (
         <p className="text-sm text-muted-foreground">Checking…</p>
       ) : data.drifting === 0 ? (
-        <EmptyState title="Ledger is clean" description={`${data.clean} item balances match the movement ledger exactly.`} />
+        <EmptyState
+          title="Ledger is clean"
+          description={`${data.clean} item balances match the movement ledger exactly.`}
+        />
       ) : (
         <ul className="divide-y text-sm">
-          {(data.rows as any[]).filter((r) => Math.abs(r.drift) > 1e-6).map((r) => (
-            <Row key={`${r.inventory_item_id}:${r.location_id ?? "all"}`}>
-              <span className="min-w-0">
-                <span className="font-medium">{r.item_name ?? "Item"}</span>
-                <span className="block text-xs text-muted-foreground">
-                  {r.location_name} · ledger {qty(r.ledger_quantity)} vs stored {qty(r.item_quantity)}
+          {(data.rows as any[])
+            .filter((r) => Math.abs(r.drift) > 1e-6)
+            .map((r) => (
+              <Row key={`${r.inventory_item_id}:${r.location_id ?? "all"}`}>
+                <span className="min-w-0">
+                  <span className="font-medium">{r.item_name ?? "Item"}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {r.location_name} · ledger {qty(r.ledger_quantity)} vs stored{" "}
+                    {qty(r.item_quantity)}
+                  </span>
                 </span>
-              </span>
-              <StatusChip tone="danger">drift {qty(r.drift)}</StatusChip>
-            </Row>
-          ))}
+                <StatusChip tone="danger">drift {qty(r.drift)}</StatusChip>
+              </Row>
+            ))}
         </ul>
       )}
     </SectionCard>

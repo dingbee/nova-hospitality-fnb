@@ -148,10 +148,17 @@ export async function listTickets(
   });
 }
 
-/** One ticket per station, so each section owns its own queue. */
-export async function fireOrder(sb: Sb, userId: string, input: FireOrderInput) {
-  await assertCapability(sb, userId, input.tenantId, "kitchen.manage");
-
+/**
+ * One ticket per station, so each section owns its own queue. Extracted from
+ * fireOrder so a caller with no staff principal to check a capability
+ * against (self-order submission — see selforder.server.ts) can still fire
+ * an order's own just-created lines through the exact same ticket-creation
+ * logic, rather than a second, parallel implementation of it.
+ */
+async function fireOrderItemsCore(
+  sb: Sb,
+  input: { tenantId: string; orderId: string; orderItemIds: string[]; priority: number },
+) {
   const { data: order } = await sb
     .from("restaurant_orders")
     .select("id, order_number, status, location_id, property_id")
@@ -237,17 +244,64 @@ export async function fireOrder(sb: Sb, userId: string, input: FireOrderInput) {
     .eq("id", input.orderId)
     .eq("status", "open");
 
-  await emitRestaurantEvent(sb, userId, {
-    type: "restaurant.kitchen.ticket.fired",
-    tenantId: input.tenantId,
-    propertyId: order.property_id ?? undefined,
-    locationId: order.location_id ?? undefined,
-    entityType: "restaurant_order",
-    entityId: order.id,
-    source: "restaurant-os",
-    payload: { order_number: order.order_number, tickets: created.length, items: items.length },
-  });
-  return { tickets: created, fired: items.length };
+  return {
+    tickets: created,
+    fired: items.length,
+    orderNumber: order.order_number as string,
+    propertyId: (order.property_id as string | null) ?? null,
+    locationId: (order.location_id as string | null) ?? null,
+  };
+}
+
+/** Staff-invoked: fires an order's un-fired lines to the kitchen/bar. */
+export async function fireOrder(sb: Sb, userId: string, input: FireOrderInput) {
+  await assertCapability(sb, userId, input.tenantId, "kitchen.manage");
+  const result = await fireOrderItemsCore(sb, input);
+
+  if (result.fired > 0) {
+    await emitRestaurantEvent(sb, userId, {
+      type: "restaurant.kitchen.ticket.fired",
+      tenantId: input.tenantId,
+      propertyId: result.propertyId ?? undefined,
+      locationId: result.locationId ?? undefined,
+      entityType: "restaurant_order",
+      entityId: input.orderId,
+      source: "restaurant-os",
+      payload: {
+        order_number: result.orderNumber,
+        tickets: result.tickets.length,
+        items: result.fired,
+      },
+    });
+  }
+  return { tickets: result.tickets, fired: result.fired };
+}
+
+/**
+ * Guest-safe entry point: fires a self-order's own just-created lines with
+ * no staff capability check, since a guest has no staff principal to check
+ * one against — the same boundary insertLines/createGuestOrder already draw
+ * for writing the lines themselves. Never throws into the caller: a firing
+ * hiccup must not fail the guest's order submission, which already
+ * succeeded and is the record that matters. The order simply stays "open"
+ * for a staff member to fire manually from the kitchen/POS screen, exactly
+ * like it does today for every order this path doesn't reach.
+ */
+export async function fireGuestOrder(
+  sb: Sb,
+  input: { tenantId: string; orderId: string },
+): Promise<{ fired: number } | { fired: 0; error: string }> {
+  try {
+    const result = await fireOrderItemsCore(sb, {
+      tenantId: input.tenantId,
+      orderId: input.orderId,
+      orderItemIds: [],
+      priority: 0,
+    });
+    return { fired: result.fired };
+  } catch (err) {
+    return { fired: 0, error: (err as Error).message };
+  }
 }
 
 const NEXT_ITEM_STATUS: Record<string, string> = {
