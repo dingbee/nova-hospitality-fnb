@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- fake Supabase rows are untyped at this boundary. */
 /**
- * I4 — the first Act-stage executor.
+ * I4 / P10 — the Act-stage executor and its Verify counterpart.
  *
  * Exercises the REAL registered tenant scope checker (restaurant/intelligence/
  * provider.ts) and the REAL restaurant/core/access.server.ts capability gate
@@ -8,7 +8,7 @@
  * exactly the same methodology decision.server.test.ts uses for I2/I3.
  */
 import { describe, expect, it } from "vitest";
-import { executeRestaurantAction } from "./actions.server";
+import { executeRestaurantAction, verifyRestaurantAction } from "./actions.server";
 
 // Registers the restaurant provider + its tenant scope checker as a side
 // effect, exactly like the real app does via the admin/restaurant layout.
@@ -21,6 +21,7 @@ const WAITER = "44444444-4444-4444-4444-444444444444";
 const DECISION_ID = "55555555-5555-5555-5555-555555555555";
 const INVENTORY_ITEM_ID = "66666666-6666-6666-6666-666666666666";
 const SUPPLIER_ID = "77777777-7777-7777-7777-777777777777";
+const OTHER_ITEM_ID = "99999999-9999-9999-9999-999999999999";
 
 function findingFacts(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -64,18 +65,38 @@ function actionRow(overrides: Partial<Record<string, unknown>> = {}) {
     action_type: "restaurant.purchase.suggest",
     status: "approved",
     result: null,
+    queued_at: null,
+    executing_at: null,
+    completed_at: null,
+    failed_at: null,
+    failure_reason: null,
+    verified_at: null,
+    verification_result: null,
     ...overrides,
   };
 }
 
-/** Minimal thenable query builder — enough to cover executeRestaurantAction's call shapes. */
+function matchesFilters(row: Record<string, any>, filters: Record<string, unknown>) {
+  return Object.entries(filters).every(([k, v]) => row[k] === v);
+}
+
+/**
+ * Minimal in-memory query builder — enough to cover executeRestaurantAction
+ * and verifyRestaurantAction's call shapes, including status-guarded
+ * updates (so the concurrency guard is genuinely exercised, not just
+ * blindly applied) and array-shaped selects for the duplicate-request and
+ * line-item checks Verify performs.
+ */
 function makeFakeSupabase(opts: {
   action: Record<string, any> | null;
   decision: Record<string, any> | null;
   restaurantMembers: Array<{ tenant_id: string; user_id: string; role: string }>;
   existingRequestByCorrelation?: Record<string, any> | null;
+  existingRequests?: Array<Record<string, any>>;
+  existingItems?: Array<Record<string, any>>;
   failRequestInsert?: boolean;
   failLineInsert?: boolean;
+  failEventInsert?: boolean;
 }) {
   const calls: Array<{
     table: string;
@@ -84,7 +105,12 @@ function makeFakeSupabase(opts: {
     filters: Record<string, unknown>;
   }> = [];
   let action = opts.action ? { ...opts.action } : null;
-  let requestCreated: Record<string, any> | null = opts.existingRequestByCorrelation ?? null;
+  const requests: Record<string, any>[] = [
+    ...(opts.existingRequestByCorrelation ? [{ ...opts.existingRequestByCorrelation }] : []),
+    ...(opts.existingRequests ?? []).map((r) => ({ ...r })),
+  ];
+  const items: Record<string, any>[] = (opts.existingItems ?? []).map((i) => ({ ...i }));
+  const events: Record<string, any>[] = [];
   let requestInsertCount = 0;
   let lineInsertCount = 0;
 
@@ -92,6 +118,7 @@ function makeFakeSupabase(opts: {
     const filters: Record<string, unknown> = {};
     let op: "select" | "update" | "insert" = "select";
     let payload: any;
+    let mode: "single" | "maybeSingle" | "many" = "many";
 
     const api: any = {
       select: () => api,
@@ -109,40 +136,65 @@ function makeFakeSupabase(opts: {
         payload = row;
         return api;
       },
-      single: () => resolve(true),
-      maybeSingle: () => resolve(false),
-      then: (onFulfilled: any, onRejected: any) => resolve(false).then(onFulfilled, onRejected),
+      single: () => {
+        mode = "single";
+        return resolve();
+      },
+      maybeSingle: () => {
+        mode = "maybeSingle";
+        return resolve();
+      },
+      then: (onFulfilled: any, onRejected: any) => resolve().then(onFulfilled, onRejected),
     };
 
-    async function resolve(single: boolean) {
+    async function resolve() {
       calls.push({ table, op, payload, filters: { ...filters } });
 
       if (op === "select") {
         if (table === "intelligence_actions") {
-          return { data: action, error: action ? null : { message: "not found" } };
+          const match = action && matchesFilters(action, filters) ? action : null;
+          if (mode === "single")
+            return { data: match, error: match ? null : { message: "not found" } };
+          return { data: match, error: null };
         }
         if (table === "intelligence_decisions") {
-          return { data: opts.decision, error: opts.decision ? null : { message: "not found" } };
+          const match =
+            opts.decision && matchesFilters(opts.decision, filters) ? opts.decision : null;
+          if (mode === "single")
+            return { data: match, error: match ? null : { message: "not found" } };
+          return { data: match, error: null };
         }
         if (table === "restaurant_members") {
-          const rows = opts.restaurantMembers.filter(
-            (m) => m.tenant_id === filters.tenant_id && m.user_id === filters.user_id,
-          );
+          const rows = opts.restaurantMembers.filter((m) => matchesFilters(m, filters));
           return { data: rows, error: null };
         }
         if (table === "restaurant_purchase_requests") {
-          const match =
-            requestCreated &&
-            requestCreated.tenant_id === filters.tenant_id &&
-            requestCreated.correlation_id === filters.correlation_id;
-          return { data: match ? requestCreated : null, error: null };
+          const matches = requests.filter((r) => matchesFilters(r, filters));
+          if (mode === "single")
+            return {
+              data: matches[0] ?? null,
+              error: matches[0] ? null : { message: "not found" },
+            };
+          if (mode === "maybeSingle") return { data: matches[0] ?? null, error: null };
+          return { data: matches, error: null };
         }
-        return { data: single ? null : [], error: null };
+        if (table === "restaurant_purchase_request_items") {
+          const matches = items.filter((r) => matchesFilters(r, filters));
+          if (mode === "maybeSingle") return { data: matches[0] ?? null, error: null };
+          return { data: matches, error: null };
+        }
+        if (table === "intelligence_events") {
+          const matches = events.filter((r) => matchesFilters(r, filters));
+          return { data: matches[0] ?? null, error: null };
+        }
+        return { data: mode === "many" ? [] : null, error: null };
       }
 
       if (op === "update") {
-        if (table === "intelligence_actions" && action) {
+        if (table === "intelligence_actions") {
+          if (!action || !matchesFilters(action, filters)) return { data: null, error: null };
           action = { ...action, ...payload };
+          return { data: mode === "many" ? [action] : action, error: null };
         }
         return { data: null, error: null };
       }
@@ -151,21 +203,45 @@ function makeFakeSupabase(opts: {
       if (table === "restaurant_purchase_requests") {
         requestInsertCount += 1;
         if (opts.failRequestInsert) return { data: null, error: { message: "insert failed" } };
-        requestCreated = {
-          id: "created-request-id",
+        if (
+          requests.some(
+            (r) => r.tenant_id === payload.tenant_id && r.correlation_id === payload.correlation_id,
+          )
+        ) {
+          return {
+            data: null,
+            error: { message: "duplicate key value violates unique constraint", code: "23505" },
+          };
+        }
+        const id =
+          requestInsertCount === 1
+            ? "created-request-id"
+            : `created-request-id-${requestInsertCount}`;
+        const row = {
+          id,
           tenant_id: payload.tenant_id,
           correlation_id: payload.correlation_id,
           status: payload.status,
+          document_number: payload.document_number,
         };
-        return { data: { id: requestCreated.id }, error: null };
+        requests.push(row);
+        return { data: { id }, error: null };
       }
       if (table === "restaurant_purchase_request_items") {
         lineInsertCount += 1;
         if (opts.failLineInsert) return { data: null, error: { message: "line insert failed" } };
-        return { data: { id: "generated" }, error: null };
+        const id = `item-${lineInsertCount}`;
+        items.push({ id, ...payload });
+        return { data: { id }, error: null };
       }
       if (table === "restaurant_procurement_audit") {
         return { data: { id: "generated" }, error: null };
+      }
+      if (table === "intelligence_events") {
+        if (opts.failEventInsert) return { data: null, error: { message: "event insert failed" } };
+        const id = `event-${events.length + 1}`;
+        events.push({ id, ...payload });
+        return { data: { id }, error: null };
       }
       return { data: { id: "generated" }, error: null };
     }
@@ -185,6 +261,9 @@ function makeFakeSupabase(opts: {
     },
     calls,
     getAction: () => action,
+    getRequests: () => requests,
+    getItems: () => items,
+    getEvents: () => events,
     getRequestInsertCount: () => requestInsertCount,
     getLineInsertCount: () => lineInsertCount,
   };
@@ -192,8 +271,8 @@ function makeFakeSupabase(opts: {
 
 const OWNER_MEMBER = [{ tenant_id: TENANT_A, user_id: MANAGER, role: "purchasing_officer" }];
 
-describe("executeRestaurantAction — first Act-stage executor", () => {
-  it("creates a draft procurement request and completes the action", async () => {
+describe("executeRestaurantAction — Act", () => {
+  it("creates a draft procurement request and drives approved -> queued -> executing -> executed", async () => {
     const fake = makeFakeSupabase({
       action: actionRow(),
       decision: decisionRow(),
@@ -205,7 +284,7 @@ describe("executeRestaurantAction — first Act-stage executor", () => {
     });
 
     expect(result).toMatchObject({
-      status: "completed",
+      status: "executed",
       executionResult: "procurement_request_created",
       procurementRequestId: "created-request-id",
       procurementRequestStatus: "draft",
@@ -234,17 +313,63 @@ describe("executeRestaurantAction — first Act-stage executor", () => {
       quantity: 30,
     });
 
-    expect(fake.getAction()?.status).toBe("completed");
-    expect(fake.getAction()?.result).toMatchObject({
-      procurement_request_id: "created-request-id",
-    });
+    // Genuinely stateful: real, distinct timestamps at every meaningful
+    // transition, not just a single insert-then-say-executed.
+    const finalAction = fake.getAction();
+    expect(finalAction?.status).toBe("executed");
+    expect(finalAction?.queued_at).toBeTruthy();
+    expect(finalAction?.executing_at).toBeTruthy();
+    expect(finalAction?.completed_at).toBeTruthy();
+    expect(finalAction?.result).toMatchObject({ procurement_request_id: "created-request-id" });
+
+    // intelligence.action.queued / executing / executed emitted, in order,
+    // via the existing tenant-scoped, idempotent intelligence_events writer.
+    const eventTypes = fake.getEvents().map((e) => e.event_type);
+    expect(eventTypes).toEqual([
+      "intelligence.action.queued",
+      "intelligence.action.executing",
+      "intelligence.action.executed",
+    ]);
+    for (const e of fake.getEvents()) {
+      expect(e.module).toBe("restaurant");
+      expect(e.tenant_id).toBe(TENANT_A);
+      expect(e.entity_type).toBe("intelligence_action");
+      expect(e.entity_id).toBe(actionRow().id);
+    }
   });
 
-  it("does not re-execute a completed action — returns the prior result", async () => {
+  it("does not re-execute an already-executed action — returns the prior result (idempotent re-run)", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({
+        status: "executed",
+        result: { procurement_request_id: "already-there", procurement_request_status: "draft" },
+      }),
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: actionRow().id,
+    });
+
+    expect(result).toEqual({
+      actionId: actionRow().id,
+      status: "executed",
+      executionResult: "procurement_request_created",
+      procurementRequestId: "already-there",
+      procurementRequestStatus: "draft",
+      alreadyExecuted: true,
+    });
+    expect(fake.getRequestInsertCount()).toBe(0);
+    expect(fake.getLineInsertCount()).toBe(0);
+    expect(fake.getEvents()).toHaveLength(0); // no re-transition, no new event
+  });
+
+  it("recognizes a legacy 'completed' row (pre-P10 vocabulary) as already executed", async () => {
     const fake = makeFakeSupabase({
       action: actionRow({
         status: "completed",
-        result: { procurement_request_id: "already-there", procurement_request_status: "draft" },
+        result: { procurement_request_id: "legacy-request", procurement_request_status: "draft" },
       }),
       decision: decisionRow(),
       restaurantMembers: OWNER_MEMBER,
@@ -258,17 +383,16 @@ describe("executeRestaurantAction — first Act-stage executor", () => {
       actionId: actionRow().id,
       status: "completed",
       executionResult: "procurement_request_created",
-      procurementRequestId: "already-there",
+      procurementRequestId: "legacy-request",
       procurementRequestStatus: "draft",
       alreadyExecuted: true,
     });
     expect(fake.getRequestInsertCount()).toBe(0);
-    expect(fake.getLineInsertCount()).toBe(0);
   });
 
   it("recovers an existing request by correlation_id after a partial failure, without duplicating it", async () => {
     const fake = makeFakeSupabase({
-      action: actionRow({ status: "executing" }), // a previous attempt crashed after creating the request
+      action: actionRow({ status: "executing", executing_at: "2026-01-01T00:00:00.000Z" }), // a previous attempt crashed after creating the request
       decision: decisionRow(),
       restaurantMembers: OWNER_MEMBER,
       existingRequestByCorrelation: {
@@ -284,13 +408,37 @@ describe("executeRestaurantAction — first Act-stage executor", () => {
     });
 
     expect(result).toMatchObject({
-      status: "completed",
+      status: "executed",
       procurementRequestId: "recovered-request-id",
       procurementRequestStatus: "draft",
     });
     expect(fake.getRequestInsertCount()).toBe(0); // never a second draft
     expect(fake.getLineInsertCount()).toBe(0);
-    expect(fake.getAction()?.status).toBe("completed");
+    expect(fake.getAction()?.status).toBe("executed");
+  });
+
+  it("protects against two concurrent executions of the same action — exactly one request, both callers converge", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow(),
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    const [a, b] = await Promise.all([
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: actionRow().id }),
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: actionRow().id }),
+    ]);
+
+    // Two insert attempts can be made (the loser's collides with the
+    // winner's tenant_id+correlation_id unique constraint), but exactly one
+    // request row — and one line item — actually exists afterward, and the
+    // loser recovers the winner's row rather than erroring or duplicating.
+    expect(fake.getRequests()).toHaveLength(1);
+    expect(fake.getLineInsertCount()).toBe(1);
+    expect(a.status).toBe("executed");
+    expect(b.status).toBe("executed");
+    expect(a.procurementRequestId).toBe(b.procurementRequestId);
+    expect(fake.getAction()?.status).toBe("executed");
   });
 
   it("refuses a caller who is not a restaurant_members of the decision's tenant", async () => {
@@ -323,6 +471,7 @@ describe("executeRestaurantAction — first Act-stage executor", () => {
     expect(result.failureReason).toMatch(/purchase\.request.*requires/i);
     expect(fake.getRequestInsertCount()).toBe(0);
     expect(fake.getAction()?.status).toBe("failed");
+    expect(fake.getEvents().map((e) => e.event_type)).toContain("intelligence.action.failed");
   });
 
   it("fails cleanly when the decision carries no supplier for the item", async () => {
@@ -402,6 +551,22 @@ describe("executeRestaurantAction — first Act-stage executor", () => {
     expect(fake.getAction()?.status).toBe("failed");
   });
 
+  it("a failed action can be retried and reaches executed", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({ status: "failed", failure_reason: "insert failed" }),
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: actionRow().id,
+    });
+
+    expect(result.status).toBe("executed");
+    expect(fake.getRequestInsertCount()).toBe(1);
+    expect(fake.getAction()?.failure_reason).toBeNull();
+  });
+
   it("refuses to execute an action that was never approved", async () => {
     const fake = makeFakeSupabase({
       action: actionRow({ status: "proposed" }),
@@ -437,5 +602,286 @@ describe("executeRestaurantAction — first Act-stage executor", () => {
     await expect(
       executeRestaurantAction(fake.supabase, MANAGER, { actionId: actionRow().id }),
     ).rejects.toThrow(/no executor registered for module/i);
+  });
+
+  it("never breaks the business action when the event writer fails", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow(),
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      failEventInsert: true,
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: actionRow().id,
+    });
+
+    expect(result.status).toBe("executed");
+    expect(fake.getAction()?.status).toBe("executed");
+    expect(fake.getEvents()).toHaveLength(0); // every emit attempt failed, silently
+  });
+});
+
+const EXECUTED_ACTION = actionRow({
+  status: "executed",
+  result: { procurement_request_id: "req-verify-1", procurement_request_status: "draft" },
+  queued_at: "2026-01-01T00:00:00.000Z",
+  executing_at: "2026-01-01T00:00:01.000Z",
+  completed_at: "2026-01-01T00:00:02.000Z",
+});
+
+function draftRequest(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "req-verify-1",
+    tenant_id: TENANT_A,
+    correlation_id: EXECUTED_ACTION.id,
+    status: "draft",
+    ...overrides,
+  };
+}
+
+function requestItem(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "item-verify-1",
+    purchase_request_id: "req-verify-1",
+    inventory_item_id: INVENTORY_ITEM_ID,
+    quantity: 30,
+    ...overrides,
+  };
+}
+
+describe("verifyRestaurantAction — Verify", () => {
+  it("positively confirms success: real request, right tenant, right correlation, right item/quantity, still draft, no duplicate", async () => {
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [draftRequest()],
+      existingItems: [requestItem()],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: EXECUTED_ACTION.id,
+    });
+
+    expect(result).toEqual({
+      verified: true,
+      outcome: "purchase_request_created",
+      entityType: "purchase_request",
+      entityId: "req-verify-1",
+      expectedQuantity: 30,
+      actualQuantity: 30,
+      status: "draft",
+    });
+    expect(fake.getAction()?.status).toBe("verified");
+    expect(fake.getAction()?.verified_at).toBeTruthy();
+    expect(fake.getAction()?.verification_result).toEqual(result);
+    expect(fake.getEvents().map((e) => e.event_type)).toEqual(["intelligence.action.verified"]);
+  });
+
+  it("detects a wrong quantity (expected 30, found 20)", async () => {
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [draftRequest()],
+      existingItems: [requestItem({ quantity: 20 })],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: EXECUTED_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      verified: false,
+      outcome: "quantity_mismatch",
+      expectedQuantity: 30,
+      actualQuantity: 20,
+    });
+    expect(fake.getAction()?.status).toBe("verification_failed");
+    expect(fake.getEvents().map((e) => e.event_type)).toEqual([
+      "intelligence.action.verification_failed",
+    ]);
+  });
+
+  it("detects a missing purchase request", async () => {
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [], // never actually created / vanished
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: EXECUTED_ACTION.id,
+    });
+
+    expect(result).toMatchObject({ verified: false, outcome: "purchase_request_missing" });
+    expect(fake.getAction()?.status).toBe("verification_failed");
+  });
+
+  it("detects a wrong tenant on the resulting request", async () => {
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [draftRequest({ tenant_id: TENANT_B })],
+      existingItems: [requestItem()],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: EXECUTED_ACTION.id,
+    });
+
+    expect(result).toMatchObject({ verified: false, outcome: "tenant_mismatch" });
+  });
+
+  it("detects a wrong item on the request", async () => {
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [draftRequest()],
+      existingItems: [requestItem({ inventory_item_id: OTHER_ITEM_ID })],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: EXECUTED_ACTION.id,
+    });
+
+    expect(result).toMatchObject({ verified: false, outcome: "item_missing" });
+  });
+
+  it("detects a wrong correlation (request exists but isn't linked to this action)", async () => {
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [draftRequest({ correlation_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" })],
+      existingItems: [requestItem()],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: EXECUTED_ACTION.id,
+    });
+
+    expect(result).toMatchObject({ verified: false, outcome: "correlation_mismatch" });
+  });
+
+  it("detects an unexpected status (already submitted, no longer the governed draft)", async () => {
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [draftRequest({ status: "submitted" })],
+      existingItems: [requestItem()],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: EXECUTED_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      verified: false,
+      outcome: "unexpected_status",
+      status: "submitted",
+    });
+  });
+
+  it("detects a duplicate request correlated to the same action", async () => {
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [draftRequest(), draftRequest({ id: "req-verify-2" })],
+      existingItems: [requestItem()],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: EXECUTED_ACTION.id,
+    });
+
+    expect(result).toMatchObject({ verified: false, outcome: "duplicate_request" });
+  });
+
+  it("refuses to verify an action that has not executed yet", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({ status: "approved" }),
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: actionRow().id,
+    });
+
+    expect(result).toEqual({
+      verified: false,
+      outcome: "not_executed",
+      reason: expect.stringMatching(/has not executed/i),
+    });
+    expect(fake.getAction()?.status).toBe("approved"); // untouched
+  });
+
+  it("reports verification unavailable for an action type with no verifier, and does not pretend it was verified", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({
+        action_type: "restaurant.inventory.replenish_review",
+        status: "executed",
+        result: { procurement_request_id: "n/a" },
+      }),
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: actionRow().id,
+    });
+
+    expect(result).toEqual({
+      verified: false,
+      outcome: "verification_unavailable",
+      reason: expect.stringMatching(/no verifier implemented/i),
+    });
+    // No status mutation, no event — we never checked, so we never claim to have.
+    expect(fake.getAction()?.status).toBe("executed");
+    expect(fake.getEvents()).toHaveLength(0);
+  });
+
+  it("refuses a caller outside the decision's tenant", async () => {
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: [{ tenant_id: TENANT_B, user_id: MANAGER, role: "purchasing_officer" }],
+      existingRequests: [draftRequest()],
+      existingItems: [requestItem()],
+    });
+
+    await expect(
+      verifyRestaurantAction(fake.supabase, MANAGER, { actionId: EXECUTED_ACTION.id }),
+    ).rejects.toThrow(/do not belong to this restaurant tenant/i);
+  });
+
+  it("re-derives every value from the database — never trusts the action's cached result blindly", async () => {
+    // The action's cached result says one thing; the real row on the
+    // request says another (e.g. it was hand-edited after the fact).
+    // Verify must report the actual database quantity, not the cached one.
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [draftRequest()],
+      existingItems: [requestItem({ quantity: 30 })],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: EXECUTED_ACTION.id,
+    });
+    expect(result.actualQuantity).toBe(30);
+    // Confirm it came from a fresh read, not the action row: the fake only
+    // ever returns items via a "restaurant_purchase_request_items" select.
+    expect(
+      fake.calls.some((c) => c.table === "restaurant_purchase_request_items" && c.op === "select"),
+    ).toBe(true);
   });
 });

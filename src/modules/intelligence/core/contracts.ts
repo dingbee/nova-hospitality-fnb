@@ -48,9 +48,15 @@ export type IntelStatus = (typeof INTEL_STATUSES)[number];
 export const INTEL_ACTION_STATUSES = [
   "proposed",
   "approved",
+  "queued",
   "executing",
-  "completed",
+  "executed",
+  "verified",
   "failed",
+  "verification_failed",
+  // Legacy values written before P10's Act/Verify lifecycle. Still valid on
+  // read; nothing writes them going forward except back-compat handling.
+  "completed",
   "cancelled",
 ] as const;
 export type IntelActionStatus = (typeof INTEL_ACTION_STATUSES)[number];
