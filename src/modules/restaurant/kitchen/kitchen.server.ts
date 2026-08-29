@@ -70,6 +70,11 @@ export async function listTickets(
   input: z.infer<typeof listTicketsSchema>,
 ) {
   await assertTenantRead(sb, userId, input.tenantId);
+  // An explicit empty list ("scope to these stations" with none given, e.g.
+  // a tenant with no kitchen-type stations configured yet) means "match no
+  // station", not "no filter" — falling through to unfiltered here would
+  // silently show every other station's tickets on a board scoped to none.
+  if (input.stationIds && input.stationIds.length === 0) return [];
   let q = sb
     .from("restaurant_kitchen_tickets")
     .select(
@@ -81,6 +86,7 @@ export async function listTickets(
     .limit(input.limit);
   if (input.locationId) q = q.eq("location_id", input.locationId);
   if (input.stationId) q = q.eq("station_id", input.stationId);
+  if (input.stationIds && input.stationIds.length > 0) q = q.in("station_id", input.stationIds);
   if (input.status) q = q.eq("status", input.status);
   if (input.openOnly) q = q.in("status", ["queued", "preparing", "ready"]);
   const { data, error } = await q;

@@ -472,6 +472,8 @@ export const upsertStationSchema = tenantScopeSchema.extend({
 export const listTicketsSchema = tenantScopeSchema.extend({
   status: z.enum(TICKET_STATUSES).optional(),
   stationId: uuid.optional(),
+  /** Scope to a set of stations at once (e.g. "every non-bar station") — the Kitchen board's own filter; omit for the unfiltered, tenant-wide read the Overview dashboard intentionally uses. */
+  stationIds: z.array(uuid).optional(),
   openOnly: z.boolean().default(false),
   limit: z.number().int().min(1).max(200).default(100),
 });

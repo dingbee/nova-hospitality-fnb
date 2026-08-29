@@ -18,7 +18,7 @@
  * submitGuestOrder now calls right after creating the order.
  */
 import { describe, expect, it } from "vitest";
-import { fireGuestOrder, fireOrder } from "./kitchen.server";
+import { fireGuestOrder, fireOrder, listTickets } from "./kitchen.server";
 
 const TENANT = "11111111-1111-1111-1111-111111111111";
 const USER = "22222222-2222-2222-2222-222222222222";
@@ -236,5 +236,165 @@ describe("fireOrder — staff path is unaffected by the extraction", () => {
       }),
     ).rejects.toThrow(/forbidden/i);
     expect(fake.tickets).toHaveLength(0);
+  });
+});
+
+/**
+ * P0 — the Kitchen board showed bar tickets alongside its own. Root cause:
+ * listTickets carried no station filter at all unless a caller explicitly
+ * supplied one, and the Kitchen route never did — every open ticket
+ * tenant-wide (including the Bar board's own, already-correctly-routed
+ * tickets) came back. The ticket itself was never duplicated or
+ * mis-routed (see fireGuestOrder's "creates one ticket per station" above,
+ * and stationRouting.test.ts) — this is purely the read side.
+ */
+function fakeListTicketsDb(rows: Record<string, any[]>) {
+  function from(table: string) {
+    let filtered = rows[table] ?? [];
+    const builder: any = {
+      select() {
+        return builder;
+      },
+      eq(col: string, val: unknown) {
+        filtered = filtered.filter((r) => r[col] === val);
+        return builder;
+      },
+      in(col: string, vals: unknown[]) {
+        const set = new Set(vals);
+        filtered = filtered.filter((r) => set.has(r[col]));
+        return builder;
+      },
+      order() {
+        return builder;
+      },
+      limit(n: number) {
+        filtered = filtered.slice(0, n);
+        return builder;
+      },
+      then: (resolve: (v: { data: any[]; error: null }) => unknown) =>
+        resolve({ data: filtered, error: null }),
+    };
+    return builder;
+  }
+  return {
+    from,
+    rpc: async () => ({ data: false, error: null }),
+  };
+}
+
+function ticketsBaseRows(overrides: Partial<Record<string, any[]>> = {}) {
+  return {
+    restaurant_members: [{ tenant_id: TENANT, user_id: USER, role: "manager" }],
+    restaurant_kitchen_ticket_items: [],
+    restaurant_orders: [],
+    restaurant_tables: [],
+    ...overrides,
+  };
+}
+
+describe("listTickets — station-scoped reads (the Kitchen board's own fix)", () => {
+  const kitchenTicket = {
+    tenant_id: TENANT,
+    id: "ticket-kitchen",
+    ticket_number: "KOT-1-1",
+    order_id: null,
+    station_id: KITCHEN_STATION,
+    status: "queued",
+    priority: 0,
+    course: null,
+    target_minutes: 15,
+    queued_at: new Date().toISOString(),
+  };
+  const barTicket = {
+    ...kitchenTicket,
+    id: "ticket-bar",
+    ticket_number: "KOT-1-2",
+    station_id: BAR_STATION,
+  };
+
+  it("1/2. a bar-only ticket is excluded when scoped to kitchen stations — Kitchen shows exactly its own, zero bar", async () => {
+    const fake = fakeListTicketsDb(
+      ticketsBaseRows({ restaurant_kitchen_tickets: [kitchenTicket, barTicket] }),
+    );
+    const rows = await listTickets(fake, USER, {
+      tenantId: TENANT,
+      stationIds: [KITCHEN_STATION],
+      openOnly: false,
+      limit: 100,
+    } as any);
+    expect(rows.map((r: any) => r.id)).toEqual(["ticket-kitchen"]);
+  });
+
+  it("3/4. a kitchen-only ticket is excluded when scoped to bar stations — Bar's own existing scoped read stays correct", async () => {
+    const fake = fakeListTicketsDb(
+      ticketsBaseRows({ restaurant_kitchen_tickets: [kitchenTicket, barTicket] }),
+    );
+    const rows = await listTickets(fake, USER, {
+      tenantId: TENANT,
+      stationIds: [BAR_STATION],
+      openOnly: false,
+      limit: 100,
+    } as any);
+    expect(rows.map((r: any) => r.id)).toEqual(["ticket-bar"]);
+  });
+
+  it("5. a mixed order's two tickets split correctly across the two scoped reads — no cross-station leakage either way", async () => {
+    const fake = fakeListTicketsDb(
+      ticketsBaseRows({ restaurant_kitchen_tickets: [kitchenTicket, barTicket] }),
+    );
+    const kitchenRows = await listTickets(fake, USER, {
+      tenantId: TENANT,
+      stationIds: [KITCHEN_STATION],
+      openOnly: false,
+      limit: 100,
+    } as any);
+    const barRows = await listTickets(fake, USER, {
+      tenantId: TENANT,
+      stationIds: [BAR_STATION],
+      openOnly: false,
+      limit: 100,
+    } as any);
+    expect(kitchenRows).toHaveLength(1);
+    expect(barRows).toHaveLength(1);
+    expect(kitchenRows[0].id).not.toBe(barRows[0].id);
+  });
+
+  it("an explicit empty station scope (a tenant with no kitchen-type stations yet) returns nothing, not everything", async () => {
+    const fake = fakeListTicketsDb(
+      ticketsBaseRows({ restaurant_kitchen_tickets: [kitchenTicket, barTicket] }),
+    );
+    const rows = await listTickets(fake, USER, {
+      tenantId: TENANT,
+      stationIds: [],
+      openOnly: false,
+      limit: 100,
+    } as any);
+    expect(rows).toEqual([]);
+  });
+
+  it("no station scope at all preserves the Overview dashboard's existing unfiltered, tenant-wide read", async () => {
+    const fake = fakeListTicketsDb(
+      ticketsBaseRows({ restaurant_kitchen_tickets: [kitchenTicket, barTicket] }),
+    );
+    const rows = await listTickets(fake, USER, {
+      tenantId: TENANT,
+      openOnly: false,
+      limit: 100,
+    } as any);
+    expect(rows.map((r: any) => r.id).sort()).toEqual(["ticket-bar", "ticket-kitchen"]);
+  });
+
+  it("8. a same-station ticket belonging to another tenant never appears, regardless of station scope", async () => {
+    const otherTenantTicket = { ...kitchenTicket, id: "ticket-foreign", tenant_id: "other-tenant" };
+    const fake = fakeListTicketsDb(
+      ticketsBaseRows({ restaurant_kitchen_tickets: [kitchenTicket, otherTenantTicket] }),
+    );
+    const rows = await listTickets(fake, USER, {
+      tenantId: TENANT,
+      stationIds: [KITCHEN_STATION],
+      openOnly: false,
+      limit: 100,
+    } as any);
+    expect(rows.map((r: any) => r.id)).toEqual(["ticket-kitchen"]);
   });
 });

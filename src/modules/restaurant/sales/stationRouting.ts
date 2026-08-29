@@ -48,6 +48,23 @@ export function resolveCataloguedLineStation(
 }
 
 /**
+ * The Kitchen board's own scope: every station that isn't a bar-type lane —
+ * the exact inverse of the "bar" classification the routing decision above
+ * already uses for its own lane default, kept in one place so the board's
+ * notion of "a kitchen station" can never drift from the one a ticket was
+ * actually routed by. Bar has the equivalent scope already
+ * (`resolveBarScope` in bar.server.ts); this is the Kitchen board's
+ * missing counterpart, not a new classification.
+ */
+export function kitchenStationIds(
+  stations: readonly StationRow[],
+  barStationTypes: readonly string[],
+): string[] {
+  const barTypes = new Set(barStationTypes);
+  return stations.filter((s) => !s.stationType || !barTypes.has(s.stationType)).map((s) => s.id);
+}
+
+/**
  * A client-proposed station is only ever honoured for a non-catalogued
  * ("open") item — one with no menu item / product behind it, so there is no
  * catalogue configuration to derive from. Even then, the proposal is only

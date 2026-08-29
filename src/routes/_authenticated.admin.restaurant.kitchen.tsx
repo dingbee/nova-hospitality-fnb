@@ -14,8 +14,11 @@ import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWor
 import {
   advanceRestaurantTicketFn,
   listRestaurantKitchenTicketsFn,
+  listRestaurantStationsFn,
   restaurantStationPerformanceFn,
 } from "@/modules/restaurant/kitchen/kitchen.functions";
+import { kitchenStationIds } from "@/modules/restaurant/sales/stationRouting";
+import { BAR_STATION_TYPES } from "@/modules/restaurant/bar/contracts";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/kitchen")({
   head: () => ({
@@ -63,13 +66,31 @@ function KitchenPage() {
   const qc = useQueryClient();
 
   const ticketsFn = useServerFn(listRestaurantKitchenTicketsFn);
+  const stationsFn = useServerFn(listRestaurantStationsFn);
   const perfFn = useServerFn(restaurantStationPerformanceFn);
   const advanceFn = useServerFn(advanceRestaurantTicketFn);
 
-  const tickets = useQuery({
-    queryKey: ["restaurant.tickets", tenantId],
-    queryFn: () => ticketsFn({ data: { tenantId: tenantId!, openOnly: true, limit: 100 } }),
+  const stations = useQuery({
+    queryKey: ["restaurant.stations", tenantId],
+    queryFn: () => stationsFn({ data: { tenantId: tenantId! } }),
     enabled: Boolean(tenantId),
+    staleTime: 60_000,
+  });
+  // The Kitchen board's own scope — every non-bar station — the same
+  // "bar or not" classification the routing decision itself uses, not a
+  // hardcoded list. A bar-only order's ticket carries the bar's own
+  // station_id (confirmed against live data: one ticket, one station, no
+  // duplication); it was showing here anyway because this read carried no
+  // station filter at all, unlike the Bar board's own scoped read.
+  const kitchenStationIdList = kitchenStationIds((stations.data ?? []) as any[], BAR_STATION_TYPES);
+
+  const tickets = useQuery({
+    queryKey: ["restaurant.tickets", tenantId, kitchenStationIdList],
+    queryFn: () =>
+      ticketsFn({
+        data: { tenantId: tenantId!, stationIds: kitchenStationIdList, openOnly: true, limit: 100 },
+      }),
+    enabled: Boolean(tenantId) && stations.data !== undefined,
     refetchInterval: 15_000,
   });
   const perf = useQuery({

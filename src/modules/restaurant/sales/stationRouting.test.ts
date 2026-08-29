@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  kitchenStationIds,
   resolveCataloguedLineStation,
   resolveOpenItemStation,
   sendToStationLabel,
@@ -121,5 +122,30 @@ describe("sendToStationLabel — the till label can never claim a drink is heade
 
   it("empty pending set defaults to 'Send to kitchen' (existing kitchen-only behaviour is unchanged)", () => {
     expect(sendToStationLabel([], BAR_STATION_TYPES)).toBe("Send to kitchen");
+  });
+});
+
+describe("kitchenStationIds — the Kitchen board's own scope (the missing counterpart of resolveBarScope)", () => {
+  it("excludes bar-type stations, keeps kitchen-type ones", () => {
+    const result = kitchenStationIds(tenantStations, BAR_STATION_TYPES);
+    expect(result).toEqual([kitchenStation.id]);
+    expect(result).not.toContain(barStation.id);
+  });
+
+  it("a station with no configured type is treated as kitchen — the same 'not bar' default resolveCataloguedLineStation's own lane fallback uses", () => {
+    const unclassified: StationRow = { id: "prep-1", stationType: null };
+    const result = kitchenStationIds([unclassified, barStation], BAR_STATION_TYPES);
+    expect(result).toEqual([unclassified.id]);
+  });
+
+  it("a tenant with only bar-type stations returns an empty list, not every station", () => {
+    const result = kitchenStationIds([barStation], BAR_STATION_TYPES);
+    expect(result).toEqual([]);
+  });
+
+  it("multiple kitchen stations are all included", () => {
+    const grill: StationRow = { id: "grill-1", stationType: "kitchen" };
+    const result = kitchenStationIds([kitchenStation, grill, barStation], BAR_STATION_TYPES);
+    expect(result).toEqual([kitchenStation.id, grill.id]);
   });
 });
