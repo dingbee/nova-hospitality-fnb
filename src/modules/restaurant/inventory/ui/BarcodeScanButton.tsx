@@ -131,7 +131,18 @@ function ScannerDialog({
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-sm">
+      <DialogContent
+        className="max-w-sm"
+        // Radix's own default here is to return focus to whatever
+        // triggered the dialog once it closes — reasonable in general, but
+        // it runs after onScan fires and silently overrides any focus a
+        // caller's onScan handler tries to set (verified against a real
+        // browser: a successful scan closed this dialog correctly, but the
+        // caller's own follow-up focus() call never stuck — activeElement
+        // settled on <body>). A caller that already has somewhere useful
+        // for focus to land wins over this dialog's own opinion about it.
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>Scan barcode</DialogTitle>
         </DialogHeader>

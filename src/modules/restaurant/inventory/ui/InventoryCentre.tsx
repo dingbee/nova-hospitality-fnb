@@ -6,7 +6,7 @@
  * blended: on hand, reserved, available, incoming. Every mutating surface here
  * writes through the ledger; nothing edits a balance directly.
  */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
@@ -978,6 +978,26 @@ function WasteTab({ tenantId }: { tenantId: string }) {
 
 /* ---------------- Stocktake ---------------- */
 
+/**
+ * Focusing a count input from inside BarcodeScanButton's onScan is a no-op
+ * while its scanner dialog is still mounted — verified against a real
+ * browser: Radix's FocusScope synchronously reverts any focus landing
+ * outside its own boundary the instant it happens, and that boundary
+ * doesn't clear the moment onScan fires; it only tears down a render pass
+ * or two later, once the dialog has actually unmounted. A single deferred
+ * attempt (one requestAnimationFrame, even a macrotask) still lost that
+ * race in testing — retrying across a few frames is what reliably
+ * outlasts it, without hard-coding a millisecond guess at how long Radix's
+ * own teardown takes.
+ */
+function focusOnceUnmounted(el: HTMLElement | null | undefined, attempt = 0) {
+  if (!el || attempt > 10) return;
+  requestAnimationFrame(() => {
+    el.focus();
+    if (document.activeElement !== el) focusOnceUnmounted(el, attempt + 1);
+  });
+}
+
 function StocktakeTab({ tenantId }: { tenantId: string }) {
   const qc = useQueryClient();
   const listFn = useServerFn(listStocktakesFn);
@@ -1026,10 +1046,26 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
         },
       }),
     successMessage: "Stocktake started",
-    onSuccess: invalidate,
+    // "Start counting" landing the user back on the still-collapsed list —
+    // with the new stocktake just another unopened row — is functionally
+    // the same as having no Count screen at all: Scan item only renders
+    // once a row is expanded, and nothing here was inviting that second,
+    // undiscoverable tap. Opening straight into the one just created is
+    // what "Start counting -> Count screen" actually has to mean.
+    onSuccess: (result: any) => {
+      invalidate();
+      setOpenId(result.id);
+      setCounts({});
+      setLineFilter("");
+      setScanMessage(null);
+    },
   });
 
   const d = detail.data as any;
+  const openedPanelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (openId && d) openedPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [openId, d]);
 
   /**
    * A stocktake's lines are fixed by the ledger snapshot taken when counting
@@ -1047,7 +1083,7 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
     setLineFilter("");
     const el = countInputRefs.current[result.line.id];
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
-    el?.focus();
+    focusOnceUnmounted(el);
   };
 
   const dirtyLines = useMemo(
@@ -1140,7 +1176,7 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
                   </button>
 
                   {openId === s.id && d && (
-                    <div className="mt-3 space-y-3 rounded-md bg-muted/40 p-3">
+                    <div ref={openedPanelRef} className="mt-3 space-y-3 rounded-md bg-muted/40 p-3">
                       {d.status !== "posted" && d.status !== "cancelled" && (
                         <div>
                           <Label htmlFor="stocktake-find">Find item</Label>
