@@ -262,7 +262,8 @@ export function stageSupplierProductRow(
   },
 ): StageResult {
   const errors: string[] = [];
-  if (!mapped.supplierName) errors.push(required("Supplier is missing."));
+  if (!mapped.supplierName && !mapped.supplierCode)
+    errors.push(required("Supplier to link is missing (name or code)."));
   if (!mapped.itemName && !mapped.itemSku && !mapped.itemBarcode)
     errors.push(required("Item to link is missing (name, SKU or barcode)."));
   const unitPrice = numField(mapped.unitPrice, "Unit price", errors, { required: true });
@@ -271,8 +272,11 @@ export function stageSupplierProductRow(
   const leadTimeDays = numField(mapped.leadTimeDays, "Lead time", errors);
 
   const supplierMatch = classifyExisting(
-    matchCatalogItem({ name: mapped.supplierName }, supplierCandidates(ref.suppliers)),
-    `Supplier "${mapped.supplierName ?? "?"}"`,
+    matchCatalogItem(
+      { sku: mapped.supplierCode, name: mapped.supplierName },
+      supplierCandidates(ref.suppliers),
+    ),
+    `Supplier "${mapped.supplierName ?? mapped.supplierCode ?? "?"}"`,
   );
   const itemMatch = classifyExisting(
     matchCatalogItem(
@@ -312,6 +316,7 @@ export function stageSupplierProductRow(
   return {
     mappedData: {
       supplierName: mapped.supplierName ?? null,
+      supplierCode: mapped.supplierCode ?? null,
       supplierId: supplierMatch.id,
       itemName: mapped.itemName ?? null,
       itemSku: mapped.itemSku ?? null,

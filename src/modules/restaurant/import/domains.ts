@@ -225,8 +225,18 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
     {
       field: "supplierName",
       label: "Supplier",
-      required: true,
+      // Not hard-required by the validator, which accepts a supplier name
+      // OR a supplier code (see the "Supplier is missing" check) — a sheet
+      // that references suppliers only by their code, like Suppliers'
+      // own natural key, is a legitimate, matchable source.
+      required: false,
       aliases: alias("Supplier", "Supplier Name", "Vendor"),
+    },
+    {
+      field: "supplierCode",
+      label: "Supplier code (to match)",
+      required: false,
+      aliases: alias("Supplier Code", "Vendor Code"),
     },
     {
       field: "itemName",
@@ -238,7 +248,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "itemSku",
       label: "Item SKU (to match)",
       required: false,
-      aliases: alias("SKU", "Item Code", "Item SKU"),
+      aliases: alias("SKU", "Item Code", "Item SKU", "Inventory SKU"),
     },
     {
       field: "itemBarcode",
@@ -268,7 +278,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "unitPrice",
       label: "Unit price",
       required: true,
-      aliases: alias("Unit Price", "Price", "Cost", "Purchase Price"),
+      aliases: alias("Unit Price", "Price", "Cost", "Purchase Price", "Purchase Cost"),
     },
     {
       field: "minOrderQuantity",
@@ -294,7 +304,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "categoryName",
       label: "Menu category",
       required: false,
-      aliases: alias("Category", "Section", "Menu Section", "Group"),
+      aliases: alias("Category", "Category Name", "Section", "Menu Section", "Group"),
     },
     {
       field: "description",
@@ -510,19 +520,22 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "menuItemName",
       label: "Dish/drink (to match)",
       required: true,
-      aliases: alias("Recipe", "Dish", "Menu Item", "Item Name", "Product"),
+      aliases: alias("Recipe", "Dish", "Menu Item", "Menu Item Name", "Item Name", "Product"),
     },
     {
       field: "ingredientName",
       label: "Ingredient name (to match)",
-      required: true,
+      // Not hard-required by the validator (stageRecipeComponentRow accepts
+      // name, SKU or barcode — see the "Ingredient to link is missing" check)
+      // so a SKU-only recipe sheet is a legitimate, matchable source.
+      required: false,
       aliases: alias("Ingredient", "Ingredient Name", "Component"),
     },
     {
       field: "ingredientSku",
       label: "Ingredient SKU (to match)",
       required: false,
-      aliases: alias("SKU", "Item Code"),
+      aliases: alias("SKU", "Item Code", "Ingredient SKU"),
     },
     {
       field: "ingredientBarcode",

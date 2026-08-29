@@ -510,7 +510,13 @@ function SheetStager({
 }) {
   const suggestFn = useServerFn(suggestImportMappingFn);
   const confirmFn = useServerFn(confirmImportMappingFn);
-  const [domain, setDomain] = useState<ImportDomain>(guesses[0]?.domain ?? "inventory_item");
+  // Empty string means "no domain chosen" — NoVA found no confident match, so
+  // staging this sheet requires a deliberate human pick rather than a silent
+  // guess (an unreviewed default here previously caused a sheet with no real
+  // match, e.g. a README or notes tab, to be staged under whatever domain
+  // happened to be first in the list, misreporting every one of its rows as
+  // that domain's required field being "missing").
+  const [domain, setDomain] = useState<ImportDomain | "">(guesses[0]?.domain ?? "");
   const [mapping, setMapping] = useState<Array<{
     sourceColumn: string;
     canonicalField: string | null;
@@ -520,14 +526,23 @@ function SheetStager({
   const [open, setOpen] = useState(false);
 
   const suggest = useAdminMutation({
-    mutationFn: () => suggestFn({ data: { tenantId, sourceId, sheetName, domain } }),
+    mutationFn: () =>
+      suggestFn({ data: { tenantId, sourceId, sheetName, domain: domain as ImportDomain } }),
     silentSuccess: true,
     onSuccess: (d: any) => setMapping(d.mapping),
   });
 
   const stage = useAdminMutation({
     mutationFn: () =>
-      confirmFn({ data: { tenantId, sourceId, sheetName, domain, mapping: mapping ?? [] } }),
+      confirmFn({
+        data: {
+          tenantId,
+          sourceId,
+          sheetName,
+          domain: domain as ImportDomain,
+          mapping: mapping ?? [],
+        },
+      }),
     onSuccessToast: (d: any) => `Staged ${d.staged} of ${d.total} row(s)`,
     onSuccess: () => {
       setOpen(false);
@@ -540,11 +555,15 @@ function SheetStager({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="font-medium">{sheetName}</span>
         <span className="flex flex-wrap items-center gap-1">
-          {guesses.map((g) => (
-            <StatusChip key={g.domain} tone="info">
-              {IMPORT_DOMAIN_LABELS[g.domain]} {Math.round(g.confidence * 100)}%
-            </StatusChip>
-          ))}
+          {guesses.length === 0 ? (
+            <StatusChip tone="warning">No confident domain match — choose one</StatusChip>
+          ) : (
+            guesses.map((g) => (
+              <StatusChip key={g.domain} tone="info">
+                {IMPORT_DOMAIN_LABELS[g.domain]} {Math.round(g.confidence * 100)}%
+              </StatusChip>
+            ))
+          )}
         </span>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -552,10 +571,11 @@ function SheetStager({
           className="h-9 rounded-md border bg-background px-2 text-sm"
           value={domain}
           onChange={(e) => {
-            setDomain(e.target.value as ImportDomain);
+            setDomain(e.target.value as ImportDomain | "");
             setMapping(null);
           }}
         >
+          <option value="">— select a domain —</option>
           {IMPORT_DOMAINS.map((d) => (
             <option key={d} value={d}>
               {IMPORT_DOMAIN_LABELS[d]}
@@ -566,7 +586,7 @@ function SheetStager({
           size="sm"
           variant="outline"
           className="h-9"
-          disabled={suggest.isPending}
+          disabled={suggest.isPending || domain === ""}
           onClick={() => {
             setOpen(true);
             suggest.mutate();
@@ -597,7 +617,7 @@ function SheetStager({
                 }
               >
                 <option value="">— ignore this column —</option>
-                {CANONICAL_FIELDS[domain].map((f) => (
+                {CANONICAL_FIELDS[domain as ImportDomain].map((f) => (
                   <option key={f.field} value={f.field}>
                     {f.label}
                     {f.required ? " (required)" : ""}
@@ -754,6 +774,7 @@ function StagedRecordsList({
                 {meta.icon} {label}
               </span>
               <span className="block text-xs text-muted-foreground">
+                {r.sheet_name ? `${r.sheet_name} · ` : ""}
                 {IMPORT_DOMAIN_LABELS[r.domain as ImportDomain]} · row {r.source_row} · {meta.label}
                 {r.match_confidence != null
                   ? ` · ${Math.round(r.match_confidence * 100)}% match`
