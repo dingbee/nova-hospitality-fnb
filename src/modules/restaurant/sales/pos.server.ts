@@ -203,6 +203,14 @@ export async function fetchSellableCatalog(
     menuQuery = menuQuery.or(`location_id.is.null,location_id.eq.${input.locationId}`);
   const { data: menus } = await menuQuery;
   const menuIds = ((menus ?? []) as any[]).map((m) => m.id);
+  // A caller that asks for one specific menu (e.g. a future per-terminal
+  // selector) gets exactly that. Otherwise the catalogue is every published,
+  // in-scope menu's items together — a tenant routinely runs more than one
+  // published menu at once (e.g. a separate Restaurant menu and Bar menu,
+  // both scoped to the same location), and picking only the single
+  // most-recently-updated one silently dropped every other published menu's
+  // items from POS and Guest Self-Order, which never pass an explicit menuId.
+  const menuIdsToUse = input.menuId ? [input.menuId] : menuIds;
   const activeMenuId = input.menuId ?? menuIds[0] ?? null;
 
   const [
@@ -220,14 +228,14 @@ export async function fetchSellableCatalog(
       .select("id, name, slug, kind, sort_order")
       .eq("tenant_id", tenantId)
       .order("sort_order"),
-    activeMenuId
+    menuIdsToUse.length > 0
       ? sb
           .from("restaurant_menu_items")
           .select(
             "id, menu_id, category_id, name, description, price, currency, available, tags, allergens, sort_order, image_url",
           )
           .eq("tenant_id", tenantId)
-          .eq("menu_id", activeMenuId)
+          .in("menu_id", menuIdsToUse)
           .order("sort_order")
       : Promise.resolve({ data: [] }),
     sb

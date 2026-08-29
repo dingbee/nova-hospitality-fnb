@@ -23,6 +23,7 @@ import { useRestaurantWorkspace } from "../../ui/useRestaurantWorkspace";
 import { BatchSheet } from "./BatchSheet";
 import { BarcodeScanButton } from "./BarcodeScanButton";
 import { stocktakeBadge, transferBadge, type StockPosition } from "../contracts";
+import { filterStocktakeLines, matchStocktakeLineByCode } from "../stocktake-scan";
 import {
   approveStockTransferFn,
   createStockTransferFn,
@@ -990,6 +991,7 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
   const [locationId, setLocationId] = useState("");
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [scanMessage, setScanMessage] = useState<string | null>(null);
+  const [lineFilter, setLineFilter] = useState("");
   const countInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const locations = useQuery({
@@ -1036,13 +1038,14 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
    */
   const handleScan = (code: string) => {
     const lines = (d?.lines ?? []) as any[];
-    const match = lines.find((l) => l.item_barcode === code || l.item_sku === code);
-    if (!match) {
-      setScanMessage(`No item on this stocktake matches "${code}". Count it by hand below.`);
+    const result = matchStocktakeLineByCode(lines, code);
+    if (!result.line) {
+      setScanMessage(result.message);
       return;
     }
     setScanMessage(null);
-    const el = countInputRefs.current[match.id];
+    setLineFilter("");
+    const el = countInputRefs.current[result.line.id];
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
     el?.focus();
   };
@@ -1120,6 +1123,8 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
                     onClick={() => {
                       setOpenId(openId === s.id ? null : s.id);
                       setCounts({});
+                      setLineFilter("");
+                      setScanMessage(null);
                     }}
                   >
                     <span className="min-w-0">
@@ -1137,59 +1142,78 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
                   {openId === s.id && d && (
                     <div className="mt-3 space-y-3 rounded-md bg-muted/40 p-3">
                       {d.status !== "posted" && d.status !== "cancelled" && (
-                        <div className="flex items-center gap-2">
-                          <BarcodeScanButton onScan={handleScan} />
-                          <span className="text-xs text-muted-foreground">
-                            Scan an item's barcode to jump to its count.
-                          </span>
+                        <div>
+                          <Label htmlFor="stocktake-find">Find item</Label>
+                          <div className="mt-1 flex gap-2">
+                            <Input
+                              id="stocktake-find"
+                              className="h-11"
+                              value={lineFilter}
+                              onChange={(e) => setLineFilter(e.target.value)}
+                              placeholder="Search by name, SKU or barcode…"
+                            />
+                            <BarcodeScanButton onScan={handleScan} />
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Scan an item's barcode to jump straight to its count, or type to filter
+                            the list below.
+                          </p>
                         </div>
                       )}
                       {scanMessage && <p className="text-xs text-destructive">{scanMessage}</p>}
+                      {lineFilter.trim() &&
+                        filterStocktakeLines((d.lines ?? []) as any[], lineFilter).length === 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            No item on this stocktake matches "{lineFilter}".
+                          </p>
+                        )}
                       <ul className="space-y-2 text-xs">
-                        {(d.lines ?? []).map((l: any) => {
-                          const counted =
-                            counts[l.id] ??
-                            (l.counted_quantity != null ? String(l.counted_quantity) : "");
-                          const variance =
-                            counted === ""
-                              ? null
-                              : Number(counted) - Number(l.expected_quantity ?? 0);
-                          return (
-                            <li
-                              key={l.id}
-                              className="flex flex-wrap items-center justify-between gap-2"
-                            >
-                              <span className="min-w-0">
-                                {l.item_name}
-                                <span className="block text-muted-foreground">
-                                  expected {qty(l.expected_quantity)} · {l.location_name}
+                        {filterStocktakeLines((d.lines ?? []) as any[], lineFilter).map(
+                          (l: any) => {
+                            const counted =
+                              counts[l.id] ??
+                              (l.counted_quantity != null ? String(l.counted_quantity) : "");
+                            const variance =
+                              counted === ""
+                                ? null
+                                : Number(counted) - Number(l.expected_quantity ?? 0);
+                            return (
+                              <li
+                                key={l.id}
+                                className="flex flex-wrap items-center justify-between gap-2"
+                              >
+                                <span className="min-w-0">
+                                  {l.item_name}
+                                  <span className="block text-muted-foreground">
+                                    expected {qty(l.expected_quantity)} · {l.location_name}
+                                  </span>
                                 </span>
-                              </span>
-                              <span className="flex items-center gap-2">
-                                <Input
-                                  ref={(el) => {
-                                    countInputRefs.current[l.id] = el;
-                                  }}
-                                  className="h-10 w-28"
-                                  type="number"
-                                  step="0.001"
-                                  value={counted}
-                                  disabled={d.status === "posted" || d.status === "cancelled"}
-                                  onChange={(e) =>
-                                    setCounts((c) => ({ ...c, [l.id]: e.target.value }))
-                                  }
-                                  placeholder="Counted"
-                                />
-                                {variance != null && Math.abs(variance) > 1e-9 && (
-                                  <StatusChip tone={variance > 0 ? "info" : "warning"}>
-                                    {variance > 0 ? "+" : ""}
-                                    {qty(variance)}
-                                  </StatusChip>
-                                )}
-                              </span>
-                            </li>
-                          );
-                        })}
+                                <span className="flex items-center gap-2">
+                                  <Input
+                                    ref={(el) => {
+                                      countInputRefs.current[l.id] = el;
+                                    }}
+                                    className="h-10 w-28"
+                                    type="number"
+                                    step="0.001"
+                                    value={counted}
+                                    disabled={d.status === "posted" || d.status === "cancelled"}
+                                    onChange={(e) =>
+                                      setCounts((c) => ({ ...c, [l.id]: e.target.value }))
+                                    }
+                                    placeholder="Counted"
+                                  />
+                                  {variance != null && Math.abs(variance) > 1e-9 && (
+                                    <StatusChip tone={variance > 0 ? "info" : "warning"}>
+                                      {variance > 0 ? "+" : ""}
+                                      {qty(variance)}
+                                    </StatusChip>
+                                  )}
+                                </span>
+                              </li>
+                            );
+                          },
+                        )}
                       </ul>
                       <div className="flex flex-wrap gap-2">
                         {["draft", "counting", "review"].includes(d.status) && (

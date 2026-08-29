@@ -36,7 +36,25 @@ export function BarcodeScanButton({ onScan }: { onScan: (code: string) => void }
     setSupported(typeof window !== "undefined" && "BarcodeDetector" in window);
   }, []);
 
-  if (!supported) return null;
+  // Rendering nothing here left staff with zero indication camera scanning
+  // was ever a possibility — indistinguishable from the feature not
+  // existing at all. BarcodeDetector is Chromium-only today (no iOS
+  // Safari, no Firefox), so this is the common case on real devices, not
+  // an edge case: it needs an honest, always-visible fallback, not silence.
+  if (!supported) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        className="h-11 w-11 shrink-0 opacity-50"
+        disabled
+        title="Camera scanning isn't available in this browser — search or type the barcode instead."
+      >
+        <ScanLine className="h-5 w-5" />
+      </Button>
+    );
+  }
 
   return (
     <>
