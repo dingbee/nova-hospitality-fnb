@@ -99,3 +99,8 @@ export const executeRestaurantActionSchema = z.object({
   actionId: z.string().uuid(),
 });
 export type ExecuteRestaurantActionInput = z.infer<typeof executeRestaurantActionSchema>;
+
+export const verifyRestaurantActionSchema = z.object({
+  actionId: z.string().uuid(),
+});
+export type VerifyRestaurantActionInput = z.infer<typeof verifyRestaurantActionSchema>;

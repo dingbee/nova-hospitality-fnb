@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { CheckCircle2, Play, Scale, ShoppingCart, XCircle } from "lucide-react";
+import { BadgeCheck, CheckCircle2, Play, Scale, ShoppingCart, XCircle } from "lucide-react";
 import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { EmptyState } from "@/components/os/EmptyState";
@@ -15,6 +15,7 @@ import {
   executeRestaurantActionFn,
   getRestaurantDecisionBoardFn,
   runRestaurantDecisionPassFn,
+  verifyRestaurantActionFn,
 } from "@/modules/restaurant/decisions/decisions.functions";
 import {
   decideDecisionFn,
@@ -155,6 +156,15 @@ function RestaurantDecisionsPage() {
   const executeAction = useAdminMutation({
     mutationFn: (vars: { actionId: string }) => executeFn({ data: vars }),
     successMessage: "Procurement draft created — it still needs its own submission and approval.",
+    onSuccess: invalidate,
+  });
+  const verifyFn = useServerFn(verifyRestaurantActionFn);
+  const verifyAction = useAdminMutation({
+    mutationFn: (vars: { actionId: string }) => verifyFn({ data: vars }),
+    onSuccessToast: (data: any) =>
+      data.verified
+        ? "Verified — the procurement draft matches the decision."
+        : `Verification found an issue: ${data.reason ?? data.outcome}`,
     onSuccess: invalidate,
   });
 
@@ -331,6 +341,16 @@ function RestaurantDecisionsPage() {
                       onClick={() => executeAction.mutate({ actionId: d.actionId })}
                     >
                       <ShoppingCart className="mr-1.5 size-4" /> Create procurement draft
+                    </Button>
+                  ) : null}
+                  {(d.status === "approved" || d.status === "executing") && d.actionId ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={verifyAction.isPending}
+                      onClick={() => verifyAction.mutate({ actionId: d.actionId })}
+                    >
+                      <BadgeCheck className="mr-1.5 size-4" /> Verify
                     </Button>
                   ) : null}
                   {d.status === "approved" || d.status === "executing" ? (

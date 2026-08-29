@@ -825,8 +825,12 @@ describe("verifyRestaurantAction — Verify", () => {
 
   it("reports verification unavailable for an action type with no verifier, and does not pretend it was verified", async () => {
     const fake = makeFakeSupabase({
+      // restaurant.inventory.replenish_review has a verifier as of I5 (see
+      // the describe block below) — this test needs a type this module
+      // genuinely still doesn't execute, same as the "no executor
+      // registered" case above.
       action: actionRow({
-        action_type: "restaurant.inventory.replenish_review",
+        action_type: "restaurant.menu.reprice_review",
         status: "executed",
         result: { procurement_request_id: "n/a" },
       }),
@@ -883,5 +887,380 @@ describe("verifyRestaurantAction — Verify", () => {
     expect(
       fake.calls.some((c) => c.table === "restaurant_purchase_request_items" && c.op === "select"),
     ).toBe(true);
+  });
+});
+
+/**
+ * I5 — restaurant.inventory.replenish_review shares the exact same executor
+ * and verifier as restaurant.purchase.suggest (runProcurementDraftExecution
+ * / verifyProcurementDraft — see actions.server.ts's file doc comment), so
+ * the bulk of Act/Verify behaviour above already covers it structurally.
+ * This block proves specifically: the new action type actually executes
+ * (was previously "no executor registered"), it works from an
+ * inventory_shortage-shaped decision (not just purchasing_replenishment),
+ * and the I5-specific failure modes — a shortage finding whose facts have
+ * no matching purchasing suggestion (null quantity, or null supplier) —
+ * fail safely rather than guessing.
+ */
+function shortageDecisionRow(overrides: Partial<Record<string, unknown>> = {}) {
+  return decisionRow({
+    decision_key: "restaurant.tenant.finding.inventory",
+    context: {
+      finding: {
+        subject: "UAT reorder ingredient",
+        headline: "UAT reorder ingredient is forecast to run out in 2 days",
+        facts: {
+          daysOfCover: 2,
+          belowReorder: true,
+          urgent: true,
+          velocity: 10,
+          inventoryItemId: INVENTORY_ITEM_ID,
+          currentQuantity: 20,
+          reorderPoint: 25,
+          recommendedQuantity: 30,
+          supplierId: SUPPLIER_ID,
+          estimatedUnitCost: 1500,
+          estimatedCost: 45000,
+          currency: "TZS",
+        },
+      },
+    },
+    ...overrides,
+  });
+}
+
+const REPLENISH_ACTION = actionRow({ action_type: "restaurant.inventory.replenish_review" });
+
+describe("restaurant.inventory.replenish_review — I5", () => {
+  it("executes from an inventory_shortage decision — the option catalogue's replenish_review action is no longer a dead end", async () => {
+    const fake = makeFakeSupabase({
+      action: REPLENISH_ACTION,
+      decision: shortageDecisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPLENISH_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "executed",
+      executionResult: "procurement_request_created",
+      procurementRequestStatus: "draft",
+    });
+    const lineInsert = fake.calls.find(
+      (c) => c.table === "restaurant_purchase_request_items" && c.op === "insert",
+    );
+    expect(lineInsert!.payload).toMatchObject({
+      inventory_item_id: INVENTORY_ITEM_ID,
+      preferred_supplier_id: SUPPLIER_ID,
+      quantity: 30,
+    });
+    const requestInsert = fake.calls.find(
+      (c) => c.table === "restaurant_purchase_requests" && c.op === "insert",
+    );
+    expect(requestInsert!.payload.status).toBe("draft"); // governed — stops at draft, never submitted/approved
+  });
+
+  it("verifies the resulting draft independently of the executor's own cached result", async () => {
+    const executed = actionRow({
+      action_type: "restaurant.inventory.replenish_review",
+      status: "executed",
+      result: { procurement_request_id: "req-replenish-1", procurement_request_status: "draft" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: shortageDecisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [
+        {
+          id: "req-replenish-1",
+          tenant_id: TENANT_A,
+          correlation_id: executed.id,
+          status: "draft",
+        },
+      ],
+      existingItems: [
+        {
+          id: "item-replenish-1",
+          purchase_request_id: "req-replenish-1",
+          inventory_item_id: INVENTORY_ITEM_ID,
+          quantity: 30,
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({
+      verified: true,
+      outcome: "purchase_request_created",
+      expectedQuantity: 30,
+      actualQuantity: 30,
+      status: "draft",
+    });
+  });
+
+  it("detects a quantity mismatch on a verified replenish_review draft", async () => {
+    const executed = actionRow({
+      action_type: "restaurant.inventory.replenish_review",
+      status: "executed",
+      result: { procurement_request_id: "req-replenish-2", procurement_request_status: "draft" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: shortageDecisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [
+        {
+          id: "req-replenish-2",
+          tenant_id: TENANT_A,
+          correlation_id: executed.id,
+          status: "draft",
+        },
+      ],
+      existingItems: [
+        {
+          id: "item-replenish-2",
+          purchase_request_id: "req-replenish-2",
+          inventory_item_id: INVENTORY_ITEM_ID,
+          quantity: 5,
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({
+      verified: false,
+      outcome: "quantity_mismatch",
+      expectedQuantity: 30,
+      actualQuantity: 5,
+    });
+  });
+
+  it("detects a duplicate replenish_review draft correlated to the same action", async () => {
+    const executed = actionRow({
+      action_type: "restaurant.inventory.replenish_review",
+      status: "executed",
+      result: { procurement_request_id: "req-replenish-3", procurement_request_status: "draft" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: shortageDecisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [
+        {
+          id: "req-replenish-3",
+          tenant_id: TENANT_A,
+          correlation_id: executed.id,
+          status: "draft",
+        },
+        {
+          id: "req-replenish-3b",
+          tenant_id: TENANT_A,
+          correlation_id: executed.id,
+          status: "draft",
+        },
+      ],
+      existingItems: [
+        {
+          id: "item-replenish-3",
+          purchase_request_id: "req-replenish-3",
+          inventory_item_id: INVENTORY_ITEM_ID,
+          quantity: 30,
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({ verified: false, outcome: "duplicate_request" });
+  });
+
+  it("does not re-execute an already-executed replenish_review action (idempotent re-run)", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({
+        action_type: "restaurant.inventory.replenish_review",
+        status: "executed",
+        result: { procurement_request_id: "already-there", procurement_request_status: "draft" },
+      }),
+      decision: shortageDecisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPLENISH_ACTION.id,
+    });
+
+    expect(result).toMatchObject({ status: "executed", alreadyExecuted: true });
+    expect(fake.getRequestInsertCount()).toBe(0);
+  });
+
+  it("protects against two concurrent executions of the same replenish_review action", async () => {
+    const fake = makeFakeSupabase({
+      action: REPLENISH_ACTION,
+      decision: shortageDecisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    const [a, b] = await Promise.all([
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: REPLENISH_ACTION.id }),
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: REPLENISH_ACTION.id }),
+    ]);
+
+    expect(fake.getRequests()).toHaveLength(1);
+    expect(a.procurementRequestId).toBe(b.procurementRequestId);
+  });
+
+  it("recovers an existing replenish_review request by correlation_id after a partial failure", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({
+        action_type: "restaurant.inventory.replenish_review",
+        status: "executing",
+        executing_at: "2026-01-01T00:00:00.000Z",
+      }),
+      decision: shortageDecisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequestByCorrelation: {
+        id: "recovered-replenish-id",
+        tenant_id: TENANT_A,
+        correlation_id: REPLENISH_ACTION.id,
+        status: "draft",
+      },
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPLENISH_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "executed",
+      procurementRequestId: "recovered-replenish-id",
+    });
+    expect(fake.getRequestInsertCount()).toBe(0);
+  });
+
+  it("refuses a caller outside the decision's tenant for a replenish_review action", async () => {
+    const fake = makeFakeSupabase({
+      action: REPLENISH_ACTION,
+      decision: shortageDecisionRow(),
+      restaurantMembers: [{ tenant_id: TENANT_B, user_id: MANAGER, role: "purchasing_officer" }],
+    });
+
+    await expect(
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: REPLENISH_ACTION.id }),
+    ).rejects.toThrow(/do not belong to this restaurant tenant/i);
+  });
+
+  it("fails the action when the caller lacks purchase.request capability", async () => {
+    const fake = makeFakeSupabase({
+      action: REPLENISH_ACTION,
+      decision: shortageDecisionRow(),
+      restaurantMembers: [{ tenant_id: TENANT_A, user_id: WAITER, role: "waiter" }],
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, WAITER, {
+      actionId: REPLENISH_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/purchase\.request.*requires/i);
+  });
+
+  it("fails safely on a shortage finding with no matching purchasing suggestion — null quantity, not a guess", async () => {
+    // Mirrors the real gap: an item with no consumption velocity to project
+    // from has no purchasing suggestion, so inventoryFindings (I5) leaves
+    // recommendedQuantity/supplierId null rather than inventing a number.
+    const fake = makeFakeSupabase({
+      action: REPLENISH_ACTION,
+      decision: shortageDecisionRow({
+        context: {
+          finding: {
+            subject: "Idle-stock item",
+            headline: "Idle-stock item is already below its reorder point",
+            facts: {
+              daysOfCover: null,
+              belowReorder: true,
+              urgent: true,
+              velocity: 0,
+              inventoryItemId: INVENTORY_ITEM_ID,
+              currentQuantity: 2,
+              reorderPoint: 10,
+              recommendedQuantity: null,
+              supplierId: null,
+              estimatedUnitCost: null,
+              estimatedCost: null,
+              currency: "TZS",
+            },
+          },
+        },
+      }),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPLENISH_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/no structured purchasing data/i);
+    expect(fake.getRequestInsertCount()).toBe(0);
+  });
+
+  it("fails safely on a shortage finding with a quantity but no supplier product on file", async () => {
+    const fake = makeFakeSupabase({
+      action: REPLENISH_ACTION,
+      decision: shortageDecisionRow({
+        context: {
+          finding: {
+            subject: "No-supplier item",
+            headline: "No-supplier item is forecast to run out in 2 days",
+            facts: {
+              daysOfCover: 2,
+              belowReorder: true,
+              urgent: true,
+              velocity: 10,
+              inventoryItemId: INVENTORY_ITEM_ID,
+              currentQuantity: 20,
+              reorderPoint: 25,
+              recommendedQuantity: 30,
+              supplierId: null,
+              estimatedUnitCost: null,
+              estimatedCost: null,
+              currency: "TZS",
+            },
+          },
+        },
+      }),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPLENISH_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/no supplier product on file/i);
+    expect(fake.getRequestInsertCount()).toBe(0);
+  });
+
+  it("cross-tenant item id cannot be laundered through a replenish_review action — tenant is always the decision's, never client-suppliable", async () => {
+    // The executor never accepts a tenant id from the caller; it is always
+    // decision.tenant_id, re-derived server-side. Prove the request actually
+    // lands under the decision's real tenant even when the finding
+    // "subject" text looks like it could belong elsewhere.
+    const fake = makeFakeSupabase({
+      action: REPLENISH_ACTION,
+      decision: shortageDecisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    await executeRestaurantAction(fake.supabase, MANAGER, { actionId: REPLENISH_ACTION.id });
+
+    const requestInsert = fake.calls.find(
+      (c) => c.table === "restaurant_purchase_requests" && c.op === "insert",
+    );
+    expect(requestInsert!.payload.tenant_id).toBe(TENANT_A);
   });
 });

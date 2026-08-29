@@ -14,7 +14,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { inventoryFindings } from "./findings";
-import type { InventoryIntelligence } from "../intelligence/types";
+import type { InventoryIntelligence, PurchaseSuggestion } from "../intelligence/types";
 
 function baseIntelligence(overrides: Partial<InventoryIntelligence> = {}): InventoryIntelligence {
   return {
@@ -103,5 +103,109 @@ describe("inventoryFindings — shortage detection", () => {
       ],
     });
     expect(inventoryFindings(inv).filter((f) => f.kind === "inventory_shortage")).toHaveLength(0);
+  });
+});
+
+/**
+ * I5 — the shortage finding must carry the same structured, executable
+ * facts (inventoryItemId/recommendedQuantity/supplierId/...) a
+ * purchasing_replenishment finding already carries, so
+ * decisions/actions.server.ts's runProcurementDraftExecution can turn a
+ * "current quantity < reorder point" recommendation into a real procurement
+ * request line — without inventoryFindings recomputing the quantity or
+ * supplier itself. It is only ever a lookup against the already-computed
+ * PurchasingIntelligence.suggestions (O6's recommendedPurchaseQuantity and
+ * purchasing.server.ts's existing supplier-selection, untouched by I5).
+ */
+describe("inventoryFindings — I5 replenishment facts", () => {
+  function suggestion(overrides: Partial<PurchaseSuggestion> = {}): PurchaseSuggestion {
+    return {
+      inventoryItemId: "item-1",
+      name: "UAT receiving ingredient",
+      currentQuantity: 1,
+      dailyVelocity: 2,
+      leadTimeDays: 3,
+      coverDays: 7,
+      recommendedQuantity: 22,
+      estimatedCost: 33000,
+      supplierName: "UAT supplier",
+      supplierId: "supplier-1",
+      ...overrides,
+    };
+  }
+
+  it("enriches a below-reorder shortage with the exact recommendedQuantity/supplier the purchasing calculation already produced", () => {
+    const inv = baseIntelligence({
+      atRisk: [
+        {
+          inventoryItemId: "item-1",
+          name: "UAT receiving ingredient",
+          currentQuantity: 1,
+          dailyVelocity: 0,
+          daysOfCover: null,
+          reorderPoint: 5,
+          belowReorder: true,
+        },
+      ],
+    });
+
+    const findings = inventoryFindings(inv, [suggestion()]);
+    const shortage = findings.find((f) => f.kind === "inventory_shortage");
+
+    // Never a second interpretation of the quantity — identical to the
+    // value purchasing.server.ts's recommendedPurchaseQuantity computed.
+    expect(shortage!.facts.recommendedQuantity).toBe(22);
+    expect(shortage!.facts.supplierId).toBe("supplier-1");
+    expect(shortage!.facts.inventoryItemId).toBe("item-1");
+    expect(shortage!.facts.currentQuantity).toBe(1);
+    expect(shortage!.facts.reorderPoint).toBe(5);
+    expect(shortage!.facts.estimatedCost).toBe(33000);
+    expect(shortage!.facts.estimatedUnitCost).toBeCloseTo(33000 / 22);
+    expect(shortage!.facts.currency).toBe("TZS");
+  });
+
+  it("leaves recommendedQuantity/supplierId null — never a guess — when no matching purchasing suggestion exists", () => {
+    const inv = baseIntelligence({
+      atRisk: [
+        {
+          inventoryItemId: "item-no-match",
+          name: "Idle item",
+          currentQuantity: 2,
+          dailyVelocity: 0,
+          daysOfCover: null,
+          reorderPoint: 10,
+          belowReorder: true,
+        },
+      ],
+    });
+
+    // A suggestion exists, but for a different item — must not leak across.
+    const findings = inventoryFindings(inv, [suggestion({ inventoryItemId: "item-1" })]);
+    const shortage = findings.find((f) => f.kind === "inventory_shortage");
+
+    expect(shortage!.facts.recommendedQuantity).toBeNull();
+    expect(shortage!.facts.supplierId).toBeNull();
+    expect(shortage!.facts.estimatedUnitCost).toBeNull();
+  });
+
+  it("omitting the suggestions argument entirely still raises the finding, just without the structured purchasing fields (back-compat)", () => {
+    const inv = baseIntelligence({
+      atRisk: [
+        {
+          inventoryItemId: "item-1",
+          name: "UAT receiving ingredient",
+          currentQuantity: 1,
+          dailyVelocity: 0,
+          daysOfCover: null,
+          reorderPoint: 5,
+          belowReorder: true,
+        },
+      ],
+    });
+
+    const shortage = inventoryFindings(inv).find((f) => f.kind === "inventory_shortage");
+    expect(shortage).toBeDefined();
+    expect(shortage!.facts.recommendedQuantity).toBeNull();
+    expect(shortage!.facts.supplierId).toBeNull();
   });
 });

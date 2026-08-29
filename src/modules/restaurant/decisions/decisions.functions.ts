@@ -4,6 +4,7 @@ import {
   executeRestaurantActionSchema,
   restaurantDecisionBoardSchema,
   runRestaurantDecisionPassSchema,
+  verifyRestaurantActionSchema,
 } from "./decision.types";
 
 export const getRestaurantDecisionBoardFn = createServerFn({ method: "POST" })
@@ -35,4 +36,20 @@ export const executeRestaurantActionFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./actions.server");
     return mod.executeRestaurantAction(context.supabase, context.userId, data);
+  });
+
+/**
+ * The separate, subsequent confirmation step (P10): re-reads the real
+ * procurement request an executed action was supposed to produce and
+ * reports "verified" or "verification_failed" — never inferred from the
+ * executor's own cached result. I5 wires this into the Decisions page so a
+ * human can see the third step of "Replenishment recommended → Draft
+ * created → Verified", not just the first two.
+ */
+export const verifyRestaurantActionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => verifyRestaurantActionSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./actions.server");
+    return mod.verifyRestaurantAction(context.supabase, context.userId, data);
   });

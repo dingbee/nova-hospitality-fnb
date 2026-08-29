@@ -10,6 +10,17 @@
  * member creating one by hand would leave it in, still requiring submission
  * and a separate human approval before it can become a purchase order.
  *
+ * Two action types share this one effect and one code path — I5 added
+ * `restaurant.inventory.replenish_review` alongside the original
+ * `restaurant.purchase.suggest` rather than building a second executor,
+ * because both mean the same thing operationally ("raise a governed
+ * replenishment draft for this item/quantity/supplier") and both read the
+ * identical fact shape (`inventoryItemId`/`recommendedQuantity`/
+ * `supplierId`/...) off `decision.context.finding.facts`. The inventory
+ * option catalogue (optionCatalogue.ts's shortageOptions) already offered
+ * `restaurant.inventory.replenish_review` before I5 — this file is what
+ * makes that option actually executable, rather than a dead action type.
+ *
  * Only `decideDecision` (Intelligence Core governance, I2/I3) creates an
  * action, and only for a decision a restaurant tenant member has already
  * approved. This executor performs the action that approval authorized — it
@@ -34,8 +45,11 @@ import { emitActionEvent } from "./actionEvents.server";
 
 type Sb = any;
 
-/** The only action type this executor knows how to run. */
-const SUPPORTED_ACTION_TYPES = new Set(["restaurant.purchase.suggest"]);
+/** The action types this executor knows how to run — both produce the same governed procurement draft (see file doc comment). */
+const SUPPORTED_ACTION_TYPES = new Set([
+  "restaurant.purchase.suggest",
+  "restaurant.inventory.replenish_review",
+]);
 
 /** A row in one of these states already ran to completion — never re-executed. */
 const ALREADY_EXECUTED_STATUSES = new Set([
@@ -263,7 +277,7 @@ export async function executeRestaurantAction(
     }
 
     if (action.status === "executing") {
-      return runPurchaseSuggestExecution(sb, userId, action, decision, tenantId, module);
+      return runProcurementDraftExecution(sb, userId, action, decision, tenantId, module);
     }
 
     // Already executed by the competitor that won the race above.
@@ -285,8 +299,14 @@ export async function executeRestaurantAction(
   );
 }
 
-/** The one governed effect this executor performs, run once the action is "executing". */
-async function runPurchaseSuggestExecution(
+/**
+ * The one governed effect this executor performs, run once the action is
+ * "executing" — shared by both `restaurant.purchase.suggest` and
+ * `restaurant.inventory.replenish_review` (see file doc comment). Nothing
+ * below branches on `action.action_type`: the two types differ only in the
+ * option/finding that proposed them, never in what executing one does.
+ */
+async function runProcurementDraftExecution(
   sb: Sb,
   userId: string,
   action: Record<string, any>,
@@ -525,13 +545,14 @@ type Verifier = (
 ) => Promise<VerifyRestaurantActionResult>;
 
 /**
- * Only the action type that actually has an executor gets a real verifier.
+ * Only the action types that actually have an executor get a real verifier.
  * Every other type in the restaurant provider's `handles` list — and any
  * type this module doesn't own at all — returns "verification_unavailable"
  * rather than being reported as verified.
  */
 const VERIFIERS: Record<string, Verifier> = {
-  "restaurant.purchase.suggest": verifyPurchaseSuggest,
+  "restaurant.purchase.suggest": verifyProcurementDraft,
+  "restaurant.inventory.replenish_review": verifyProcurementDraft,
 };
 
 /**
@@ -605,9 +626,11 @@ export async function verifyRestaurantAction(
  * The seven checks P10 requires: the request exists, belongs to the same
  * tenant, is linked to this action via `correlation_id`, carries the
  * expected item and quantity, remains in the expected governed ("draft")
- * state, and is not duplicated.
+ * state, and is not duplicated. Shared by both action types this module
+ * executes (see file doc comment) — verification never depends on which
+ * finding proposed the draft, only on what actually landed in the database.
  */
-async function verifyPurchaseSuggest(
+async function verifyProcurementDraft(
   sb: Sb,
   tenantId: string,
   action: Record<string, any>,

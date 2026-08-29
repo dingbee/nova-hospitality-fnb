@@ -10,6 +10,7 @@ import type {
   InventoryIntelligence,
   KitchenIntelligence,
   MenuIntelligence,
+  PurchaseSuggestion,
   PurchasingIntelligence,
 } from "../intelligence/types";
 import type { RestaurantFinding } from "./decision.types";
@@ -97,8 +98,21 @@ export function menuFindings(m: MenuIntelligence): RestaurantFinding[] {
 
 /* ---------------------------- inventory ---------------------------- */
 
-export function inventoryFindings(inv: InventoryIntelligence): RestaurantFinding[] {
+export function inventoryFindings(
+  inv: InventoryIntelligence,
+  // I5: the same recommended-quantity/supplier computation purchasing
+  // intelligence already produces for this exact item, keyed for lookup —
+  // never recomputed here. Optional and defaulted so every existing caller
+  // (and every existing test) keeps working unchanged; when omitted, or when
+  // no suggestion exists for a given row (no consumption velocity, or no
+  // supplier product on file), the shortage finding still raises with its
+  // original facts, just without the structured purchasing fields, and a
+  // downstream executor fails safely rather than guessing (see
+  // decisions/actions.server.ts's runProcurementDraftExecution).
+  purchasingSuggestions: readonly PurchaseSuggestion[] = [],
+): RestaurantFinding[] {
   const out: RestaurantFinding[] = [];
+  const suggestionByItem = new Map(purchasingSuggestions.map((s) => [s.inventoryItemId, s]));
 
   // A row belongs here for either of two independent reasons: consumption
   // velocity projects a stock-out inside the window, or the item is already
@@ -143,12 +157,36 @@ export function inventoryFindings(inv: InventoryIntelligence): RestaurantFinding
         confidence: row.dailyVelocity > 0 ? 0.75 : 0.45,
         direction: "down",
       },
-      facts: {
-        daysOfCover: days,
-        belowReorder: row.belowReorder,
-        urgent: days != null ? days <= 2 : row.belowReorder,
-        velocity: row.dailyVelocity,
-      },
+      facts: (() => {
+        const suggestion = suggestionByItem.get(row.inventoryItemId);
+        return {
+          daysOfCover: days,
+          belowReorder: row.belowReorder,
+          urgent: days != null ? days <= 2 : row.belowReorder,
+          velocity: row.dailyVelocity,
+          // Structured identifiers a downstream executor needs to raise a
+          // real procurement request line — the same additive shape
+          // purchasingFindings already gives purchasing_replenishment
+          // findings (decisions/actions.server.ts's
+          // runProcurementDraftExecution reads these off either kind
+          // identically). recommendedQuantity/supplierId/estimatedUnitCost
+          // are null, not guessed, when no matching purchasing suggestion
+          // exists for this item (no consumption velocity to project from,
+          // or no supplier product on file) — the executor fails safely on
+          // a null quantity or supplier rather than fabricating one.
+          inventoryItemId: row.inventoryItemId,
+          currentQuantity: row.currentQuantity,
+          reorderPoint: row.reorderPoint,
+          recommendedQuantity: suggestion?.recommendedQuantity ?? null,
+          supplierId: suggestion?.supplierId ?? null,
+          estimatedUnitCost:
+            suggestion && suggestion.recommendedQuantity > 0
+              ? round(suggestion.estimatedCost / suggestion.recommendedQuantity, 4)
+              : null,
+          estimatedCost: suggestion?.estimatedCost ?? null,
+          currency: inv.currency,
+        };
+      })(),
     });
   }
 
@@ -379,7 +417,7 @@ export function gatherFindings(input: {
 }): RestaurantFinding[] {
   const severityRank = { critical: 0, high: 1, medium: 2, low: 3, info: 4 } as const;
   return [
-    ...inventoryFindings(input.inventory),
+    ...inventoryFindings(input.inventory, input.purchasing.suggestions),
     ...menuFindings(input.menu),
     ...kitchenFindings(input.kitchen),
     ...purchasingFindings(input.purchasing),
