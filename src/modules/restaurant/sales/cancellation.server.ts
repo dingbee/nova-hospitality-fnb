@@ -11,6 +11,7 @@ import { assertCapability } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { REASON_CODES } from "../inventory/policy";
 import { reverseMovementsForOrder } from "../inventory/reversal.server";
+import { closeActiveGuestSession } from "../selforder/selforder.server";
 import { recalcOrder } from "./sales.server";
 import { evaluateCancellation } from "./cancellation";
 import type { CancelOrderInput } from "./pos.contracts";
@@ -99,6 +100,9 @@ export async function cancelOrder(sb: Sb, userId: string, input: CancelOrderInpu
 
   if (order.table_id) {
     await sb.from("restaurant_tables").update({ status: "available" }).eq("id", order.table_id).eq("tenant_id", input.tenantId);
+    // O12: cancellation hands the table back exactly like a settled bill
+    // does — the dining session that placed this order is over.
+    await closeActiveGuestSession(sb, order.table_id, "order_cancelled");
   }
 
   const totals = await recalcOrder(sb, input.tenantId, input.orderId);

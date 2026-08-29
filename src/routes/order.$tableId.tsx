@@ -70,7 +70,9 @@ import {
   classifyRecoveredOrder,
   clearStoredOrderId,
   readStoredOrderId,
+  readStoredSessionToken,
   writeStoredOrderId,
+  writeStoredSessionToken,
 } from "@/modules/restaurant/selforder/selforder-recovery";
 import type { SalesLineModifier } from "@/modules/restaurant/sales/sales.server";
 
@@ -156,8 +158,15 @@ function GuestOrderPage() {
   // selforder-recovery.ts for the full security model — this id is a hint,
   // re-validated server-side below before anything is shown or resumed.
   const [storedOrderId, setStoredOrderId] = useState<string | null>(null);
+  // The guest's dining-session token for this table, if one was issued on a
+  // previous order here — same "hint only" model as storedOrderId. It is
+  // never assumed valid: resolveOrStartGuestSession re-validates it
+  // server-side on every submission and simply issues a fresh one if it's
+  // missing, expired, or belongs to a session that's since closed.
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
   useEffect(() => {
     setStoredOrderId(readStoredOrderId(tableId));
+    setSessionToken(readStoredSessionToken(tableId));
   }, [tableId]);
 
   const dismissRecovery = () => {
@@ -260,11 +269,21 @@ function GuestOrderPage() {
           tableId,
           guestName: guestName || undefined,
           lines: cart.map(toGuestOrderLine),
+          sessionToken: sessionToken ?? undefined,
         },
       }),
     networkMode: "always",
-    onSuccess: (order: { id: string; order_number: string; total: number }) => {
+    onSuccess: (order: {
+      id: string;
+      order_number: string;
+      total: number;
+      guestSessionToken?: string;
+    }) => {
       writeStoredOrderId(tableId, order.id);
+      if (order.guestSessionToken) {
+        writeStoredSessionToken(tableId, order.guestSessionToken);
+        setSessionToken(order.guestSessionToken);
+      }
       setConfirmed({
         orderId: order.id,
         orderNumber: order.order_number,
@@ -274,6 +293,13 @@ function GuestOrderPage() {
       setCartOpen(false);
     },
   });
+
+  // The one new guest-facing refusal this sprint adds: the server declined
+  // to start or continue a dining session at this table (another session is
+  // already active there). Every other submit failure keeps the existing
+  // generic copy.
+  const submitTableOccupied =
+    submit.error instanceof Error && submit.error.message.includes("already has a dining session");
 
   if (menu.isPending) {
     return (
@@ -539,7 +565,9 @@ function GuestOrderPage() {
             </div>
             {submit.isError && (
               <p className="text-xs text-destructive">
-                Couldn't send your order — please try again.
+                {submitTableOccupied
+                  ? "This table already has an order in progress. If this is your table, please ask a member of staff for help."
+                  : "Couldn't send your order — please try again."}
               </p>
             )}
             <Button

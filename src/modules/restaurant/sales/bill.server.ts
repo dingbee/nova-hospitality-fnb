@@ -13,6 +13,7 @@
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { add, money, sub } from "../pricing/decimal";
+import { closeActiveGuestSession } from "../selforder/selforder.server";
 import { recalcOrder } from "./sales.server";
 import type {
   BillStageInput,
@@ -222,6 +223,11 @@ export async function releaseTable(sb: Sb, userId: string, input: { tenantId: st
     .update({ status: "available" })
     .eq("id", order.table_id)
     .eq("tenant_id", input.tenantId);
+
+  // O12: the dining session this table hosted is over — an old, kept QR
+  // photo or a stale browser tab must not be able to start a new order
+  // against a table that has already been handed back and reset.
+  await closeActiveGuestSession(sb, order.table_id, "table_released");
 
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.table.released",

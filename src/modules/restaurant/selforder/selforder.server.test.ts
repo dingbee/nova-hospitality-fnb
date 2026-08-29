@@ -1,6 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- fake Supabase rows are untyped at this boundary. */
 import { describe, expect, it } from "vitest";
-import { pickGuestOrderableLines, resolveGuestTableContext } from "./selforder.server";
+import {
+  closeActiveGuestSession,
+  pickGuestOrderableLines,
+  resolveGuestTableContext,
+  resolveOrStartGuestSession,
+  type GuestTableContext,
+} from "./selforder.server";
 import type { GuestLineInput } from "./selforder.contracts";
 
 function line(overrides: Partial<GuestLineInput> = {}): GuestLineInput {
@@ -130,5 +136,214 @@ describe("resolveGuestTableContext", () => {
     await expect(resolveGuestTableContext(fakeSb(rows) as any, "table-1")).rejects.toThrow(
       /not available/,
     );
+  });
+});
+
+/**
+ * O12 — the guest dining-session gate. A minimal in-memory fake for
+ * restaurant_guest_sessions supporting exactly the
+ * select/eq/lt/maybeSingle/update/insert shapes resolveOrStartGuestSession
+ * and closeActiveGuestSession use, including the partial-unique-index
+ * behaviour (`insert` fails if another 'active' row already exists for the
+ * same table_id) so the pre-check's refusal path and the DB constraint's
+ * backstop are both exercised the same way the real schema enforces it.
+ */
+function fakeSessionsSb(initialRows: any[] = []) {
+  const rows: any[] = initialRows.map((r) => ({ ...r }));
+  let seq = rows.length;
+
+  function from(table: string) {
+    if (table !== "restaurant_guest_sessions") throw new Error(`unexpected table ${table}`);
+    const eqFilters: Array<[string, unknown]> = [];
+    const ltFilters: Array<[string, unknown]> = [];
+    let op: "select" | "update" | "insert" = "select";
+    let payload: any;
+
+    function matches(r: any) {
+      return (
+        eqFilters.every(([c, v]) => r[c] === v) && ltFilters.every(([c, v]) => r[c] < (v as string))
+      );
+    }
+
+    async function resolve(single: boolean) {
+      if (op === "select") {
+        const matched = rows.filter(matches);
+        return single ? { data: matched[0] ?? null, error: null } : { data: matched, error: null };
+      }
+      if (op === "update") {
+        for (const r of rows.filter(matches)) Object.assign(r, payload);
+        return { data: null, error: null };
+      }
+      if (op === "insert") {
+        if (
+          payload.status === "active" &&
+          rows.some((r) => r.table_id === payload.table_id && r.status === "active")
+        ) {
+          return {
+            data: null,
+            error: { message: "duplicate key value violates unique constraint" },
+          };
+        }
+        seq += 1;
+        rows.push({ id: `session-${seq}`, ...payload });
+        return { data: null, error: null };
+      }
+      return { data: null, error: null };
+    }
+
+    const api: any = {
+      select: () => api,
+      eq: (col: string, val: unknown) => {
+        eqFilters.push([col, val]);
+        return api;
+      },
+      lt: (col: string, val: unknown) => {
+        ltFilters.push([col, val]);
+        return api;
+      },
+      update: (patch: any) => {
+        op = "update";
+        payload = patch;
+        return api;
+      },
+      insert: (row: any) => {
+        op = "insert";
+        payload = row;
+        return api;
+      },
+      maybeSingle: () => resolve(true),
+      then: (onFulfilled: any, onRejected: any) => resolve(false).then(onFulfilled, onRejected),
+    };
+    return api;
+  }
+
+  return { sb: { from } as any, rows };
+}
+
+const TABLE_1: GuestTableContext = {
+  tableId: "table-1",
+  tableCode: "T1",
+  tableName: "Table 1",
+  tenantId: "tenant-1",
+  tenantName: "Demo Tenant",
+  propertyId: "prop-1",
+  locationId: "loc-1",
+  currency: "USD",
+};
+
+const TABLE_2: GuestTableContext = { ...TABLE_1, tableId: "table-2", tableCode: "T2" };
+
+function activeSessionRow(overrides: Partial<Record<string, unknown>> = {}) {
+  const now = Date.now();
+  return {
+    id: "session-existing",
+    tenant_id: "tenant-1",
+    table_id: "table-1",
+    token: "existing-token",
+    status: "active",
+    started_at: new Date(now - 60_000).toISOString(),
+    last_activity_at: new Date(now - 60_000).toISOString(),
+    expires_at: new Date(now + 60 * 60_000).toISOString(),
+    closed_at: null,
+    closed_reason: null,
+    ...overrides,
+  };
+}
+
+describe("resolveOrStartGuestSession", () => {
+  it("issues a new session when the table has none active — first legitimate scan", async () => {
+    const { sb, rows } = fakeSessionsSb([]);
+    const token = await resolveOrStartGuestSession(sb, TABLE_1, undefined);
+    expect(token).toEqual(expect.any(String));
+    expect(token.length).toBeGreaterThanOrEqual(32);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ table_id: "table-1", status: "active" });
+  });
+
+  it("reuses and extends a presented token that matches an active, unexpired session on this table", async () => {
+    const existing = activeSessionRow();
+    const { sb, rows } = fakeSessionsSb([existing]);
+    const token = await resolveOrStartGuestSession(sb, TABLE_1, "existing-token");
+    expect(token).toBe("existing-token");
+    expect(rows).toHaveLength(1); // reused, not duplicated
+    expect(new Date(rows[0].expires_at).getTime()).toBeGreaterThan(
+      new Date(existing.expires_at).getTime(),
+    ); // rolling expiry moved forward
+  });
+
+  it("refuses a new order when another session is already active on the table and no valid token is presented — table occupied", async () => {
+    const { sb } = fakeSessionsSb([activeSessionRow()]);
+    await expect(resolveOrStartGuestSession(sb, TABLE_1, undefined)).rejects.toThrow(
+      /already has a dining session/,
+    );
+  });
+
+  it("treats an expired token as absent — lazily expires the stale row and starts a fresh session (QR reuse: old session != new session)", async () => {
+    const stale = activeSessionRow({
+      token: "stale-token",
+      expires_at: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const { sb, rows } = fakeSessionsSb([stale]);
+    const token = await resolveOrStartGuestSession(sb, TABLE_1, "stale-token");
+    expect(token).not.toBe("stale-token");
+    const staleRow = rows.find((r) => r.token === "stale-token");
+    expect(staleRow?.status).toBe("expired");
+    const newRow = rows.find((r) => r.token === token);
+    expect(newRow).toMatchObject({ table_id: "table-1", status: "active" });
+  });
+
+  it("treats a closed token as absent — the old dining session cannot authorize a new order (checkout/expiry closure)", async () => {
+    const closed = activeSessionRow({
+      token: "closed-token",
+      status: "closed",
+      closed_at: new Date().toISOString(),
+    });
+    const { sb, rows } = fakeSessionsSb([closed]);
+    const token = await resolveOrStartGuestSession(sb, TABLE_1, "closed-token");
+    expect(token).not.toBe("closed-token");
+    expect(rows.filter((r) => r.status === "active")).toHaveLength(1);
+  });
+
+  it("cross-table isolation: a token valid for table 1 does not authorize table 2, and does not block a fresh session there", async () => {
+    const table1Session = activeSessionRow();
+    const { sb, rows } = fakeSessionsSb([table1Session]);
+    const token = await resolveOrStartGuestSession(sb, TABLE_2, "existing-token");
+    expect(token).not.toBe("existing-token");
+    const table2Row = rows.find((r) => r.table_id === "table-2");
+    expect(table2Row).toMatchObject({ status: "active" });
+    // Table 1's session is untouched by a request scoped to table 2.
+    expect(rows.find((r) => r.table_id === "table-1")).toMatchObject({
+      token: "existing-token",
+      status: "active",
+    });
+  });
+
+  it("replay: a stale/foreign token presented against an already-occupied table is indistinguishable from no token — still refused", async () => {
+    const guestBActive = activeSessionRow({ id: "session-b", token: "guest-b-token" });
+    const { sb } = fakeSessionsSb([guestBActive]);
+    // Guest A replays an old token that matches nothing live on this table.
+    await expect(resolveOrStartGuestSession(sb, TABLE_1, "guest-a-old-token")).rejects.toThrow(
+      /already has a dining session/,
+    );
+  });
+});
+
+describe("closeActiveGuestSession", () => {
+  it("closes the table's active session so a later presentation of its token is treated as absent", async () => {
+    const existing = activeSessionRow();
+    const { sb, rows } = fakeSessionsSb([existing]);
+    await closeActiveGuestSession(sb, "table-1", "table_released");
+    expect(rows[0]).toMatchObject({ status: "closed", closed_reason: "table_released" });
+
+    const token = await resolveOrStartGuestSession(sb, TABLE_1, "existing-token");
+    expect(token).not.toBe("existing-token"); // a fresh scan now starts a new session
+  });
+
+  it("leaves other tables' sessions untouched", async () => {
+    const t1 = activeSessionRow();
+    const t2 = activeSessionRow({ id: "session-t2", table_id: "table-2", token: "t2-token" });
+    const { sb, rows } = fakeSessionsSb([t1, t2]);
+    await closeActiveGuestSession(sb, "table-1", "table_released");
+    expect(rows.find((r) => r.table_id === "table-2")).toMatchObject({ status: "active" });
   });
 });

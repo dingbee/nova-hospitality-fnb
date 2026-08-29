@@ -22,10 +22,16 @@ export interface KeyValueStorage {
 }
 
 const STORAGE_PREFIX = "nova.selforder.activeOrder.";
+const SESSION_STORAGE_PREFIX = "nova.selforder.session.";
 
 /** Table-scoped by construction — a key for table A can never collide with, or be read as, table B's. */
 function storageKey(tableId: string): string {
   return `${STORAGE_PREFIX}${tableId}`;
+}
+
+/** Table-scoped by construction, same as storageKey — a session token stored for table A is never read as table B's. */
+function sessionStorageKey(tableId: string): string {
+  return `${SESSION_STORAGE_PREFIX}${tableId}`;
 }
 
 function safeStorage(): KeyValueStorage | null {
@@ -71,6 +77,50 @@ export function clearStoredOrderId(
 ): void {
   try {
     storage?.removeItem(storageKey(tableId));
+  } catch {
+    // See safeStorage.
+  }
+}
+
+/**
+ * The guest's current dining-session token for this table, if any — a hint
+ * only, exactly like readStoredOrderId. The server (resolveOrStartGuestSession
+ * in selforder.server.ts) is the sole authority on whether it's still
+ * active, unexpired, and bound to this table; a stale, wrong-table, or
+ * tampered value is simply treated as "no token presented" and never
+ * trusted client-side for anything.
+ */
+export function readStoredSessionToken(
+  tableId: string,
+  storage: KeyValueStorage | null = safeStorage(),
+): string | null {
+  try {
+    return storage?.getItem(sessionStorageKey(tableId)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Called after every successful order submission — the server may have reused the presented token or issued a new one; either way this is what the next submission at this table should present. */
+export function writeStoredSessionToken(
+  tableId: string,
+  sessionToken: string,
+  storage: KeyValueStorage | null = safeStorage(),
+): void {
+  try {
+    storage?.setItem(sessionStorageKey(tableId), sessionToken);
+  } catch {
+    // See safeStorage — a write failure is never surfaced to the guest.
+  }
+}
+
+/** Drops the session hint for this table — used once the guest's visit is clearly over, so a later, unrelated visit never presents a stale token. */
+export function clearStoredSessionToken(
+  tableId: string,
+  storage: KeyValueStorage | null = safeStorage(),
+): void {
+  try {
+    storage?.removeItem(sessionStorageKey(tableId));
   } catch {
     // See safeStorage.
   }

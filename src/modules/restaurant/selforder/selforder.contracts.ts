@@ -24,5 +24,10 @@ export const submitGuestOrderSchema = z.object({
   tableId: uuid,
   guestName: z.string().max(160).optional(),
   lines: z.array(guestLineSchema).min(1).max(50),
+  // Opaque, server-issued dining-session token (see restaurant_guest_sessions,
+  // migration 0018) — a hint the guest's browser carried from a previous
+  // order at this table, re-validated server-side on every submission.
+  // Never trusted for anything beyond "which session to try to continue".
+  sessionToken: z.string().max(256).optional(),
 });
 export type SubmitGuestOrderInput = z.infer<typeof submitGuestOrderSchema>;

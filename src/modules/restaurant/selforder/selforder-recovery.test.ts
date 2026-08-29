@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   classifyRecoveredOrder,
   clearStoredOrderId,
+  clearStoredSessionToken,
   readStoredOrderId,
+  readStoredSessionToken,
   writeStoredOrderId,
+  writeStoredSessionToken,
   type KeyValueStorage,
 } from "./selforder-recovery";
 
@@ -125,6 +128,35 @@ describe("classifyRecoveredOrder — recoverable-state definition", () => {
     expect(
       classifyRecoveredOrder({ status: "open", paymentState: "pending", amountDue: 5000 }),
     ).toBe("offer");
+  });
+});
+
+describe("stored guest-session token — table scoping (O12)", () => {
+  it("recovers the stored session token for the correct table", () => {
+    const storage = new FakeStorage();
+    writeStoredSessionToken("table-A", "session-token-123", storage);
+    expect(readStoredSessionToken("table-A", storage)).toBe("session-token-123");
+  });
+
+  it("a different table cannot read table A's stored session token — never mixed with the order-id key", () => {
+    const storage = new FakeStorage();
+    writeStoredOrderId("table-A", "order-123", storage);
+    writeStoredSessionToken("table-A", "session-token-123", storage);
+    expect(readStoredSessionToken("table-B", storage)).toBeNull();
+    // The two hints live under distinct keys — clearing one never touches the other.
+    clearStoredSessionToken("table-A", storage);
+    expect(readStoredOrderId("table-A", storage)).toBe("order-123");
+  });
+
+  it("nothing stored reads as null, not an empty string or a throw", () => {
+    const storage = new FakeStorage();
+    expect(readStoredSessionToken("table-unused", storage)).toBeNull();
+  });
+
+  it("storage functions never throw when storage is unavailable — degrades silently", () => {
+    expect(() => writeStoredSessionToken("table-A", "session-token-123", null)).not.toThrow();
+    expect(() => clearStoredSessionToken("table-A", null)).not.toThrow();
+    expect(readStoredSessionToken("table-A", null)).toBeNull();
   });
 });
 

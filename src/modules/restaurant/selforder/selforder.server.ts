@@ -11,6 +11,17 @@
  * written. The pricing and station-routing authority itself is not
  * reimplemented — `insertLines` is called unchanged, exactly as the POS
  * calls it.
+ *
+ * O12 — the table id proves "this is a real, active table", nothing more.
+ * It does not prove a dining session is currently, legitimately in
+ * progress there, so it must not double as a permanent bearer credential
+ * for *placing new orders*. `restaurant_guest_sessions` (0018) is that
+ * missing, minimal concept: a server-issued, table-bound, time-boxed
+ * session that gates only `submitGuestOrder`. Every other guest action
+ * (tracking/payment/bill/staff/feedback) is already safely scoped by an
+ * unguessable orderId + tenant/table re-derivation and is deliberately left
+ * unchanged — recovering or paying an order a guest already placed must
+ * never require re-proving a live session (see selforder-recovery.ts).
  */
 import { fetchSellableCatalog } from "../sales/pos.server";
 import { createGuestOrder, type SalesLineInput } from "../sales/sales.server";
@@ -18,6 +29,28 @@ import { fireGuestOrder } from "../kitchen/kitchen.server";
 import type { GuestLineInput } from "./selforder.contracts";
 
 type Sb = any;
+
+/**
+ * Rolling idle window: a session stays valid as long as the guest places at
+ * least one order within this window of their last one, refreshed on every
+ * accepted order. Long enough that a guest who steps away for a few minutes
+ * (bathroom, smoke break, chasing a kid) never loses the ordering
+ * experience; short enough that a table photographed and abandoned hours or
+ * days earlier cannot silently resume placing orders.
+ */
+const GUEST_SESSION_DURATION_MS = 3 * 60 * 60 * 1000;
+
+const GUEST_SESSION_TABLE_OCCUPIED_MESSAGE =
+  "This table already has a dining session in progress. If this is your table, please ask a member of staff for help.";
+
+/** Same shape as receipts/delivery.server.ts's token() — 32 bytes of crypto randomness, hex-encoded. Never derived from, or predictable from, the table id. */
+function generateGuestSessionToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 export type GuestTableContext = {
   tableId: string;
@@ -79,6 +112,119 @@ export async function resolveGuestTableContext(
   };
 }
 
+/**
+ * The sole write path that creates or reuses a guest dining session. Called
+ * only from `submitGuestOrder`, immediately before a new order is written.
+ *
+ * - A presented token that matches an *active, unexpired* session on this
+ *   exact table is reused and its expiry rolled forward — the ordinary
+ *   "same guest, same table, next order" path.
+ * - A presented token that doesn't match (wrong table, expired, closed, or
+ *   simply absent — a fresh scan, a different device, or a photographed QR
+ *   opened without ever carrying a session) is treated identically to no
+ *   token at all: it grants nothing. If another session is already active
+ *   on this table, the request is refused — a QR the guest kept does not
+ *   let them attach a new order to a session they didn't start. If the
+ *   table is free, a brand-new session is created — the same physical QR
+ *   remains reusable for the next legitimate guest (old session != new
+ *   session), with no need to ever rotate the QR itself.
+ * - The database's partial unique index on (table_id) where status='active'
+ *   is the actual race-safety backstop if two requests land at once; the
+ *   pre-check here just gives a clean, hospitality-worded refusal instead
+ *   of a constraint-violation error in the common case.
+ */
+export async function resolveOrStartGuestSession(
+  sb: Sb,
+  table: GuestTableContext,
+  presentedToken: string | null | undefined,
+): Promise<string> {
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  // Lazily expire any stale 'active' row for this table before deciding
+  // anything — there is no background job; expiry is enforced at the point
+  // a new decision needs to be made.
+  await sb
+    .from("restaurant_guest_sessions")
+    .update({ status: "expired" })
+    .eq("table_id", table.tableId)
+    .eq("status", "active")
+    .lt("expires_at", nowIso);
+
+  if (presentedToken) {
+    const { data: existing } = await sb
+      .from("restaurant_guest_sessions")
+      .select("id, expires_at")
+      .eq("token", presentedToken)
+      .eq("table_id", table.tableId)
+      .eq("status", "active")
+      .maybeSingle();
+    if (existing && new Date(existing.expires_at) > now) {
+      const expiresAt = new Date(now.getTime() + GUEST_SESSION_DURATION_MS).toISOString();
+      await sb
+        .from("restaurant_guest_sessions")
+        .update({ last_activity_at: nowIso, expires_at: expiresAt })
+        .eq("id", existing.id);
+      return presentedToken;
+    }
+  }
+
+  const { data: blocking } = await sb
+    .from("restaurant_guest_sessions")
+    .select("id")
+    .eq("table_id", table.tableId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (blocking) {
+    throw new Error(GUEST_SESSION_TABLE_OCCUPIED_MESSAGE);
+  }
+
+  const token = generateGuestSessionToken();
+  const expiresAt = new Date(now.getTime() + GUEST_SESSION_DURATION_MS).toISOString();
+  const { error } = await sb.from("restaurant_guest_sessions").insert({
+    tenant_id: table.tenantId,
+    property_id: table.propertyId,
+    location_id: table.locationId,
+    table_id: table.tableId,
+    token,
+    status: "active",
+    started_at: nowIso,
+    last_activity_at: nowIso,
+    expires_at: expiresAt,
+  });
+  if (error) {
+    // The partial unique index caught a race the pre-check above missed —
+    // another request just won the same table. Same refusal either way.
+    throw new Error(GUEST_SESSION_TABLE_OCCUPIED_MESSAGE);
+  }
+  return token;
+}
+
+/**
+ * Closes any active guest session for a table. Called from the existing
+ * canonical points where a table is handed back — `releaseTable`
+ * (bill.server.ts, order closed and settled) and the table-release-on-
+ * cancel path (cancellation.server.ts) — never from a new, invented
+ * checkout state. Best-effort: a session row failing to close must never
+ * block the table release itself, which is the operationally important
+ * side effect.
+ */
+export async function closeActiveGuestSession(
+  sb: Sb,
+  tableId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await sb
+      .from("restaurant_guest_sessions")
+      .update({ status: "closed", closed_at: new Date().toISOString(), closed_reason: reason })
+      .eq("table_id", tableId)
+      .eq("status", "active");
+  } catch {
+    // Best-effort — see doc comment.
+  }
+}
+
 /** The public menu for the table's own tenant/location — nothing else is reachable from a table id. */
 export async function guestMenu(sb: Sb, tableId: string) {
   const table = await resolveGuestTableContext(sb, tableId);
@@ -124,9 +270,10 @@ export function pickGuestOrderableLines(
 
 export async function submitGuestOrder(
   sb: Sb,
-  input: { tableId: string; guestName?: string; lines: GuestLineInput[] },
+  input: { tableId: string; guestName?: string; lines: GuestLineInput[]; sessionToken?: string },
 ) {
   const table = await resolveGuestTableContext(sb, input.tableId);
+  const sessionToken = await resolveOrStartGuestSession(sb, table, input.sessionToken);
   const catalog = await fetchSellableCatalog(sb, table.tenantId, {
     propertyId: table.propertyId ?? undefined,
     locationId: table.locationId ?? undefined,
@@ -188,5 +335,8 @@ export async function submitGuestOrder(
   // manually, exactly like every order this path doesn't reach.
   await fireGuestOrder(sb, { tenantId: table.tenantId, orderId: order.id });
 
-  return order;
+  // Additive: every existing field on `order` is untouched, so any caller
+  // reading order.id/order_number/total keeps working unchanged. Only a new
+  // consumer (order.$tableId.tsx) needs to look at guestSessionToken.
+  return { ...order, guestSessionToken: sessionToken };
 }
