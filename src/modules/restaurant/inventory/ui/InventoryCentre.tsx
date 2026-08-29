@@ -1152,7 +1152,7 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
                               onChange={(e) => setLineFilter(e.target.value)}
                               placeholder="Search by name, SKU or barcode…"
                             />
-                            <BarcodeScanButton onScan={handleScan} />
+                            <BarcodeScanButton onScan={handleScan} label="Scan item" />
                           </div>
                           <p className="mt-1 text-xs text-muted-foreground">
                             Scan an item's barcode to jump straight to its count, or type to filter

@@ -1,57 +1,48 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ScanLine } from "lucide-react";
+import { BrowserMultiFormatReader } from "@zxing/browser";
+import type { IScannerControls } from "@zxing/browser";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { hasCameraApi } from "./camera-support";
 
 /**
- * Minimal shape of the browser-native Barcode Detection API. Not in the
- * standard DOM lib types yet, so it's declared narrowly here rather than
- * pulling in a polyfill or an OCR/ML dependency for what the platform
- * already does natively where it's available.
+ * Camera barcode capture, reused everywhere an item needs to be looked up
+ * (receiving basket, stocktake counting).
+ *
+ * Decodes with @zxing/browser (already a project dependency) rather than
+ * the browser-native BarcodeDetector API: BarcodeDetector only ships in
+ * Chromium, so gating on it left the scanner silently absent on iOS Safari
+ * and Firefox — the majority of real staff phones. zxing decodes in pure
+ * JS against a live video element, so the only real precondition is a
+ * camera stream (`getUserMedia`), which every modern mobile browser
+ * engine supports. Where that's genuinely unavailable, or permission is
+ * denied, manual search/entry is always the working fallback — scanning
+ * is never the only way in.
  */
-interface DetectedBarcode {
-  rawValue: string;
-}
-interface BarcodeDetectorLike {
-  detect(source: CanvasImageSource): Promise<DetectedBarcode[]>;
-}
-declare global {
-  interface Window {
-    BarcodeDetector?: new (opts?: { formats?: string[] }) => BarcodeDetectorLike;
-  }
-}
-
-/**
- * Optional camera barcode capture, reused everywhere an item needs to be
- * looked up (receiving basket, stocktake counting). Feature-detected: on a
- * browser/device without BarcodeDetector support this renders nothing, and
- * every caller's manual search/entry field keeps working exactly as before
- * — scanning is never the only way in.
- */
-export function BarcodeScanButton({ onScan }: { onScan: (code: string) => void }) {
-  const [supported, setSupported] = useState(false);
+export function BarcodeScanButton({
+  onScan,
+  label,
+}: {
+  onScan: (code: string) => void;
+  /** A visible text label alongside the icon — an icon-only button reads fine tucked next to a search field (the receiving basket), but a primary "how do I count this" action needs to be unmistakable on its own, not a tooltip a thumb has to discover. Omit for the compact icon-only form. */
+  label?: string;
+}) {
   const [open, setOpen] = useState(false);
+  const cameraApiAvailable = hasCameraApi(typeof navigator === "undefined" ? undefined : navigator);
 
-  useEffect(() => {
-    setSupported(typeof window !== "undefined" && "BarcodeDetector" in window);
-  }, []);
-
-  // Rendering nothing here left staff with zero indication camera scanning
-  // was ever a possibility — indistinguishable from the feature not
-  // existing at all. BarcodeDetector is Chromium-only today (no iOS
-  // Safari, no Firefox), so this is the common case on real devices, not
-  // an edge case: it needs an honest, always-visible fallback, not silence.
-  if (!supported) {
+  if (!cameraApiAvailable) {
     return (
       <Button
         type="button"
         variant="outline"
-        size="icon"
-        className="h-11 w-11 shrink-0 opacity-50"
+        size={label ? "default" : "icon"}
+        className={label ? "h-11 shrink-0 gap-2 opacity-50" : "h-11 w-11 shrink-0 opacity-50"}
         disabled
         title="Camera scanning isn't available in this browser — search or type the barcode instead."
       >
         <ScanLine className="h-5 w-5" />
+        {label && <span>{label} (unavailable)</span>}
       </Button>
     );
   }
@@ -61,12 +52,13 @@ export function BarcodeScanButton({ onScan }: { onScan: (code: string) => void }
       <Button
         type="button"
         variant="outline"
-        size="icon"
-        className="h-11 w-11 shrink-0"
+        size={label ? "default" : "icon"}
+        className={label ? "h-11 shrink-0 gap-2" : "h-11 w-11 shrink-0"}
         title="Scan barcode"
         onClick={() => setOpen(true)}
       >
         <ScanLine className="h-5 w-5" />
+        {label && <span>{label}</span>}
       </Button>
       {open && (
         <ScannerDialog
@@ -88,49 +80,42 @@ function ScannerDialog({
   onScan: (code: string) => void;
   onClose: () => void;
 }) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  // A plain useRef here read as null on the effect's first run — Radix
+  // Dialog.Content mounts its children (this <video>) on a later commit
+  // than the wrapping ScannerDialog itself, so the ref wasn't attached
+  // yet by the time the effect fired and the camera never actually
+  // started. Verified against a real browser, not assumed: a callback ref
+  // (state, so it re-renders and re-runs the effect once the node exists)
+  // fixes it — the effect now depends on the actual DOM node, not a timing
+  // assumption about when refs settle relative to Radix's own mount order.
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let stream: MediaStream | null = null;
-    let raf: number | null = null;
+    if (!videoEl) return;
     let cancelled = false;
+    let controls: IScannerControls | null = null;
+    const reader = new BrowserMultiFormatReader();
 
     async function start() {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
-        });
+        const started = await reader.decodeFromConstraints(
+          { video: { facingMode: "environment" } },
+          videoEl!,
+          (result) => {
+            // Fires on every decode attempt, success or not — a frame with
+            // no visible barcode reports a (expected, non-fatal) not-found
+            // error here rather than a result, so only a hit is terminal.
+            if (cancelled || !result) return;
+            controls?.stop();
+            onScan(result.getText());
+          },
+        );
         if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
+          started.stop();
           return;
         }
-        const video = videoRef.current;
-        if (!video) return;
-        video.srcObject = stream;
-        await video.play();
-
-        const Detector = window.BarcodeDetector;
-        if (!Detector) {
-          setError("Barcode scanning is not supported on this device.");
-          return;
-        }
-        const detector = new Detector();
-
-        const tick = async () => {
-          if (cancelled || !video) return;
-          try {
-            const results = await detector.detect(video);
-            if (results.length > 0 && results[0]!.rawValue) {
-              onScan(results[0]!.rawValue);
-              return;
-            }
-          } catch {
-            // A single failed detection frame is not fatal — keep scanning.
-          }
-          raf = requestAnimationFrame(() => void tick());
-        };
-        raf = requestAnimationFrame(() => void tick());
+        controls = started;
       } catch {
         if (!cancelled)
           setError("Camera access was denied or is unavailable. You can still type the barcode.");
@@ -140,10 +125,9 @@ function ScannerDialog({
 
     return () => {
       cancelled = true;
-      if (raf != null) cancelAnimationFrame(raf);
-      stream?.getTracks().forEach((t) => t.stop());
+      controls?.stop();
     };
-  }, [onScan]);
+  }, [videoEl, onScan]);
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
@@ -155,7 +139,7 @@ function ScannerDialog({
           <p className="text-sm text-muted-foreground">{error}</p>
         ) : (
           <video
-            ref={videoRef}
+            ref={setVideoEl}
             className="aspect-square w-full rounded-md bg-black object-cover"
             muted
             playsInline
