@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { BadgeCheck, CheckCircle2, Play, Scale, ShoppingCart, XCircle } from "lucide-react";
+import { BadgeCheck, CheckCircle2, Play, Scale, ShoppingCart, Tag, XCircle } from "lucide-react";
 import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { EmptyState } from "@/components/os/EmptyState";
@@ -55,6 +55,21 @@ const STATUS_TONE: Record<string, "neutral" | "success" | "warning" | "danger" |
   failed: "danger",
   expired: "neutral",
 };
+
+/**
+ * I6 — the board never stores an action's `action_type` directly, only
+ * `recommendedOptionKey` (the human's actual choice, set by decideDecision)
+ * against the same `options` array `buildRestaurantDecision` persisted. A
+ * reprice_review decision needs its own button label ("pricing review", not
+ * "procurement draft") so a human never reads an unapproved recommendation
+ * as if it were already a live price.
+ */
+function isRepriceDecision(d: any): boolean {
+  return (
+    d.options?.find((o: any) => o.option.key === d.recommendedOptionKey)?.option.actionType ===
+    "restaurant.menu.reprice_review"
+  );
+}
 
 function OptionRows({ options, selectedKey }: { options: any[]; selectedKey: string | null }) {
   return (
@@ -155,7 +170,10 @@ function RestaurantDecisionsPage() {
   });
   const executeAction = useAdminMutation({
     mutationFn: (vars: { actionId: string }) => executeFn({ data: vars }),
-    successMessage: "Procurement draft created — it still needs its own submission and approval.",
+    onSuccessToast: (data: any) =>
+      data.executionResult === "price_review_created"
+        ? "Pricing review created — it still needs a separate pricing approval before it can ever become the live price."
+        : "Procurement draft created — it still needs its own submission and approval.",
     onSuccess: invalidate,
   });
   const verifyFn = useServerFn(verifyRestaurantActionFn);
@@ -163,7 +181,9 @@ function RestaurantDecisionsPage() {
     mutationFn: (vars: { actionId: string }) => verifyFn({ data: vars }),
     onSuccessToast: (data: any) =>
       data.verified
-        ? "Verified — the procurement draft matches the decision."
+        ? data.entityType === "price_review"
+          ? "Verified — the pricing review matches the decision and is still awaiting a separate pricing approval."
+          : "Verified — the procurement draft matches the decision."
         : `Verification found an issue: ${data.reason ?? data.outcome}`,
     onSuccess: invalidate,
   });
@@ -340,7 +360,15 @@ function RestaurantDecisionsPage() {
                       disabled={executeAction.isPending}
                       onClick={() => executeAction.mutate({ actionId: d.actionId })}
                     >
-                      <ShoppingCart className="mr-1.5 size-4" /> Create procurement draft
+                      {isRepriceDecision(d) ? (
+                        <>
+                          <Tag className="mr-1.5 size-4" /> Create pricing review
+                        </>
+                      ) : (
+                        <>
+                          <ShoppingCart className="mr-1.5 size-4" /> Create procurement draft
+                        </>
+                      )}
                     </Button>
                   ) : null}
                   {(d.status === "approved" || d.status === "executing") && d.actionId ? (

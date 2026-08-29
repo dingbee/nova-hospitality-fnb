@@ -97,6 +97,10 @@ function makeFakeSupabase(opts: {
   failRequestInsert?: boolean;
   failLineInsert?: boolean;
   failEventInsert?: boolean;
+  // I6
+  menuItem?: Record<string, any> | null;
+  existingPriceReviews?: Array<Record<string, any>>;
+  failPriceReviewInsert?: boolean;
 }) {
   const calls: Array<{
     table: string;
@@ -110,9 +114,13 @@ function makeFakeSupabase(opts: {
     ...(opts.existingRequests ?? []).map((r) => ({ ...r })),
   ];
   const items: Record<string, any>[] = (opts.existingItems ?? []).map((i) => ({ ...i }));
+  const priceReviews: Record<string, any>[] = (opts.existingPriceReviews ?? []).map((r) => ({
+    ...r,
+  }));
   const events: Record<string, any>[] = [];
   let requestInsertCount = 0;
   let lineInsertCount = 0;
+  let priceReviewInsertCount = 0;
 
   function builder(table: string) {
     const filters: Record<string, unknown> = {};
@@ -126,6 +134,12 @@ function makeFakeSupabase(opts: {
         filters[col] = val;
         return api;
       },
+      is: (col: string, val: unknown) => {
+        filters[col] = val;
+        return api;
+      },
+      order: () => api,
+      limit: () => api,
       update: (patch: any) => {
         op = "update";
         payload = patch;
@@ -183,6 +197,21 @@ function makeFakeSupabase(opts: {
           if (mode === "maybeSingle") return { data: matches[0] ?? null, error: null };
           return { data: matches, error: null };
         }
+        if (table === "restaurant_menu_items") {
+          const match =
+            opts.menuItem && matchesFilters(opts.menuItem, filters) ? opts.menuItem : null;
+          return { data: match, error: null };
+        }
+        if (table === "restaurant_prices") {
+          const matches = priceReviews.filter((r) => matchesFilters(r, filters));
+          if (mode === "single")
+            return {
+              data: matches[0] ?? null,
+              error: matches[0] ? null : { message: "not found" },
+            };
+          if (mode === "maybeSingle") return { data: matches[0] ?? null, error: null };
+          return { data: matches, error: null };
+        }
         if (table === "intelligence_events") {
           const matches = events.filter((r) => matchesFilters(r, filters));
           return { data: matches[0] ?? null, error: null };
@@ -237,6 +266,30 @@ function makeFakeSupabase(opts: {
       if (table === "restaurant_procurement_audit") {
         return { data: { id: "generated" }, error: null };
       }
+      if (table === "restaurant_prices") {
+        priceReviewInsertCount += 1;
+        if (opts.failPriceReviewInsert) return { data: null, error: { message: "insert failed" } };
+        if (
+          priceReviews.some(
+            (r) => r.tenant_id === payload.tenant_id && r.correlation_id === payload.correlation_id,
+          )
+        ) {
+          return {
+            data: null,
+            error: { message: "duplicate key value violates unique constraint", code: "23505" },
+          };
+        }
+        const id =
+          priceReviewInsertCount === 1
+            ? "created-review-id"
+            : `created-review-id-${priceReviewInsertCount}`;
+        const row = { id, ...payload };
+        priceReviews.push(row);
+        return { data: { id, status: payload.status }, error: null };
+      }
+      if (table === "restaurant_pricing_audit") {
+        return { data: { id: "generated" }, error: null };
+      }
       if (table === "intelligence_events") {
         if (opts.failEventInsert) return { data: null, error: { message: "event insert failed" } };
         const id = `event-${events.length + 1}`;
@@ -266,6 +319,8 @@ function makeFakeSupabase(opts: {
     getEvents: () => events,
     getRequestInsertCount: () => requestInsertCount,
     getLineInsertCount: () => lineInsertCount,
+    getPriceReviews: () => priceReviews,
+    getPriceReviewInsertCount: () => priceReviewInsertCount,
   };
 }
 
@@ -582,7 +637,10 @@ describe("executeRestaurantAction — Act", () => {
 
   it("refuses an action type this executor does not know how to run", async () => {
     const fake = makeFakeSupabase({
-      action: actionRow({ action_type: "restaurant.menu.reprice_review" }),
+      // restaurant.menu.reprice_review has an executor as of I6 (see the
+      // describe block far below) — this test needs a type this module
+      // genuinely still doesn't execute.
+      action: actionRow({ action_type: "restaurant.kitchen.staffing_review" }),
       decision: decisionRow(),
       restaurantMembers: OWNER_MEMBER,
     });
@@ -825,12 +883,12 @@ describe("verifyRestaurantAction — Verify", () => {
 
   it("reports verification unavailable for an action type with no verifier, and does not pretend it was verified", async () => {
     const fake = makeFakeSupabase({
-      // restaurant.inventory.replenish_review has a verifier as of I5 (see
-      // the describe block below) — this test needs a type this module
-      // genuinely still doesn't execute, same as the "no executor
-      // registered" case above.
+      // restaurant.inventory.replenish_review (I5) and
+      // restaurant.menu.reprice_review (I6) both have verifiers now — this
+      // test needs a type this module genuinely still doesn't execute, same
+      // as the "no executor registered" case above.
       action: actionRow({
-        action_type: "restaurant.menu.reprice_review",
+        action_type: "restaurant.kitchen.staffing_review",
         status: "executed",
         result: { procurement_request_id: "n/a" },
       }),
@@ -1262,5 +1320,543 @@ describe("restaurant.inventory.replenish_review — I5", () => {
       (c) => c.table === "restaurant_purchase_requests" && c.op === "insert",
     );
     expect(requestInsert!.payload.tenant_id).toBe(TENANT_A);
+  });
+});
+
+/**
+ * I6 — restaurant.menu.reprice_review. A differently-shaped governed effect
+ * from the other two action types (a restaurant_prices "pending_approval"
+ * row, never a procurement draft), so it gets its own fixtures, but drives
+ * through the exact same executeRestaurantAction/verifyRestaurantAction
+ * dispatch, lifecycle, idempotency and capability-gate machinery — nothing
+ * below is a second Act/Verify implementation.
+ */
+const MENU_ITEM_ID = "aaaaaaaa-1111-2222-3333-444444444444";
+// pricing.manage (owner/general_manager/restaurant_manager/accountant) is
+// what this executor itself requires — deliberately NOT pricing.approve
+// (owner/general_manager only), proving the executor never needs, and never
+// exercises, publish authority.
+const PRICING_MEMBER = [{ tenant_id: TENANT_A, user_id: MANAGER, role: "restaurant_manager" }];
+
+function repriceFindingFacts(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    classification: "puzzle",
+    marginPercent: 40,
+    menuItemId: MENU_ITEM_ID,
+    currentPrice: 12000,
+    currency: "TZS",
+    recommendedPrice: 14000,
+    targetMarginPercent: 65,
+    priceDelta: 2000,
+    ...overrides,
+  };
+}
+
+function repriceDecisionRow(overrides: Partial<Record<string, unknown>> = {}) {
+  return decisionRow({
+    decision_key: "restaurant.tenant.finding.menu",
+    context: {
+      finding: {
+        subject: "UAT signature dish",
+        headline:
+          "UAT signature dish sells but does not carry its margin — current price TZS 12,000, proposed review price TZS 14,000 (requires approval before it takes effect)",
+        facts: repriceFindingFacts(),
+      },
+    },
+    ...overrides,
+  });
+}
+
+const REPRICE_ACTION = actionRow({ action_type: "restaurant.menu.reprice_review" });
+
+function menuItemRow(overrides: Partial<Record<string, unknown>> = {}) {
+  return { id: MENU_ITEM_ID, tenant_id: TENANT_A, price: 12000, currency: "TZS", ...overrides };
+}
+
+/** An active restaurant_prices override, matching the exact scope shape the executor's own current-price lookup queries (tenant scope, no property/location/price-list/channel). */
+function activePriceRow(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "existing-active-price",
+    tenant_id: TENANT_A,
+    menu_item_id: MENU_ITEM_ID,
+    scope: "tenant",
+    property_id: null,
+    location_id: null,
+    price_list_id: null,
+    channel: null,
+    status: "active",
+    version: 1,
+    amount: 12000,
+    currency: "TZS",
+    correlation_id: null,
+    ...overrides,
+  };
+}
+
+describe("restaurant.menu.reprice_review — I6", () => {
+  it("creates a pending_approval pricing review from a menu_margin decision — never active, the live price never moves", async () => {
+    const fake = makeFakeSupabase({
+      action: REPRICE_ACTION,
+      decision: repriceDecisionRow(),
+      restaurantMembers: PRICING_MEMBER,
+      menuItem: menuItemRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPRICE_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "executed",
+      executionResult: "price_review_created",
+      priceReviewId: "created-review-id",
+      priceReviewStatus: "pending_approval",
+    });
+
+    const insert = fake.calls.find((c) => c.table === "restaurant_prices" && c.op === "insert");
+    expect(insert!.payload).toMatchObject({
+      tenant_id: TENANT_A,
+      menu_item_id: MENU_ITEM_ID,
+      scope: "tenant",
+      amount: 14000,
+      currency: "TZS",
+      status: "pending_approval",
+      requires_approval: true,
+      version: 1,
+      supersedes_id: null,
+      correlation_id: REPRICE_ACTION.id,
+    });
+    // The one governed effect really did stop at draft/review, not active.
+    expect(fake.getPriceReviews()).toHaveLength(1);
+    expect(fake.getPriceReviews()[0].status).toBe("pending_approval");
+
+    // Same audit trail a human raising a price through the Pricing Centre gets.
+    expect(
+      fake.calls.some((c) => c.table === "restaurant_pricing_audit" && c.op === "insert"),
+    ).toBe(true);
+
+    const finalAction = fake.getAction();
+    expect(finalAction?.status).toBe("executed");
+    expect(finalAction?.result).toMatchObject({ price_review_id: "created-review-id" });
+  });
+
+  it("versions against, and supersedes_id references, an existing active override — never edits it in place", async () => {
+    const fake = makeFakeSupabase({
+      action: REPRICE_ACTION,
+      decision: repriceDecisionRow(),
+      restaurantMembers: PRICING_MEMBER,
+      menuItem: menuItemRow(),
+      existingPriceReviews: [activePriceRow({ version: 3 })],
+    });
+
+    await executeRestaurantAction(fake.supabase, MANAGER, { actionId: REPRICE_ACTION.id });
+
+    const insert = fake.calls.find((c) => c.table === "restaurant_prices" && c.op === "insert");
+    expect(insert!.payload).toMatchObject({ version: 4, supersedes_id: "existing-active-price" });
+    // The active row itself is never updated by this executor — only decidePrice() supersedes it, later, separately.
+    expect(fake.calls.some((c) => c.table === "restaurant_prices" && c.op === "update")).toBe(
+      false,
+    );
+    const active = fake.getPriceReviews().find((r) => r.id === "existing-active-price");
+    expect(active?.status).toBe("active"); // completely untouched
+  });
+
+  it("verifies the resulting review independently of the executor's own cached result", async () => {
+    const executed = actionRow({
+      action_type: "restaurant.menu.reprice_review",
+      status: "executed",
+      result: { price_review_id: "review-verify-1", price_review_status: "pending_approval" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: repriceDecisionRow(),
+      restaurantMembers: PRICING_MEMBER,
+      existingPriceReviews: [
+        {
+          id: "review-verify-1",
+          tenant_id: TENANT_A,
+          menu_item_id: MENU_ITEM_ID,
+          correlation_id: executed.id,
+          amount: 14000,
+          currency: "TZS",
+          status: "pending_approval",
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({
+      verified: true,
+      outcome: "price_review_created",
+      entityType: "price_review",
+      expectedAmount: 14000,
+      actualAmount: 14000,
+      status: "pending_approval",
+    });
+  });
+
+  it("reports verification_failed — not verified — if the review somehow reads 'active' instead of 'pending_approval'", async () => {
+    // This must never happen through this executor, but Verify's job is to
+    // positively confirm the actual database state, not assume it. An
+    // active row here would mean an unintended live-price mutation, and
+    // must be reported as a failure, never silently accepted.
+    const executed = actionRow({
+      action_type: "restaurant.menu.reprice_review",
+      status: "executed",
+      result: { price_review_id: "review-verify-2", price_review_status: "pending_approval" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: repriceDecisionRow(),
+      restaurantMembers: PRICING_MEMBER,
+      existingPriceReviews: [
+        {
+          id: "review-verify-2",
+          tenant_id: TENANT_A,
+          menu_item_id: MENU_ITEM_ID,
+          correlation_id: executed.id,
+          amount: 14000,
+          currency: "TZS",
+          status: "active",
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({
+      verified: false,
+      outcome: "unexpected_status",
+      status: "active",
+    });
+  });
+
+  it("detects an amount mismatch on the resulting review", async () => {
+    const executed = actionRow({
+      action_type: "restaurant.menu.reprice_review",
+      status: "executed",
+      result: { price_review_id: "review-verify-3", price_review_status: "pending_approval" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: repriceDecisionRow(),
+      restaurantMembers: PRICING_MEMBER,
+      existingPriceReviews: [
+        {
+          id: "review-verify-3",
+          tenant_id: TENANT_A,
+          menu_item_id: MENU_ITEM_ID,
+          correlation_id: executed.id,
+          amount: 13500,
+          currency: "TZS",
+          status: "pending_approval",
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({
+      verified: false,
+      outcome: "amount_mismatch",
+      expectedAmount: 14000,
+      actualAmount: 13500,
+    });
+  });
+
+  it("detects a duplicate pricing review correlated to the same action", async () => {
+    const executed = actionRow({
+      action_type: "restaurant.menu.reprice_review",
+      status: "executed",
+      result: { price_review_id: "review-verify-4", price_review_status: "pending_approval" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: repriceDecisionRow(),
+      restaurantMembers: PRICING_MEMBER,
+      existingPriceReviews: [
+        {
+          id: "review-verify-4",
+          tenant_id: TENANT_A,
+          menu_item_id: MENU_ITEM_ID,
+          correlation_id: executed.id,
+          amount: 14000,
+          currency: "TZS",
+          status: "pending_approval",
+        },
+        {
+          id: "review-verify-4b",
+          tenant_id: TENANT_A,
+          menu_item_id: MENU_ITEM_ID,
+          correlation_id: executed.id,
+          amount: 14000,
+          currency: "TZS",
+          status: "pending_approval",
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({ verified: false, outcome: "duplicate_review" });
+  });
+
+  it("does not re-execute an already-executed reprice_review action (idempotent re-run)", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({
+        action_type: "restaurant.menu.reprice_review",
+        status: "executed",
+        result: { price_review_id: "already-there", price_review_status: "pending_approval" },
+      }),
+      decision: repriceDecisionRow(),
+      restaurantMembers: PRICING_MEMBER,
+      menuItem: menuItemRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPRICE_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "executed",
+      executionResult: "price_review_created",
+      priceReviewId: "already-there",
+      alreadyExecuted: true,
+    });
+    expect(fake.getPriceReviewInsertCount()).toBe(0);
+  });
+
+  it("protects against two concurrent executions of the same reprice_review action — exactly one review", async () => {
+    const fake = makeFakeSupabase({
+      action: REPRICE_ACTION,
+      decision: repriceDecisionRow(),
+      restaurantMembers: PRICING_MEMBER,
+      menuItem: menuItemRow(),
+    });
+
+    const [a, b] = await Promise.all([
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: REPRICE_ACTION.id }),
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: REPRICE_ACTION.id }),
+    ]);
+
+    expect(fake.getPriceReviews()).toHaveLength(1);
+    expect(a.priceReviewId).toBe(b.priceReviewId);
+    expect(fake.getAction()?.status).toBe("executed");
+  });
+
+  it("recovers an existing review by correlation_id after a partial failure, without duplicating it", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({
+        action_type: "restaurant.menu.reprice_review",
+        status: "executing",
+        executing_at: "2026-01-01T00:00:00.000Z",
+      }),
+      decision: repriceDecisionRow(),
+      restaurantMembers: PRICING_MEMBER,
+      menuItem: menuItemRow(),
+      existingPriceReviews: [
+        {
+          id: "recovered-review-id",
+          tenant_id: TENANT_A,
+          menu_item_id: MENU_ITEM_ID,
+          correlation_id: REPRICE_ACTION.id,
+          amount: 14000,
+          currency: "TZS",
+          status: "pending_approval",
+        },
+      ],
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPRICE_ACTION.id,
+    });
+
+    expect(result).toMatchObject({ status: "executed", priceReviewId: "recovered-review-id" });
+    expect(fake.getPriceReviewInsertCount()).toBe(0);
+  });
+
+  it("refuses a caller outside the decision's tenant", async () => {
+    const fake = makeFakeSupabase({
+      action: REPRICE_ACTION,
+      decision: repriceDecisionRow(),
+      restaurantMembers: [{ tenant_id: TENANT_B, user_id: MANAGER, role: "restaurant_manager" }],
+      menuItem: menuItemRow(),
+    });
+
+    await expect(
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: REPRICE_ACTION.id }),
+    ).rejects.toThrow(/do not belong to this restaurant tenant/i);
+    expect(fake.getPriceReviewInsertCount()).toBe(0);
+  });
+
+  it("fails the action when the caller lacks pricing.manage — an intelligence-decision approver is not automatically a pricing authority", async () => {
+    const fake = makeFakeSupabase({
+      action: REPRICE_ACTION,
+      decision: repriceDecisionRow(),
+      // purchasing_officer can approve procurement, but not pricing.
+      restaurantMembers: [{ tenant_id: TENANT_A, user_id: MANAGER, role: "purchasing_officer" }],
+      menuItem: menuItemRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPRICE_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/pricing\.manage.*requires/i);
+    expect(fake.getPriceReviewInsertCount()).toBe(0);
+  });
+
+  it("STALE PRICE PROTECTION: refuses to raise a review when the live price has moved since the decision was generated", async () => {
+    const fake = makeFakeSupabase({
+      action: REPRICE_ACTION,
+      decision: repriceDecisionRow(), // captured currentPrice: 12000
+      restaurantMembers: PRICING_MEMBER,
+      // The item's real price is now 13000, not the 12000 this decision saw.
+      menuItem: menuItemRow({ price: 13000 }),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPRICE_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/stale price/i);
+    expect(result.failureReason).toMatch(/12,?000/);
+    expect(result.failureReason).toMatch(/13,?000/);
+    // No destructive overwrite — nothing was ever created.
+    expect(fake.getPriceReviewInsertCount()).toBe(0);
+    expect(fake.getPriceReviews()).toHaveLength(0);
+  });
+
+  it("STALE PRICE PROTECTION: also fires when an active restaurant_prices override moved, even if restaurant_menu_items.price alone looks unchanged", async () => {
+    const fake = makeFakeSupabase({
+      action: REPRICE_ACTION,
+      decision: repriceDecisionRow(), // captured currentPrice: 12000
+      restaurantMembers: PRICING_MEMBER,
+      menuItem: menuItemRow({ price: 12000 }), // looks fresh...
+      // ...but a scoped override is what's actually authoritative, and it has moved.
+      existingPriceReviews: [activePriceRow({ amount: 12500 })],
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPRICE_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/stale price/i);
+    expect(fake.getPriceReviewInsertCount()).toBe(0);
+  });
+
+  it("refuses when the menu item's real currency no longer matches what the decision captured — never proposes cross-currency", async () => {
+    const fake = makeFakeSupabase({
+      action: REPRICE_ACTION,
+      decision: repriceDecisionRow(), // captured currency: TZS
+      restaurantMembers: PRICING_MEMBER,
+      menuItem: menuItemRow({ price: 12000, currency: "USD" }), // re-based to a different currency since
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPRICE_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/stale price/i);
+    expect(fake.getPriceReviewInsertCount()).toBe(0);
+  });
+
+  it("fails safely on a decision with no recommended price — never guesses one", async () => {
+    const fake = makeFakeSupabase({
+      action: REPRICE_ACTION,
+      decision: repriceDecisionRow({
+        context: {
+          finding: {
+            subject: "No target margin set",
+            headline: "No target margin set",
+            facts: repriceFindingFacts({ recommendedPrice: null }),
+          },
+        },
+      }),
+      restaurantMembers: PRICING_MEMBER,
+      menuItem: menuItemRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPRICE_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/no structured pricing data/i);
+    expect(fake.getPriceReviewInsertCount()).toBe(0);
+  });
+
+  it("fails safely on an invalid (zero/negative) proposed price", async () => {
+    const fake = makeFakeSupabase({
+      action: REPRICE_ACTION,
+      decision: repriceDecisionRow({
+        context: {
+          finding: {
+            subject: "x",
+            headline: "x",
+            facts: repriceFindingFacts({ recommendedPrice: -500 }),
+          },
+        },
+      }),
+      restaurantMembers: PRICING_MEMBER,
+      menuItem: menuItemRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPRICE_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/no structured pricing data/i);
+    expect(fake.getPriceReviewInsertCount()).toBe(0);
+  });
+
+  it("fails safely when the menu item does not exist for this tenant — cross-tenant/deleted item protection", async () => {
+    const fake = makeFakeSupabase({
+      action: REPRICE_ACTION,
+      decision: repriceDecisionRow(),
+      restaurantMembers: PRICING_MEMBER,
+      menuItem: null, // not found (wrong tenant, or deleted)
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPRICE_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/does not exist for this tenant/i);
+    expect(fake.getPriceReviewInsertCount()).toBe(0);
+  });
+
+  it("never issues an UPDATE against restaurant_prices, restaurant_menu_items, or any order table — only ever an insert of a new review row", async () => {
+    const fake = makeFakeSupabase({
+      action: REPRICE_ACTION,
+      decision: repriceDecisionRow(),
+      restaurantMembers: PRICING_MEMBER,
+      menuItem: menuItemRow(),
+    });
+
+    await executeRestaurantAction(fake.supabase, MANAGER, { actionId: REPRICE_ACTION.id });
+
+    const mutatingCalls = fake.calls.filter(
+      (c) =>
+        c.op !== "select" &&
+        c.table !== "intelligence_actions" &&
+        c.table !== "intelligence_events" &&
+        c.table !== "restaurant_pricing_audit",
+    );
+    expect(mutatingCalls).toEqual([
+      expect.objectContaining({ table: "restaurant_prices", op: "insert" }),
+    ]);
+    expect(
+      fake.calls.some(
+        (c) => c.table.includes("restaurant_orders") || c.table.includes("restaurant_order_items"),
+      ),
+    ).toBe(false);
   });
 });

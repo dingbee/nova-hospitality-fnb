@@ -42,14 +42,29 @@ export function menuFindings(m: MenuIntelligence): RestaurantFinding[] {
     const projected = round(dailyGp * 30, 2);
     const declining = trend != null && trend <= -MARGIN_DECLINE_PERCENT;
 
+    // I6: a recommended reprice figure only exists when this item's recipe
+    // costing actually has a target margin set (costing.server.ts's
+    // computeRecipeCost's own suggested_price, surfaced by menu.server.ts —
+    // never recomputed here). Rendered explicitly as "current" vs
+    // "recommended review" — never implying the recommendation is already
+    // in effect — because this is the one place both the Proposed and
+    // Recorded decision cards on the Decisions page actually display
+    // (finding.headline flows into decision.trigger and
+    // reasoning.whatIsHappening; the facts below are for the executor).
+    const hasReprice = item.recommendedPrice != null && item.price != null;
+    const priceClause = hasReprice
+      ? ` — current price ${money(m.currency, item.price as number)}, proposed review price ${money(m.currency, item.recommendedPrice as number)} (requires approval before it takes effect)`
+      : "";
+
     out.push({
       key: `finding.menu.${item.menuItemId}`,
       kind: "menu_margin",
       severity: margin != null && margin < 50 ? "high" : "medium",
       subject: item.name,
-      headline: declining
-        ? `${item.name} margin and volume are both under pressure`
-        : `${item.name} sells but does not carry its margin`,
+      headline:
+        (declining
+          ? `${item.name} margin and volume are both under pressure`
+          : `${item.name} sells but does not carry its margin`) + priceClause,
       detail: [
         `${item.quantitySold} sold in the last ${m.windowDays} days`,
         margin != null ? `${margin}% gross margin` : "margin unknown",
@@ -66,7 +81,15 @@ export function menuFindings(m: MenuIntelligence): RestaurantFinding[] {
         { label: "Gross profit", value: money(m.currency, item.grossProfit) },
         { label: "Classification", value: item.classification },
         ...(item.price != null
-          ? [{ label: "Menu price", value: money(m.currency, item.price) }]
+          ? [{ label: "Current live price", value: money(m.currency, item.price) }]
+          : []),
+        ...(item.recommendedPrice != null
+          ? [
+              {
+                label: "Recommended review price (not yet applied)",
+                value: money(m.currency, item.recommendedPrice),
+              },
+            ]
           : []),
         ...(item.costReviewReason ? [{ label: "Cost review", value: item.costReviewReason }] : []),
       ],
@@ -89,6 +112,19 @@ export function menuFindings(m: MenuIntelligence): RestaurantFinding[] {
         isStar: item.classification === "star",
         isDog: item.classification === "dog",
         highVolume: item.quantitySold >= Math.max(10, m.totals.itemsSold * 0.05),
+        // Structured identifiers a downstream executor needs to raise a real
+        // pricing review row — additive, mirrors I5's inventoryItemId/
+        // recommendedQuantity pattern. Null (never guessed) when no target
+        // margin has been set for this item's recipe costing.
+        menuItemId: item.menuItemId,
+        currentPrice: item.price,
+        currency: m.currency,
+        recommendedPrice: item.recommendedPrice,
+        targetMarginPercent: item.targetMarginPercent,
+        priceDelta:
+          item.recommendedPrice != null && item.price != null
+            ? round(item.recommendedPrice - item.price, 2)
+            : null,
       },
     });
   }

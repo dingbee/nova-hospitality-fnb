@@ -10,16 +10,30 @@
  * member creating one by hand would leave it in, still requiring submission
  * and a separate human approval before it can become a purchase order.
  *
- * Two action types share this one effect and one code path — I5 added
- * `restaurant.inventory.replenish_review` alongside the original
- * `restaurant.purchase.suggest` rather than building a second executor,
- * because both mean the same thing operationally ("raise a governed
- * replenishment draft for this item/quantity/supplier") and both read the
- * identical fact shape (`inventoryItemId`/`recommendedQuantity`/
+ * Two action types share this one procurement-draft effect and one code
+ * path — I5 added `restaurant.inventory.replenish_review` alongside the
+ * original `restaurant.purchase.suggest` rather than building a second
+ * executor, because both mean the same thing operationally ("raise a
+ * governed replenishment draft for this item/quantity/supplier") and both
+ * read the identical fact shape (`inventoryItemId`/`recommendedQuantity`/
  * `supplierId`/...) off `decision.context.finding.facts`. The inventory
  * option catalogue (optionCatalogue.ts's shortageOptions) already offered
  * `restaurant.inventory.replenish_review` before I5 — this file is what
  * makes that option actually executable, rather than a dead action type.
+ *
+ * I6 adds a third, differently-shaped action type:
+ * `restaurant.menu.reprice_review`. Its governed effect is not a
+ * procurement draft — it is a `pending_approval` row in the existing,
+ * already-built `restaurant_prices` version/approval workflow
+ * (pricing.server.ts's `upsertPrice`/`decidePrice`). That table already
+ * separates "propose a price" (capability `pricing.manage`) from "publish
+ * a price" (capability `pricing.approve`, a distinct, higher-privilege
+ * check) — exactly the governed, capability-protected path the task asked
+ * this executor to find and reuse rather than inventing pricing autonomy.
+ * This executor only ever proposes; it never calls `decidePrice`, so a
+ * live selling price never changes as a direct or indirect effect of
+ * Intelligence approving a decision. See `runMenuRepriceExecution` and
+ * `verifyMenuRepriceReview` below.
  *
  * Only `decideDecision` (Intelligence Core governance, I2/I3) creates an
  * action, and only for a decision a restaurant tenant member has already
@@ -41,14 +55,17 @@ import { getTenantScopeChecker } from "@/modules/intelligence/core/registry";
 import { assertCapability } from "../core/access.server";
 import { nextDocumentNumber, recordProcurementAudit } from "../procurement/audit.server";
 import { DOCUMENT_PREFIX } from "../procurement/contracts";
+import { roundTo } from "../pricing/decimal";
+import { audit as recordPricingAudit } from "../pricing/pricing.server";
 import { emitActionEvent } from "./actionEvents.server";
 
 type Sb = any;
 
-/** The action types this executor knows how to run — both produce the same governed procurement draft (see file doc comment). */
+/** The action types this executor knows how to run (see file doc comment for what each one does). */
 const SUPPORTED_ACTION_TYPES = new Set([
   "restaurant.purchase.suggest",
   "restaurant.inventory.replenish_review",
+  "restaurant.menu.reprice_review",
 ]);
 
 /** A row in one of these states already ran to completion — never re-executed. */
@@ -68,9 +85,12 @@ const now = () => new Date().toISOString();
 export interface ExecuteRestaurantActionResult {
   actionId: string;
   status: "executed" | "failed" | "completed";
-  executionResult?: "procurement_request_created";
+  executionResult?: "procurement_request_created" | "price_review_created";
   procurementRequestId?: string;
   procurementRequestStatus?: string;
+  /** I6 — the restaurant_prices row id/status for a reprice_review action. Status is always "pending_approval" here; this executor never publishes a price. */
+  priceReviewId?: string;
+  priceReviewStatus?: string;
   failureReason?: string;
   /** True when a prior run already produced this result — nothing new happened. */
   alreadyExecuted?: boolean;
@@ -83,6 +103,9 @@ export interface VerifyRestaurantActionResult {
   entityId?: string;
   expectedQuantity?: number;
   actualQuantity?: number;
+  /** I6 — money fields for a reprice_review verification, kept distinct from the quantity fields above rather than overloading them. */
+  expectedAmount?: number;
+  actualAmount?: number;
   status?: string;
   reason?: string;
 }
@@ -150,6 +173,40 @@ async function guardedTransition(
   return data ?? null;
 }
 
+/**
+ * Reconstructs the result of a prior successful run from `action.result`
+ * alone, without touching the database again — recognizes whichever of the
+ * two governed effects this module can produce (a procurement draft or a
+ * pricing review). Returns `null` if `action.result` doesn't carry either
+ * shape yet, meaning there is nothing to recover and real execution must
+ * still happen.
+ */
+function alreadyExecutedResult(action: Record<string, any>): ExecuteRestaurantActionResult | null {
+  const status: ExecuteRestaurantActionResult["status"] =
+    action.status === "completed" ? "completed" : "executed";
+  if (action.result?.procurement_request_id) {
+    return {
+      actionId: action.id,
+      status,
+      executionResult: "procurement_request_created",
+      procurementRequestId: action.result.procurement_request_id,
+      procurementRequestStatus: action.result.procurement_request_status ?? "draft",
+      alreadyExecuted: true,
+    };
+  }
+  if (action.result?.price_review_id) {
+    return {
+      actionId: action.id,
+      status,
+      executionResult: "price_review_created",
+      priceReviewId: action.result.price_review_id,
+      priceReviewStatus: action.result.price_review_status ?? "pending_approval",
+      alreadyExecuted: true,
+    };
+  }
+  return null;
+}
+
 async function failAction(
   sb: Sb,
   userId: string,
@@ -212,15 +269,9 @@ export async function executeRestaurantAction(
   const tenantId = decision.tenant_id as string;
   const module = decision.module as string;
 
-  if (ALREADY_EXECUTED_STATUSES.has(action.status) && action.result?.procurement_request_id) {
-    return {
-      actionId: action.id,
-      status: action.status === "completed" ? "completed" : "executed",
-      executionResult: "procurement_request_created",
-      procurementRequestId: action.result.procurement_request_id,
-      procurementRequestStatus: action.result.procurement_request_status ?? "draft",
-      alreadyExecuted: true,
-    };
+  if (ALREADY_EXECUTED_STATUSES.has(action.status)) {
+    const already = alreadyExecutedResult(action);
+    if (already) return already;
   }
   if (!RESUMABLE_STATUSES.has(action.status)) {
     throw new Error(
@@ -277,19 +328,15 @@ export async function executeRestaurantAction(
     }
 
     if (action.status === "executing") {
-      return runProcurementDraftExecution(sb, userId, action, decision, tenantId, module);
+      return action.action_type === "restaurant.menu.reprice_review"
+        ? runMenuRepriceExecution(sb, userId, action, decision, tenantId, module)
+        : runProcurementDraftExecution(sb, userId, action, decision, tenantId, module);
     }
 
     // Already executed by the competitor that won the race above.
-    if (ALREADY_EXECUTED_STATUSES.has(action.status) && action.result?.procurement_request_id) {
-      return {
-        actionId: action.id,
-        status: action.status === "completed" ? "completed" : "executed",
-        executionResult: "procurement_request_created",
-        procurementRequestId: action.result.procurement_request_id,
-        procurementRequestStatus: action.result.procurement_request_status ?? "draft",
-        alreadyExecuted: true,
-      };
+    if (ALREADY_EXECUTED_STATUSES.has(action.status)) {
+      const already = alreadyExecutedResult(action);
+      if (already) return already;
     }
 
     throw new Error(`Unexpected action status "${action.status}" mid-execution.`);
@@ -537,6 +584,307 @@ async function finishExecution(
   };
 }
 
+/**
+ * I6 — the governed effect for `restaurant.menu.reprice_review`: a
+ * `pending_approval` row in the existing `restaurant_prices` workflow
+ * (mirrors `upsertPrice(..., requiresApproval: true, activate: false)`
+ * without importing the human-facing function itself, the same way
+ * `runProcurementDraftExecution` writes `restaurant_purchase_requests`
+ * directly rather than calling the staff CRUD entry point). It never
+ * inserts an `active` row and never calls `decidePrice` — a live selling
+ * price changes only when a separate human with `pricing.approve`
+ * (distinct from the `pricing.manage` this executor itself requires)
+ * reviews and approves it through the existing pricing UI.
+ */
+async function runMenuRepriceExecution(
+  sb: Sb,
+  userId: string,
+  action: Record<string, any>,
+  decision: Record<string, any>,
+  tenantId: string,
+  module: string,
+): Promise<ExecuteRestaurantActionResult> {
+  const finding = (decision.context?.finding ?? {}) as {
+    subject?: string;
+    headline?: string;
+    facts?: Record<string, unknown>;
+  };
+  const facts = finding.facts ?? {};
+  const menuItemId = facts.menuItemId;
+  const recommendedPrice = facts.recommendedPrice;
+  const capturedCurrentPrice = facts.currentPrice;
+  const currency = typeof facts.currency === "string" ? facts.currency : null;
+
+  if (
+    typeof menuItemId !== "string" ||
+    typeof recommendedPrice !== "number" ||
+    !(recommendedPrice > 0) ||
+    typeof currency !== "string"
+  ) {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The owning decision has no structured pricing data (menu item / recommended price / currency) — cannot raise a pricing review.",
+    );
+  }
+  if (typeof capturedCurrentPrice !== "number") {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The owning decision has no captured current price to validate freshness against — cannot raise a pricing review.",
+    );
+  }
+
+  // Idempotency first, before any capability or freshness check, so a retry
+  // of an already-completed action never re-runs (and never re-fails) those
+  // checks against data that may have moved on since.
+  const { data: existingByCorrelation, error: correlationErr } = await sb
+    .from("restaurant_prices")
+    .select("id, status")
+    .eq("tenant_id", tenantId)
+    .eq("correlation_id", action.id)
+    .maybeSingle();
+  if (correlationErr) {
+    return failAction(sb, userId, action, tenantId, module, correlationErr.message);
+  }
+  if (existingByCorrelation) {
+    return finishMenuRepriceExecution(
+      sb,
+      userId,
+      action,
+      decision,
+      tenantId,
+      module,
+      existingByCorrelation.id,
+      existingByCorrelation.status,
+    );
+  }
+
+  // Intelligence-decision approval is not pricing authority: the human who
+  // approved this decision may not be the person entitled to propose a
+  // price. Checked here, on the actual governed table's own capability,
+  // exactly like I5 checks purchase.request rather than trusting the
+  // decision's own approval.
+  try {
+    await assertCapability(sb, userId, tenantId, "pricing.manage");
+  } catch (err) {
+    return failAction(sb, userId, action, tenantId, module, (err as Error).message);
+  }
+
+  const { data: menuItem, error: itemErr } = await sb
+    .from("restaurant_menu_items")
+    .select("id, tenant_id, price, currency")
+    .eq("id", menuItemId)
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  if (itemErr) return failAction(sb, userId, action, tenantId, module, itemErr.message);
+  if (!menuItem) {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The menu item this decision named does not exist for this tenant — refusing to raise a pricing review.",
+    );
+  }
+
+  // The exact "current active price for this scope" lookup upsertPrice
+  // itself uses (tenant scope, no property/location/price-list/channel
+  // override) — the freshest read of what this item's restaurant_prices
+  // override actually is, without invoking the full rule-set/promotion
+  // pricing engine, which is out of scope here.
+  const { data: activeRows, error: activeErr } = await sb
+    .from("restaurant_prices")
+    .select("id, version, amount, currency, status")
+    .eq("tenant_id", tenantId)
+    .eq("menu_item_id", menuItemId)
+    .eq("scope", "tenant")
+    .is("property_id", null)
+    .is("location_id", null)
+    .is("price_list_id", null)
+    .is("channel", null)
+    .eq("status", "active")
+    .order("version", { ascending: false })
+    .limit(1);
+  if (activeErr) return failAction(sb, userId, action, tenantId, module, activeErr.message);
+  const activePrice = ((activeRows ?? []) as any[])[0] ?? null;
+
+  // Authoritative "what does this item sell for right now": the active
+  // restaurant_prices override for this exact scope if one exists, else the
+  // menu item's own price — the same precedence quoteWithRuleSet already
+  // gives it (a scoped price candidate first, the menu item's price as
+  // fallback), not a second interpretation invented here.
+  const authoritativeAmount = activePrice
+    ? Number(activePrice.amount)
+    : Number(menuItem.price ?? 0);
+  const authoritativeCurrency = activePrice
+    ? activePrice.currency
+    : (menuItem.currency ?? currency);
+
+  // STALE PRICE PROTECTION: the decision was built from a price snapshot
+  // that may no longer hold. Never overwrite a price that has moved since —
+  // fail safely and name both figures so a human knows to re-run
+  // intelligence rather than blindly re-approve.
+  if (
+    roundTo(authoritativeAmount, 2) !== roundTo(capturedCurrentPrice, 2) ||
+    authoritativeCurrency !== currency
+  ) {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      `Stale price: this recommendation was generated when the price was ${currency} ${roundTo(capturedCurrentPrice, 2)}, but the current price is now ${authoritativeCurrency} ${roundTo(authoritativeAmount, 2)}. Re-run intelligence and review this recommendation again before proceeding.`,
+    );
+  }
+
+  const version = activePrice ? Number(activePrice.version) + 1 : 1;
+  const supersedesId = activePrice ? activePrice.id : null;
+
+  const { data: created, error: createErr } = await sb
+    .from("restaurant_prices")
+    .insert({
+      tenant_id: tenantId,
+      menu_item_id: menuItemId,
+      scope: "tenant",
+      property_id: null,
+      location_id: null,
+      price_list_id: null,
+      channel: null,
+      currency,
+      amount: recommendedPrice,
+      tax_inclusive: false,
+      version,
+      // Never 'active' — see file/function doc comments. Only a separate
+      // decidePrice() call, gated on pricing.approve, can ever publish this.
+      status: "pending_approval",
+      effective_from: now(),
+      reason:
+        `${decision.decision_key} — ${finding.headline ?? "Intelligence pricing review"}`.slice(
+          0,
+          500,
+        ),
+      supersedes_id: supersedesId,
+      requires_approval: true,
+      created_by: userId,
+      correlation_id: action.id,
+    })
+    .select("id, status")
+    .single();
+  if (createErr) {
+    // Another concurrent execution of this exact action won the race and
+    // already inserted the (tenant_id, correlation_id)-unique row — same
+    // "already happened, not an error" recovery runProcurementDraftExecution
+    // uses for its own dedupe key.
+    if (String((createErr as any).code) === "23505") {
+      const { data: recovered, error: recoverErr } = await sb
+        .from("restaurant_prices")
+        .select("id, status")
+        .eq("tenant_id", tenantId)
+        .eq("correlation_id", action.id)
+        .maybeSingle();
+      if (recoverErr || !recovered) {
+        return failAction(
+          sb,
+          userId,
+          action,
+          tenantId,
+          module,
+          recoverErr?.message ??
+            "Concurrent insert detected but the winning pricing review could not be recovered.",
+        );
+      }
+      return finishMenuRepriceExecution(
+        sb,
+        userId,
+        action,
+        decision,
+        tenantId,
+        module,
+        recovered.id,
+        recovered.status,
+      );
+    }
+    return failAction(sb, userId, action, tenantId, module, createErr.message);
+  }
+  if (!created) {
+    return failAction(sb, userId, action, tenantId, module, "Failed to create the pricing review.");
+  }
+
+  // Same audit trail a human raising a price through the Pricing Centre
+  // gets — an intelligence-created pricing review is not invisible to
+  // whoever reviews restaurant_pricing_audit.
+  await recordPricingAudit(sb, userId, {
+    tenantId,
+    entityType: "price",
+    entityId: created.id,
+    action: "price.created",
+    previousValue: activePrice
+      ? { amount: activePrice.amount, currency: activePrice.currency }
+      : null,
+    newValue: { amount: recommendedPrice, currency, status: "pending_approval" },
+    reason: decision.decision_key,
+    metadata: { origin: "intelligence", decision_id: decision.id, action_id: action.id },
+  });
+
+  return finishMenuRepriceExecution(
+    sb,
+    userId,
+    action,
+    decision,
+    tenantId,
+    module,
+    created.id,
+    created.status,
+  );
+}
+
+/** Marks the action "executed" once its pricing review exists (fresh or recovered). */
+async function finishMenuRepriceExecution(
+  sb: Sb,
+  userId: string,
+  action: Record<string, any>,
+  decision: Record<string, any>,
+  tenantId: string,
+  module: string,
+  priceReviewId: string,
+  priceReviewStatus: string,
+): Promise<ExecuteRestaurantActionResult> {
+  await sb
+    .from("intelligence_actions")
+    .update({
+      status: "executed",
+      completed_at: now(),
+      result: { price_review_id: priceReviewId, price_review_status: priceReviewStatus },
+    })
+    .eq("id", action.id);
+
+  await emitActionEvent(sb, userId, {
+    type: "intelligence.action.executed",
+    tenantId,
+    module,
+    actionId: action.id,
+    decisionId: decision.id,
+    payload: { price_review_id: priceReviewId },
+  });
+
+  return {
+    actionId: action.id,
+    status: "executed",
+    executionResult: "price_review_created",
+    priceReviewId,
+    priceReviewStatus,
+  };
+}
+
 type Verifier = (
   sb: Sb,
   tenantId: string,
@@ -553,6 +901,7 @@ type Verifier = (
 const VERIFIERS: Record<string, Verifier> = {
   "restaurant.purchase.suggest": verifyProcurementDraft,
   "restaurant.inventory.replenish_review": verifyProcurementDraft,
+  "restaurant.menu.reprice_review": verifyMenuRepriceReview,
 };
 
 /**
@@ -754,5 +1103,142 @@ async function verifyProcurementDraft(
     expectedQuantity,
     actualQuantity,
     status: request.status,
+  };
+}
+
+/**
+ * I6 — independently re-reads the real `restaurant_prices` row a
+ * reprice_review action was supposed to produce. Confirms it exists, is
+ * scoped to the right tenant and menu item, carries the exact expected
+ * amount/currency, is correlated to this action, is not duplicated, and —
+ * critically — is still exactly `pending_approval`. That last check is not
+ * cosmetic: it is the one place this module positively confirms the
+ * governed effect stopped where it was supposed to and no live price was
+ * published. If the row somehow reads `active`, this reports failure rather
+ * than "verified" — an unintended live-price mutation must never be
+ * reported as a successful, harmless review.
+ */
+async function verifyMenuRepriceReview(
+  sb: Sb,
+  tenantId: string,
+  action: Record<string, any>,
+  decision: Record<string, any>,
+): Promise<VerifyRestaurantActionResult> {
+  const facts = (decision.context?.finding?.facts ?? {}) as Record<string, unknown>;
+  const expectedAmount =
+    typeof facts.recommendedPrice === "number" ? facts.recommendedPrice : undefined;
+  const expectedMenuItemId = typeof facts.menuItemId === "string" ? facts.menuItemId : undefined;
+  const expectedCurrency = typeof facts.currency === "string" ? facts.currency : undefined;
+
+  const expectedReviewId = action.result?.price_review_id as string | undefined;
+  if (!expectedReviewId) {
+    return {
+      verified: false,
+      outcome: "price_review_missing",
+      reason: "The action has no recorded price_review_id to verify.",
+    };
+  }
+
+  const { data: review, error } = await sb
+    .from("restaurant_prices")
+    .select("id, tenant_id, menu_item_id, correlation_id, amount, currency, status")
+    .eq("id", expectedReviewId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!review) {
+    return {
+      verified: false,
+      outcome: "price_review_missing",
+      entityType: "price_review",
+      entityId: expectedReviewId,
+      reason: `Pricing review ${expectedReviewId} does not exist.`,
+    };
+  }
+  if (review.tenant_id !== tenantId) {
+    return {
+      verified: false,
+      outcome: "tenant_mismatch",
+      entityType: "price_review",
+      entityId: review.id,
+      reason: "The pricing review belongs to a different tenant.",
+    };
+  }
+  if (review.correlation_id !== action.id) {
+    return {
+      verified: false,
+      outcome: "correlation_mismatch",
+      entityType: "price_review",
+      entityId: review.id,
+      reason: "The pricing review's correlation_id does not match this action.",
+    };
+  }
+  if (expectedMenuItemId && review.menu_item_id !== expectedMenuItemId) {
+    return {
+      verified: false,
+      outcome: "item_missing",
+      entityType: "price_review",
+      entityId: review.id,
+      reason: `Expected menu item ${expectedMenuItemId} but the review is for ${review.menu_item_id ?? "(none)"}.`,
+    };
+  }
+
+  const actualAmount = Number(review.amount);
+  if (expectedAmount != null && roundTo(actualAmount, 2) !== roundTo(expectedAmount, 2)) {
+    return {
+      verified: false,
+      outcome: "amount_mismatch",
+      entityType: "price_review",
+      entityId: review.id,
+      expectedAmount,
+      actualAmount,
+      reason: `Expected proposed price ${expectedAmount}, found ${actualAmount}.`,
+    };
+  }
+  if (expectedCurrency && review.currency !== expectedCurrency) {
+    return {
+      verified: false,
+      outcome: "currency_mismatch",
+      entityType: "price_review",
+      entityId: review.id,
+      reason: `Expected currency ${expectedCurrency}, found ${review.currency}.`,
+    };
+  }
+
+  if (review.status !== "pending_approval") {
+    return {
+      verified: false,
+      outcome: "unexpected_status",
+      entityType: "price_review",
+      entityId: review.id,
+      status: review.status,
+      reason: `Expected the review to remain "pending_approval" (governed, not yet published); found "${review.status}".`,
+    };
+  }
+
+  const { data: dupes, error: dupErr } = await sb
+    .from("restaurant_prices")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("correlation_id", action.id);
+  if (dupErr) throw new Error(dupErr.message);
+  const dupeCount = (dupes ?? []).length;
+  if (dupeCount > 1) {
+    return {
+      verified: false,
+      outcome: "duplicate_review",
+      entityType: "price_review",
+      entityId: review.id,
+      reason: `Found ${dupeCount} pricing reviews correlated to this action — expected exactly 1.`,
+    };
+  }
+
+  return {
+    verified: true,
+    outcome: "price_review_created",
+    entityType: "price_review",
+    entityId: review.id,
+    expectedAmount,
+    actualAmount,
+    status: review.status,
   };
 }

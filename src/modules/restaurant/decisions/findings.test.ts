@@ -13,8 +13,13 @@
  * the decision engine) didn't.
  */
 import { describe, expect, it } from "vitest";
-import { inventoryFindings } from "./findings";
-import type { InventoryIntelligence, PurchaseSuggestion } from "../intelligence/types";
+import { inventoryFindings, menuFindings } from "./findings";
+import type {
+  InventoryIntelligence,
+  MenuIntelligence,
+  MenuItemIntelligence,
+  PurchaseSuggestion,
+} from "../intelligence/types";
 
 function baseIntelligence(overrides: Partial<InventoryIntelligence> = {}): InventoryIntelligence {
   return {
@@ -207,5 +212,110 @@ describe("inventoryFindings — I5 replenishment facts", () => {
     expect(shortage).toBeDefined();
     expect(shortage!.facts.recommendedQuantity).toBeNull();
     expect(shortage!.facts.supplierId).toBeNull();
+  });
+});
+
+/**
+ * I6 — a menu_margin finding must carry the same structured, executable
+ * facts (menuItemId/currentPrice/recommendedPrice/currency) a
+ * purchasing_replenishment finding already carries for I5, so
+ * decisions/actions.server.ts's runMenuRepriceExecution can turn a
+ * "sells but does not carry its margin" recommendation into a real pricing
+ * review — without menuFindings recomputing the recommended price itself.
+ * It is only ever costing.server.ts's own suggested_price (surfaced by
+ * menu.server.ts), never a second interpretation.
+ */
+describe("menuFindings — I6 repricing facts", () => {
+  function baseMenuIntelligence(overrides: Partial<MenuIntelligence> = {}): MenuIntelligence {
+    return {
+      generatedAt: new Date().toISOString(),
+      windowDays: 30,
+      currency: "TZS",
+      totals: { revenue: 0, cost: 0, grossProfit: 0, itemsSold: 0 },
+      items: [],
+      profitDrivers: [],
+      marginLosers: [],
+      declining: [],
+      promote: [],
+      costReview: [],
+      insights: [],
+      ...overrides,
+    };
+  }
+
+  function menuItem(overrides: Partial<MenuItemIntelligence> = {}): MenuItemIntelligence {
+    return {
+      menuItemId: "item-1",
+      name: "UAT signature dish",
+      price: 12000,
+      quantitySold: 40,
+      revenue: 480000,
+      cost: 336000,
+      grossProfit: 144000,
+      marginPercent: 30,
+      foodCostPercent: 70,
+      trendPercent: -5,
+      classification: "puzzle",
+      needsCostReview: false,
+      costReviewReason: null,
+      promote: true,
+      recommendedPrice: null,
+      targetMarginPercent: null,
+      ...overrides,
+    };
+  }
+
+  it("enriches a margin-losing item with the exact recommendedPrice costing.server.ts already computed", () => {
+    const m = baseMenuIntelligence({
+      marginLosers: [menuItem({ recommendedPrice: 14000, targetMarginPercent: 65 })],
+      totals: { revenue: 480000, cost: 336000, grossProfit: 144000, itemsSold: 40 },
+    });
+
+    const findings = menuFindings(m);
+    const finding = findings.find((f) => f.key === "finding.menu.item-1");
+
+    expect(finding!.facts).toMatchObject({
+      menuItemId: "item-1",
+      currentPrice: 12000,
+      currency: "TZS",
+      recommendedPrice: 14000,
+      targetMarginPercent: 65,
+      priceDelta: 2000,
+    });
+    // Never made to look like an already-applied price.
+    expect(finding!.headline).toMatch(/current price/i);
+    expect(finding!.headline).toMatch(/proposed review price/i);
+    expect(finding!.headline).toMatch(/requires approval/i);
+    expect(finding!.evidence).toContainEqual({
+      label: "Recommended review price (not yet applied)",
+      value: "TZS 14,000",
+    });
+  });
+
+  it("leaves recommendedPrice/priceDelta null — never a guess — when no target margin has been set", () => {
+    const m = baseMenuIntelligence({
+      marginLosers: [menuItem({ recommendedPrice: null, targetMarginPercent: null })],
+    });
+
+    const findings = menuFindings(m);
+    const finding = findings.find((f) => f.key === "finding.menu.item-1");
+
+    expect(finding!.facts.recommendedPrice).toBeNull();
+    expect(finding!.facts.priceDelta).toBeNull();
+    // No price clause when there is nothing to recommend.
+    expect(finding!.headline).not.toMatch(/proposed review price/i);
+  });
+
+  it("always carries menuItemId/currentPrice/currency even without a recommendation, for downstream lookups", () => {
+    const m = baseMenuIntelligence({
+      declining: [menuItem({ menuItemId: "item-2", trendPercent: -25, recommendedPrice: null })],
+    });
+
+    const finding = menuFindings(m).find((f) => f.key === "finding.menu.item-2");
+    expect(finding!.facts).toMatchObject({
+      menuItemId: "item-2",
+      currentPrice: 12000,
+      currency: "TZS",
+    });
   });
 });

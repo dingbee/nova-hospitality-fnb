@@ -40,7 +40,8 @@ import type {
 
 type Sb = any;
 
-async function audit(
+/** Exported so decisions/actions.server.ts's I6 pricing-review executor writes to the exact same audit trail the human pricing UI does. */
+export async function audit(
   sb: Sb,
   userId: string,
   entry: {

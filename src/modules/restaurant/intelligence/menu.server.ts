@@ -36,7 +36,9 @@ export async function getMenuIntelligence(
     sb.from("restaurant_menu_items").select("id, name, price, currency, cost_price").eq("tenant_id", tenantId),
     sb
       .from("restaurant_recipe_costs")
-      .select("menu_item_id, total_cost, computed_at, food_cost_percent")
+      .select(
+        "menu_item_id, total_cost, computed_at, food_cost_percent, suggested_price, target_margin",
+      )
       .eq("tenant_id", tenantId),
   ]);
 
@@ -105,6 +107,15 @@ export async function getMenuIntelligence(
       }
     }
 
+    // I6: the recommended reprice price this exact recipe cost run already
+    // computed (computeRecipeCost's totalCost / (1 - targetMargin/100)) —
+    // never recomputed here. Only meaningful when someone has actually set a
+    // target margin for this item's recipe costing; otherwise there is
+    // nothing to recommend and this stays null rather than guessing one.
+    const recommendedPrice =
+      recipe?.suggested_price != null ? Number(recipe.suggested_price) : null;
+    const targetMarginPercent = recipe?.target_margin != null ? Number(recipe.target_margin) : null;
+
     return {
       menuItemId: mi.id,
       name: mi.name,
@@ -120,6 +131,8 @@ export async function getMenuIntelligence(
       needsCostReview: costReviewReason != null,
       costReviewReason,
       promote: false,
+      recommendedPrice,
+      targetMarginPercent,
     };
   });
 

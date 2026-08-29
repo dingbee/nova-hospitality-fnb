@@ -55,6 +55,9 @@ export interface MenuItemIntelligence {
   needsCostReview: boolean;
   costReviewReason: string | null;
   promote: boolean;
+  /** From the latest recipe cost run's own suggested_price (totalCost / (1 - targetMargin/100)) — null unless a target margin has actually been set for this item. Never recomputed outside costing.server.ts. */
+  recommendedPrice: number | null;
+  targetMarginPercent: number | null;
 }
 
 export interface MenuIntelligence {
