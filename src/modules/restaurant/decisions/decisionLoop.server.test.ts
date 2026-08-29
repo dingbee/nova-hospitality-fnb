@@ -14,10 +14,19 @@
  * decision.server.test.ts and actions.server.test.ts use for the rest of the
  * loop.
  *
- * restaurant_members is empty for every tenant in the live database (see I3,
- * reconfirmed in I4), so there is currently no way to run this same chain
- * over a real authenticated HTTP session — see the I4 report for what that
- * means for live UAT.
+ * `restaurant_members` was empty for every tenant in the live database as of
+ * I3/I4. That is no longer true: the NOVA_O12_SIM UAT tenant
+ * (cebda97b-33b1-43bf-932e-d7fee992a6c3, built in O9) now carries two real
+ * members (owner, purchasing_officer). Reconciled in the I-series baseline
+ * sprint: `runRestaurantDecisionPass` was run against a snapshot of that
+ * tenant's live data with its real member rows — `intelligence.read`
+ * authorized for both real members and was refused for a user with no
+ * membership row, and the pass correctly found 11 real findings across all
+ * four engines, recognized the one already-persisted purchasing decision as
+ * existing (decisionsRecorded stayed idempotent for it), and would persist
+ * the other 10 as new decisions. So this chain can now be run over a real
+ * authenticated session for this tenant — the blocker this comment
+ * described is resolved, not a live-UAT limitation going forward.
  */
 import { describe, expect, it } from "vitest";
 import { runRestaurantDecisionPass } from "./decisions.server";
