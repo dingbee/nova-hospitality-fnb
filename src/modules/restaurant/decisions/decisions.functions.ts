@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   executeRestaurantActionSchema,
+  orchestrateApprovedRestaurantActionsSchema,
   restaurantDecisionBoardSchema,
   runRestaurantDecisionPassSchema,
   verifyRestaurantActionSchema,
@@ -52,4 +53,21 @@ export const verifyRestaurantActionFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./actions.server");
     return mod.verifyRestaurantAction(context.supabase, context.userId, data);
+  });
+
+/**
+ * I11 — discovers this tenant's currently-approved restaurant actions from
+ * the database (never from anything the client supplies) and runs each one
+ * through the existing executeRestaurantActionFn logic above. A human still
+ * had to approve every action beforehand via decideDecision; this only
+ * closes the "who finds the approved ones" gap the per-row Execute button
+ * left open. Never calls verifyRestaurantAction — Act and Verify remain
+ * separate operations.
+ */
+export const orchestrateApprovedRestaurantActionsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => orchestrateApprovedRestaurantActionsSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./actions.server");
+    return mod.orchestrateApprovedRestaurantActions(context.supabase, context.userId, data);
   });

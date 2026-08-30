@@ -14,6 +14,7 @@ import {
   Tag,
   Users,
   XCircle,
+  Zap,
 } from "lucide-react";
 import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
@@ -25,6 +26,7 @@ import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWor
 import {
   executeRestaurantActionFn,
   getRestaurantDecisionBoardFn,
+  orchestrateApprovedRestaurantActionsFn,
   runRestaurantDecisionPassFn,
   verifyRestaurantActionFn,
 } from "@/modules/restaurant/decisions/decisions.functions";
@@ -66,6 +68,24 @@ const STATUS_TONE: Record<string, "neutral" | "success" | "warning" | "danger" |
   completed: "success",
   failed: "danger",
   expired: "neutral",
+};
+
+/**
+ * I11 — the underlying intelligence_actions row's own status, distinct from
+ * the decision's own status above (which stays "approved" for the whole
+ * Act/Verify lifecycle — see decisions.server.ts's loadStored doc comment).
+ * Shown so a manager can tell "approved, nothing has run yet" apart from
+ * "executed" or "verified" apart from "failed" without re-clicking a button.
+ */
+const ACTION_STATUS_TONE: Record<string, "neutral" | "success" | "warning" | "danger" | "info"> = {
+  approved: "info",
+  queued: "info",
+  executing: "warning",
+  executed: "success",
+  completed: "success",
+  verified: "success",
+  failed: "danger",
+  verification_failed: "danger",
 };
 
 /**
@@ -264,6 +284,28 @@ function RestaurantDecisionsPage() {
     onSuccess: invalidate,
   });
 
+  // I11 — discovers and executes this tenant's currently-approved actions in
+  // one authenticated call, exactly what a human clicking "Execute" on every
+  // approved row one at a time already does — never approves anything, never
+  // verifies anything, only dispatches through the same executeRestaurantAction
+  // the per-row button already calls.
+  const orchestrateFn = useServerFn(orchestrateApprovedRestaurantActionsFn);
+  const orchestrateActions = useAdminMutation({
+    mutationFn: () => orchestrateFn({ data: { tenantId: tenantId as string } }),
+    onSuccessToast: (result: any) => {
+      if (result.discovered === 0) return "No approved actions were waiting to execute.";
+      const failed = result.outcomes.filter((o: any) => o.status === "failed").length;
+      const already = result.outcomes.filter((o: any) => o.alreadyExecuted).length;
+      const executed = result.outcomes.length - failed - already;
+      const parts: string[] = [];
+      if (executed) parts.push(`${executed} executed`);
+      if (already) parts.push(`${already} already done`);
+      if (failed) parts.push(`${failed} failed`);
+      return `Executed approved actions — ${parts.join(", ")}.`;
+    },
+    onSuccess: invalidate,
+  });
+
   const data = board.data as any;
 
   return (
@@ -298,6 +340,15 @@ function RestaurantDecisionsPage() {
               disabled={!tenantId || runPass.isPending}
             >
               <Play className="mr-1.5 size-4" /> Run decision pass
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => orchestrateActions.mutate(undefined)}
+              disabled={!tenantId || orchestrateActions.isPending}
+              title="Runs every currently-approved action through the existing executor — the same effect as clicking Execute on each approved row below, done in one call. Never approves anything itself."
+            >
+              <Zap className="mr-1.5 size-4" /> Execute approved actions
             </Button>
           </div>
         }
@@ -377,14 +428,31 @@ function RestaurantDecisionsPage() {
                     <p className="font-medium">{d.title}</p>
                     <p className="mt-0.5 text-xs text-muted-foreground">{d.trigger}</p>
                   </div>
-                  <span className="flex items-center gap-2">
+                  <span className="flex flex-wrap items-center gap-2">
                     <StatusChip tone={STATUS_TONE[d.status] ?? "neutral"}>{d.status}</StatusChip>
                     <StatusChip tone={RISK_TONE[d.riskLevel] ?? "neutral"}>
                       {d.riskLevel} risk
                     </StatusChip>
+                    {d.action ? (
+                      <StatusChip tone={ACTION_STATUS_TONE[d.action.status] ?? "neutral"}>
+                        action: {d.action.status}
+                      </StatusChip>
+                    ) : null}
                   </span>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">{d.reasoning?.whySelected}</p>
+                {d.action?.failureReason ? (
+                  <p className="mt-1 text-xs text-destructive">
+                    Action failed: {d.action.failureReason}
+                  </p>
+                ) : null}
+                {d.action?.status === "verification_failed" ? (
+                  <p className="mt-1 text-xs text-destructive">
+                    Verification did not confirm this action{" "}
+                    {d.action.verificationOutcome ? `(${d.action.verificationOutcome})` : ""} — it
+                    was NOT reported as verified.
+                  </p>
+                ) : null}
 
                 {d.planSteps?.length ? (
                   <ul className="mt-3 space-y-1 text-xs">

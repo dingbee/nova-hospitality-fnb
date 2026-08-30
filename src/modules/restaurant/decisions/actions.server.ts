@@ -1976,3 +1976,127 @@ async function verifyKitchenStaffingReview(
     status: review.status,
   };
 }
+
+/**
+ * I11 — the one genuine gap the audit found: nothing previously discovered
+ * approved actions on its own. `executeRestaurantAction` was already a
+ * complete, idempotent, concurrency-safe state machine (`guardedTransition`,
+ * `alreadyExecutedResult`, correlation-based crash recovery) — but every
+ * call required a client-supplied `actionId` from a per-row UI button. This
+ * function adds ONLY discovery + dispatch: it finds this tenant's real
+ * `approved` restaurant actions from the database and calls the existing,
+ * unmodified `executeRestaurantAction` for each one. It duplicates none of
+ * that executor's logic, and it never calls `verifyRestaurantAction` — Act
+ * and Verify stay two distinct, separately-triggerable operations, exactly
+ * as P10 established.
+ *
+ * Concurrency and idempotency are inherited, not reimplemented: two callers
+ * running this at the same time each discover the same approved rows and
+ * each call `executeRestaurantAction` for them, which races on the exact
+ * same `guardedTransition` (`UPDATE ... WHERE status = 'approved' ...
+ * RETURNING`) a single manual "Execute" click already goes through — only
+ * one side of the race performs each transition, and a loser that catches
+ * up mid-run recovers the winner's result rather than duplicating it.
+ *
+ * This function creates nothing, approves nothing, and expands no
+ * executor's authority — it is a discovery+fan-out shim over machinery
+ * that already existed and was already safe.
+ */
+export interface OrchestrateApprovedRestaurantActionsResult {
+  discovered: number;
+  outcomes: Array<
+    { actionId: string; decisionKey: string; actionType: string } & (
+      ExecuteRestaurantActionResult | { status: "failed"; failureReason: string }
+    )
+  >;
+}
+
+export async function orchestrateApprovedRestaurantActions(
+  sb: Sb,
+  userId: string,
+  input: { tenantId: string; limit?: number },
+): Promise<OrchestrateApprovedRestaurantActionsResult> {
+  // Same tenant-wide read gate "Run decision pass" / "Check for updates"
+  // already use — this is a discovery sweep over intelligence state, not a
+  // new authority. Every dispatched execution still passes through
+  // executeRestaurantAction's own assertActionScope and each executor's own
+  // capability check (purchase.request, pricing.manage, ...) independently.
+  await assertCapability(sb, userId, input.tenantId, "intelligence.read");
+  const limit = Math.min(Math.max(input.limit ?? 20, 1), 50);
+
+  // Real discovery, never a client-supplied list: which decisions belong to
+  // this tenant, then which of THEIR actions are genuinely "approved" right
+  // now. intelligence_actions carries no tenant_id of its own (0011) — its
+  // tenant is only ever established by joining back through decision_id,
+  // exactly like every other tenant-scoped read of this table.
+  const { data: decisionRows, error: decisionErr } = await sb
+    .from("intelligence_decisions")
+    .select("id, decision_key")
+    .eq("module", "restaurant")
+    .eq("tenant_id", input.tenantId);
+  if (decisionErr) throw new Error(decisionErr.message);
+  const decisionKeyById = new Map<string, string>(
+    ((decisionRows ?? []) as Array<{ id: string; decision_key: string }>).map((d) => [
+      d.id,
+      d.decision_key,
+    ]),
+  );
+  if (decisionKeyById.size === 0) return { discovered: 0, outcomes: [] };
+
+  const { data: actionRows, error: actionErr } = await sb
+    .from("intelligence_actions")
+    .select("id, decision_id, action_type, status")
+    .in("decision_id", Array.from(decisionKeyById.keys()))
+    .order("created_at", { ascending: true });
+  if (actionErr) throw new Error(actionErr.message);
+  // Discovery-eligible = "approved" (never yet attempted) or "failed" (a
+  // prior attempt hit a recoverable error — executeRestaurantAction's own
+  // RESUMABLE_STATUSES already treats "failed" as safely retryable; without
+  // including it here, a transient failure would only ever be retried by a
+  // human clicking the per-row Execute button again, not by this sweep).
+  // "queued"/"executing" are deliberately excluded — those are already
+  // being worked, by this call or a concurrent one, and re-dispatching them
+  // adds nothing (guardedTransition would just lose the race harmlessly).
+  // Filtered and bounded in JS rather than in the query: intelligence_actions
+  // is a low-cardinality governance table, not high-volume, and this avoids
+  // a second .in()-style filter alongside the decision_id scoping above.
+  const eligible = (
+    (actionRows ?? []) as Array<{
+      id: string;
+      decision_id: string;
+      action_type: string;
+      status: string;
+    }>
+  )
+    .filter((a) => a.status === "approved" || a.status === "failed")
+    .slice(0, limit);
+
+  const outcomes: OrchestrateApprovedRestaurantActionsResult["outcomes"] = [];
+  for (const row of eligible) {
+    const decisionKey = decisionKeyById.get(row.decision_id) ?? "";
+    try {
+      const result = await executeRestaurantAction(sb, userId, { actionId: row.id });
+      outcomes.push({
+        ...result,
+        actionId: row.id,
+        decisionKey,
+        actionType: row.action_type,
+      });
+    } catch (err) {
+      // An unsupported action type, or an executor-level authorization
+      // failure, throws before executeRestaurantAction writes anything —
+      // the row stays exactly "approved" (never silently dropped from
+      // discovery; the next sweep reports the same failure again until a
+      // human resolves it). Captured here, not swallowed.
+      outcomes.push({
+        actionId: row.id,
+        decisionKey,
+        actionType: row.action_type,
+        status: "failed",
+        failureReason: (err as Error).message,
+      });
+    }
+  }
+
+  return { discovered: eligible.length, outcomes };
+}

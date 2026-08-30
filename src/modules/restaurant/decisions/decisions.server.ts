@@ -18,13 +18,14 @@ import { getPurchasingIntelligence } from "../intelligence/purchasing.server";
 import { gatherFindings } from "./findings";
 import { buildRestaurantDecisions, restaurantDecisionHeadline } from "./restaurantDecisionEngine";
 import type {
+  RestaurantActionSummary,
   RestaurantDecisionBoard,
   RestaurantDecisionBoardInput,
   RestaurantDecisionPassResult,
   RestaurantFinding,
+  RestaurantStoredDecision,
   RunRestaurantDecisionPassInput,
 } from "./decision.types";
-import type { StoredDecision } from "@/modules/intelligence/decisions/decision.types";
 
 type Sb = any;
 
@@ -79,7 +80,7 @@ function stepRow(s: any) {
 }
 
 /** Persisted restaurant decisions for this tenant, newest first. */
-async function loadStored(sb: Sb, tenantId: string): Promise<StoredDecision[]> {
+async function loadStored(sb: Sb, tenantId: string): Promise<RestaurantStoredDecision[]> {
   const { data } = await sb
     .from("intelligence_decisions")
     .select("*")
@@ -89,6 +90,30 @@ async function loadStored(sb: Sb, tenantId: string): Promise<StoredDecision[]> {
     .limit(25);
   const rows = (data ?? []) as any[];
   if (rows.length === 0) return [];
+
+  // I11 — the owning action's own live status, batch-fetched the same way
+  // plans/plan_steps already are, so the UI can show real Executed/Verified/
+  // Failed state rather than only a moment-of-click toast. Read-only: never
+  // mutates intelligence_actions.
+  const actionIds = rows.map((r) => r.action_id).filter((id): id is string => Boolean(id));
+  const { data: actionRows } = actionIds.length
+    ? await sb
+        .from("intelligence_actions")
+        .select("id, status, failure_reason, verification_result")
+        .in("id", actionIds)
+    : { data: [] as any[] };
+  const actionById = new Map<string, RestaurantActionSummary>(
+    ((actionRows ?? []) as any[]).map((a) => [
+      a.id,
+      {
+        id: a.id,
+        status: a.status,
+        failureReason: a.failure_reason ?? null,
+        verified: a.verification_result?.verified ?? null,
+        verificationOutcome: a.verification_result?.outcome ?? null,
+      },
+    ]),
+  );
 
   const { data: plans } = await sb
     .from("intelligence_plans")
@@ -152,7 +177,8 @@ async function loadStored(sb: Sb, tenantId: string): Promise<StoredDecision[]> {
         steps: planSteps.map(stepRow),
       },
       planSteps: planSteps.map((s: any) => ({ id: s.id as string, ...stepRow(s) })),
-    } as StoredDecision;
+      action: row.action_id ? (actionById.get(row.action_id) ?? null) : null,
+    } as RestaurantStoredDecision;
   });
 }
 

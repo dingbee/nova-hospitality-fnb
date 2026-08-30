@@ -63,6 +63,23 @@ export interface RestaurantDecisionCandidate {
   decision: Decision;
 }
 
+/**
+ * I11 — the owning action's own live state, so the Decisions UI can show
+ * "Executed" / "Verified" / "Failed" persistently instead of only via a
+ * toast at the moment a button is clicked. A local addition on top of the
+ * Intelligence Core's own StoredDecision (untouched) — this table has no
+ * other reader that needs it.
+ */
+export interface RestaurantActionSummary {
+  id: string;
+  status: string;
+  failureReason: string | null;
+  verified: boolean | null;
+  verificationOutcome: string | null;
+}
+
+export type RestaurantStoredDecision = StoredDecision & { action: RestaurantActionSummary | null };
+
 export interface RestaurantDecisionBoard {
   generated_at: string;
   tenant_id: string;
@@ -70,7 +87,7 @@ export interface RestaurantDecisionBoard {
   headline: string;
   findings: RestaurantFinding[];
   candidates: RestaurantDecisionCandidate[];
-  stored: StoredDecision[];
+  stored: RestaurantStoredDecision[];
 }
 
 export interface RestaurantDecisionPassResult {
@@ -121,3 +138,12 @@ export const verifyRestaurantActionSchema = z.object({
   actionId: z.string().uuid(),
 });
 export type VerifyRestaurantActionInput = z.infer<typeof verifyRestaurantActionSchema>;
+
+/** I11 — tenant-wide discovery+dispatch over already-approved actions. Never accepts an action list from the client; the server discovers eligible rows itself. */
+export const orchestrateApprovedRestaurantActionsSchema = z.object({
+  tenantId: z.string().uuid(),
+  limit: z.number().int().min(1).max(50).default(20),
+});
+export type OrchestrateApprovedRestaurantActionsInput = z.infer<
+  typeof orchestrateApprovedRestaurantActionsSchema
+>;
