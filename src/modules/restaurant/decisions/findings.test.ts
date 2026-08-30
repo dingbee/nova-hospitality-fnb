@@ -13,12 +13,14 @@
  * the decision engine) didn't.
  */
 import { describe, expect, it } from "vitest";
-import { inventoryFindings, menuFindings } from "./findings";
+import { inventoryFindings, kitchenFindings, menuFindings } from "./findings";
 import type {
   InventoryIntelligence,
+  KitchenIntelligence,
   MenuIntelligence,
   MenuItemIntelligence,
   PurchaseSuggestion,
+  StationPerformance,
 } from "../intelligence/types";
 
 function baseIntelligence(overrides: Partial<InventoryIntelligence> = {}): InventoryIntelligence {
@@ -317,5 +319,72 @@ describe("menuFindings — I6 repricing facts", () => {
       currentPrice: 12000,
       currency: "TZS",
     });
+  });
+});
+
+describe("kitchenFindings — I7 workflow review facts", () => {
+  function baseKitchenIntelligence(
+    overrides: Partial<KitchenIntelligence> = {},
+  ): KitchenIntelligence {
+    return {
+      generatedAt: new Date().toISOString(),
+      windowDays: 30,
+      ticketsAnalysed: 0,
+      averagePrepMinutes: null,
+      previousAveragePrepMinutes: null,
+      trendPercent: null,
+      stations: [],
+      insights: [],
+      ...overrides,
+    };
+  }
+
+  function station(overrides: Partial<StationPerformance> = {}): StationPerformance {
+    return {
+      stationId: "station-1",
+      name: "Grill",
+      targetMinutes: 15,
+      tickets: 40,
+      averagePrepMinutes: 22,
+      peakPrepMinutes: 30,
+      delayedTickets: 10,
+      delayedPercent: 25,
+      overTarget: true,
+      dinnerPeakMinutes: 24,
+      ...overrides,
+    };
+  }
+
+  it("carries stationId/stationName — the structured identifier a downstream executor needs, mirroring I5/I6", () => {
+    const k = baseKitchenIntelligence({ stations: [station()] });
+    const finding = kitchenFindings(k).find((f) => f.key === "finding.kitchen.station-1");
+    expect(finding).toBeDefined();
+    expect(finding!.facts).toMatchObject({
+      stationId: "station-1",
+      stationName: "Grill",
+      averagePrepMinutes: 22,
+      targetMinutes: 15,
+    });
+  });
+
+  it("never invents a station id — a station with no id-bearing data still only reports what it actually has", () => {
+    const k = baseKitchenIntelligence({
+      stations: [station({ stationId: "station-2", name: "Pastry", averagePrepMinutes: null })],
+    });
+    const finding = kitchenFindings(k).find((f) => f.key === "finding.kitchen.station-2");
+    expect(finding!.facts.stationId).toBe("station-2");
+    expect(finding!.facts.averagePrepMinutes).toBeNull();
+  });
+
+  it("only flags stations that are actually over target or heavily delayed", () => {
+    const k = baseKitchenIntelligence({
+      stations: [
+        station({ stationId: "station-ok", overTarget: false, delayedPercent: 5 }),
+        station({ stationId: "station-bad", overTarget: true }),
+      ],
+    });
+    const keys = kitchenFindings(k).map((f) => f.key);
+    expect(keys).toContain("finding.kitchen.station-bad");
+    expect(keys).not.toContain("finding.kitchen.station-ok");
   });
 });

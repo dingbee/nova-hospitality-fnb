@@ -101,6 +101,10 @@ function makeFakeSupabase(opts: {
   menuItem?: Record<string, any> | null;
   existingPriceReviews?: Array<Record<string, any>>;
   failPriceReviewInsert?: boolean;
+  // I7
+  station?: Record<string, any> | null;
+  existingReviews?: Array<Record<string, any>>;
+  failReviewInsert?: boolean;
 }) {
   const calls: Array<{
     table: string;
@@ -117,10 +121,12 @@ function makeFakeSupabase(opts: {
   const priceReviews: Record<string, any>[] = (opts.existingPriceReviews ?? []).map((r) => ({
     ...r,
   }));
+  const reviews: Record<string, any>[] = (opts.existingReviews ?? []).map((r) => ({ ...r }));
   const events: Record<string, any>[] = [];
   let requestInsertCount = 0;
   let lineInsertCount = 0;
   let priceReviewInsertCount = 0;
+  let reviewInsertCount = 0;
 
   function builder(table: string) {
     const filters: Record<string, unknown> = {};
@@ -212,6 +218,20 @@ function makeFakeSupabase(opts: {
           if (mode === "maybeSingle") return { data: matches[0] ?? null, error: null };
           return { data: matches, error: null };
         }
+        if (table === "restaurant_stations") {
+          const match = opts.station && matchesFilters(opts.station, filters) ? opts.station : null;
+          return { data: match, error: null };
+        }
+        if (table === "restaurant_operational_reviews") {
+          const matches = reviews.filter((r) => matchesFilters(r, filters));
+          if (mode === "single")
+            return {
+              data: matches[0] ?? null,
+              error: matches[0] ? null : { message: "not found" },
+            };
+          if (mode === "maybeSingle") return { data: matches[0] ?? null, error: null };
+          return { data: matches, error: null };
+        }
         if (table === "intelligence_events") {
           const matches = events.filter((r) => matchesFilters(r, filters));
           return { data: matches[0] ?? null, error: null };
@@ -290,6 +310,26 @@ function makeFakeSupabase(opts: {
       if (table === "restaurant_pricing_audit") {
         return { data: { id: "generated" }, error: null };
       }
+      if (table === "restaurant_operational_reviews") {
+        reviewInsertCount += 1;
+        if (opts.failReviewInsert) return { data: null, error: { message: "insert failed" } };
+        if (
+          reviews.some(
+            (r) => r.tenant_id === payload.tenant_id && r.correlation_id === payload.correlation_id,
+          )
+        ) {
+          return {
+            data: null,
+            error: { message: "duplicate key value violates unique constraint", code: "23505" },
+          };
+        }
+        const id =
+          reviewInsertCount === 1 ? "created-review-id" : `created-review-id-${reviewInsertCount}`;
+        const status = "pending_review";
+        const row = { id, status, ...payload };
+        reviews.push(row);
+        return { data: { id, status }, error: null };
+      }
       if (table === "intelligence_events") {
         if (opts.failEventInsert) return { data: null, error: { message: "event insert failed" } };
         const id = `event-${events.length + 1}`;
@@ -321,6 +361,8 @@ function makeFakeSupabase(opts: {
     getLineInsertCount: () => lineInsertCount,
     getPriceReviews: () => priceReviews,
     getPriceReviewInsertCount: () => priceReviewInsertCount,
+    getReviews: () => reviews,
+    getReviewInsertCount: () => reviewInsertCount,
   };
 }
 
@@ -1858,5 +1900,468 @@ describe("restaurant.menu.reprice_review — I6", () => {
         (c) => c.table.includes("restaurant_orders") || c.table.includes("restaurant_order_items"),
       ),
     ).toBe(false);
+  });
+});
+
+/**
+ * I7 — restaurant.kitchen.workflow_review closes the Act->Verify loop for
+ * kitchen_capacity findings the same way I5 closed it for shortage findings
+ * and I6 closed it for menu_margin findings: through the exact same
+ * executeRestaurantAction/verifyRestaurantAction dispatch, lifecycle,
+ * idempotency and capability-gate machinery. The governed effect is always a
+ * `pending_review` row in restaurant_operational_reviews — a recommendation
+ * for management to review, never an automatic staffing/station/routing
+ * change. Nothing here ever writes to restaurant_kitchen_tickets,
+ * restaurant_stations, restaurant_orders or restaurant_order_items.
+ */
+const STATION_ID = "bbbbbbbb-1111-2222-3333-444444444444";
+// kitchen.manage (owner/general_manager/restaurant_manager/chef/
+// kitchen_manager/bartender) is what this executor requires — deliberately
+// not a pricing or purchasing capability, proving the executor never needs
+// authority over anything but raising the review itself.
+const KITCHEN_MEMBER = [{ tenant_id: TENANT_A, user_id: MANAGER, role: "kitchen_manager" }];
+
+function kitchenFindingFacts(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    overTargetPercent: 62,
+    delayedPercent: 18,
+    tickets: 140,
+    dinnerPeak: true,
+    lowVolume: false,
+    stationId: STATION_ID,
+    stationName: "UAT hot kitchen",
+    averagePrepMinutes: 18,
+    targetMinutes: 12,
+    ...overrides,
+  };
+}
+
+function kitchenDecisionRow(overrides: Partial<Record<string, unknown>> = {}) {
+  return decisionRow({
+    decision_key: "restaurant.tenant.finding.kitchen",
+    context: {
+      finding: {
+        subject: "UAT hot kitchen",
+        headline: "UAT hot kitchen is running over target on ticket prep during dinner service",
+        detail: "62% of tickets exceeded the 12 minute target during dinner service.",
+        facts: kitchenFindingFacts(),
+      },
+    },
+    options: [
+      {
+        option: {
+          key: "review_workflow",
+          summary: "Review hot kitchen prep workflow and staffing during dinner service.",
+          tactics: [
+            "Review station staffing levels during peak dinner service",
+            "Re-check whether the current prep target is realistic for this station",
+          ],
+        },
+      },
+    ],
+    recommended_option_key: "review_workflow",
+    ...overrides,
+  });
+}
+
+const WORKFLOW_REVIEW_ACTION = actionRow({ action_type: "restaurant.kitchen.workflow_review" });
+
+function stationRow(overrides: Partial<Record<string, unknown>> = {}) {
+  return { id: STATION_ID, tenant_id: TENANT_A, name: "UAT hot kitchen", ...overrides };
+}
+
+describe("restaurant.kitchen.workflow_review — I7", () => {
+  it("creates a pending_review workflow review from a kitchen_capacity decision — a recommendation, not a kitchen change", async () => {
+    const fake = makeFakeSupabase({
+      action: WORKFLOW_REVIEW_ACTION,
+      decision: kitchenDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: WORKFLOW_REVIEW_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "executed",
+      executionResult: "workflow_review_created",
+      workflowReviewId: "created-review-id",
+      workflowReviewStatus: "pending_review",
+    });
+
+    const insert = fake.calls.find(
+      (c) => c.table === "restaurant_operational_reviews" && c.op === "insert",
+    );
+    expect(insert!.payload).toMatchObject({
+      tenant_id: TENANT_A,
+      decision_id: DECISION_ID,
+      review_type: "kitchen_workflow",
+      station_id: STATION_ID,
+      correlation_id: WORKFLOW_REVIEW_ACTION.id,
+    });
+    expect(insert!.payload.recommendation).toMatch(/staffing levels during peak/i);
+    // The one governed effect really did stop at a review record, not a
+    // staffing/station/routing change — no such table is ever touched.
+    expect(fake.getReviews()).toHaveLength(1);
+    expect(fake.getReviews()[0].status).toBe("pending_review");
+
+    const finalAction = fake.getAction();
+    expect(finalAction?.status).toBe("executed");
+    expect(finalAction?.result).toMatchObject({ workflow_review_id: "created-review-id" });
+  });
+
+  it("dispatches restaurant.kitchen.workflow_review to its own executor, distinct from procurement/reprice — proving the dead-end action type is now wired", async () => {
+    const fake = makeFakeSupabase({
+      action: WORKFLOW_REVIEW_ACTION,
+      decision: kitchenDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: WORKFLOW_REVIEW_ACTION.id,
+    });
+
+    expect(result.executionResult).toBe("workflow_review_created");
+    expect(fake.calls.some((c) => c.table === "restaurant_purchase_requests")).toBe(false);
+    expect(fake.calls.some((c) => c.table === "restaurant_prices")).toBe(false);
+  });
+
+  it("fails safely when the owning decision has no structured station data — never guesses a station", async () => {
+    const fake = makeFakeSupabase({
+      action: WORKFLOW_REVIEW_ACTION,
+      decision: kitchenDecisionRow({
+        context: {
+          finding: {
+            subject: "x",
+            headline: "x",
+            facts: kitchenFindingFacts({ stationId: undefined, stationName: undefined }),
+          },
+        },
+      }),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: WORKFLOW_REVIEW_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/no structured kitchen station data/i);
+    expect(fake.getReviewInsertCount()).toBe(0);
+  });
+
+  it("refuses a caller outside the decision's tenant", async () => {
+    const fake = makeFakeSupabase({
+      action: WORKFLOW_REVIEW_ACTION,
+      decision: kitchenDecisionRow(),
+      restaurantMembers: [{ tenant_id: TENANT_B, user_id: MANAGER, role: "kitchen_manager" }],
+      station: stationRow(),
+    });
+
+    await expect(
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: WORKFLOW_REVIEW_ACTION.id }),
+    ).rejects.toThrow(/do not belong to this restaurant tenant/i);
+    expect(fake.getReviewInsertCount()).toBe(0);
+  });
+
+  it("fails the action when the caller lacks kitchen.manage — an intelligence-decision approver is not automatically a kitchen authority", async () => {
+    const fake = makeFakeSupabase({
+      action: WORKFLOW_REVIEW_ACTION,
+      decision: kitchenDecisionRow(),
+      // purchasing_officer can approve procurement, but not kitchen operations.
+      restaurantMembers: [{ tenant_id: TENANT_A, user_id: MANAGER, role: "purchasing_officer" }],
+      station: stationRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: WORKFLOW_REVIEW_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/kitchen\.manage.*requires/i);
+    expect(fake.getReviewInsertCount()).toBe(0);
+  });
+
+  it("does not re-execute an already-executed workflow_review action (idempotent re-run)", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({
+        action_type: "restaurant.kitchen.workflow_review",
+        status: "executed",
+        result: { workflow_review_id: "already-there", workflow_review_status: "pending_review" },
+      }),
+      decision: kitchenDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: WORKFLOW_REVIEW_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "executed",
+      executionResult: "workflow_review_created",
+      workflowReviewId: "already-there",
+      alreadyExecuted: true,
+    });
+    expect(fake.getReviewInsertCount()).toBe(0);
+  });
+
+  it("protects against two concurrent executions of the same workflow_review action — exactly one review", async () => {
+    const fake = makeFakeSupabase({
+      action: WORKFLOW_REVIEW_ACTION,
+      decision: kitchenDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    const [a, b] = await Promise.all([
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: WORKFLOW_REVIEW_ACTION.id }),
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: WORKFLOW_REVIEW_ACTION.id }),
+    ]);
+
+    expect(fake.getReviews()).toHaveLength(1);
+    expect(a.workflowReviewId).toBe(b.workflowReviewId);
+    expect(fake.getAction()?.status).toBe("executed");
+  });
+
+  it("recovers an existing review by correlation_id after a partial failure, without duplicating it", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({
+        action_type: "restaurant.kitchen.workflow_review",
+        status: "executing",
+        executing_at: "2026-01-01T00:00:00.000Z",
+      }),
+      decision: kitchenDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+      existingReviews: [
+        {
+          id: "recovered-review-id",
+          tenant_id: TENANT_A,
+          decision_id: DECISION_ID,
+          station_id: STATION_ID,
+          correlation_id: WORKFLOW_REVIEW_ACTION.id,
+          status: "pending_review",
+        },
+      ],
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: WORKFLOW_REVIEW_ACTION.id,
+    });
+
+    expect(result).toMatchObject({ status: "executed", workflowReviewId: "recovered-review-id" });
+    expect(fake.getReviewInsertCount()).toBe(0);
+  });
+
+  it("verifies the resulting review independently of the executor's own cached result", async () => {
+    const executed = actionRow({
+      action_type: "restaurant.kitchen.workflow_review",
+      status: "executed",
+      result: { workflow_review_id: "review-verify-1", workflow_review_status: "pending_review" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: kitchenDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      existingReviews: [
+        {
+          id: "review-verify-1",
+          tenant_id: TENANT_A,
+          decision_id: DECISION_ID,
+          station_id: STATION_ID,
+          correlation_id: executed.id,
+          status: "pending_review",
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({
+      verified: true,
+      outcome: "workflow_review_created",
+      entityType: "workflow_review",
+      entityId: "review-verify-1",
+      status: "pending_review",
+    });
+  });
+
+  it("verification failure: reports a station mismatch rather than silently accepting a review for the wrong station", async () => {
+    const executed = actionRow({
+      action_type: "restaurant.kitchen.workflow_review",
+      status: "executed",
+      result: { workflow_review_id: "review-verify-2", workflow_review_status: "pending_review" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: kitchenDecisionRow(), // captured stationId: STATION_ID
+      restaurantMembers: KITCHEN_MEMBER,
+      existingReviews: [
+        {
+          id: "review-verify-2",
+          tenant_id: TENANT_A,
+          decision_id: DECISION_ID,
+          station_id: "cccccccc-1111-2222-3333-444444444444", // a different station
+          correlation_id: executed.id,
+          status: "pending_review",
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({ verified: false, outcome: "station_mismatch" });
+  });
+
+  it("verification failure: reports unexpected_status if the review somehow reads anything other than pending_review", async () => {
+    const executed = actionRow({
+      action_type: "restaurant.kitchen.workflow_review",
+      status: "executed",
+      result: { workflow_review_id: "review-verify-3", workflow_review_status: "pending_review" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: kitchenDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      existingReviews: [
+        {
+          id: "review-verify-3",
+          tenant_id: TENANT_A,
+          decision_id: DECISION_ID,
+          station_id: STATION_ID,
+          correlation_id: executed.id,
+          status: "dismissed", // no action type ever writes this today, but Verify must not assume
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({
+      verified: false,
+      outcome: "unexpected_status",
+      status: "dismissed",
+    });
+  });
+
+  it("detects a duplicate workflow review correlated to the same action", async () => {
+    const executed = actionRow({
+      action_type: "restaurant.kitchen.workflow_review",
+      status: "executed",
+      result: { workflow_review_id: "review-verify-4", workflow_review_status: "pending_review" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: kitchenDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      existingReviews: [
+        {
+          id: "review-verify-4",
+          tenant_id: TENANT_A,
+          decision_id: DECISION_ID,
+          station_id: STATION_ID,
+          correlation_id: executed.id,
+          status: "pending_review",
+        },
+        {
+          id: "review-verify-4b",
+          tenant_id: TENANT_A,
+          decision_id: DECISION_ID,
+          station_id: STATION_ID,
+          correlation_id: executed.id,
+          status: "pending_review",
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({ verified: false, outcome: "duplicate_review" });
+  });
+
+  it("never mutates restaurant_kitchen_tickets, restaurant_stations, restaurant_orders or restaurant_order_items — only ever inserts a review record", async () => {
+    const fake = makeFakeSupabase({
+      action: WORKFLOW_REVIEW_ACTION,
+      decision: kitchenDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    await executeRestaurantAction(fake.supabase, MANAGER, { actionId: WORKFLOW_REVIEW_ACTION.id });
+
+    const mutatingCalls = fake.calls.filter(
+      (c) =>
+        c.op !== "select" &&
+        c.table !== "intelligence_actions" &&
+        c.table !== "intelligence_events",
+    );
+    expect(mutatingCalls).toEqual([
+      expect.objectContaining({ table: "restaurant_operational_reviews", op: "insert" }),
+    ]);
+    // restaurant_stations is read (to confirm the station exists) but never
+    // written; the ticket/order tables are never touched at all.
+    expect(
+      fake.calls.some(
+        (c) =>
+          (c.table === "restaurant_stations" ||
+            c.table.includes("restaurant_kitchen_tickets") ||
+            c.table.includes("restaurant_orders") ||
+            c.table.includes("restaurant_order_items")) &&
+          c.op !== "select",
+      ),
+    ).toBe(false);
+    expect(
+      fake.calls.some(
+        (c) =>
+          c.table.includes("restaurant_kitchen_tickets") ||
+          c.table.includes("restaurant_orders") ||
+          c.table.includes("restaurant_order_items"),
+      ),
+    ).toBe(false);
+  });
+
+  it("existing purchase/replenishment/reprice action types remain unaffected by the I7 dispatch changes", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({ action_type: "restaurant.purchase.suggest" }),
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: "88888888-8888-8888-8888-888888888888",
+    });
+
+    expect(result).toMatchObject({
+      status: "executed",
+      executionResult: "procurement_request_created",
+    });
+    expect(fake.calls.some((c) => c.table === "restaurant_operational_reviews")).toBe(false);
+  });
+
+  it("preserves the proven approved -> queued -> executing -> executed lifecycle for the new action type", async () => {
+    const fake = makeFakeSupabase({
+      action: WORKFLOW_REVIEW_ACTION,
+      decision: kitchenDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    await executeRestaurantAction(fake.supabase, MANAGER, { actionId: WORKFLOW_REVIEW_ACTION.id });
+
+    const finalAction = fake.getAction();
+    expect(finalAction?.queued_at).toBeTruthy();
+    expect(finalAction?.executing_at).toBeTruthy();
+    expect(finalAction?.completed_at).toBeTruthy();
+    expect(finalAction?.status).toBe("executed");
+    expect(fake.getEvents().map((e) => e.event_type)).toEqual([
+      "intelligence.action.queued",
+      "intelligence.action.executing",
+      "intelligence.action.executed",
+    ]);
   });
 });

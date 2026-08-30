@@ -358,6 +358,14 @@ export function kitchenFindings(k: KitchenIntelligence): RestaurantFinding[] {
         tickets: s.tickets,
         dinnerPeak: s.dinnerPeakMinutes != null,
         lowVolume: s.tickets < 30,
+        // I7: a structured identifier a downstream executor needs to raise
+        // a governed workflow review — additive, mirrors I5's
+        // inventoryItemId and I6's menuItemId pattern. Previously only
+        // available embedded in `key` (a string, not meant for parsing).
+        stationId: s.stationId,
+        stationName: s.name,
+        averagePrepMinutes: s.averagePrepMinutes,
+        targetMinutes: s.targetMinutes,
       },
     });
   }

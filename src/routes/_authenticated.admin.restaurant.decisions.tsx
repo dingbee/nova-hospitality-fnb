@@ -3,7 +3,16 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { BadgeCheck, CheckCircle2, Play, Scale, ShoppingCart, Tag, XCircle } from "lucide-react";
+import {
+  BadgeCheck,
+  CheckCircle2,
+  ClipboardList,
+  Play,
+  Scale,
+  ShoppingCart,
+  Tag,
+  XCircle,
+} from "lucide-react";
 import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { EmptyState } from "@/components/os/EmptyState";
@@ -68,6 +77,21 @@ function isRepriceDecision(d: any): boolean {
   return (
     d.options?.find((o: any) => o.option.key === d.recommendedOptionKey)?.option.actionType ===
     "restaurant.menu.reprice_review"
+  );
+}
+
+/**
+ * I7 — same pattern as isRepriceDecision above. A kitchen_capacity decision
+ * whose recommended option is a workflow_review must read as exactly what
+ * it is: NOVA raising a recommendation for management to review, never an
+ * automatic kitchen change. "Create workflow review" (not "Fix kitchen" or
+ * "Optimize kitchen") is the label that keeps that governance boundary
+ * visible in the UI itself, not just in code comments.
+ */
+function isKitchenWorkflowReviewDecision(d: any): boolean {
+  return (
+    d.options?.find((o: any) => o.option.key === d.recommendedOptionKey)?.option.actionType ===
+    "restaurant.kitchen.workflow_review"
   );
 }
 
@@ -173,7 +197,9 @@ function RestaurantDecisionsPage() {
     onSuccessToast: (data: any) =>
       data.executionResult === "price_review_created"
         ? "Pricing review created — it still needs a separate pricing approval before it can ever become the live price."
-        : "Procurement draft created — it still needs its own submission and approval.",
+        : data.executionResult === "workflow_review_created"
+          ? "Workflow review created — this is a recommendation for management to review. No kitchen staffing, station or routing configuration was changed."
+          : "Procurement draft created — it still needs its own submission and approval.",
     onSuccess: invalidate,
   });
   const verifyFn = useServerFn(verifyRestaurantActionFn);
@@ -183,7 +209,9 @@ function RestaurantDecisionsPage() {
       data.verified
         ? data.entityType === "price_review"
           ? "Verified — the pricing review matches the decision and is still awaiting a separate pricing approval."
-          : "Verified — the procurement draft matches the decision."
+          : data.entityType === "workflow_review"
+            ? "Verified — the workflow review matches the decision and remains a recommendation only."
+            : "Verified — the procurement draft matches the decision."
         : `Verification found an issue: ${data.reason ?? data.outcome}`,
     onSuccess: invalidate,
   });
@@ -363,6 +391,10 @@ function RestaurantDecisionsPage() {
                       {isRepriceDecision(d) ? (
                         <>
                           <Tag className="mr-1.5 size-4" /> Create pricing review
+                        </>
+                      ) : isKitchenWorkflowReviewDecision(d) ? (
+                        <>
+                          <ClipboardList className="mr-1.5 size-4" /> Create workflow review
                         </>
                       ) : (
                         <>

@@ -66,6 +66,7 @@ const SUPPORTED_ACTION_TYPES = new Set([
   "restaurant.purchase.suggest",
   "restaurant.inventory.replenish_review",
   "restaurant.menu.reprice_review",
+  "restaurant.kitchen.workflow_review",
 ]);
 
 /** A row in one of these states already ran to completion — never re-executed. */
@@ -85,12 +86,16 @@ const now = () => new Date().toISOString();
 export interface ExecuteRestaurantActionResult {
   actionId: string;
   status: "executed" | "failed" | "completed";
-  executionResult?: "procurement_request_created" | "price_review_created";
+  executionResult?:
+    "procurement_request_created" | "price_review_created" | "workflow_review_created";
   procurementRequestId?: string;
   procurementRequestStatus?: string;
   /** I6 — the restaurant_prices row id/status for a reprice_review action. Status is always "pending_approval" here; this executor never publishes a price. */
   priceReviewId?: string;
   priceReviewStatus?: string;
+  /** I7 — the restaurant_operational_reviews row id/status for a kitchen.workflow_review action. Status is always "pending_review" here; this executor never touches operational kitchen state. */
+  workflowReviewId?: string;
+  workflowReviewStatus?: string;
   failureReason?: string;
   /** True when a prior run already produced this result — nothing new happened. */
   alreadyExecuted?: boolean;
@@ -138,7 +143,9 @@ async function loadActionAndDecision(sb: Sb, actionId: string) {
 
   const { data: decision, error: decisionErr } = await sb
     .from("intelligence_decisions")
-    .select("id, tenant_id, module, decision_key, property_id, location_id, context")
+    .select(
+      "id, tenant_id, module, decision_key, property_id, location_id, context, options, recommended_option_key",
+    )
     .eq("id", action.decision_id)
     .single();
   if (decisionErr || !decision) throw new Error("Owning decision not found.");
@@ -201,6 +208,16 @@ function alreadyExecutedResult(action: Record<string, any>): ExecuteRestaurantAc
       executionResult: "price_review_created",
       priceReviewId: action.result.price_review_id,
       priceReviewStatus: action.result.price_review_status ?? "pending_approval",
+      alreadyExecuted: true,
+    };
+  }
+  if (action.result?.workflow_review_id) {
+    return {
+      actionId: action.id,
+      status,
+      executionResult: "workflow_review_created",
+      workflowReviewId: action.result.workflow_review_id,
+      workflowReviewStatus: action.result.workflow_review_status ?? "pending_review",
       alreadyExecuted: true,
     };
   }
@@ -328,9 +345,13 @@ export async function executeRestaurantAction(
     }
 
     if (action.status === "executing") {
-      return action.action_type === "restaurant.menu.reprice_review"
-        ? runMenuRepriceExecution(sb, userId, action, decision, tenantId, module)
-        : runProcurementDraftExecution(sb, userId, action, decision, tenantId, module);
+      if (action.action_type === "restaurant.menu.reprice_review") {
+        return runMenuRepriceExecution(sb, userId, action, decision, tenantId, module);
+      }
+      if (action.action_type === "restaurant.kitchen.workflow_review") {
+        return runKitchenWorkflowReviewExecution(sb, userId, action, decision, tenantId, module);
+      }
+      return runProcurementDraftExecution(sb, userId, action, decision, tenantId, module);
     }
 
     // Already executed by the competitor that won the race above.
@@ -885,6 +906,222 @@ async function finishMenuRepriceExecution(
   };
 }
 
+/**
+ * I7 — the governed effect for `restaurant.kitchen.workflow_review`: a
+ * `pending_review` row in `restaurant_operational_reviews` (see migration
+ * 0021's doc comment for why this table exists — the same
+ * unique(tenant_id, correlation_id) concurrency guarantee I5/I6 already
+ * lean on, which no existing table offered for a kitchen review). This is
+ * a recommendation, never a change: it never writes to
+ * restaurant_kitchen_tickets, restaurant_stations, restaurant_order_items,
+ * staffing, routing or recipes. A human reads the review and, if they
+ * agree, makes any actual change through the existing station/staffing
+ * tools this executor never touches.
+ */
+async function runKitchenWorkflowReviewExecution(
+  sb: Sb,
+  userId: string,
+  action: Record<string, any>,
+  decision: Record<string, any>,
+  tenantId: string,
+  module: string,
+): Promise<ExecuteRestaurantActionResult> {
+  const finding = (decision.context?.finding ?? {}) as {
+    subject?: string;
+    headline?: string;
+    detail?: string;
+    facts?: Record<string, unknown>;
+  };
+  const facts = finding.facts ?? {};
+  const stationId = facts.stationId;
+  const stationName = facts.stationName;
+
+  if (typeof stationId !== "string" || typeof stationName !== "string") {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The owning decision has no structured kitchen station data (stationId/stationName) — cannot raise a workflow review.",
+    );
+  }
+
+  // Idempotency first, before any capability or station check, so a retry
+  // of an already-completed action never re-runs (and never re-fails) those
+  // checks against data that may have moved on since.
+  const { data: existingByCorrelation, error: correlationErr } = await sb
+    .from("restaurant_operational_reviews")
+    .select("id, status")
+    .eq("tenant_id", tenantId)
+    .eq("correlation_id", action.id)
+    .maybeSingle();
+  if (correlationErr) {
+    return failAction(sb, userId, action, tenantId, module, correlationErr.message);
+  }
+  if (existingByCorrelation) {
+    return finishKitchenWorkflowReviewExecution(
+      sb,
+      userId,
+      action,
+      decision,
+      tenantId,
+      module,
+      existingByCorrelation.id,
+      existingByCorrelation.status,
+    );
+  }
+
+  // Intelligence-decision approval is not kitchen-operations authority: the
+  // human who approved this decision may not be the person entitled to
+  // raise a kitchen review. Checked here, on the actual governed table's
+  // own capability, exactly like I5 checks purchase.request and I6 checks
+  // pricing.manage rather than trusting the decision's own approval.
+  try {
+    await assertCapability(sb, userId, tenantId, "kitchen.manage");
+  } catch (err) {
+    return failAction(sb, userId, action, tenantId, module, (err as Error).message);
+  }
+
+  const { data: station, error: stationErr } = await sb
+    .from("restaurant_stations")
+    .select("id, tenant_id, name")
+    .eq("id", stationId)
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  if (stationErr) return failAction(sb, userId, action, tenantId, module, stationErr.message);
+  if (!station) {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The station this decision named does not exist for this tenant — refusing to raise a workflow review.",
+    );
+  }
+
+  const recommendedOption = ((decision.options ?? []) as any[]).find(
+    (o) => o.option?.key === decision.recommended_option_key,
+  );
+  const recommendation: string | null =
+    recommendedOption?.option?.tactics?.join("; ") ?? recommendedOption?.option?.summary ?? null;
+
+  const { data: created, error: createErr } = await sb
+    .from("restaurant_operational_reviews")
+    .insert({
+      tenant_id: tenantId,
+      property_id: decision.property_id ?? null,
+      location_id: decision.location_id ?? null,
+      decision_id: decision.id,
+      review_type: "kitchen_workflow",
+      station_id: stationId,
+      title: finding.headline ?? `Review ${stationName}'s workflow`,
+      detail: finding.detail ?? null,
+      recommendation,
+      facts,
+      created_by: userId,
+      correlation_id: action.id,
+    })
+    .select("id, status")
+    .single();
+  if (createErr) {
+    // Another concurrent execution of this exact action won the race and
+    // already inserted the (tenant_id, correlation_id)-unique row — same
+    // "already happened, not an error" recovery runProcurementDraftExecution
+    // and runMenuRepriceExecution use for their own dedupe keys.
+    if (String((createErr as any).code) === "23505") {
+      const { data: recovered, error: recoverErr } = await sb
+        .from("restaurant_operational_reviews")
+        .select("id, status")
+        .eq("tenant_id", tenantId)
+        .eq("correlation_id", action.id)
+        .maybeSingle();
+      if (recoverErr || !recovered) {
+        return failAction(
+          sb,
+          userId,
+          action,
+          tenantId,
+          module,
+          recoverErr?.message ??
+            "Concurrent insert detected but the winning workflow review could not be recovered.",
+        );
+      }
+      return finishKitchenWorkflowReviewExecution(
+        sb,
+        userId,
+        action,
+        decision,
+        tenantId,
+        module,
+        recovered.id,
+        recovered.status,
+      );
+    }
+    return failAction(sb, userId, action, tenantId, module, createErr.message);
+  }
+  if (!created) {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "Failed to create the workflow review.",
+    );
+  }
+
+  return finishKitchenWorkflowReviewExecution(
+    sb,
+    userId,
+    action,
+    decision,
+    tenantId,
+    module,
+    created.id,
+    created.status,
+  );
+}
+
+/** Marks the action "executed" once its workflow review exists (fresh or recovered). */
+async function finishKitchenWorkflowReviewExecution(
+  sb: Sb,
+  userId: string,
+  action: Record<string, any>,
+  decision: Record<string, any>,
+  tenantId: string,
+  module: string,
+  reviewId: string,
+  reviewStatus: string,
+): Promise<ExecuteRestaurantActionResult> {
+  await sb
+    .from("intelligence_actions")
+    .update({
+      status: "executed",
+      completed_at: now(),
+      result: { workflow_review_id: reviewId, workflow_review_status: reviewStatus },
+    })
+    .eq("id", action.id);
+
+  await emitActionEvent(sb, userId, {
+    type: "intelligence.action.executed",
+    tenantId,
+    module,
+    actionId: action.id,
+    decisionId: decision.id,
+    payload: { workflow_review_id: reviewId },
+  });
+
+  return {
+    actionId: action.id,
+    status: "executed",
+    executionResult: "workflow_review_created",
+    workflowReviewId: reviewId,
+    workflowReviewStatus: reviewStatus,
+  };
+}
+
 type Verifier = (
   sb: Sb,
   tenantId: string,
@@ -902,6 +1139,7 @@ const VERIFIERS: Record<string, Verifier> = {
   "restaurant.purchase.suggest": verifyProcurementDraft,
   "restaurant.inventory.replenish_review": verifyProcurementDraft,
   "restaurant.menu.reprice_review": verifyMenuRepriceReview,
+  "restaurant.kitchen.workflow_review": verifyKitchenWorkflowReview,
 };
 
 /**
@@ -1239,6 +1477,123 @@ async function verifyMenuRepriceReview(
     entityId: review.id,
     expectedAmount,
     actualAmount,
+    status: review.status,
+  };
+}
+
+/**
+ * I7 — independently re-reads the real `restaurant_operational_reviews` row
+ * a workflow_review action was supposed to produce. Confirms it exists, is
+ * scoped to the right tenant, is correlated to this action, references the
+ * expected decision and station, remains in the expected governed
+ * ("pending_review") state, and is not duplicated. Every value comes from a
+ * fresh database read, exactly like verifyProcurementDraft/
+ * verifyMenuRepriceReview — nothing here is inferred from the action's own
+ * cached result.
+ */
+async function verifyKitchenWorkflowReview(
+  sb: Sb,
+  tenantId: string,
+  action: Record<string, any>,
+  decision: Record<string, any>,
+): Promise<VerifyRestaurantActionResult> {
+  const facts = (decision.context?.finding?.facts ?? {}) as Record<string, unknown>;
+  const expectedStationId = typeof facts.stationId === "string" ? facts.stationId : undefined;
+
+  const expectedReviewId = action.result?.workflow_review_id as string | undefined;
+  if (!expectedReviewId) {
+    return {
+      verified: false,
+      outcome: "workflow_review_missing",
+      reason: "The action has no recorded workflow_review_id to verify.",
+    };
+  }
+
+  const { data: review, error } = await sb
+    .from("restaurant_operational_reviews")
+    .select("id, tenant_id, decision_id, station_id, correlation_id, status")
+    .eq("id", expectedReviewId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!review) {
+    return {
+      verified: false,
+      outcome: "workflow_review_missing",
+      entityType: "workflow_review",
+      entityId: expectedReviewId,
+      reason: `Workflow review ${expectedReviewId} does not exist.`,
+    };
+  }
+  if (review.tenant_id !== tenantId) {
+    return {
+      verified: false,
+      outcome: "tenant_mismatch",
+      entityType: "workflow_review",
+      entityId: review.id,
+      reason: "The workflow review belongs to a different tenant.",
+    };
+  }
+  if (review.correlation_id !== action.id) {
+    return {
+      verified: false,
+      outcome: "correlation_mismatch",
+      entityType: "workflow_review",
+      entityId: review.id,
+      reason: "The workflow review's correlation_id does not match this action.",
+    };
+  }
+  if (review.decision_id !== decision.id) {
+    return {
+      verified: false,
+      outcome: "decision_mismatch",
+      entityType: "workflow_review",
+      entityId: review.id,
+      reason: "The workflow review references a different decision.",
+    };
+  }
+  if (expectedStationId && review.station_id !== expectedStationId) {
+    return {
+      verified: false,
+      outcome: "station_mismatch",
+      entityType: "workflow_review",
+      entityId: review.id,
+      reason: `Expected station ${expectedStationId} but the review is for ${review.station_id ?? "(none)"}.`,
+    };
+  }
+
+  if (review.status !== "pending_review") {
+    return {
+      verified: false,
+      outcome: "unexpected_status",
+      entityType: "workflow_review",
+      entityId: review.id,
+      status: review.status,
+      reason: `Expected the review to remain "pending_review" (governed, recommendation only); found "${review.status}".`,
+    };
+  }
+
+  const { data: dupes, error: dupErr } = await sb
+    .from("restaurant_operational_reviews")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("correlation_id", action.id);
+  if (dupErr) throw new Error(dupErr.message);
+  const dupeCount = (dupes ?? []).length;
+  if (dupeCount > 1) {
+    return {
+      verified: false,
+      outcome: "duplicate_review",
+      entityType: "workflow_review",
+      entityId: review.id,
+      reason: `Found ${dupeCount} workflow reviews correlated to this action — expected exactly 1.`,
+    };
+  }
+
+  return {
+    verified: true,
+    outcome: "workflow_review_created",
+    entityType: "workflow_review",
+    entityId: review.id,
     status: review.status,
   };
 }
