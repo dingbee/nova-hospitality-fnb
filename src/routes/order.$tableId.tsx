@@ -71,8 +71,10 @@ import {
   clearStoredOrderId,
   readStoredOrderId,
   readStoredSessionToken,
+  readWelcomeSeen,
   writeStoredOrderId,
   writeStoredSessionToken,
+  writeWelcomeSeen,
 } from "@/modules/restaurant/selforder/selforder-recovery";
 import type { SalesLineModifier } from "@/modules/restaurant/sales/sales.server";
 
@@ -164,9 +166,16 @@ function GuestOrderPage() {
   // server-side on every submission and simply issues a fresh one if it's
   // missing, expired, or belongs to a session that's since closed.
   const [sessionToken, setSessionToken] = useState<string | null>(null);
+  // Whether this browser has already tapped past the branded welcome for
+  // this table. Read only after mount, same "hint only, never during the
+  // initial render" reasoning as storedOrderId above — it decides one UI
+  // moment (skip straight to the menu on reload) and never gates
+  // authorization, so a hydration mismatch here has no security meaning.
+  const [welcomeSeen, setWelcomeSeen] = useState(false);
   useEffect(() => {
     setStoredOrderId(readStoredOrderId(tableId));
     setSessionToken(readStoredSessionToken(tableId));
+    setWelcomeSeen(readWelcomeSeen(tableId));
   }, [tableId]);
 
   const dismissRecovery = () => {
@@ -381,6 +390,18 @@ function GuestOrderPage() {
     );
   }
 
+  if (!welcomeSeen) {
+    return (
+      <GuestWelcome
+        businessName={menu.data?.table.businessName ?? "our restaurant"}
+        onContinue={() => {
+          writeWelcomeSeen(tableId);
+          setWelcomeSeen(true);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background pb-28 text-foreground">
       <div className="sticky top-0 z-20 bg-background/95 pt-safe backdrop-blur">
@@ -388,7 +409,7 @@ function GuestOrderPage() {
           <div className="pt-3">
             <p className="eyebrow">Table {menu.data?.table.tableName}</p>
             <p className="font-display mt-0.5 text-xl leading-tight text-foreground">
-              {menu.data?.table.tenantName}
+              {menu.data?.table.businessName}
             </p>
           </div>
         </header>
@@ -591,6 +612,41 @@ function GuestOrderPage() {
  * (or the same guest starting a fresh round) must never be silently
  * dropped into someone else's in-progress order.
  */
+/**
+ * The first thing a guest sees after scanning the table QR — a warm,
+ * correctly branded welcome before the menu, not a bare product grid. Reuses
+ * the guest portal's existing design system (no new visual language) and
+ * needs nothing beyond the tenant's already-fetched businessName: no login,
+ * no AI call, no new query. If AI services or anything else are down this
+ * screen is unaffected — it renders the moment guestMenuFn's ordinary query
+ * resolves, exactly like every other guest screen already does.
+ */
+function GuestWelcome({
+  businessName,
+  onContinue,
+}: {
+  businessName: string;
+  onContinue: () => void;
+}) {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center pt-safe">
+      <span className="flex size-14 items-center justify-center rounded-full bg-primary/10">
+        <Sparkles className="size-7 text-primary" aria-hidden />
+      </span>
+      <p className="eyebrow">Welcome to</p>
+      <h1 className="font-display text-2xl text-foreground">{businessName}</h1>
+      <p className="max-w-xs text-sm text-muted-foreground">
+        We're delighted to have you with us. Take a look around and choose your favourites.
+      </p>
+      <div className="mt-3 flex w-full max-w-xs flex-col gap-2">
+        <Button className="min-h-12 rounded-full text-base" onClick={onContinue}>
+          Explore menu
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function RecoveryPrompt({
   onContinue,
   onStartNew,

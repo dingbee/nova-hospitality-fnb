@@ -58,6 +58,15 @@ export type GuestTableContext = {
   tableName: string;
   tenantId: string;
   tenantName: string;
+  /**
+   * The name a guest should actually be welcomed by — settings.business.
+   * tradingName when the operator has configured one (the existing "doing
+   * business as" field surfaced in BusinessPanel.tsx, e.g. legal name "X
+   * Hospitality Ltd" vs. trading name "Baobab Grove Lodge"), falling back to
+   * tenantName otherwise. No new setup field: this reads a field that
+   * already exists and is already editable by staff today.
+   */
+  businessName: string;
   propertyId: string | null;
   locationId: string | null;
   currency: string;
@@ -84,12 +93,15 @@ export async function resolveGuestTableContext(
   }
   const { data: tenant } = await sb
     .from("restaurant_tenants")
-    .select("id, name, status")
+    .select("id, name, status, settings")
     .eq("id", table.tenant_id)
     .maybeSingle();
   if (!tenant || tenant.status !== "active") {
     throw new Error("This table is not available for ordering.");
   }
+  const tradingName = (
+    (tenant.settings as { business?: { tradingName?: string } } | null)?.business?.tradingName ?? ""
+  ).trim();
   const currency = await (async () => {
     const { data } = await sb
       .from("restaurant_currencies")
@@ -106,6 +118,7 @@ export async function resolveGuestTableContext(
     tableName: table.name,
     tenantId: table.tenant_id,
     tenantName: tenant.name,
+    businessName: tradingName || tenant.name,
     propertyId: table.property_id ?? null,
     locationId: table.location_id ?? null,
     currency,

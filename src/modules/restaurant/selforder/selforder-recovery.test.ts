@@ -5,8 +5,10 @@ import {
   clearStoredSessionToken,
   readStoredOrderId,
   readStoredSessionToken,
+  readWelcomeSeen,
   writeStoredOrderId,
   writeStoredSessionToken,
+  writeWelcomeSeen,
   type KeyValueStorage,
 } from "./selforder-recovery";
 
@@ -157,6 +159,30 @@ describe("stored guest-session token — table scoping (O12)", () => {
     expect(() => writeStoredSessionToken("table-A", "session-token-123", null)).not.toThrow();
     expect(() => clearStoredSessionToken("table-A", null)).not.toThrow();
     expect(readStoredSessionToken("table-A", null)).toBeNull();
+  });
+});
+
+describe("welcome-seen hint — table scoping (Pre-I10 guest welcome)", () => {
+  it("defaults to not seen for a table nothing has been written for", () => {
+    const storage = new FakeStorage();
+    expect(readWelcomeSeen("table-A", storage)).toBe(false);
+  });
+
+  it("reads seen only after it has been written for that table", () => {
+    const storage = new FakeStorage();
+    writeWelcomeSeen("table-A", storage);
+    expect(readWelcomeSeen("table-A", storage)).toBe(true);
+  });
+
+  it("a different table's welcome-seen flag is independent — table B stays unseen when only table A was written", () => {
+    const storage = new FakeStorage();
+    writeWelcomeSeen("table-A", storage);
+    expect(readWelcomeSeen("table-B", storage)).toBe(false);
+  });
+
+  it("never throws when storage is unavailable — degrades to 'not seen', never crashes the page", () => {
+    expect(() => writeWelcomeSeen("table-A", null)).not.toThrow();
+    expect(readWelcomeSeen("table-A", null)).toBe(false);
   });
 });
 

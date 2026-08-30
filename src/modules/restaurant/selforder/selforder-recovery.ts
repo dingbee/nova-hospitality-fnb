@@ -23,6 +23,7 @@ export interface KeyValueStorage {
 
 const STORAGE_PREFIX = "nova.selforder.activeOrder.";
 const SESSION_STORAGE_PREFIX = "nova.selforder.session.";
+const WELCOME_STORAGE_PREFIX = "nova.selforder.welcomeSeen.";
 
 /** Table-scoped by construction — a key for table A can never collide with, or be read as, table B's. */
 function storageKey(tableId: string): string {
@@ -32,6 +33,11 @@ function storageKey(tableId: string): string {
 /** Table-scoped by construction, same as storageKey — a session token stored for table A is never read as table B's. */
 function sessionStorageKey(tableId: string): string {
   return `${SESSION_STORAGE_PREFIX}${tableId}`;
+}
+
+/** Table-scoped by construction, same as storageKey — welcomeSeen for table A never affects table B. */
+function welcomeStorageKey(tableId: string): string {
+  return `${WELCOME_STORAGE_PREFIX}${tableId}`;
 }
 
 function safeStorage(): KeyValueStorage | null {
@@ -123,6 +129,36 @@ export function clearStoredSessionToken(
     storage?.removeItem(sessionStorageKey(tableId));
   } catch {
     // See safeStorage.
+  }
+}
+
+/**
+ * Whether this browser has already shown the branded welcome screen for
+ * this table. A convenience flag only, entirely separate from the O12
+ * dining-session token: it decides a UI moment (skip straight to the menu
+ * on a reload), never guest authorization — resolveGuestTableContext is
+ * re-derived from the URL's tableId on every load regardless of this value.
+ */
+export function readWelcomeSeen(
+  tableId: string,
+  storage: KeyValueStorage | null = safeStorage(),
+): boolean {
+  try {
+    return storage?.getItem(welcomeStorageKey(tableId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Called once the guest taps past the welcome screen for this table. */
+export function writeWelcomeSeen(
+  tableId: string,
+  storage: KeyValueStorage | null = safeStorage(),
+): void {
+  try {
+    storage?.setItem(welcomeStorageKey(tableId), "1");
+  } catch {
+    // See safeStorage — a write failure is never surfaced to the guest.
   }
 }
 

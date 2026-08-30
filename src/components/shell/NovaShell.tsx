@@ -5,6 +5,8 @@ import { LogOut, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { usePrincipal } from "@/lib/rbac/usePermissions";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
+import { hasRestaurantCapability } from "@/modules/restaurant/core/permissions";
+import { StaffNovaPanel } from "@/modules/restaurant/staffnova/ui/StaffNovaPanel";
 import { activeItem, groupOf, visibleGroups } from "./navigation";
 import { CommandPalette } from "./CommandPalette";
 import { TopBar } from "./TopBar";
@@ -21,7 +23,18 @@ export function NovaShell({ children }: { children: ReactNode }) {
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [staffNovaOpen, setStaffNovaOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
+  // UI affordance only — askStaffNovaFn independently re-enforces
+  // intelligence.read server-side against the verified JWT userId on every
+  // request, so hiding/showing this button changes discoverability, never
+  // authorization.
+  const canAskStaffNova = hasRestaurantCapability(
+    workspace?.roles ?? [],
+    "intelligence.read",
+    workspace?.platformAdmin ?? false,
+  );
 
   const groups = useMemo(
     () => visibleGroups(principal?.permissions ?? []),
@@ -83,6 +96,8 @@ export function NovaShell({ children }: { children: ReactNode }) {
         roleSummary={roleSummary}
         onOpenPalette={() => setPaletteOpen(true)}
         onSignOut={signOut}
+        showAskNova={canAskStaffNova}
+        onOpenAskNova={() => setStaffNovaOpen(true)}
       />
 
       <div className="flex">
@@ -108,6 +123,14 @@ export function NovaShell({ children }: { children: ReactNode }) {
       </div>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={groups} />
+
+      {canAskStaffNova && workspace?.tenant && (
+        <StaffNovaPanel
+          open={staffNovaOpen}
+          onOpenChange={setStaffNovaOpen}
+          tenantId={workspace.tenant.id}
+        />
+      )}
     </div>
   );
 }

@@ -1,4 +1,11 @@
-import { Command as CommandIcon, LogOut, Menu, Search, UtensilsCrossed } from "lucide-react";
+import {
+  Command as CommandIcon,
+  LogOut,
+  Menu,
+  Search,
+  Sparkles,
+  UtensilsCrossed,
+} from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { PRODUCT } from "@/config/product";
 import { ThemeToggle } from "@/components/os/ThemeToggle";
@@ -13,6 +20,8 @@ export function TopBar({
   roleSummary,
   onOpenPalette,
   onSignOut,
+  showAskNova,
+  onOpenAskNova,
 }: {
   mobileOpen: boolean;
   onToggleMobile: () => void;
@@ -21,6 +30,9 @@ export function TopBar({
   roleSummary: string;
   onOpenPalette: () => void;
   onSignOut: () => void;
+  /** Restaurant-role UI affordance only (see permissions.ts) — the server independently re-enforces intelligence.read on every request regardless of whether this button is shown. */
+  showAskNova: boolean;
+  onOpenAskNova: () => void;
 }) {
   return (
     <header className="sticky top-0 z-30 border-b border-[color:var(--nova-line)] bg-[color:var(--nova-surface)]/90 backdrop-blur-xl">
@@ -58,6 +70,17 @@ export function TopBar({
         )}
 
         <div className="ml-auto flex items-center gap-2">
+          {showAskNova && (
+            <button
+              type="button"
+              onClick={onOpenAskNova}
+              className="nova-action inline-flex min-h-10 items-center gap-2 bg-[color:var(--nova-accent)]/10 px-3 text-xs font-medium text-[color:var(--nova-accent)]"
+            >
+              <Sparkles className="size-3.5" />
+              <span className="hidden sm:inline">Ask NOVA</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={onOpenPalette}

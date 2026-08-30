@@ -128,6 +128,46 @@ describe("resolveGuestTableContext", () => {
     ).rejects.toThrow(/not available/);
   });
 
+  it("businessName falls back to the tenant's legal name when no trading name is configured (Pre-I10)", async () => {
+    const ctx = await resolveGuestTableContext(fakeSb(baseRows) as any, "table-1");
+    expect(ctx.businessName).toBe("Demo Tenant");
+  });
+
+  it("businessName prefers settings.business.tradingName when the operator has configured one (Pre-I10)", async () => {
+    const rows = {
+      ...baseRows,
+      restaurant_tenants: [
+        {
+          id: "tenant-1",
+          name: "Demo Tenant Holdings Ltd",
+          status: "active",
+          settings: { business: { tradingName: "Baobab Grove Lodge" } },
+        },
+      ],
+    };
+    const ctx = await resolveGuestTableContext(fakeSb(rows) as any, "table-1");
+    expect(ctx.businessName).toBe("Baobab Grove Lodge");
+    // The legal/registered name is preserved unchanged alongside it — not
+    // overwritten by the trading name.
+    expect(ctx.tenantName).toBe("Demo Tenant Holdings Ltd");
+  });
+
+  it("businessName ignores a blank/whitespace-only trading name and falls back to the tenant name (Pre-I10)", async () => {
+    const rows = {
+      ...baseRows,
+      restaurant_tenants: [
+        {
+          id: "tenant-1",
+          name: "Demo Tenant",
+          status: "active",
+          settings: { business: { tradingName: "   " } },
+        },
+      ],
+    };
+    const ctx = await resolveGuestTableContext(fakeSb(rows) as any, "table-1");
+    expect(ctx.businessName).toBe("Demo Tenant");
+  });
+
   it("refuses a table whose tenant is no longer active", async () => {
     const rows = {
       ...baseRows,
@@ -226,6 +266,7 @@ const TABLE_1: GuestTableContext = {
   tableName: "Table 1",
   tenantId: "tenant-1",
   tenantName: "Demo Tenant",
+  businessName: "Demo Tenant",
   propertyId: "prop-1",
   locationId: "loc-1",
   currency: "USD",
