@@ -11,6 +11,7 @@ import {
   Scale,
   ShoppingCart,
   Tag,
+  Users,
   XCircle,
 } from "lucide-react";
 import { PageHeader } from "@/components/os/PageHeader";
@@ -92,6 +93,20 @@ function isKitchenWorkflowReviewDecision(d: any): boolean {
   return (
     d.options?.find((o: any) => o.option.key === d.recommendedOptionKey)?.option.actionType ===
     "restaurant.kitchen.workflow_review"
+  );
+}
+
+/**
+ * I8 — same pattern as isKitchenWorkflowReviewDecision above, for the
+ * sibling option (e.g. add_staff) the same kitchen_capacity finding can
+ * produce. "Create staffing review" (never "Add staff" or "Fix staffing")
+ * keeps this a management-review label, not a directive — the system has
+ * no shift/schedule/payroll data, so the review is workload evidence only.
+ */
+function isKitchenStaffingReviewDecision(d: any): boolean {
+  return (
+    d.options?.find((o: any) => o.option.key === d.recommendedOptionKey)?.option.actionType ===
+    "restaurant.kitchen.staffing_review"
   );
 }
 
@@ -199,7 +214,9 @@ function RestaurantDecisionsPage() {
         ? "Pricing review created — it still needs a separate pricing approval before it can ever become the live price."
         : data.executionResult === "workflow_review_created"
           ? "Workflow review created — this is a recommendation for management to review. No kitchen staffing, station or routing configuration was changed."
-          : "Procurement draft created — it still needs its own submission and approval.",
+          : data.executionResult === "staffing_review_created"
+            ? "Staffing review created — a management review based on kitchen workload evidence. No staff assignments or schedules were changed."
+            : "Procurement draft created — it still needs its own submission and approval.",
     onSuccess: invalidate,
   });
   const verifyFn = useServerFn(verifyRestaurantActionFn);
@@ -211,7 +228,9 @@ function RestaurantDecisionsPage() {
           ? "Verified — the pricing review matches the decision and is still awaiting a separate pricing approval."
           : data.entityType === "workflow_review"
             ? "Verified — the workflow review matches the decision and remains a recommendation only."
-            : "Verified — the procurement draft matches the decision."
+            : data.entityType === "staffing_review"
+              ? "Verified — the staffing review matches the decision and remains a recommendation only."
+              : "Verified — the procurement draft matches the decision."
         : `Verification found an issue: ${data.reason ?? data.outcome}`,
     onSuccess: invalidate,
   });
@@ -395,6 +414,10 @@ function RestaurantDecisionsPage() {
                       ) : isKitchenWorkflowReviewDecision(d) ? (
                         <>
                           <ClipboardList className="mr-1.5 size-4" /> Create workflow review
+                        </>
+                      ) : isKitchenStaffingReviewDecision(d) ? (
+                        <>
+                          <Users className="mr-1.5 size-4" /> Create staffing review
                         </>
                       ) : (
                         <>

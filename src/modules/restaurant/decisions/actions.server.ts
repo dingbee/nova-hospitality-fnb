@@ -35,6 +35,18 @@
  * Intelligence approving a decision. See `runMenuRepriceExecution` and
  * `verifyMenuRepriceReview` below.
  *
+ * I8 adds a fourth action type, `restaurant.kitchen.staffing_review`, and
+ * reuses I7's `restaurant_operational_reviews` table rather than a new one
+ * — the finding that proposes it is the exact same `kitchen_capacity`
+ * finding I7 reads, differing only in which option a human approved
+ * (`add_staff` vs `adjust_workflow`/`reallocate_stations`). The system has
+ * no shift/schedule/attendance/payroll data (only `restaurant_members` role
+ * assignments), so this executor never claims a staffing conclusion beyond
+ * the same workload evidence (tickets/delayed%/over-target%/prep minutes)
+ * I7 already reads — it records the engine's own recommendation text
+ * verbatim, never inventing a headcount or an HR claim. See
+ * `runKitchenStaffingReviewExecution` and `verifyKitchenStaffingReview`.
+ *
  * Only `decideDecision` (Intelligence Core governance, I2/I3) creates an
  * action, and only for a decision a restaurant tenant member has already
  * approved. This executor performs the action that approval authorized — it
@@ -67,6 +79,7 @@ const SUPPORTED_ACTION_TYPES = new Set([
   "restaurant.inventory.replenish_review",
   "restaurant.menu.reprice_review",
   "restaurant.kitchen.workflow_review",
+  "restaurant.kitchen.staffing_review",
 ]);
 
 /** A row in one of these states already ran to completion — never re-executed. */
@@ -87,7 +100,10 @@ export interface ExecuteRestaurantActionResult {
   actionId: string;
   status: "executed" | "failed" | "completed";
   executionResult?:
-    "procurement_request_created" | "price_review_created" | "workflow_review_created";
+    | "procurement_request_created"
+    | "price_review_created"
+    | "workflow_review_created"
+    | "staffing_review_created";
   procurementRequestId?: string;
   procurementRequestStatus?: string;
   /** I6 — the restaurant_prices row id/status for a reprice_review action. Status is always "pending_approval" here; this executor never publishes a price. */
@@ -96,6 +112,9 @@ export interface ExecuteRestaurantActionResult {
   /** I7 — the restaurant_operational_reviews row id/status for a kitchen.workflow_review action. Status is always "pending_review" here; this executor never touches operational kitchen state. */
   workflowReviewId?: string;
   workflowReviewStatus?: string;
+  /** I8 — the restaurant_operational_reviews row id/status for a kitchen.staffing_review action. Same table/status as I7's workflow review; distinguished only by review_type = "kitchen_staffing". */
+  staffingReviewId?: string;
+  staffingReviewStatus?: string;
   failureReason?: string;
   /** True when a prior run already produced this result — nothing new happened. */
   alreadyExecuted?: boolean;
@@ -218,6 +237,16 @@ function alreadyExecutedResult(action: Record<string, any>): ExecuteRestaurantAc
       executionResult: "workflow_review_created",
       workflowReviewId: action.result.workflow_review_id,
       workflowReviewStatus: action.result.workflow_review_status ?? "pending_review",
+      alreadyExecuted: true,
+    };
+  }
+  if (action.result?.staffing_review_id) {
+    return {
+      actionId: action.id,
+      status,
+      executionResult: "staffing_review_created",
+      staffingReviewId: action.result.staffing_review_id,
+      staffingReviewStatus: action.result.staffing_review_status ?? "pending_review",
       alreadyExecuted: true,
     };
   }
@@ -350,6 +379,9 @@ export async function executeRestaurantAction(
       }
       if (action.action_type === "restaurant.kitchen.workflow_review") {
         return runKitchenWorkflowReviewExecution(sb, userId, action, decision, tenantId, module);
+      }
+      if (action.action_type === "restaurant.kitchen.staffing_review") {
+        return runKitchenStaffingReviewExecution(sb, userId, action, decision, tenantId, module);
       }
       return runProcurementDraftExecution(sb, userId, action, decision, tenantId, module);
     }
@@ -1122,6 +1154,228 @@ async function finishKitchenWorkflowReviewExecution(
   };
 }
 
+/**
+ * I8 — the governed effect for `restaurant.kitchen.staffing_review`: a
+ * `pending_review` row in the same `restaurant_operational_reviews` table
+ * I7 uses, distinguished only by `review_type = "kitchen_staffing"`. No new
+ * table: this action is proposed from the exact same `kitchen_capacity`
+ * finding I7 reads (see optionCatalogue.ts's `kitchenOptions` — `add_staff`
+ * is just another option on the same finding, alongside `adjust_workflow`/
+ * `reallocate_stations`), so it needs the same facts (`stationId`/
+ * `stationName`) and the same idempotency/capability/station-exists
+ * guarantees, not a second implementation.
+ *
+ * The system has no shift/schedule/attendance/payroll data — only
+ * `restaurant_members` role assignments — so this never claims a staffing
+ * conclusion ("understaffed", "add N people") beyond the workload evidence
+ * (tickets/delayed%/over-target%/prep minutes) the finding already carries.
+ * `recommendation` below is the decision engine's own approved-option text,
+ * recorded verbatim; this executor never invents or upgrades it. It never
+ * writes to restaurant_members, staffing records, schedules, payroll,
+ * station assignments, or kitchen routing/configuration.
+ */
+async function runKitchenStaffingReviewExecution(
+  sb: Sb,
+  userId: string,
+  action: Record<string, any>,
+  decision: Record<string, any>,
+  tenantId: string,
+  module: string,
+): Promise<ExecuteRestaurantActionResult> {
+  const finding = (decision.context?.finding ?? {}) as {
+    subject?: string;
+    headline?: string;
+    detail?: string;
+    facts?: Record<string, unknown>;
+  };
+  const facts = finding.facts ?? {};
+  const stationId = facts.stationId;
+  const stationName = facts.stationName;
+
+  if (typeof stationId !== "string" || typeof stationName !== "string") {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The owning decision has no structured kitchen station data (stationId/stationName) — cannot raise a staffing review.",
+    );
+  }
+
+  // Idempotency first, before any capability or station check — identical
+  // ordering to runKitchenWorkflowReviewExecution and for the same reason.
+  const { data: existingByCorrelation, error: correlationErr } = await sb
+    .from("restaurant_operational_reviews")
+    .select("id, status")
+    .eq("tenant_id", tenantId)
+    .eq("correlation_id", action.id)
+    .maybeSingle();
+  if (correlationErr) {
+    return failAction(sb, userId, action, tenantId, module, correlationErr.message);
+  }
+  if (existingByCorrelation) {
+    return finishKitchenStaffingReviewExecution(
+      sb,
+      userId,
+      action,
+      decision,
+      tenantId,
+      module,
+      existingByCorrelation.id,
+      existingByCorrelation.status,
+    );
+  }
+
+  // Same capability as I7's workflow review — kitchen.manage — not a new
+  // "staffing" capability: this is still just "raise a kitchen operations
+  // review", never staffing/schedule authority. Checked against the actual
+  // governed table's capability, not trusted from the decision's approval.
+  try {
+    await assertCapability(sb, userId, tenantId, "kitchen.manage");
+  } catch (err) {
+    return failAction(sb, userId, action, tenantId, module, (err as Error).message);
+  }
+
+  const { data: station, error: stationErr } = await sb
+    .from("restaurant_stations")
+    .select("id, tenant_id, name")
+    .eq("id", stationId)
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  if (stationErr) return failAction(sb, userId, action, tenantId, module, stationErr.message);
+  if (!station) {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The station this decision named does not exist for this tenant — refusing to raise a staffing review.",
+    );
+  }
+
+  // The engine's own approved-option text (e.g. add_staff's tactics), never
+  // rewritten or strengthened into an invented headcount/HR conclusion.
+  const recommendedOption = ((decision.options ?? []) as any[]).find(
+    (o) => o.option?.key === decision.recommended_option_key,
+  );
+  const recommendation: string | null =
+    recommendedOption?.option?.tactics?.join("; ") ?? recommendedOption?.option?.summary ?? null;
+
+  const { data: created, error: createErr } = await sb
+    .from("restaurant_operational_reviews")
+    .insert({
+      tenant_id: tenantId,
+      property_id: decision.property_id ?? null,
+      location_id: decision.location_id ?? null,
+      decision_id: decision.id,
+      review_type: "kitchen_staffing",
+      station_id: stationId,
+      title: finding.headline ?? `Review ${stationName}'s staffing/workload`,
+      detail: finding.detail ?? null,
+      recommendation,
+      facts,
+      created_by: userId,
+      correlation_id: action.id,
+    })
+    .select("id, status")
+    .single();
+  if (createErr) {
+    // Same concurrent-winner recovery as I7 — the (tenant_id, correlation_id)
+    // unique constraint is what actually guarantees exactly one review.
+    if (String((createErr as any).code) === "23505") {
+      const { data: recovered, error: recoverErr } = await sb
+        .from("restaurant_operational_reviews")
+        .select("id, status")
+        .eq("tenant_id", tenantId)
+        .eq("correlation_id", action.id)
+        .maybeSingle();
+      if (recoverErr || !recovered) {
+        return failAction(
+          sb,
+          userId,
+          action,
+          tenantId,
+          module,
+          recoverErr?.message ??
+            "Concurrent insert detected but the winning staffing review could not be recovered.",
+        );
+      }
+      return finishKitchenStaffingReviewExecution(
+        sb,
+        userId,
+        action,
+        decision,
+        tenantId,
+        module,
+        recovered.id,
+        recovered.status,
+      );
+    }
+    return failAction(sb, userId, action, tenantId, module, createErr.message);
+  }
+  if (!created) {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "Failed to create the staffing review.",
+    );
+  }
+
+  return finishKitchenStaffingReviewExecution(
+    sb,
+    userId,
+    action,
+    decision,
+    tenantId,
+    module,
+    created.id,
+    created.status,
+  );
+}
+
+/** Marks the action "executed" once its staffing review exists (fresh or recovered). */
+async function finishKitchenStaffingReviewExecution(
+  sb: Sb,
+  userId: string,
+  action: Record<string, any>,
+  decision: Record<string, any>,
+  tenantId: string,
+  module: string,
+  reviewId: string,
+  reviewStatus: string,
+): Promise<ExecuteRestaurantActionResult> {
+  await sb
+    .from("intelligence_actions")
+    .update({
+      status: "executed",
+      completed_at: now(),
+      result: { staffing_review_id: reviewId, staffing_review_status: reviewStatus },
+    })
+    .eq("id", action.id);
+
+  await emitActionEvent(sb, userId, {
+    type: "intelligence.action.executed",
+    tenantId,
+    module,
+    actionId: action.id,
+    decisionId: decision.id,
+    payload: { staffing_review_id: reviewId },
+  });
+
+  return {
+    actionId: action.id,
+    status: "executed",
+    executionResult: "staffing_review_created",
+    staffingReviewId: reviewId,
+    staffingReviewStatus: reviewStatus,
+  };
+}
+
 type Verifier = (
   sb: Sb,
   tenantId: string,
@@ -1140,6 +1394,7 @@ const VERIFIERS: Record<string, Verifier> = {
   "restaurant.inventory.replenish_review": verifyProcurementDraft,
   "restaurant.menu.reprice_review": verifyMenuRepriceReview,
   "restaurant.kitchen.workflow_review": verifyKitchenWorkflowReview,
+  "restaurant.kitchen.staffing_review": verifyKitchenStaffingReview,
 };
 
 /**
@@ -1593,6 +1848,130 @@ async function verifyKitchenWorkflowReview(
     verified: true,
     outcome: "workflow_review_created",
     entityType: "workflow_review",
+    entityId: review.id,
+    status: review.status,
+  };
+}
+
+/**
+ * I8 — independently re-reads the real `restaurant_operational_reviews` row
+ * a staffing_review action was supposed to produce. Same checks as
+ * verifyKitchenWorkflowReview, plus a `review_type` check (a staffing
+ * review must actually read "kitchen_staffing", not another domain's
+ * review type sharing the same table) — the task's "review type is
+ * staffing" requirement. Every value comes from a fresh database read.
+ */
+async function verifyKitchenStaffingReview(
+  sb: Sb,
+  tenantId: string,
+  action: Record<string, any>,
+  decision: Record<string, any>,
+): Promise<VerifyRestaurantActionResult> {
+  const facts = (decision.context?.finding?.facts ?? {}) as Record<string, unknown>;
+  const expectedStationId = typeof facts.stationId === "string" ? facts.stationId : undefined;
+
+  const expectedReviewId = action.result?.staffing_review_id as string | undefined;
+  if (!expectedReviewId) {
+    return {
+      verified: false,
+      outcome: "staffing_review_missing",
+      reason: "The action has no recorded staffing_review_id to verify.",
+    };
+  }
+
+  const { data: review, error } = await sb
+    .from("restaurant_operational_reviews")
+    .select("id, tenant_id, decision_id, station_id, review_type, correlation_id, status")
+    .eq("id", expectedReviewId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!review) {
+    return {
+      verified: false,
+      outcome: "staffing_review_missing",
+      entityType: "staffing_review",
+      entityId: expectedReviewId,
+      reason: `Staffing review ${expectedReviewId} does not exist.`,
+    };
+  }
+  if (review.tenant_id !== tenantId) {
+    return {
+      verified: false,
+      outcome: "tenant_mismatch",
+      entityType: "staffing_review",
+      entityId: review.id,
+      reason: "The staffing review belongs to a different tenant.",
+    };
+  }
+  if (review.correlation_id !== action.id) {
+    return {
+      verified: false,
+      outcome: "correlation_mismatch",
+      entityType: "staffing_review",
+      entityId: review.id,
+      reason: "The staffing review's correlation_id does not match this action.",
+    };
+  }
+  if (review.decision_id !== decision.id) {
+    return {
+      verified: false,
+      outcome: "decision_mismatch",
+      entityType: "staffing_review",
+      entityId: review.id,
+      reason: "The staffing review references a different decision.",
+    };
+  }
+  if (review.review_type !== "kitchen_staffing") {
+    return {
+      verified: false,
+      outcome: "review_type_mismatch",
+      entityType: "staffing_review",
+      entityId: review.id,
+      reason: `Expected review_type "kitchen_staffing" but found "${review.review_type}".`,
+    };
+  }
+  if (expectedStationId && review.station_id !== expectedStationId) {
+    return {
+      verified: false,
+      outcome: "station_mismatch",
+      entityType: "staffing_review",
+      entityId: review.id,
+      reason: `Expected station ${expectedStationId} but the review is for ${review.station_id ?? "(none)"}.`,
+    };
+  }
+
+  if (review.status !== "pending_review") {
+    return {
+      verified: false,
+      outcome: "unexpected_status",
+      entityType: "staffing_review",
+      entityId: review.id,
+      status: review.status,
+      reason: `Expected the review to remain "pending_review" (governed, recommendation only); found "${review.status}".`,
+    };
+  }
+
+  const { data: dupes, error: dupErr } = await sb
+    .from("restaurant_operational_reviews")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("correlation_id", action.id);
+  if (dupErr) throw new Error(dupErr.message);
+  const dupeCount = (dupes ?? []).length;
+  if (dupeCount > 1) {
+    return {
+      verified: false,
+      outcome: "duplicate_review",
+      entityType: "staffing_review",
+      entityId: review.id,
+      reason: `Found ${dupeCount} staffing reviews correlated to this action — expected exactly 1.`,
+    };
+  }
+
+  return {
+    verified: true,
+    outcome: "staffing_review_created",
+    entityType: "staffing_review",
     entityId: review.id,
     status: review.status,
   };

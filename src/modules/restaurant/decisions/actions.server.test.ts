@@ -679,10 +679,12 @@ describe("executeRestaurantAction — Act", () => {
 
   it("refuses an action type this executor does not know how to run", async () => {
     const fake = makeFakeSupabase({
-      // restaurant.menu.reprice_review has an executor as of I6 (see the
-      // describe block far below) — this test needs a type this module
-      // genuinely still doesn't execute.
-      action: actionRow({ action_type: "restaurant.kitchen.staffing_review" }),
+      // restaurant.kitchen.staffing_review has an executor as of I8 (see
+      // the describe block far below) — this test needs a type this module
+      // genuinely still doesn't execute. restaurant.no_change is a
+      // deliberate no-op in the provider's `handles` list that never gets
+      // one.
+      action: actionRow({ action_type: "restaurant.no_change" }),
       decision: decisionRow(),
       restaurantMembers: OWNER_MEMBER,
     });
@@ -925,12 +927,12 @@ describe("verifyRestaurantAction — Verify", () => {
 
   it("reports verification unavailable for an action type with no verifier, and does not pretend it was verified", async () => {
     const fake = makeFakeSupabase({
-      // restaurant.inventory.replenish_review (I5) and
-      // restaurant.menu.reprice_review (I6) both have verifiers now — this
-      // test needs a type this module genuinely still doesn't execute, same
-      // as the "no executor registered" case above.
+      // restaurant.inventory.replenish_review (I5), restaurant.menu.reprice_review
+      // (I6) and restaurant.kitchen.staffing_review (I8) all have verifiers
+      // now — this test needs a type this module genuinely still doesn't
+      // execute, same as the "no executor registered" case above.
       action: actionRow({
-        action_type: "restaurant.kitchen.staffing_review",
+        action_type: "restaurant.no_change",
         status: "executed",
         result: { procurement_request_id: "n/a" },
       }),
@@ -1970,6 +1972,43 @@ function stationRow(overrides: Partial<Record<string, unknown>> = {}) {
   return { id: STATION_ID, tenant_id: TENANT_A, name: "UAT hot kitchen", ...overrides };
 }
 
+/**
+ * I8 — the exact same kitchen_capacity finding I7 reads (kitchenFindingFacts
+ * carries the only staffing-adjacent evidence the system has: tickets,
+ * delayed%, over-target%, prep minutes — no shift/schedule/payroll data
+ * exists anywhere). Only the approved option differs: `add_staff` instead
+ * of `review_workflow`/`adjust_workflow`.
+ */
+function staffingDecisionRow(overrides: Partial<Record<string, unknown>> = {}) {
+  return decisionRow({
+    decision_key: "restaurant.tenant.finding.kitchen",
+    context: {
+      finding: {
+        subject: "UAT hot kitchen",
+        headline: "UAT hot kitchen is running over target on ticket prep during dinner service",
+        detail: "62% of tickets exceeded the 12 minute target during dinner service.",
+        facts: kitchenFindingFacts(),
+      },
+    },
+    options: [
+      {
+        option: {
+          key: "add_staff",
+          summary: "Roster an additional commis or chef de partie for the dinner peak.",
+          tactics: [
+            "Roster additional cover for the peak service",
+            "Confirm the change with the head chef",
+          ],
+        },
+      },
+    ],
+    recommended_option_key: "add_staff",
+    ...overrides,
+  });
+}
+
+const STAFFING_REVIEW_ACTION = actionRow({ action_type: "restaurant.kitchen.staffing_review" });
+
 describe("restaurant.kitchen.workflow_review — I7", () => {
   it("creates a pending_review workflow review from a kitchen_capacity decision — a recommendation, not a kitchen change", async () => {
     const fake = makeFakeSupabase({
@@ -2362,6 +2401,486 @@ describe("restaurant.kitchen.workflow_review — I7", () => {
       "intelligence.action.queued",
       "intelligence.action.executing",
       "intelligence.action.executed",
+    ]);
+  });
+});
+
+/**
+ * I8 — restaurant.kitchen.staffing_review closes the Act->Verify loop for
+ * the sibling `add_staff` option on the exact same kitchen_capacity finding
+ * I7 already reads. The governed effect is the same restaurant_operational_
+ * reviews table I7 uses, distinguished only by review_type =
+ * "kitchen_staffing" — no new table, no new executor framework. The system
+ * has no shift/schedule/attendance/payroll data (only restaurant_members
+ * role assignments), so nothing here ever asserts a staffing conclusion
+ * beyond the same workload evidence (tickets/delayed%/over-target%/prep
+ * minutes) I7's facts already carry.
+ */
+describe("restaurant.kitchen.staffing_review — I8", () => {
+  it("1. creates a pending_review staffing review from a kitchen_capacity decision — a workload-evidence recommendation, not a staffing change", async () => {
+    const fake = makeFakeSupabase({
+      action: STAFFING_REVIEW_ACTION,
+      decision: staffingDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: STAFFING_REVIEW_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "executed",
+      executionResult: "staffing_review_created",
+      staffingReviewId: "created-review-id",
+      staffingReviewStatus: "pending_review",
+    });
+
+    const insert = fake.calls.find(
+      (c) => c.table === "restaurant_operational_reviews" && c.op === "insert",
+    );
+    expect(insert!.payload).toMatchObject({
+      tenant_id: TENANT_A,
+      decision_id: DECISION_ID,
+      review_type: "kitchen_staffing",
+      station_id: STATION_ID,
+      correlation_id: STAFFING_REVIEW_ACTION.id,
+    });
+    expect(fake.getReviews()).toHaveLength(1);
+    expect(fake.getReviews()[0].status).toBe("pending_review");
+
+    const finalAction = fake.getAction();
+    expect(finalAction?.status).toBe("executed");
+    expect(finalAction?.result).toMatchObject({ staffing_review_id: "created-review-id" });
+  });
+
+  it("2. dispatches restaurant.kitchen.staffing_review to its own executor, distinct from workflow_review/procurement/reprice", async () => {
+    const fake = makeFakeSupabase({
+      action: STAFFING_REVIEW_ACTION,
+      decision: staffingDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: STAFFING_REVIEW_ACTION.id,
+    });
+
+    expect(result.executionResult).toBe("staffing_review_created");
+    expect(fake.calls.some((c) => c.table === "restaurant_purchase_requests")).toBe(false);
+    expect(fake.calls.some((c) => c.table === "restaurant_prices")).toBe(false);
+  });
+
+  it("3. records the engine's own approved recommendation verbatim — never inventing a headcount or HR conclusion", async () => {
+    const fake = makeFakeSupabase({
+      action: STAFFING_REVIEW_ACTION,
+      decision: staffingDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    await executeRestaurantAction(fake.supabase, MANAGER, { actionId: STAFFING_REVIEW_ACTION.id });
+
+    const insert = fake.calls.find(
+      (c) => c.table === "restaurant_operational_reviews" && c.op === "insert",
+    );
+    // The exact tactics text from optionCatalogue.ts's add_staff option —
+    // not a rewritten or strengthened claim.
+    expect(insert!.payload.recommendation).toBe(
+      "Roster additional cover for the peak service; Confirm the change with the head chef",
+    );
+    expect(insert!.payload.title).toBe(
+      "UAT hot kitchen is running over target on ticket prep during dinner service",
+    );
+    expect(insert!.payload.facts).toMatchObject({
+      tickets: expect.any(Number),
+      delayedPercent: expect.any(Number),
+      overTargetPercent: expect.any(Number),
+    });
+    // No fact resembling a headcount, hours, or employee identity exists —
+    // there is nothing in the system to invent one from.
+    expect(insert!.payload.facts.staffCount).toBeUndefined();
+    expect(insert!.payload.facts.employeeId).toBeUndefined();
+  });
+
+  it("4. fails safely when the owning decision has no structured station data — never guesses a station", async () => {
+    const fake = makeFakeSupabase({
+      action: STAFFING_REVIEW_ACTION,
+      decision: staffingDecisionRow({
+        context: {
+          finding: {
+            subject: "x",
+            headline: "x",
+            facts: kitchenFindingFacts({ stationId: undefined, stationName: undefined }),
+          },
+        },
+      }),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: STAFFING_REVIEW_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/no structured kitchen station data/i);
+    expect(fake.getReviewInsertCount()).toBe(0);
+  });
+
+  it("5. refuses a caller outside the decision's tenant", async () => {
+    const fake = makeFakeSupabase({
+      action: STAFFING_REVIEW_ACTION,
+      decision: staffingDecisionRow(),
+      restaurantMembers: [{ tenant_id: TENANT_B, user_id: MANAGER, role: "kitchen_manager" }],
+      station: stationRow(),
+    });
+
+    await expect(
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: STAFFING_REVIEW_ACTION.id }),
+    ).rejects.toThrow(/do not belong to this restaurant tenant/i);
+    expect(fake.getReviewInsertCount()).toBe(0);
+  });
+
+  it("6. fails the action when the caller lacks kitchen.manage — an intelligence-decision approver is not automatically a kitchen authority", async () => {
+    const fake = makeFakeSupabase({
+      action: STAFFING_REVIEW_ACTION,
+      decision: staffingDecisionRow(),
+      restaurantMembers: [{ tenant_id: TENANT_A, user_id: MANAGER, role: "purchasing_officer" }],
+      station: stationRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: STAFFING_REVIEW_ACTION.id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/kitchen\.manage.*requires/i);
+    expect(fake.getReviewInsertCount()).toBe(0);
+  });
+
+  it("7. refuses a caller with no membership in this tenant at all (non-member, distinct from wrong-tenant)", async () => {
+    const fake = makeFakeSupabase({
+      action: STAFFING_REVIEW_ACTION,
+      decision: staffingDecisionRow(),
+      restaurantMembers: [], // never belonged to any tenant
+      station: stationRow(),
+    });
+
+    await expect(
+      executeRestaurantAction(fake.supabase, "00000000-0000-0000-0000-000000000000", {
+        actionId: STAFFING_REVIEW_ACTION.id,
+      }),
+    ).rejects.toThrow(/do not belong to this restaurant tenant/i);
+    expect(fake.getReviewInsertCount()).toBe(0);
+  });
+
+  it("8. does not re-execute an already-executed staffing_review action (idempotent re-run)", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({
+        action_type: "restaurant.kitchen.staffing_review",
+        status: "executed",
+        result: { staffing_review_id: "already-there", staffing_review_status: "pending_review" },
+      }),
+      decision: staffingDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: STAFFING_REVIEW_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "executed",
+      executionResult: "staffing_review_created",
+      staffingReviewId: "already-there",
+      alreadyExecuted: true,
+    });
+    expect(fake.getReviewInsertCount()).toBe(0);
+  });
+
+  it("9. protects against two concurrent executions of the same staffing_review action — exactly one review", async () => {
+    const fake = makeFakeSupabase({
+      action: STAFFING_REVIEW_ACTION,
+      decision: staffingDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    const [a, b] = await Promise.all([
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: STAFFING_REVIEW_ACTION.id }),
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: STAFFING_REVIEW_ACTION.id }),
+    ]);
+
+    expect(fake.getReviews()).toHaveLength(1);
+    expect((a as any).staffingReviewId).toBe((b as any).staffingReviewId);
+    expect(fake.getAction()?.status).toBe("executed");
+  });
+
+  it("10. recovers an existing review by correlation_id after a partial failure, without duplicating it", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({
+        action_type: "restaurant.kitchen.staffing_review",
+        status: "executing",
+        executing_at: "2026-01-01T00:00:00.000Z",
+      }),
+      decision: staffingDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+      existingReviews: [
+        {
+          id: "recovered-review-id",
+          tenant_id: TENANT_A,
+          decision_id: DECISION_ID,
+          review_type: "kitchen_staffing",
+          station_id: STATION_ID,
+          correlation_id: STAFFING_REVIEW_ACTION.id,
+          status: "pending_review",
+        },
+      ],
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: STAFFING_REVIEW_ACTION.id,
+    });
+
+    expect(result).toMatchObject({ status: "executed", staffingReviewId: "recovered-review-id" });
+    expect(fake.getReviewInsertCount()).toBe(0);
+  });
+
+  it("11. verifies the resulting review independently of the executor's own cached result", async () => {
+    const executed = actionRow({
+      action_type: "restaurant.kitchen.staffing_review",
+      status: "executed",
+      result: { staffing_review_id: "review-verify-1", staffing_review_status: "pending_review" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: staffingDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      existingReviews: [
+        {
+          id: "review-verify-1",
+          tenant_id: TENANT_A,
+          decision_id: DECISION_ID,
+          review_type: "kitchen_staffing",
+          station_id: STATION_ID,
+          correlation_id: executed.id,
+          status: "pending_review",
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({
+      verified: true,
+      outcome: "staffing_review_created",
+      entityType: "staffing_review",
+      entityId: "review-verify-1",
+      status: "pending_review",
+    });
+  });
+
+  it("12. verification failure: reports a review_type mismatch rather than accepting a differently-typed review", async () => {
+    const executed = actionRow({
+      action_type: "restaurant.kitchen.staffing_review",
+      status: "executed",
+      result: { staffing_review_id: "review-verify-2", staffing_review_status: "pending_review" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: staffingDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      existingReviews: [
+        {
+          id: "review-verify-2",
+          tenant_id: TENANT_A,
+          decision_id: DECISION_ID,
+          review_type: "kitchen_workflow", // wrong type — this action is a staffing review
+          station_id: STATION_ID,
+          correlation_id: executed.id,
+          status: "pending_review",
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({ verified: false, outcome: "review_type_mismatch" });
+  });
+
+  it("13. detects a duplicate staffing review correlated to the same action", async () => {
+    const executed = actionRow({
+      action_type: "restaurant.kitchen.staffing_review",
+      status: "executed",
+      result: { staffing_review_id: "review-verify-3", staffing_review_status: "pending_review" },
+    });
+    const fake = makeFakeSupabase({
+      action: executed,
+      decision: staffingDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      existingReviews: [
+        {
+          id: "review-verify-3",
+          tenant_id: TENANT_A,
+          decision_id: DECISION_ID,
+          review_type: "kitchen_staffing",
+          station_id: STATION_ID,
+          correlation_id: executed.id,
+          status: "pending_review",
+        },
+        {
+          id: "review-verify-3b",
+          tenant_id: TENANT_A,
+          decision_id: DECISION_ID,
+          review_type: "kitchen_staffing",
+          station_id: STATION_ID,
+          correlation_id: executed.id,
+          status: "pending_review",
+        },
+      ],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, { actionId: executed.id });
+
+    expect(result).toMatchObject({ verified: false, outcome: "duplicate_review" });
+  });
+
+  it("14. never mutates restaurant_kitchen_tickets, restaurant_stations, restaurant_members, restaurant_orders or restaurant_order_items — only ever inserts a review record", async () => {
+    const fake = makeFakeSupabase({
+      action: STAFFING_REVIEW_ACTION,
+      decision: staffingDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    await executeRestaurantAction(fake.supabase, MANAGER, { actionId: STAFFING_REVIEW_ACTION.id });
+
+    const mutatingCalls = fake.calls.filter(
+      (c) =>
+        c.op !== "select" &&
+        c.table !== "intelligence_actions" &&
+        c.table !== "intelligence_events",
+    );
+    expect(mutatingCalls).toEqual([
+      expect.objectContaining({ table: "restaurant_operational_reviews", op: "insert" }),
+    ]);
+    expect(
+      fake.calls.some(
+        (c) =>
+          (c.table === "restaurant_stations" ||
+            c.table === "restaurant_members" ||
+            c.table.includes("restaurant_kitchen_tickets") ||
+            c.table.includes("restaurant_orders") ||
+            c.table.includes("restaurant_order_items")) &&
+          c.op !== "select",
+      ),
+    ).toBe(false);
+  });
+
+  it("15. existing restaurant.purchase.suggest action remains unaffected by the I8 dispatch changes", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({ action_type: "restaurant.purchase.suggest" }),
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: "88888888-8888-8888-8888-888888888888",
+    });
+
+    expect(result).toMatchObject({
+      status: "executed",
+      executionResult: "procurement_request_created",
+    });
+  });
+
+  it("16. existing restaurant.inventory.replenish_review action remains unaffected by the I8 dispatch changes", async () => {
+    const fake = makeFakeSupabase({
+      action: REPLENISH_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPLENISH_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "executed",
+      executionResult: "procurement_request_created",
+    });
+  });
+
+  it("17. existing restaurant.menu.reprice_review action remains unaffected by the I8 dispatch changes", async () => {
+    const fake = makeFakeSupabase({
+      action: REPRICE_ACTION,
+      decision: repriceDecisionRow(),
+      restaurantMembers: PRICING_MEMBER,
+      menuItem: menuItemRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: REPRICE_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "executed",
+      executionResult: "price_review_created",
+    });
+  });
+
+  it("18. existing restaurant.kitchen.workflow_review action remains unaffected by the I8 dispatch changes", async () => {
+    const fake = makeFakeSupabase({
+      action: WORKFLOW_REVIEW_ACTION,
+      decision: kitchenDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: WORKFLOW_REVIEW_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "executed",
+      executionResult: "workflow_review_created",
+    });
+  });
+
+  it("19. preserves the proven approved -> queued -> executing -> executed -> verified lifecycle and events for the new action type", async () => {
+    const fake = makeFakeSupabase({
+      action: STAFFING_REVIEW_ACTION,
+      decision: staffingDecisionRow(),
+      restaurantMembers: KITCHEN_MEMBER,
+      station: stationRow(),
+    });
+
+    await executeRestaurantAction(fake.supabase, MANAGER, { actionId: STAFFING_REVIEW_ACTION.id });
+
+    const executedAction = fake.getAction();
+    expect(executedAction?.queued_at).toBeTruthy();
+    expect(executedAction?.executing_at).toBeTruthy();
+    expect(executedAction?.completed_at).toBeTruthy();
+    expect(executedAction?.status).toBe("executed");
+    expect(fake.getEvents().map((e) => e.event_type)).toEqual([
+      "intelligence.action.queued",
+      "intelligence.action.executing",
+      "intelligence.action.executed",
+    ]);
+
+    const verifyResult = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: STAFFING_REVIEW_ACTION.id,
+    });
+    expect(verifyResult.verified).toBe(true);
+    expect(fake.getAction()?.status).toBe("verified");
+    expect(fake.getEvents().map((e) => e.event_type)).toEqual([
+      "intelligence.action.queued",
+      "intelligence.action.executing",
+      "intelligence.action.executed",
+      "intelligence.action.verified",
     ]);
   });
 });
