@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Play,
+  RadioTower,
   Scale,
   ShoppingCart,
   Tag,
@@ -27,6 +28,7 @@ import {
   runRestaurantDecisionPassFn,
   verifyRestaurantActionFn,
 } from "@/modules/restaurant/decisions/decisions.functions";
+import { consumeRestaurantEventsFn } from "@/modules/restaurant/events/events.functions";
 import {
   decideDecisionFn,
   updatePlanStepFn,
@@ -195,6 +197,17 @@ function RestaurantDecisionsPage() {
     successMessage: "Decision pass complete",
     onSuccess: invalidate,
   });
+  const consumeFn = useServerFn(consumeRestaurantEventsFn);
+  const checkForUpdates = useAdminMutation({
+    mutationFn: () => consumeFn({ data: { tenantId: tenantId as string, windowDays } }),
+    onSuccessToast: (data: any) =>
+      data.failed
+        ? `Could not refresh intelligence from recent kitchen activity: ${data.failureReason}`
+        : data.refreshed
+          ? `Consumed ${data.consumed} kitchen ticket event${data.consumed === 1 ? "" : "s"} — intelligence refreshed.`
+          : "No new kitchen ticket activity since the last check.",
+    onSuccess: invalidate,
+  });
   const decide = useAdminMutation({
     mutationFn: (vars: { id: string; decision: "approved" | "rejected" | "completed" }) =>
       decideFn({ data: vars }),
@@ -254,6 +267,15 @@ function RestaurantDecisionsPage() {
                 {w}d
               </Button>
             ))}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => checkForUpdates.mutate(undefined)}
+              disabled={!tenantId || checkForUpdates.isPending}
+              title="Consume any new kitchen ticket activity and refresh intelligence if something changed. Never approves or executes anything on its own."
+            >
+              <RadioTower className="mr-1.5 size-4" /> Check for updates
+            </Button>
             <Button
               size="sm"
               onClick={() => runPass.mutate(undefined)}
