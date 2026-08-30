@@ -240,6 +240,7 @@ function WorkspaceDetail({
   const workspace = data?.workspace;
   const sources = (data?.sources as any[]) ?? [];
   const summary = data?.summary;
+  const unmappedColumns = (data?.unmappedColumns as any[]) ?? [];
 
   if (!workspace) return <SectionCard title="Loading…">{null}</SectionCard>;
 
@@ -304,6 +305,52 @@ function WorkspaceDetail({
         onChanged={invalidate}
         onBulkApprove={(domain, severity) => bulkApprove.mutate({ domain, severity })}
       />
+
+      {unmappedColumns.length > 0 && (
+        <SectionCard
+          title="Columns NoVA didn't recognise"
+          description="Nothing is lost — the original values are kept with every row — but nothing here maps to a NOVA field yet. Review these before committing."
+        >
+          <ul className="space-y-1 text-sm">
+            {unmappedColumns.map((u: any) => (
+              <li key={`${u.sheetName}-${u.domain}`}>
+                <span className="text-muted-foreground">
+                  {u.sheetName} ({IMPORT_DOMAIN_LABELS[u.domain as ImportDomain] ?? u.domain}):
+                </span>{" "}
+                {u.columns.join(", ")}
+              </li>
+            ))}
+          </ul>
+        </SectionCard>
+      )}
+
+      {summary?.byPlan && (
+        <SectionCard
+          title="Import plan"
+          description="What committing right now would actually do — before anything is written."
+        >
+          <ul className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <li className="rounded-md border p-2">
+              <span className="block text-xs text-muted-foreground">CREATE</span>
+              <span className="font-medium">{summary.byPlan.create} new record(s)</span>
+            </li>
+            <li className="rounded-md border p-2">
+              <span className="block text-xs text-muted-foreground">UPDATE / LINK</span>
+              <span className="font-medium">{summary.byPlan.update} existing record(s)</span>
+            </li>
+            <li className="rounded-md border p-2">
+              <span className="block text-xs text-muted-foreground">REVIEW</span>
+              <span className="font-medium">{summary.byPlan.review} row(s) need a decision</span>
+            </li>
+            <li className="rounded-md border p-2">
+              <span className="block text-xs text-muted-foreground">REJECT</span>
+              <span className="font-medium">
+                {summary.byPlan.reject} row(s) will not be imported
+              </span>
+            </li>
+          </ul>
+        </SectionCard>
+      )}
 
       <SectionCard
         title="Commit"
@@ -730,8 +777,11 @@ function StagedRecordsList({
   });
 
   const decide = useAdminMutation({
-    mutationFn: (vars: { recordId: string; decision: "approved" | "rejected" | "skipped" }) =>
-      decideFn({ data: { tenantId, ...vars } }),
+    mutationFn: (vars: {
+      recordId: string;
+      decision: "approved" | "rejected" | "skipped";
+      matchedEntityId?: string;
+    }) => decideFn({ data: { tenantId, ...vars } }),
     onSuccess: onChanged,
   });
 
@@ -747,75 +797,127 @@ function StagedRecordsList({
 
   return (
     <ul className="max-h-[32rem] divide-y overflow-y-auto text-sm">
-      {rows.map((r) => {
-        const meta = SEVERITY_META[r.severity] ?? SEVERITY_META.new_entity!;
-        const label =
-          r.mapped_data.name ??
-          r.mapped_data.menuItemName ??
-          r.mapped_data.itemName ??
-          r.mapped_data.productMenuItemName ??
-          r.mapped_data.code ??
-          "Row";
-        // For a variant/modifier/link row, the dish or group it attaches to
-        // is the fact a reviewer actually needs to see — not just the row's
-        // own name, which may otherwise look identical across many rows
-        // (e.g. every size variant sheet has a "name" of "Small"/"Large").
-        const linkedTo =
-          r.mapped_data.productMenuItemName ??
-          (r.domain === "product_station" ? r.mapped_data.menuItemName : null) ??
-          r.mapped_data.groupCode ??
-          r.mapped_data.modifierGroupCode ??
-          r.mapped_data.stationCode ??
-          null;
-        return (
-          <li key={r.id} className="flex flex-wrap items-start justify-between gap-2 py-2">
-            <span className="min-w-0">
-              <span className="font-medium">
-                {meta.icon} {label}
-              </span>
-              <span className="block text-xs text-muted-foreground">
-                {r.sheet_name ? `${r.sheet_name} · ` : ""}
-                {IMPORT_DOMAIN_LABELS[r.domain as ImportDomain]} · row {r.source_row} · {meta.label}
-                {r.match_confidence != null
-                  ? ` · ${Math.round(r.match_confidence * 100)}% match`
-                  : ""}
-                {linkedTo && linkedTo !== label ? ` · linked to "${linkedTo}"` : ""}
-              </span>
-              {r.validation_errors?.length > 0 && (
-                <span className="block text-xs text-muted-foreground">
-                  {r.validation_errors.join(" ")}
-                </span>
-              )}
-              {r.commit_error && (
-                <span className="block text-xs text-destructive">
-                  Commit failed: {r.commit_error}
-                </span>
-              )}
-            </span>
-            {r.decision === "pending" && !r.commit_error && (
-              <span className="flex shrink-0 items-center gap-1">
-                <Button
-                  size="sm"
-                  className="h-8"
-                  disabled={decide.isPending}
-                  onClick={() => decide.mutate({ recordId: r.id, decision: "approved" })}
-                >
-                  Approve
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8"
-                  disabled={decide.isPending}
-                  onClick={() => decide.mutate({ recordId: r.id, decision: "rejected" })}
-                >
-                  Reject
-                </Button>
-              </span>
-            )}
-          </li>
-        );
-      })}
+      {rows.map((r) => (
+        <StagedRowItem key={r.id} r={r} decide={decide} />
+      ))}
     </ul>
+  );
+}
+
+function StagedRowItem({
+  r,
+  decide,
+}: {
+  r: any;
+  decide: {
+    isPending: boolean;
+    mutate: (vars: {
+      recordId: string;
+      decision: "approved" | "rejected" | "skipped";
+      matchedEntityId?: string;
+    }) => void;
+  };
+}) {
+  const candidates: Array<{ id: string; label: string; score: number }> = r.match_candidates ?? [];
+  const [chosenId, setChosenId] = useState<string>(r.matched_entity_id ?? candidates[0]?.id ?? "");
+  const [showEvidence, setShowEvidence] = useState(false);
+
+  const meta = SEVERITY_META[r.severity] ?? SEVERITY_META.new_entity!;
+  const label =
+    r.mapped_data.name ??
+    r.mapped_data.menuItemName ??
+    r.mapped_data.itemName ??
+    r.mapped_data.productMenuItemName ??
+    r.mapped_data.code ??
+    "Row";
+  // For a variant/modifier/link row, the dish or group it attaches to is the
+  // fact a reviewer actually needs to see — not just the row's own name,
+  // which may otherwise look identical across many rows (e.g. every size
+  // variant sheet has a "name" of "Small"/"Large").
+  const linkedTo =
+    r.mapped_data.productMenuItemName ??
+    (r.domain === "product_station" ? r.mapped_data.menuItemName : null) ??
+    r.mapped_data.groupCode ??
+    r.mapped_data.modifierGroupCode ??
+    r.mapped_data.stationCode ??
+    null;
+
+  return (
+    <li className="flex flex-wrap items-start justify-between gap-2 py-2">
+      <span className="min-w-0">
+        <span className="font-medium">
+          {meta.icon} {label}
+        </span>
+        <span className="block text-xs text-muted-foreground">
+          {r.sheet_name ? `${r.sheet_name} · ` : ""}
+          {IMPORT_DOMAIN_LABELS[r.domain as ImportDomain]} · row {r.source_row} · {meta.label}
+          {r.match_confidence != null ? ` · ${Math.round(r.match_confidence * 100)}% match` : ""}
+          {linkedTo && linkedTo !== label ? ` · linked to "${linkedTo}"` : ""}
+        </span>
+        {r.validation_errors?.length > 0 && (
+          <span className="block text-xs text-muted-foreground">
+            {r.validation_errors.join(" ")}
+          </span>
+        )}
+        {r.commit_error && (
+          <span className="block text-xs text-destructive">Commit failed: {r.commit_error}</span>
+        )}
+        {r.match_evidence?.length > 0 && (
+          <button
+            type="button"
+            className="mt-0.5 block text-xs text-muted-foreground underline underline-offset-2"
+            onClick={() => setShowEvidence((v) => !v)}
+          >
+            {showEvidence ? "Hide" : "Why this match?"}
+          </button>
+        )}
+        {showEvidence && r.match_evidence?.length > 0 && (
+          <span className="block text-xs text-muted-foreground">{r.match_evidence.join(" ")}</span>
+        )}
+        {candidates.length > 1 && (
+          <span className="mt-1 flex items-center gap-1">
+            <span className="text-xs text-muted-foreground">Match:</span>
+            <select
+              className="h-7 rounded-md border bg-background px-1 text-xs"
+              value={chosenId}
+              onChange={(e) => setChosenId(e.target.value)}
+            >
+              {candidates.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label} ({Math.round(c.score * 100)}%)
+                </option>
+              ))}
+            </select>
+          </span>
+        )}
+      </span>
+      {r.decision === "pending" && !r.commit_error && (
+        <span className="flex shrink-0 items-center gap-1">
+          <Button
+            size="sm"
+            className="h-8"
+            disabled={decide.isPending}
+            onClick={() =>
+              decide.mutate({
+                recordId: r.id,
+                decision: "approved",
+                matchedEntityId: candidates.length > 1 ? chosenId : undefined,
+              })
+            }
+          >
+            Approve
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8"
+            disabled={decide.isPending}
+            onClick={() => decide.mutate({ recordId: r.id, decision: "rejected" })}
+          >
+            Reject
+          </Button>
+        </span>
+      )}
+    </li>
   );
 }

@@ -98,6 +98,29 @@ describe("stageInventoryItemRow", () => {
     const r = stageInventoryItemRow({}, ref);
     expect(r.severity).toBe("cannot_map");
   });
+
+  it("flags a row whose stated currency differs from the property's, without inventing a conversion", () => {
+    const r = stageInventoryItemRow(
+      { name: "Rice", averageCost: "12", currency: "USD" },
+      { ...ref, propertyCurrency: "TZS" },
+    );
+    expect(r.mappedData.averageCost).toBe(12);
+    expect(r.validationErrors.some((e) => e.includes("USD") && e.includes("TZS"))).toBe(true);
+    expect(r.severity).not.toBe("auto_ok");
+  });
+
+  it("does not flag a row whose currency matches the property's own (case-insensitive)", () => {
+    const r = stageInventoryItemRow(
+      { name: "Rice", averageCost: "12", currency: "tzs" },
+      { ...ref, propertyCurrency: "TZS" },
+    );
+    expect(r.validationErrors).toEqual([]);
+  });
+
+  it("is silent about currency when the row states none at all", () => {
+    const r = stageInventoryItemRow({ name: "Rice" }, { ...ref, propertyCurrency: "TZS" });
+    expect(r.validationErrors).toEqual([]);
+  });
 });
 
 describe("stageSupplierProductRow", () => {
@@ -494,5 +517,41 @@ describe("stageOpeningStockRow", () => {
     expect(r.mappedData.locationId).toBeNull();
     expect(r.validationErrors.some((e) => e.includes("Unknown Store"))).toBe(true);
     expect(r.severity).not.toBe("cannot_map");
+  });
+});
+
+describe("matchCandidates — the picker's own data, only where a row's own identity was actually ranked against alternatives", () => {
+  it("surfaces the top candidates for an ambiguous inventory match, most-similar first", () => {
+    const r = stageInventoryItemRow(
+      { name: "Chicken Breast" },
+      {
+        inventoryItems: [
+          { id: "item-a", sku: "A", name: "Chicken Breast Fillet", barcode: null, brand: null },
+          { id: "item-b", sku: "B", name: "Chicken Breast Whole", barcode: null, brand: null },
+        ],
+        units: UNITS,
+        categories: [],
+      },
+    );
+    expect(r.matchStatus).toBe("ambiguous");
+    expect(r.matchCandidates.length).toBeGreaterThanOrEqual(2);
+    expect(r.matchCandidates.map((c) => c.id)).toEqual(
+      expect.arrayContaining(["item-a", "item-b"]),
+    );
+    expect(r.matchCandidates[0]!.score).toBeGreaterThanOrEqual(r.matchCandidates[1]!.score);
+  });
+
+  it("is empty for a clean brand-new supplier — nothing to pick between", () => {
+    const r = stageSupplierRow({ name: "Totally New Supplier Ltd" }, { suppliers: [] });
+    expect(r.matchStatus).toBe("new_entity");
+    expect(r.matchCandidates).toEqual([]);
+  });
+
+  it("is empty for a relationship reference row (classifyExisting never carries a picker)", () => {
+    const r = stageProductStationRow(
+      { menuItemName: "Ghost Dish", stationCode: "KITCHEN" },
+      { menuItems: [], stations: [], existingProducts: [] },
+    );
+    expect(r.matchCandidates).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCsv, parseJson, parsePasted, parseXlsxBase64 } from "./parsers";
+import { detectHeaderRowIndex, parseCsv, parseJson, parsePasted, parseXlsxBase64 } from "./parsers";
 import * as XLSX from "xlsx";
 
 describe("parseCsv", () => {
@@ -89,5 +89,69 @@ describe("parseXlsxBase64", () => {
 
     const { sheets } = parseXlsxBase64(base64);
     expect(sheets.map((s) => s.sheetName)).toEqual(["Data"]);
+  });
+
+  it("finds the real header row beneath a title banner and a blank spacer row, and preserves the skipped rows", () => {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["NOVA Restaurant — Inventory Export, generated 2026-01-05"],
+      [],
+      ["Item Name", "SKU", "Reorder Point", "Unit Cost"],
+      ["Chicken Breast", "CHK-1", "8", "12000"],
+      ["Rice 5kg", "RCE-1", "20", "9500"],
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, "Inventory");
+    const base64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
+
+    const { sheets } = parseXlsxBase64(base64);
+    expect(sheets[0]!.headers).toEqual(["Item Name", "SKU", "Reorder Point", "Unit Cost"]);
+    expect(sheets[0]!.rows).toEqual([
+      { "Item Name": "Chicken Breast", SKU: "CHK-1", "Reorder Point": "8", "Unit Cost": "12000" },
+      { "Item Name": "Rice 5kg", SKU: "RCE-1", "Reorder Point": "20", "Unit Cost": "9500" },
+    ]);
+    expect(sheets[0]!.skippedRows?.length).toBe(1);
+    expect(sheets[0]!.skippedRows?.[0]?.[0]).toContain("NOVA Restaurant");
+  });
+
+  it("still defaults to row 0 for a sheet whose headers use entirely unfamiliar words — never disturbs the common case", () => {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["Preferred Brand", "Shelf Location", "Internal Department"],
+      ["Acme", "A3", "Kitchen"],
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, "Custom");
+    const base64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
+
+    const { sheets } = parseXlsxBase64(base64);
+    expect(sheets[0]!.headers).toEqual([
+      "Preferred Brand",
+      "Shelf Location",
+      "Internal Department",
+    ]);
+    expect(sheets[0]!.rows).toEqual([
+      { "Preferred Brand": "Acme", "Shelf Location": "A3", "Internal Department": "Kitchen" },
+    ]);
+  });
+});
+
+describe("detectHeaderRowIndex", () => {
+  it("returns 0 for an empty or tiny table rather than throwing", () => {
+    expect(detectHeaderRowIndex([])).toBe(0);
+    expect(detectHeaderRowIndex([["Name"]])).toBe(0);
+  });
+
+  it("picks the row with the strongest alias evidence within the scan window", () => {
+    const table = [
+      ["Stock List — March 2026"],
+      ["Description", "Unit", "Balance", "Buy Price"],
+      ["Coca-Cola 500ml", "ea", "48", "1200"],
+    ];
+    expect(detectHeaderRowIndex(table)).toBe(1);
+  });
+
+  it("does not look past the scan window (a header buried 9+ rows down is not found)", () => {
+    const preamble = Array.from({ length: 9 }, (_, i) => [`Note line ${i}`]);
+    const table = [...preamble, ["Item Name", "SKU"], ["Rice", "ITM-1"]];
+    expect(detectHeaderRowIndex(table)).toBe(0);
   });
 });

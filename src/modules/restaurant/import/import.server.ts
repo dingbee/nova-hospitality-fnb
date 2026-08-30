@@ -31,8 +31,10 @@ import {
   IMPORT_DOMAIN_COMMIT_ORDER,
   detectDomains,
   suggestFieldMapping,
+  type DomainGuess,
   type ImportDomain,
 } from "./domains";
+import { suggestDomainViaAi, suggestFieldViaAi } from "./ai-assist";
 import { applyMapping } from "./normalize";
 import {
   stageInventoryItemRow,
@@ -157,7 +159,7 @@ export async function getImportWorkspace(
       .order("created_at"),
     sb
       .from("restaurant_import_staged_records")
-      .select("id, domain, severity, decision, committed_at, commit_error")
+      .select("id, domain, match_status, severity, decision, committed_at, commit_error")
       .eq("tenant_id", input.tenantId)
       .eq("workspace_id", input.workspaceId),
   ]);
@@ -166,24 +168,80 @@ export async function getImportWorkspace(
   if (sErr) throw new Error(sErr.message);
   if (stErr) throw new Error(stErr.message);
 
+  // No source column NoVA couldn't place is ever silently dropped — this is
+  // the operator-visible record of exactly that: every column a reviewer
+  // saw and chose "— ignore this column —" for (or that had no confident
+  // alias at all), across every sheet this workspace has confirmed a
+  // mapping for. The source row itself (raw_data) keeps the actual values
+  // regardless; this is only the summary of *which columns* were left out.
+  const sourceIds = ((sources ?? []) as any[]).map((s) => s.id);
+  let unmappedColumns: Array<{ sheetName: string; domain: string; columns: string[] }> = [];
+  if (sourceIds.length > 0) {
+    const { data: mappings, error: mErr } = await sb
+      .from("restaurant_import_field_mappings")
+      .select("sheet_name, domain, mapping")
+      .eq("tenant_id", input.tenantId)
+      .in("source_id", sourceIds);
+    if (mErr) throw new Error(mErr.message);
+    unmappedColumns = ((mappings ?? []) as any[])
+      .map((m) => ({
+        sheetName: m.sheet_name,
+        domain: m.domain,
+        columns: (m.mapping as Array<{ sourceColumn: string; canonicalField: string | null }>)
+          .filter((f) => !f.canonicalField)
+          .map((f) => f.sourceColumn),
+      }))
+      .filter((m) => m.columns.length > 0);
+  }
+
   const rows = (staged ?? []) as any[];
   const byDomain: Record<string, number> = {};
   const bySeverity: Record<string, number> = {};
   const byDecision: Record<string, number> = {};
+  const byPlan = { create: 0, update: 0, review: 0, reject: 0 };
   let committed = 0;
   let failed = 0;
   for (const r of rows) {
     byDomain[r.domain] = (byDomain[r.domain] ?? 0) + 1;
     bySeverity[r.severity] = (bySeverity[r.severity] ?? 0) + 1;
     byDecision[r.decision] = (byDecision[r.decision] ?? 0) + 1;
+    byPlan[planBucketFor(r)] += 1;
     if (r.committed_at) committed += 1;
     if (r.commit_error) failed += 1;
   }
   return {
     workspace,
     sources: sources ?? [],
-    summary: { total: rows.length, byDomain, bySeverity, byDecision, committed, failed },
+    summary: { total: rows.length, byDomain, bySeverity, byDecision, byPlan, committed, failed },
+    unmappedColumns,
   };
+}
+
+/**
+ * The pre-commit import plan's own bucket for one staged row: what will
+ * actually happen to it if the workspace is committed as it stands right
+ * now. A row a human has already rejected, or that can't be safely mapped
+ * at all, is REJECT regardless of anything else. A row still waiting on a
+ * human because it's ambiguous or carries an unresolved finding (an
+ * unrecognised unit, a currency mismatch) is REVIEW — even when it would
+ * otherwise create a brand new entity, matching the plan example in the
+ * spec ("2 unknown units" is its own REVIEW line, not folded into CREATE).
+ * Everything else is either a brand new entity (CREATE) or a link to one
+ * that already exists (UPDATE).
+ */
+function planBucketFor(r: {
+  decision: string;
+  severity: string;
+  match_status: string;
+}): "create" | "update" | "review" | "reject" {
+  if (r.decision === "rejected" || r.severity === "cannot_map") return "reject";
+  if (
+    r.decision === "pending" &&
+    (r.severity === "ambiguous_match" || r.severity === "missing_field")
+  )
+    return "review";
+  if (r.match_status === "new_entity") return "create";
+  return "update";
 }
 
 /* ================= Source upload & parse ================= */
@@ -210,6 +268,51 @@ async function loadSourceRow(sb: Sb, tenantId: string, sourceId: string) {
 
 /** Marker thrown when a source has no configured extraction path (PDF/image) — never a fabricated result. */
 class ExtractionUnavailableError extends Error {}
+
+/**
+ * Only reaches for AI when the deterministic heuristic genuinely could not
+ * place a sheet (no guess at all, or its best guess is weak) — a confident
+ * heuristic result is never second-guessed. Appends the AI's own guess
+ * rather than replacing anything, and skips it outright if the AI happened
+ * to land on a domain the heuristic already suggested (nothing to add).
+ */
+async function withAiDomainAssist(
+  headers: readonly string[],
+  rows: readonly Record<string, string>[],
+  heuristicGuesses: DomainGuess[],
+): Promise<DomainGuess[]> {
+  const topConfidence = heuristicGuesses[0]?.confidence ?? 0;
+  if (topConfidence >= 0.5) return heuristicGuesses;
+  const ai = await suggestDomainViaAi(headers, rows);
+  if (!ai || heuristicGuesses.some((g) => g.domain === ai.domain)) return heuristicGuesses;
+  return [
+    ...heuristicGuesses,
+    { domain: ai.domain, confidence: ai.confidence, matchedHeaders: [], source: "ai" as const },
+  ];
+}
+
+/**
+ * The one property-level fact the commit path actually needs about money:
+ * what currency this property's own prices/costs are already in, so a
+ * source row is judged against the property's real setting rather than a
+ * literal hardcoded everywhere it commits a price. "TZS" is the same
+ * last-resort fallback already used throughout this codebase when a
+ * property has no currency configured at all — never invented here.
+ */
+async function resolvePropertyCurrency(
+  sb: Sb,
+  tenantId: string,
+  propertyId: string | null | undefined,
+): Promise<string> {
+  if (!propertyId) return "TZS";
+  const { data } = await sb
+    .from("restaurant_properties")
+    .select("currency")
+    .eq("tenant_id", tenantId)
+    .eq("id", propertyId)
+    .maybeSingle();
+  return (data as any)?.currency ?? "TZS";
+}
 
 async function parseSourceContent(sb: Sb, source: any): Promise<ParsedSource> {
   if (source.kind === "pdf" || source.kind === "image") {
@@ -306,12 +409,18 @@ export async function parseImportSource(
 
   try {
     const parsed = await parseSourceContent(sb, source);
-    const sheetSummaries = parsed.sheets.map((s) => ({
-      sheetName: s.sheetName,
-      headers: s.headers,
-      rowCount: s.rows.length,
-      detectedDomains: detectDomains(s.headers),
-    }));
+    const sheetSummaries = await Promise.all(
+      parsed.sheets.map(async (s) => {
+        const heuristicGuesses = detectDomains(s.headers);
+        const detectedDomains = await withAiDomainAssist(s.headers, s.rows, heuristicGuesses);
+        return {
+          sheetName: s.sheetName,
+          headers: s.headers,
+          rowCount: s.rows.length,
+          detectedDomains,
+        };
+      }),
+    );
     const { data, error } = await sb
       .from("restaurant_import_sources")
       .update({
@@ -352,9 +461,22 @@ export async function suggestImportMapping(
   const parsed = await parseSourceContent(sb, source);
   const sheet = parsed.sheets.find((s) => s.sheetName === input.sheetName);
   if (!sheet) throw new Error(`Sheet "${input.sheetName}" not found in this source.`);
+  const heuristicMapping = suggestFieldMapping(sheet.headers, input.domain);
+  const mapping = await Promise.all(
+    heuristicMapping.map(async (m) => {
+      if (m.canonicalField) return m;
+      const sampleValues = sheet.rows.slice(0, 5).map((r) => r[m.sourceColumn] ?? "");
+      const ai = await suggestFieldViaAi(m.sourceColumn, input.domain, sampleValues);
+      if (!ai) return m;
+      // Still not "auto": an AI-sourced guess gets exactly the same standing
+      // as an unmatched column always has — visible in the review table,
+      // never silently applied — the reviewer picks it (or doesn't).
+      return { ...m, canonicalField: ai.canonicalField, confidence: ai.confidence };
+    }),
+  );
   return {
     headers: sheet.headers,
-    mapping: suggestFieldMapping(sheet.headers, input.domain),
+    mapping,
     canonicalFields: CANONICAL_FIELDS[input.domain],
   };
 }
@@ -430,7 +552,7 @@ async function fetchRefData(sb: Sb, tenantId: string) {
 function stageRow(
   domain: ImportDomain,
   mappedRaw: Record<string, string>,
-  ref: Awaited<ReturnType<typeof fetchRefData>>,
+  ref: Awaited<ReturnType<typeof fetchRefData>> & { propertyCurrency?: string },
 ): StageResult {
   switch (domain) {
     case "supplier":
@@ -440,17 +562,20 @@ function stageRow(
         inventoryItems: ref.inventoryItems,
         units: ref.units,
         categories: ref.inventoryCategories,
+        propertyCurrency: ref.propertyCurrency,
       });
     case "supplier_product":
       return stageSupplierProductRow(mappedRaw, {
         suppliers: ref.suppliers,
         inventoryItems: ref.inventoryItems,
         existingSupplierProducts: ref.supplierProducts,
+        propertyCurrency: ref.propertyCurrency,
       });
     case "menu_item":
       return stageMenuItemRow(mappedRaw, {
         menuItems: ref.menuItems,
         categories: ref.menuCategories,
+        propertyCurrency: ref.propertyCurrency,
       });
     case "product_station":
       return stageProductStationRow(mappedRaw, {
@@ -491,6 +616,7 @@ function stageRow(
         inventoryItems: ref.inventoryItems,
         units: ref.units,
         locations: ref.locations,
+        propertyCurrency: ref.propertyCurrency,
       });
   }
 }
@@ -521,7 +647,18 @@ export async function confirmImportMapping(
   const sheet = parsed.sheets.find((s) => s.sheetName === input.sheetName);
   if (!sheet) throw new Error(`Sheet "${input.sheetName}" not found in this source.`);
 
-  const ref = await fetchRefData(sb, input.tenantId);
+  const { data: workspaceForCurrency } = await sb
+    .from("restaurant_import_workspaces")
+    .select("property_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", source.workspace_id)
+    .maybeSingle();
+  const propertyCurrency = await resolvePropertyCurrency(
+    sb,
+    input.tenantId,
+    (workspaceForCurrency as any)?.property_id,
+  );
+  const ref = { ...(await fetchRefData(sb, input.tenantId)), propertyCurrency };
 
   const { data: existingStaged, error: exErr } = await sb
     .from("restaurant_import_staged_records")
@@ -565,6 +702,7 @@ export async function confirmImportMapping(
       matched_entity_table: result.matchedEntityTable,
       match_confidence: result.matchConfidence,
       match_evidence: result.matchEvidence,
+      match_candidates: result.matchCandidates,
       validation_errors: result.validationErrors,
       severity: result.severity,
       decision: autoApprove ? "approved" : "pending",
@@ -736,6 +874,7 @@ async function commitInventoryItemRow(
   userId: string,
   tenantId: string,
   record: any,
+  propertyCurrency: string,
 ): Promise<string> {
   const m = record.mapped_data;
   const result = await upsertInventoryItem(sb, userId, {
@@ -752,7 +891,7 @@ async function commitInventoryItemRow(
     parLevel: m.parLevel ?? undefined,
     reorderPoint: m.reorderPoint ?? undefined,
     averageCost: Number(m.averageCost ?? 0),
-    currency: "TZS",
+    currency: propertyCurrency,
     trackBatches: false,
     allowNegative: false,
   });
@@ -764,6 +903,7 @@ async function commitSupplierProductRow(
   userId: string,
   tenantId: string,
   record: any,
+  propertyCurrency: string,
 ): Promise<string> {
   const m = record.mapped_data;
   if (!m.supplierId || !m.inventoryItemId) {
@@ -781,7 +921,7 @@ async function commitSupplierProductRow(
     name: m.name ?? m.itemName ?? "Supplier product",
     packSize: m.packSize ?? undefined,
     unitPrice: Number(m.unitPrice ?? 0),
-    currency: "TZS",
+    currency: m.currency ?? propertyCurrency,
     minOrderQuantity: m.minOrderQuantity ?? undefined,
     leadTimeDays: m.leadTimeDays ?? undefined,
     active: true,
@@ -795,6 +935,7 @@ async function commitMenuItemRow(
   tenantId: string,
   menuId: string,
   record: any,
+  propertyCurrency: string,
 ): Promise<string> {
   const m = record.mapped_data;
   const slug = `${slugify(m.name)}-${record.source_row}`;
@@ -807,7 +948,7 @@ async function commitMenuItemRow(
     slug,
     description: m.description ?? undefined,
     price: Number(m.price ?? 0),
-    currency: "TZS",
+    currency: m.currency ?? propertyCurrency,
     available: m.available ?? true,
     tags: [],
     allergens: [],
@@ -821,6 +962,7 @@ async function commitProductStationRow(
   userId: string,
   tenantId: string,
   record: any,
+  propertyCurrency: string,
 ): Promise<string> {
   const m = record.mapped_data;
   if (!m.menuItemId) {
@@ -842,7 +984,7 @@ async function commitProductStationRow(
     menuItemId: m.menuItemId,
     stationId: m.stationId,
     price: Number(m.price ?? 0),
-    currency: "TZS",
+    currency: propertyCurrency,
     active: m.active ?? true,
     servicePeriodIds: [],
     sortOrder: 0,
@@ -1030,6 +1172,7 @@ async function commitOpeningStockRow(
   record: any,
   workspace: any,
   units: readonly UnitRow[],
+  propertyCurrency: string,
 ): Promise<string> {
   const m = record.mapped_data;
   if (!m.inventoryItemId) {
@@ -1082,7 +1225,7 @@ async function commitOpeningStockRow(
     movementType: "opening_balance",
     quantity,
     unitCost: Number(m.unitCost ?? item.average_cost ?? 0),
-    currency: item.currency ?? "TZS",
+    currency: m.currency ?? item.currency ?? propertyCurrency,
     reason: "Opening balance (import)",
     referenceType: "restaurant_import_staged_records",
     referenceId: record.id,
@@ -1123,6 +1266,7 @@ export async function commitImportWorkspace(
     .select("id, code, name, dimension, factor, base_unit_id")
     .or(`tenant_id.is.null,tenant_id.eq.${input.tenantId}`);
   const unitRows = (units ?? []) as UnitRow[];
+  const propertyCurrency = await resolvePropertyCurrency(sb, input.tenantId, workspace.property_id);
 
   let targetMenuId = input.targetMenuId ?? null;
   const outcomes: CommitOutcome[] = [];
@@ -1150,7 +1294,7 @@ export async function commitImportWorkspace(
         slug: `${slugify(workspace.name)}-${slugify(workspace.workspace_number)}`,
         version: 1,
         status: "draft",
-        currency: "TZS",
+        currency: propertyCurrency,
       });
       targetMenuId = menu.id as string;
     }
@@ -1164,10 +1308,22 @@ export async function commitImportWorkspace(
             committedEntityId = await commitSupplierRow(sb, userId, input.tenantId, record);
             break;
           case "inventory_item":
-            committedEntityId = await commitInventoryItemRow(sb, userId, input.tenantId, record);
+            committedEntityId = await commitInventoryItemRow(
+              sb,
+              userId,
+              input.tenantId,
+              record,
+              propertyCurrency,
+            );
             break;
           case "supplier_product":
-            committedEntityId = await commitSupplierProductRow(sb, userId, input.tenantId, record);
+            committedEntityId = await commitSupplierProductRow(
+              sb,
+              userId,
+              input.tenantId,
+              record,
+              propertyCurrency,
+            );
             break;
           case "menu_item":
             committedEntityId = await commitMenuItemRow(
@@ -1176,10 +1332,17 @@ export async function commitImportWorkspace(
               input.tenantId,
               targetMenuId!,
               record,
+              propertyCurrency,
             );
             break;
           case "product_station":
-            committedEntityId = await commitProductStationRow(sb, userId, input.tenantId, record);
+            committedEntityId = await commitProductStationRow(
+              sb,
+              userId,
+              input.tenantId,
+              record,
+              propertyCurrency,
+            );
             break;
           case "variant":
             committedEntityId = await commitVariantRow(sb, userId, input.tenantId, record);
@@ -1215,6 +1378,7 @@ export async function commitImportWorkspace(
               record,
               workspace,
               unitRows,
+              propertyCurrency,
             );
             break;
         }

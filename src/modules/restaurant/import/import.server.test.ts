@@ -211,6 +211,27 @@ vi.mock("../core/access.server", () => ({
 }));
 vi.mock("../events/emit.server", () => ({ emitRestaurantEvent: vi.fn(async () => undefined) }));
 
+/**
+ * Unconfigured by default (matches every real deployment with no
+ * NOVA_AI_API_KEY set) — a test that wants the AI-assist path to actually
+ * fire overrides this mock's resolved value for that one test.
+ */
+const callAiGateway = vi.fn(
+  async (_opts: any): Promise<{ content: string; latencyMs: number; model: string }> => {
+    throw new Error("AI advisory is not configured for this deployment.");
+  },
+);
+vi.mock("@/lib/ai-gateway.server", () => ({
+  callAiGateway: (opts: any) => callAiGateway(opts),
+  parseAiJson: (s: string) => {
+    try {
+      return JSON.parse(s);
+    } catch {
+      return null;
+    }
+  },
+}));
+
 vi.mock("../suppliers/suppliers.server", () => ({
   upsertSupplier: vi.fn(async (_sb: any, _u: string, input: any) => {
     const row = {
@@ -248,6 +269,36 @@ vi.mock("../suppliers/suppliers.server", () => ({
 
 vi.mock("../inventory/inventory.server", () => ({
   upsertInventoryItem: vi.fn(async (_sb: any, _u: string, input: any) => {
+    // Mirrors the real schema's own constraints (migrations 0001/0012): SKU
+    // is unique per tenant, and barcode is unique per tenant whenever
+    // present — a real insert violating either throws, it never silently
+    // creates a second row with the same identity. This is what actually
+    // protects a batch containing a duplicate SKU/barcode: the second row
+    // fails at commit with a distinct, per-row error, the first still
+    // succeeds — never two items sharing the same identity, never a crash
+    // that aborts the rest of the workspace's commit.
+    if (!input.id) {
+      if (
+        input.sku &&
+        db.restaurant_inventory_items!.some(
+          (r) => r.tenant_id === input.tenantId && r.sku === input.sku,
+        )
+      ) {
+        throw new Error(
+          `duplicate key value violates unique constraint "restaurant_inventory_items_tenant_id_sku_key"`,
+        );
+      }
+      if (
+        input.barcode &&
+        db.restaurant_inventory_items!.some(
+          (r) => r.tenant_id === input.tenantId && r.barcode === input.barcode,
+        )
+      ) {
+        throw new Error(
+          `duplicate key value violates unique constraint "idx_restaurant_inv_items_barcode"`,
+        );
+      }
+    }
     const row = {
       id: input.id ?? nextId("item"),
       tenant_id: input.tenantId,
@@ -291,6 +342,7 @@ vi.mock("../menu/menu.server", () => ({
       menu_id: input.menuId,
       name: input.name,
       price: input.price,
+      currency: input.currency ?? null,
     };
     const existingIdx = db.restaurant_menu_items!.findIndex((r) => r.id === row.id);
     if (existingIdx >= 0)
@@ -437,6 +489,7 @@ import {
   getImportWorkspace,
   listStagedRecords,
   parseImportSource,
+  suggestImportMapping,
   uploadImportSource,
 } from "./import.server";
 
@@ -444,6 +497,10 @@ beforeEach(() => {
   resetDb();
   movements.length = 0;
   recipeComponents.length = 0;
+  callAiGateway.mockReset();
+  callAiGateway.mockImplementation(async () => {
+    throw new Error("AI advisory is not configured for this deployment.");
+  });
 });
 
 async function stageCsv(tenantId: string, workspaceId: string, csv: string, domain: string) {
@@ -662,6 +719,42 @@ describe("commit: dependency order and cross-domain resolution", () => {
     } as any);
     expect(result2.failed).toBe(0);
     expect(recipeComponents).toHaveLength(1);
+  });
+
+  it("commits at the workspace's own property currency, not a hardcoded literal", async () => {
+    db.restaurant_properties = [{ id: "prop-usd", tenant_id: TENANT, currency: "USD" }];
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "USD property",
+      propertyId: "prop-usd",
+    } as any);
+
+    await stageCsv(
+      TENANT,
+      ws.id,
+      "Name,SKU,Cost\nImported Cheese,ITM-CHZ,4500\n",
+      "inventory_item",
+    );
+    await stageCsv(TENANT, ws.id, "Name,Price\nCheese Plate,9500\n", "menu_item");
+    await approveAllPending(TENANT, ws.id);
+    const result = await commitImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    } as any);
+    expect(result.status).toBe("committed");
+    expect(db.restaurant_inventory_items![0]!.currency).toBe("USD");
+    expect(db.restaurant_menu_items![0]!.currency).toBe("USD");
+  });
+
+  it("falls back to TZS when the workspace has no property configured — unchanged default", async () => {
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "No property",
+    } as any);
+    await stageCsv(TENANT, ws.id, "Name,SKU,Cost\nHouse Salt,ITM-SLT,500\n", "inventory_item");
+    await approveAllPending(TENANT, ws.id);
+    await commitImportWorkspace(sb, USER, { tenantId: TENANT, workspaceId: ws.id } as any);
+    expect(db.restaurant_inventory_items![0]!.currency).toBe("TZS");
   });
 
   it("blocks a recipe row that references a dish not yet imported, without fabricating a link", async () => {
@@ -937,6 +1030,56 @@ describe("human review", () => {
     expect(result.committed).toBe(1);
   });
 
+  it("surfaces both tied candidates, and a human picking the OTHER one updates that item, not the auto-selected one", async () => {
+    db.restaurant_inventory_items!.push(
+      {
+        id: "item-1",
+        tenant_id: TENANT,
+        sku: "ITM-1",
+        name: "Tomato Whole",
+        barcode: null,
+        brand: null,
+      },
+      {
+        id: "item-2",
+        tenant_id: TENANT,
+        sku: "ITM-2",
+        name: "Tomato Paste",
+        barcode: null,
+        brand: null,
+      },
+    );
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Candidates",
+    } as any);
+    await stageCsv(TENANT, ws.id, "Name,SKU,Cost\nTomato,,500\n", "inventory_item");
+    const staged = await listStagedRecords(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      limit: 100,
+    } as any);
+    expect(staged[0]!.match_candidates.map((c: any) => c.id).sort()).toEqual(["item-1", "item-2"]);
+
+    // The human deliberately picks item-2, overriding whichever the
+    // deterministic tie-break auto-selected.
+    await decideStagedRecord(sb, USER, {
+      tenantId: TENANT,
+      recordId: staged[0]!.id,
+      decision: "approved",
+      matchedEntityId: "item-2",
+    } as any);
+    const result = await commitImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    } as any);
+    expect(result.committed).toBe(1);
+    expect(db.restaurant_inventory_items!.find((i) => i.id === "item-2")!.average_cost).toBe(500);
+    expect(db.restaurant_inventory_items!.find((i) => i.id === "item-1")!.average_cost).not.toBe(
+      500,
+    );
+  });
+
   it("a rejected record is never committed", async () => {
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test" } as any);
     await stageCsv(TENANT, ws.id, "Name,SKU\nWidget,\n", "inventory_item");
@@ -1018,5 +1161,309 @@ describe("workspace summary", () => {
     });
     expect(summary.total).toBe(2);
     expect(summary.byDomain.inventory_item).toBe(2);
+  });
+
+  it("computes an import plan (CREATE/UPDATE/REVIEW/REJECT) reflecting what a commit would actually do right now", async () => {
+    // An existing item this sheet's second row will cleanly link to (UPDATE).
+    db.restaurant_inventory_items!.push({
+      id: "item-1",
+      tenant_id: TENANT,
+      sku: "ITM-1",
+      name: "Rice 25kg",
+      barcode: null,
+      brand: null,
+    });
+    const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Plan" } as any);
+    await stageCsv(
+      TENANT,
+      ws.id,
+      "Name,SKU,Unit\nBrand New Item,,\nRice 25kg,ITM-1,\nAnother New,,sacks\n",
+      "inventory_item",
+    );
+    const staged = await listStagedRecords(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      limit: 100,
+    } as any);
+    // Reject the brand new item explicitly.
+    const brandNew = staged.find((r: any) => r.mapped_data.name === "Brand New Item");
+    await decideStagedRecord(sb, USER, {
+      tenantId: TENANT,
+      recordId: brandNew!.id,
+      decision: "rejected",
+    } as any);
+
+    const { summary } = await getImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    });
+    expect(summary.byPlan.reject).toBe(1); // Brand New Item, rejected
+    expect(summary.byPlan.update).toBe(1); // Rice 25kg, exact_match, auto_ok
+    expect(summary.byPlan.review).toBe(1); // Another New, unrecognised unit "sacks" -> missing_field, still pending
+    expect(summary.byPlan.create).toBe(0);
+  });
+
+  it("surfaces source columns nothing recognised, instead of silently discarding them", async () => {
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Custom fields",
+    } as any);
+    // "Preferred Brand" and "Shelf Location" have no canonical field on
+    // inventory_item — Name and SKU do.
+    const source = await uploadImportSource(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      kind: "csv",
+      text: "Name,SKU,Preferred Brand,Shelf Location\nRice,ITM-1,Acme,A3\n",
+    } as any);
+    await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
+    await confirmImportMapping(sb, USER, {
+      tenantId: TENANT,
+      sourceId: source.id,
+      sheetName: "Sheet1",
+      domain: "inventory_item",
+      mapping: [
+        { sourceColumn: "Name", canonicalField: "name", confidence: 1, auto: true },
+        { sourceColumn: "SKU", canonicalField: "sku", confidence: 1, auto: true },
+        { sourceColumn: "Preferred Brand", canonicalField: null, confidence: 0, auto: false },
+        { sourceColumn: "Shelf Location", canonicalField: null, confidence: 0, auto: false },
+      ],
+    } as any);
+
+    const { unmappedColumns } = await getImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    });
+    expect(unmappedColumns).toEqual([
+      {
+        sheetName: "Sheet1",
+        domain: "inventory_item",
+        columns: ["Preferred Brand", "Shelf Location"],
+      },
+    ]);
+  });
+
+  it("reports no unmapped columns when everything was recognised", async () => {
+    const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Clean" } as any);
+    await stageCsv(TENANT, ws.id, "Name,SKU\nRice,ITM-1\n", "inventory_item");
+    const { unmappedColumns } = await getImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    });
+    expect(unmappedColumns).toEqual([]);
+  });
+});
+
+describe("AI-assist wiring — bounded, validated, never bypassing human review", () => {
+  it("degrades to the plain heuristic result — empty, never fabricated — when the AI gateway is not configured (the real-world default)", async () => {
+    const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "AI off" } as any);
+    const source = await uploadImportSource(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      kind: "csv",
+      text: "Preferred Brand,Shelf Location\nAcme,A3\n",
+    } as any);
+    const result = await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
+    // The gateway is attempted (headers are unfamiliar to the heuristic) but
+    // its own "not configured" error is swallowed exactly like narrate()
+    // does elsewhere in this codebase — the caller never sees a fabricated
+    // suggestion or a thrown error either way.
+    expect(callAiGateway).toHaveBeenCalledTimes(1);
+    expect(result.sheets[0]!.detectedDomains).toEqual([]);
+  });
+
+  it("appends a validated AI domain suggestion, clearly marked, only when the heuristic alone was empty", async () => {
+    callAiGateway.mockResolvedValue({
+      content: JSON.stringify({
+        domain: "supplier",
+        confidence: 0.66,
+        reason: "vendor-like fields",
+      }),
+      latencyMs: 1,
+      model: "test",
+    });
+    const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "AI on" } as any);
+    const source = await uploadImportSource(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      kind: "csv",
+      text: "Vendor Company,Attn\nAcme Distributors,Jane\n",
+    } as any);
+    const result = await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
+    expect(result.sheets[0]!.detectedDomains).toEqual([
+      { domain: "supplier", confidence: 0.66, matchedHeaders: [], source: "ai" },
+    ]);
+  });
+
+  it("never surfaces an AI domain suggestion the fixed domain list doesn't contain", async () => {
+    callAiGateway.mockResolvedValue({
+      content: JSON.stringify({ domain: "purchase_order", confidence: 0.9 }),
+      latencyMs: 1,
+      model: "test",
+    });
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "AI hallucinated",
+    } as any);
+    const source = await uploadImportSource(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      kind: "csv",
+      text: "Column A,Column B\nx,y\n",
+    } as any);
+    const result = await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
+    expect(result.sheets[0]!.detectedDomains).toEqual([]);
+  });
+
+  it("does not call the AI gateway a second time once the heuristic is already confident", async () => {
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Confident sheet",
+    } as any);
+    const source = await uploadImportSource(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      kind: "csv",
+      text: "Item Name,SKU,Barcode,Reorder Point\nRice,ITM-1,123,10\n",
+    } as any);
+    await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
+    expect(callAiGateway).not.toHaveBeenCalled();
+  });
+
+  it("suggestImportMapping fills an unmatched column via AI, still not marked auto — the reviewer still confirms it", async () => {
+    callAiGateway.mockResolvedValue({
+      content: JSON.stringify({ field: "reorderPoint", confidence: 0.72 }),
+      latencyMs: 1,
+      model: "test",
+    });
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Field assist",
+    } as any);
+    const source = await uploadImportSource(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      kind: "csv",
+      text: "Item Name,Min Stock Trigger\nRice,10\n",
+    } as any);
+    await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
+    const result = await suggestImportMapping(sb, USER, {
+      tenantId: TENANT,
+      sourceId: source.id,
+      sheetName: "Sheet1",
+      domain: "inventory_item" as any,
+    });
+    const suggested = result.mapping.find((m: any) => m.sourceColumn === "Min Stock Trigger");
+    expect(suggested).toMatchObject({ canonicalField: "reorderPoint", auto: false });
+  });
+});
+
+describe("adversarial — Phase 16 scenarios exercised through the real orchestration", () => {
+  it("duplicate SKU within one sheet: the first row creates the item, the second fails at commit with its own error rather than creating a second item with the same identity", async () => {
+    const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Dup SKU" } as any);
+    await stageCsv(
+      TENANT,
+      ws.id,
+      "Name,SKU,Cost\nChicken Breast,DUP-1,12000\nChicken Thigh,DUP-1,9500\n",
+      "inventory_item",
+    );
+    await approveAllPending(TENANT, ws.id);
+    const result = await commitImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    } as any);
+    expect(result.committed).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(db.restaurant_inventory_items!.filter((i) => i.sku === "DUP-1")).toHaveLength(1);
+    const failedOutcome = result.outcomes.find((o: any) => o.error);
+    expect(failedOutcome!.error).toMatch(/unique constraint/i);
+  });
+
+  it("duplicate barcode within one sheet degrades the same safe way", async () => {
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Dup barcode",
+    } as any);
+    await stageCsv(
+      TENANT,
+      ws.id,
+      "Name,Barcode\nCoca-Cola 500ml,6009123456789\nGeneric Cola 500ml,6009123456789\n",
+      "inventory_item",
+    );
+    await approveAllPending(TENANT, ws.id);
+    const result = await commitImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    } as any);
+    expect(result.committed).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(
+      db.restaurant_inventory_items!.filter((i) => i.barcode === "6009123456789"),
+    ).toHaveLength(1);
+  });
+
+  it("missing SKU and missing barcode still stages and commits by name alone — never blocked purely for lacking an identifier", async () => {
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "No identifiers",
+    } as any);
+    await stageCsv(TENANT, ws.id, "Name,Cost\nFresh Basil,3000\n", "inventory_item");
+    const staged = await listStagedRecords(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      limit: 100,
+    } as any);
+    expect(staged[0]!.severity).not.toBe("cannot_map");
+    expect(staged[0]!.match_status).toBe("new_entity");
+  });
+
+  it("blank/irrelevant columns are dropped from the mapping, never mapped to a fabricated field", async () => {
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Blank cols",
+    } as any);
+    const source = await uploadImportSource(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      kind: "csv",
+      text: "Name,,SKU\nRice,,ITM-1\n",
+    } as any);
+    await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
+    const suggested = await suggestImportMapping(sb, USER, {
+      tenantId: TENANT,
+      sourceId: source.id,
+      sheetName: "Sheet1",
+      domain: "inventory_item" as any,
+    });
+    // The blank header column never appears at all — parsers.ts drops it outright.
+    expect(suggested.headers).toEqual(["Name", "SKU"]);
+  });
+
+  it("an irrelevant README-style sheet gets no domain guess at all and is never silently defaulted to one", async () => {
+    const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "README" } as any);
+    const source = await uploadImportSource(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      kind: "csv",
+      text: "Notes\nThis workbook was prepared for the March migration. Contact ops for questions.\n",
+    } as any);
+    const result = await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
+    expect(result.sheets[0]!.detectedDomains).toEqual([]);
+  });
+
+  it("a mixed-domain sheet (both menu-item and product-station signals) surfaces multiple candidates instead of forcing one", async () => {
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Mixed domain",
+    } as any);
+    const source = await uploadImportSource(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      kind: "csv",
+      text: "Menu Item,Selling Price,Station Code\nGrilled Chicken,18000,KITCHEN\n",
+    } as any);
+    const result = await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
+    const domains = result.sheets[0]!.detectedDomains.map((g: any) => g.domain);
+    expect(domains).toEqual(expect.arrayContaining(["menu_item", "product_station"]));
   });
 });

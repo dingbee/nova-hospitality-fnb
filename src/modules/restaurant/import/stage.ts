@@ -29,6 +29,12 @@ export type MatchStatus =
 export type Severity =
   "cannot_map" | "ambiguous_match" | "missing_field" | "new_entity" | "auto_ok";
 
+export interface MatchCandidate {
+  id: string;
+  label: string;
+  score: number;
+}
+
 export interface StageResult {
   mappedData: Record<string, unknown>;
   matchStatus: MatchStatus;
@@ -36,6 +42,15 @@ export interface StageResult {
   matchedEntityTable: string | null;
   matchConfidence: number | null;
   matchEvidence: string[];
+  /**
+   * The candidates classify() actually ranked this row's own identity
+   * against (top 3, score > 0) — how a reviewer resolving an
+   * "ambiguous"/"possible_match" row picks a different existing entity than
+   * the one auto-selected, instead of only being able to approve or reject.
+   * Empty for a relationship reference (classifyExisting) and for a clean
+   * new_entity with no candidates at all.
+   */
+  matchCandidates: MatchCandidate[];
   validationErrors: string[];
   severity: Severity;
 }
@@ -65,6 +80,15 @@ interface Classified {
   id: string | null;
   confidence: number | null;
   evidence: string[];
+  /** Present on a real classify() result; absent on the small ad-hoc "already on file"/"new" placeholders built elsewhere in this file for a relationship link's own identity (those never need a picker — there is nothing to pick between). */
+  candidates?: MatchCandidate[];
+}
+
+function topCandidates(results: readonly CatalogMatchResult[]): MatchCandidate[] {
+  return results
+    .filter((r) => r.score > 0)
+    .slice(0, 3)
+    .map((r) => ({ id: r.candidate.id, label: r.candidate.name, score: r.score }));
 }
 
 /**
@@ -75,8 +99,9 @@ interface Classified {
  */
 function classify(results: readonly CatalogMatchResult[]): Classified {
   const top = results[0];
+  const candidates = topCandidates(results);
   if (!top || top.score === 0)
-    return { status: "new_entity", id: null, confidence: null, evidence: [] };
+    return { status: "new_entity", id: null, confidence: null, evidence: [], candidates: [] };
   const runnerUp = results[1];
   const tie = runnerUp && runnerUp.score > 0 && runnerUp.score >= top.score - 0.05;
   if (tie) {
@@ -85,6 +110,7 @@ function classify(results: readonly CatalogMatchResult[]): Classified {
       id: top.candidate.id,
       confidence: top.score,
       evidence: top.evidence,
+      candidates,
     };
   }
   if (top.confidence === "exact") {
@@ -93,6 +119,7 @@ function classify(results: readonly CatalogMatchResult[]): Classified {
       id: top.candidate.id,
       confidence: top.score,
       evidence: top.evidence,
+      candidates,
     };
   }
   return {
@@ -100,6 +127,7 @@ function classify(results: readonly CatalogMatchResult[]): Classified {
     id: top.candidate.id,
     confidence: top.score,
     evidence: top.evidence,
+    candidates,
   };
 }
 
@@ -117,6 +145,23 @@ function classifyExisting(
     };
   }
   return c;
+}
+
+/**
+ * A row that states its own currency, different from the property's actual
+ * currency, is never silently coerced — no FX rate is invented here or
+ * anywhere in this pipeline. Advisory only (not REQUIRED): a genuinely
+ * multi-currency supplier list is a legitimate source, the human just has to
+ * confirm it, same as any other non-blocking finding in this module.
+ */
+function checkCurrency(raw: string | undefined, propertyCurrency: string, errors: string[]) {
+  const stated = raw?.trim().toUpperCase();
+  if (!stated) return;
+  if (stated !== propertyCurrency.toUpperCase()) {
+    errors.push(
+      `Row states currency "${stated}" but this property is configured for "${propertyCurrency}" — confirm before approving; no conversion is applied.`,
+    );
+  }
 }
 
 function numField(
@@ -173,6 +218,7 @@ export function stageSupplierRow(
     matchedEntityTable: c.id ? "restaurant_suppliers" : null,
     matchConfidence: c.confidence,
     matchEvidence: c.evidence,
+    matchCandidates: c.candidates ?? [],
     validationErrors: errors,
     severity: computeSeverity(c.status, errors),
   };
@@ -186,10 +232,12 @@ export function stageInventoryItemRow(
     inventoryItems: readonly InventoryItemRow[];
     units: readonly UnitRow[];
     categories: readonly { id: string; name: string }[];
+    propertyCurrency?: string;
   },
 ): StageResult {
   const errors: string[] = [];
   if (!mapped.name) errors.push(required("Item name is missing."));
+  if (ref.propertyCurrency) checkCurrency(mapped.currency, ref.propertyCurrency, errors);
 
   const reorderPoint = numField(mapped.reorderPoint, "Reorder point", errors);
   const parLevel = numField(mapped.parLevel, "Par level", errors);
@@ -232,6 +280,7 @@ export function stageInventoryItemRow(
       reorderPoint: reorderPoint ?? null,
       parLevel: parLevel ?? null,
       averageCost: averageCost ?? null,
+      currency: mapped.currency ?? null,
       openingQuantity: openingQuantity ?? null,
       openingUnitId: openingUnitRes.unit?.id ?? null,
       openingUnit: mapped.openingUnit ?? null,
@@ -241,6 +290,7 @@ export function stageInventoryItemRow(
     matchedEntityTable: c.id ? "restaurant_inventory_items" : null,
     matchConfidence: c.confidence,
     matchEvidence: c.evidence,
+    matchCandidates: c.candidates ?? [],
     validationErrors: errors,
     severity: computeSeverity(c.status, errors),
   };
@@ -259,6 +309,7 @@ export function stageSupplierProductRow(
       supplier_sku: string | null;
       barcode: string | null;
     }[];
+    propertyCurrency?: string;
   },
 ): StageResult {
   const errors: string[] = [];
@@ -266,6 +317,7 @@ export function stageSupplierProductRow(
     errors.push(required("Supplier to link is missing (name or code)."));
   if (!mapped.itemName && !mapped.itemSku && !mapped.itemBarcode)
     errors.push(required("Item to link is missing (name, SKU or barcode)."));
+  if (ref.propertyCurrency) checkCurrency(mapped.currency, ref.propertyCurrency, errors);
   const unitPrice = numField(mapped.unitPrice, "Unit price", errors, { required: true });
   const packSize = numField(mapped.packSize, "Pack size", errors);
   const minOrderQuantity = numField(mapped.minOrderQuantity, "Minimum order quantity", errors);
@@ -314,6 +366,7 @@ export function stageSupplierProductRow(
   }
 
   return {
+    matchCandidates: [],
     mappedData: {
       supplierName: mapped.supplierName ?? null,
       supplierCode: mapped.supplierCode ?? null,
@@ -327,6 +380,7 @@ export function stageSupplierProductRow(
       name: mapped.name ?? mapped.itemName ?? null,
       packSize: packSize ?? null,
       unitPrice: unitPrice ?? null,
+      currency: mapped.currency ?? null,
       minOrderQuantity: minOrderQuantity ?? null,
       leadTimeDays: leadTimeDays ?? null,
     },
@@ -344,10 +398,15 @@ export function stageSupplierProductRow(
 
 export function stageMenuItemRow(
   mapped: Record<string, string>,
-  ref: { menuItems: readonly MenuItemRow[]; categories: readonly { id: string; name: string }[] },
+  ref: {
+    menuItems: readonly MenuItemRow[];
+    categories: readonly { id: string; name: string }[];
+    propertyCurrency?: string;
+  },
 ): StageResult {
   const errors: string[] = [];
   if (!mapped.name) errors.push(required("Dish/drink name is missing."));
+  if (ref.propertyCurrency) checkCurrency(mapped.currency, ref.propertyCurrency, errors);
   const price = numField(mapped.price, "Price", errors, { required: true });
 
   let categoryId: string | null = null;
@@ -370,6 +429,7 @@ export function stageMenuItemRow(
       categoryName: mapped.categoryName ?? null,
       description: mapped.description ?? null,
       price: price ?? null,
+      currency: mapped.currency ?? null,
       available: available ?? true,
     },
     matchStatus: c.status,
@@ -377,6 +437,7 @@ export function stageMenuItemRow(
     matchedEntityTable: c.id ? "restaurant_menu_items" : null,
     matchConfidence: c.confidence,
     matchEvidence: c.evidence,
+    matchCandidates: c.candidates ?? [],
     validationErrors: errors,
     severity: computeSeverity(c.status, errors),
   };
@@ -445,6 +506,7 @@ export function stageProductStationRow(
   const finalStatus = worse(worse(menuItemMatch.status, stationMatch.status), productStatus.status);
 
   return {
+    matchCandidates: [],
     mappedData: {
       menuItemName: mapped.menuItemName ?? null,
       menuItemId: menuItemMatch.id,
@@ -526,6 +588,7 @@ export function stageVariantRow(
   const finalStatus = worse(chainStatus, variantStatus.status);
 
   return {
+    matchCandidates: [],
     mappedData: {
       productMenuItemName: mapped.productMenuItemName ?? null,
       productId,
@@ -585,6 +648,7 @@ export function stageModifierGroupRow(
     matchedEntityTable: c.id ? "restaurant_modifier_groups" : null,
     matchConfidence: c.confidence,
     matchEvidence: c.evidence,
+    matchCandidates: c.candidates ?? [],
     validationErrors: errors,
     severity: computeSeverity(c.status, errors),
   };
@@ -681,6 +745,7 @@ export function stageModifierRow(
   const finalStatus = worse(chainStatus, modifierStatus.status);
 
   return {
+    matchCandidates: [],
     mappedData: {
       groupCode: mapped.groupCode ?? null,
       groupId: groupMatch.id,
@@ -770,6 +835,7 @@ export function stageProductModifierGroupRow(
   const finalStatus = worse(chainStatus, linkStatus.status);
 
   return {
+    matchCandidates: [],
     mappedData: {
       productMenuItemName: mapped.productMenuItemName ?? null,
       productId,
@@ -828,6 +894,7 @@ export function stageRecipeComponentRow(
   const overallStatus = worse(menuItemMatch.status, ingredientMatch.status);
 
   return {
+    matchCandidates: [],
     mappedData: {
       menuItemName: mapped.menuItemName ?? null,
       menuItemId: menuItemMatch.id,
@@ -859,11 +926,13 @@ export function stageOpeningStockRow(
     inventoryItems: readonly InventoryItemRow[];
     units: readonly UnitRow[];
     locations: readonly { id: string; name: string }[];
+    propertyCurrency?: string;
   },
 ): StageResult {
   const errors: string[] = [];
   if (!mapped.itemName && !mapped.itemSku && !mapped.itemBarcode)
     errors.push(required("Item to stock is missing (name, SKU or barcode)."));
+  if (ref.propertyCurrency) checkCurrency(mapped.currency, ref.propertyCurrency, errors);
   const quantity = numField(mapped.quantity, "Opening quantity", errors, { required: true });
   const unitCost = numField(mapped.unitCost, "Unit cost", errors);
 
@@ -894,6 +963,7 @@ export function stageOpeningStockRow(
   if (itemMatch.error) errors.push(required(itemMatch.error));
 
   return {
+    matchCandidates: [],
     mappedData: {
       itemName: mapped.itemName ?? null,
       itemSku: mapped.itemSku ?? null,
@@ -905,6 +975,7 @@ export function stageOpeningStockRow(
       unitId: unitRes.unit?.id ?? null,
       unitCode: mapped.unitCode ?? null,
       unitCost: unitCost ?? null,
+      currency: mapped.currency ?? null,
     },
     matchStatus: itemMatch.status,
     matchedEntityId: itemMatch.id,

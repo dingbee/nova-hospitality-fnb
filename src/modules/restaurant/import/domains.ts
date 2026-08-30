@@ -150,19 +150,30 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "name",
       label: "Item name",
       required: true,
-      aliases: alias("Item Name", "Name", "Product Name", "Description", "Ingredient"),
+      aliases: alias(
+        "Item Name",
+        "Name",
+        "Product Name",
+        "Product",
+        "Product Description",
+        "Description",
+        "Ingredient",
+        "Material",
+        "Article",
+        "Stock Item",
+      ),
     },
     {
       field: "sku",
       label: "SKU",
       required: false,
-      aliases: alias("SKU", "Item Code", "Product Code", "Code"),
+      aliases: alias("SKU", "Item Code", "Product Code", "Code", "Stock Code", "Article Number"),
     },
     {
       field: "barcode",
       label: "Barcode",
       required: false,
-      aliases: alias("Barcode", "EAN", "UPC", "Bar Code"),
+      aliases: alias("Barcode", "EAN", "UPC", "Bar Code", "GTIN"),
     },
     { field: "brand", label: "Brand", required: false, aliases: alias("Brand", "Manufacturer") },
     {
@@ -175,7 +186,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "unitCode",
       label: "Stock unit",
       required: false,
-      aliases: alias("Unit", "UOM", "Stock Unit", "Uom"),
+      aliases: alias("Unit", "UOM", "Stock Unit", "Uom", "Unit Of Measure", "Measure"),
     },
     {
       field: "packSize",
@@ -199,7 +210,21 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "averageCost",
       label: "Unit cost",
       required: false,
-      aliases: alias("Cost", "Unit Cost", "Average Cost", "Purchase Cost"),
+      aliases: alias(
+        "Cost",
+        "Unit Cost",
+        "Average Cost",
+        "Purchase Cost",
+        "Buy Price",
+        "Buying Price",
+        "Rate",
+      ),
+    },
+    {
+      field: "currency",
+      label: "Currency (if not the property's own)",
+      required: false,
+      aliases: alias("Currency", "Ccy", "Curr"),
     },
     {
       field: "openingQuantity",
@@ -212,6 +237,9 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
         "Qty On Hand",
         "Stock On Hand",
         "Current Quantity",
+        "Balance",
+        "On Hand",
+        "Physical Count",
       ),
     },
     {
@@ -278,7 +306,22 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "unitPrice",
       label: "Unit price",
       required: true,
-      aliases: alias("Unit Price", "Price", "Cost", "Purchase Price", "Purchase Cost"),
+      aliases: alias(
+        "Unit Price",
+        "Price",
+        "Cost",
+        "Purchase Price",
+        "Purchase Cost",
+        "Buy Price",
+        "Buying Price",
+        "Rate",
+      ),
+    },
+    {
+      field: "currency",
+      label: "Currency (if not the property's own)",
+      required: false,
+      aliases: alias("Currency", "Ccy", "Curr"),
     },
     {
       field: "minOrderQuantity",
@@ -316,7 +359,20 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "price",
       label: "Price",
       required: true,
-      aliases: alias("Price", "Selling Price", "Menu Price"),
+      aliases: alias(
+        "Price",
+        "Selling Price",
+        "Sale Price",
+        "Sell Price",
+        "Menu Price",
+        "Retail Price",
+      ),
+    },
+    {
+      field: "currency",
+      label: "Currency (if not the property's own)",
+      required: false,
+      aliases: alias("Currency", "Ccy", "Curr"),
     },
     {
       field: "available",
@@ -607,8 +663,26 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       required: false,
       aliases: alias("Cost", "Unit Cost", "Value"),
     },
+    {
+      field: "currency",
+      label: "Currency (if not the property's own)",
+      required: false,
+      aliases: alias("Currency", "Ccy", "Curr"),
+    },
   ],
 };
+
+/**
+ * Every canonical field alias across every domain, flattened — the one
+ * semantic signal a header-row finder needs to tell a real header row
+ * ("Item Name", "SKU", "Qty") apart from a title/notes row above it, without
+ * that finder needing to know what a "domain" is. Not a classifier by
+ * itself: a row scoring high here is still just *evidence* of being a
+ * header row, exactly like a signal word is only ever evidence of a domain.
+ */
+export const ALL_CANONICAL_ALIASES: ReadonlySet<string> = new Set(
+  Object.values(CANONICAL_FIELDS).flatMap((fields) => fields.flatMap((f) => f.aliases)),
+);
 
 /** Header words that carry a domain's identity — used only to *suggest* a detected domain, never to decide it. */
 const DOMAIN_SIGNAL_WORDS: Record<ImportDomain, readonly string[]> = {
@@ -641,28 +715,56 @@ export interface DomainGuess {
   domain: ImportDomain;
   confidence: number;
   matchedHeaders: string[];
+  /** Omitted for the deterministic alias/signal-word heuristic; "ai" for a validated AI-assist suggestion (see import/ai-assist.ts) appended only when the heuristic alone was weak or empty. Either way this is still just a suggestion — a human still confirms it before anything is staged. */
+  source?: "ai";
 }
 
-/** Deterministic header heuristic — a starting suggestion, never an autonomous decision. */
+/**
+ * Deterministic header heuristic — a starting suggestion, never an
+ * autonomous decision. Evidence comes from two places, combined: a small
+ * hand-picked list of especially identity-establishing words per domain
+ * (DOMAIN_SIGNAL_WORDS, surfaced back to the caller as matchedHeaders — the
+ * "why" a reviewer sees), and the SAME alias table suggestFieldMapping
+ * itself uses for every canonical field on the domain, not only the curated
+ * subset. That second signal exists so a sheet a human would obviously call
+ * "inventory" — because most of its columns genuinely map to inventory
+ * fields — still registers real evidence even when none of its headers
+ * happen to be one of the specific words DOMAIN_SIGNAL_WORDS lists; keeping
+ * DOMAIN_SIGNAL_WORDS in sync with every alias ever added to CANONICAL_
+ * FIELDS would otherwise be a second, easily-forgotten place to update.
+ */
 export function detectDomains(headers: readonly string[]): DomainGuess[] {
   const normalized = headers.map(normalizeHeader);
   const guesses: DomainGuess[] = [];
   for (const domain of IMPORT_DOMAINS) {
     const signals = DOMAIN_SIGNAL_WORDS[domain];
-    const requiredFields = CANONICAL_FIELDS[domain].filter((f) => f.required);
+    const fields = CANONICAL_FIELDS[domain];
+    const requiredFields = fields.filter((f) => f.required);
     const matched: string[] = [];
     let signalHits = 0;
+    const fieldsCovered = new Set<string>();
     for (let i = 0; i < normalized.length; i++) {
       if (signals.includes(normalized[i]!)) {
         signalHits += 1;
         matched.push(headers[i]!);
       }
+      const hitField = fields.find((f) => f.aliases.includes(normalized[i]!));
+      if (hitField) fieldsCovered.add(hitField.field);
     }
     const requiredHit = requiredFields.every((f) => normalized.some((n) => f.aliases.includes(n)));
-    if (signalHits === 0 && !requiredHit) continue;
+    // A single incidental alias hit (e.g. a lone "Notes" column) is too weak
+    // to trust as its own evidence — that is exactly the class of mistake
+    // that pre-selects the wrong domain in the mapping UI for an otherwise
+    // irrelevant sheet. Two or more distinct fields covered is a genuinely
+    // different signal: several of this sheet's columns really do mean
+    // something to this domain.
+    const genuineFieldCoverage = fieldsCovered.size >= 2;
+    if (signalHits === 0 && !requiredHit && !genuineFieldCoverage) continue;
     const confidence = Math.min(
       1,
-      signalHits / Math.max(2, signals.length) + (requiredHit ? 0.3 : 0),
+      signalHits / Math.max(2, signals.length) +
+        (requiredHit ? 0.3 : 0) +
+        (genuineFieldCoverage ? Math.min(0.4, fieldsCovered.size * 0.1) : 0),
     );
     if (confidence > 0)
       guesses.push({ domain, confidence: Number(confidence.toFixed(2)), matchedHeaders: matched });
