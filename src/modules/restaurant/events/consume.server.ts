@@ -60,6 +60,10 @@ export interface ConsumeRestaurantEventsResult {
   /** True only when a recompute actually ran — never true for an empty batch. */
   refreshed: boolean;
   decisionsRecorded?: number;
+  /** I10 — a still-`proposed` decision refreshed in place because its finding materially changed. */
+  decisionsUpdated?: number;
+  /** I10 — a still-`proposed` decision marked `expired` because its finding no longer appears. */
+  decisionsExpired?: number;
   findings?: number;
   /**
    * Set only when the recompute itself failed. The batch is left exactly
@@ -78,11 +82,13 @@ export interface ConsumeRestaurantEventsResult {
  * never one recompute per event. Idempotent: events are marked processed
  * only after the recompute has actually succeeded (act-then-mark), so a
  * thrown error leaves the same batch retryable rather than silently
- * dropped. Two concurrent callers both do real work in the rare exact-tie
- * case (see the I9 report's documented limitation — the pre-existing,
- * unmodified runRestaurantDecisionPass has its own check-then-insert
- * dedupe by decision_key, not a DB-unique constraint); this function does
- * not attempt to retrofit a stronger guarantee into that engine.
+ * dropped. Two concurrent callers can both do real recompute work in the
+ * rare exact-tie case; the actual duplicate-decision guarantee for that
+ * race is runRestaurantDecisionPass's own `unique (tenant_id, module,
+ * decision_key)` constraint on intelligence_decisions (0011), not anything
+ * in this function — a losing concurrent insert simply fails and is
+ * skipped there, so no duplicate decision can result even from two
+ * concurrent consumers.
  */
 export async function consumeRestaurantEvents(
   sb: Sb,
@@ -115,7 +121,12 @@ export async function consumeRestaurantEvents(
     return { consumed: 0, refreshed: false };
   }
 
-  let pass: { decisionsRecorded: number; findings: number };
+  let pass: {
+    decisionsRecorded: number;
+    decisionsUpdated: number;
+    decisionsExpired: number;
+    findings: number;
+  };
   try {
     pass = await runRestaurantDecisionPass(sb, userId, {
       tenantId: input.tenantId,
@@ -145,6 +156,8 @@ export async function consumeRestaurantEvents(
     consumed: unprocessed.length,
     refreshed: true,
     decisionsRecorded: pass.decisionsRecorded,
+    decisionsUpdated: pass.decisionsUpdated,
+    decisionsExpired: pass.decisionsExpired,
     findings: pass.findings,
   };
 }

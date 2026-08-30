@@ -194,18 +194,34 @@ function RestaurantDecisionsPage() {
 
   const runPass = useAdminMutation({
     mutationFn: () => passFn({ data: { tenantId: tenantId as string, windowDays, persist: true } }),
-    successMessage: "Decision pass complete",
+    onSuccessToast: (data: any) => {
+      const parts: string[] = [];
+      if (data.decisionsRecorded) parts.push(`${data.decisionsRecorded} new`);
+      if (data.decisionsUpdated) parts.push(`${data.decisionsUpdated} updated`);
+      if (data.decisionsExpired) parts.push(`${data.decisionsExpired} resolved`);
+      return parts.length > 0
+        ? `Decision pass complete — ${parts.join(", ")}.`
+        : "Decision pass complete — nothing changed since the last review.";
+    },
     onSuccess: invalidate,
   });
   const consumeFn = useServerFn(consumeRestaurantEventsFn);
   const checkForUpdates = useAdminMutation({
     mutationFn: () => consumeFn({ data: { tenantId: tenantId as string, windowDays } }),
-    onSuccessToast: (data: any) =>
-      data.failed
-        ? `Could not refresh intelligence from recent kitchen activity: ${data.failureReason}`
-        : data.refreshed
-          ? `Consumed ${data.consumed} kitchen ticket event${data.consumed === 1 ? "" : "s"} — intelligence refreshed.`
-          : "No new kitchen ticket activity since the last check.",
+    onSuccessToast: (data: any) => {
+      if (data.failed)
+        return `Could not refresh intelligence from recent kitchen activity: ${data.failureReason}`;
+      if (!data.refreshed) return "No new kitchen ticket activity since the last check.";
+      const parts: string[] = [];
+      if (data.decisionsRecorded)
+        parts.push(
+          `${data.decisionsRecorded} new decision${data.decisionsRecorded === 1 ? "" : "s"}`,
+        );
+      if (data.decisionsUpdated) parts.push(`${data.decisionsUpdated} updated`);
+      if (data.decisionsExpired) parts.push(`${data.decisionsExpired} resolved`);
+      const decisionSummary = parts.length > 0 ? ` — ${parts.join(", ")}` : "";
+      return `Consumed ${data.consumed} kitchen ticket event${data.consumed === 1 ? "" : "s"} — intelligence refreshed${decisionSummary}.`;
+    },
     onSuccess: invalidate,
   });
   const decide = useAdminMutation({

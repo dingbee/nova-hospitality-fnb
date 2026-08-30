@@ -77,6 +77,23 @@ export interface RestaurantDecisionPassResult {
   findings: number;
   decisionsEvaluated: number;
   decisionsRecorded: number;
+  /**
+   * I10 — a still-`proposed` (never reviewed) decision whose underlying
+   * finding materially changed (severity or facts) was refreshed in place:
+   * same row, same decision_key, no new governance record. A decision a
+   * human has already acted on is never touched, regardless of how much
+   * the finding has since changed.
+   */
+  decisionsUpdated: number;
+  /**
+   * I10 — a still-`proposed` decision whose finding no longer appears in
+   * this pass's candidates (the condition resolved) was marked `expired`.
+   * Non-destructive: the row and its full history remain in place, just no
+   * longer awaiting review. Only ever applies to `proposed` decisions —
+   * once a human has approved/rejected/modified a decision, I10 never
+   * changes its status.
+   */
+  decisionsExpired: number;
   plansCreated: number;
   headline: string;
 }
