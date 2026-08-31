@@ -148,6 +148,8 @@ export const RESTAURANT_EVENT_TYPES = [
   "restaurant.import.committed",
   /* --- Business identity / branding (GEP4). --- */
   "restaurant.tenant.branding.updated",
+  /* --- Menu Intelligence reasoning evaluations (INT-01). --- */
+  "restaurant.intelligence.menu.evaluated",
 ] as const;
 export type RestaurantEventType = (typeof RESTAURANT_EVENT_TYPES)[number];
 
@@ -291,6 +293,7 @@ export const RESTAURANT_EVENT_SEVERITY: Record<
   "restaurant.import.workspace.created": "info",
   "restaurant.import.committed": "low",
   "restaurant.tenant.branding.updated": "info",
+  "restaurant.intelligence.menu.evaluated": "info",
 };
 
 export const restaurantEventSchema = z.object({

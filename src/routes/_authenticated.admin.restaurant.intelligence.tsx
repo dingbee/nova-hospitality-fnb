@@ -3,7 +3,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { Brain, ChefHat, Boxes, ShoppingCart, Utensils } from "lucide-react";
+import { Brain, ChefHat, Boxes, ShoppingCart, Sparkles, Utensils } from "lucide-react";
+import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { StatCard } from "@/components/os/StatCard";
@@ -23,6 +24,8 @@ import {
   type InsightSeverity,
   type RestaurantInsight,
 } from "@/modules/restaurant/intelligence/types";
+import { runMenuIntelligenceReasoningFn } from "@/modules/restaurant/intelligence/menuReasoning.functions";
+import { MENU_INTELLIGENCE_STARTER_QUESTIONS } from "@/modules/restaurant/intelligence/menuReasoning.contracts";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/intelligence")({
   head: () => ({
@@ -79,6 +82,112 @@ function InsightList({ insights }: { insights: RestaurantInsight[] }) {
   );
 }
 
+const PRIORITY_TONE: Record<string, "neutral" | "success" | "warning" | "danger"> = {
+  low: "neutral",
+  medium: "warning",
+  high: "danger",
+  critical: "danger",
+};
+
+/**
+ * INT-01 — the first model-powered panel in this codebase. Deliberately
+ * kept visually distinct from the deterministic facts rendered just above
+ * it in the same SectionCard: this panel is NOVA's interpretation and
+ * recommendation, never a restatement of the numbers themselves, and its
+ * self-reported "confidence" is explicitly labeled as such — never shown
+ * as if it were a statistical measure.
+ */
+function MenuReasoningPanel({
+  tenantId,
+  windowDays,
+}: {
+  tenantId: string | undefined;
+  windowDays: number;
+}) {
+  const fn = useServerFn(runMenuIntelligenceReasoningFn);
+  const [question, setQuestion] = useState<string>(MENU_INTELLIGENCE_STARTER_QUESTIONS[0]);
+  const ask = useAdminMutation({
+    mutationFn: (q: string) =>
+      fn({ data: { tenantId: tenantId as string, question: q, windowDays, provider: "openai" } }),
+    silentSuccess: true,
+    // The panel itself renders the degraded/unavailable state below — no duplicate toast.
+    silentError: true,
+  });
+
+  if (!tenantId) return null;
+  const outcome = ask.data;
+
+  return (
+    <div className="space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
+      <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <Sparkles className="size-4 text-primary" aria-hidden />
+        Ask NOVA about this menu
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {MENU_INTELLIGENCE_STARTER_QUESTIONS.map((q) => (
+          <Button
+            key={q}
+            size="sm"
+            variant={question === q ? "default" : "outline"}
+            disabled={ask.isPending}
+            onClick={() => {
+              setQuestion(q);
+              ask.mutate(q);
+            }}
+          >
+            {q}
+          </Button>
+        ))}
+      </div>
+
+      {ask.isPending && (
+        <p className="text-xs text-muted-foreground">
+          NOVA is reasoning over this window's numbers…
+        </p>
+      )}
+
+      {outcome && !outcome.ok && (
+        <p className="text-xs text-muted-foreground">
+          {outcome.reason === "provider_unavailable"
+            ? `NOVA's reasoning layer isn't available right now (${outcome.detail}). The deterministic numbers above are unaffected.`
+            : outcome.reason === "insufficient_data"
+              ? outcome.detail
+              : "NOVA couldn't produce a reliable answer this time — please try again."}
+        </p>
+      )}
+
+      {outcome && outcome.ok && (
+        <div className="space-y-2 text-sm">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              NOVA's interpretation
+            </p>
+            <p className="mt-0.5 text-foreground">{outcome.result.insight}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Recommendation
+            </p>
+            <p className="mt-0.5 text-foreground">{outcome.result.recommendation}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <StatusChip tone={PRIORITY_TONE[outcome.result.priority] ?? "neutral"}>
+              {outcome.result.priority} priority
+            </StatusChip>
+            <span className="text-xs text-muted-foreground">
+              NOVA's self-reported confidence: {Math.round(outcome.result.confidence * 100)}% (not a
+              statistical measure)
+            </span>
+          </div>
+          <p className="text-[0.7rem] text-muted-foreground">
+            {outcome.provider} · {outcome.model} · {outcome.latencyMs}ms · {outcome.promptVersion}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RestaurantIntelligencePage() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id as string | undefined;
@@ -115,7 +224,8 @@ function RestaurantIntelligencePage() {
   });
   const opportunities = useQuery({
     queryKey: ["restaurant", "intel", "opportunities", tenantId, windowDays],
-    queryFn: () => opportunitiesFn({ data: { tenantId: tenantId as string, windowDays, targetCoverDays: 7 } }),
+    queryFn: () =>
+      opportunitiesFn({ data: { tenantId: tenantId as string, windowDays, targetCoverDays: 7 } }),
     enabled,
   });
 
@@ -156,17 +266,27 @@ function RestaurantIntelligencePage() {
         <StatCard
           label="Items at stock risk"
           value={inv ? String(inv.atRisk.length) : "—"}
-          hint={inv?.wastage.changePercent != null ? `waste ${inv.wastage.changePercent}%` : undefined}
+          hint={
+            inv?.wastage.changePercent != null ? `waste ${inv.wastage.changePercent}%` : undefined
+          }
         />
         <StatCard
           label="Avg ticket time"
           value={kit?.averagePrepMinutes != null ? `${kit.averagePrepMinutes} min` : "—"}
-          hint={kit?.trendPercent != null ? `${kit.trendPercent > 0 ? "+" : ""}${kit.trendPercent}% vs prior` : undefined}
+          hint={
+            kit?.trendPercent != null
+              ? `${kit.trendPercent > 0 ? "+" : ""}${kit.trendPercent}% vs prior`
+              : undefined
+          }
         />
         <StatCard
           label="Expected monthly spend"
           value={pur ? money(pur.expectedMonthlySpend, pur.currency) : "—"}
-          hint={pur?.spendChangePercent != null ? `${pur.spendChangePercent > 0 ? "+" : ""}${pur.spendChangePercent}%` : undefined}
+          hint={
+            pur?.spendChangePercent != null
+              ? `${pur.spendChangePercent > 0 ? "+" : ""}${pur.spendChangePercent}%`
+              : undefined
+          }
         />
       </div>
 
@@ -179,17 +299,30 @@ function RestaurantIntelligencePage() {
           {(m?.items ?? []).length > 0 ? (
             <ul className="divide-y text-sm">
               {(m.items as any[]).slice(0, 15).map((i) => (
-                <li key={i.menuItemId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <li
+                  key={i.menuItemId}
+                  className="flex flex-wrap items-center justify-between gap-2 py-2"
+                >
                   <div className="min-w-0">
                     <span className="font-medium">{i.name}</span>
                     <p className="text-xs text-muted-foreground">
                       {i.quantitySold} sold · revenue {money(i.revenue)} · GP {money(i.grossProfit)}
-                      {i.trendPercent != null ? ` · trend ${i.trendPercent > 0 ? "+" : ""}${i.trendPercent}%` : ""}
+                      {i.trendPercent != null
+                        ? ` · trend ${i.trendPercent > 0 ? "+" : ""}${i.trendPercent}%`
+                        : ""}
                     </p>
                   </div>
                   <span className="flex items-center gap-2 text-xs text-muted-foreground">
                     {i.marginPercent != null ? `${i.marginPercent}% margin` : ""}
-                    <StatusChip tone={i.classification === "star" ? "success" : i.classification === "dog" ? "danger" : "neutral"}>
+                    <StatusChip
+                      tone={
+                        i.classification === "star"
+                          ? "success"
+                          : i.classification === "dog"
+                            ? "danger"
+                            : "neutral"
+                      }
+                    >
                       {MENU_CLASS_LABEL[i.classification as keyof typeof MENU_CLASS_LABEL]}
                     </StatusChip>
                   </span>
@@ -203,6 +336,7 @@ function RestaurantIntelligencePage() {
               icon={Utensils}
             />
           )}
+          <MenuReasoningPanel tenantId={tenantId} windowDays={windowDays} />
         </div>
       </SectionCard>
 
@@ -215,7 +349,10 @@ function RestaurantIntelligencePage() {
           {(inv?.atRisk ?? []).length > 0 ? (
             <ul className="divide-y text-sm">
               {(inv.atRisk as any[]).map((r) => (
-                <li key={r.inventoryItemId} className="flex items-center justify-between gap-2 py-2">
+                <li
+                  key={r.inventoryItemId}
+                  className="flex items-center justify-between gap-2 py-2"
+                >
                   <span>{r.name}</span>
                   <span className="text-xs text-muted-foreground">
                     {r.currentQuantity} on hand · {r.dailyVelocity}/day ·{" "}
@@ -225,7 +362,11 @@ function RestaurantIntelligencePage() {
               ))}
             </ul>
           ) : (
-            <EmptyState title="Stock is comfortable" description="Nothing is forecast to run out soon." icon={Boxes} />
+            <EmptyState
+              title="Stock is comfortable"
+              description="Nothing is forecast to run out soon."
+              icon={Boxes}
+            />
           )}
         </div>
       </SectionCard>
@@ -239,7 +380,10 @@ function RestaurantIntelligencePage() {
           {(kit?.stations ?? []).length > 0 ? (
             <ul className="divide-y text-sm">
               {(kit.stations as any[]).map((s) => (
-                <li key={s.stationId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <li
+                  key={s.stationId}
+                  className="flex flex-wrap items-center justify-between gap-2 py-2"
+                >
                   <span className="font-medium">{s.name}</span>
                   <span className="text-xs text-muted-foreground">
                     {s.tickets} tickets ·{" "}
@@ -252,7 +396,11 @@ function RestaurantIntelligencePage() {
               ))}
             </ul>
           ) : (
-            <EmptyState title="No kitchen tickets" description="Fire orders to the kitchen to build this view." icon={ChefHat} />
+            <EmptyState
+              title="No kitchen tickets"
+              description="Fire orders to the kitchen to build this view."
+              icon={ChefHat}
+            />
           )}
         </div>
       </SectionCard>
@@ -266,12 +414,15 @@ function RestaurantIntelligencePage() {
           {(pur?.suggestions ?? []).length > 0 ? (
             <ul className="divide-y text-sm">
               {(pur.suggestions as any[]).slice(0, 12).map((s) => (
-                <li key={s.inventoryItemId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <li
+                  key={s.inventoryItemId}
+                  className="flex flex-wrap items-center justify-between gap-2 py-2"
+                >
                   <div className="min-w-0">
                     <span className="font-medium">{s.name}</span>
                     <p className="text-xs text-muted-foreground">
-                      order {s.recommendedQuantity} · {s.dailyVelocity}/day · {s.leadTimeDays}d lead +{" "}
-                      {s.coverDays}d cover
+                      order {s.recommendedQuantity} · {s.dailyVelocity}/day · {s.leadTimeDays}d lead
+                      + {s.coverDays}d cover
                     </p>
                   </div>
                   <span className="text-xs text-muted-foreground">
@@ -282,7 +433,11 @@ function RestaurantIntelligencePage() {
               ))}
             </ul>
           ) : (
-            <EmptyState title="No purchase suggestions" description="Consumption velocity is covered by stock on hand." icon={ShoppingCart} />
+            <EmptyState
+              title="No purchase suggestions"
+              description="Consumption velocity is covered by stock on hand."
+              icon={ShoppingCart}
+            />
           )}
           {(pur?.suppliers ?? []).length > 0 ? (
             <div className="rounded-lg border p-3">
@@ -296,7 +451,9 @@ function RestaurantIntelligencePage() {
                     <span className="text-xs text-muted-foreground">
                       score {s.score}/100 · {s.orders} received
                       {s.onTimePercent != null ? ` · ${s.onTimePercent}% on time` : ""}
-                      {s.averageLeadTimeDays != null ? ` · ${s.averageLeadTimeDays}d actual lead` : ""}
+                      {s.averageLeadTimeDays != null
+                        ? ` · ${s.averageLeadTimeDays}d actual lead`
+                        : ""}
                     </span>
                   </li>
                 ))}
@@ -324,7 +481,9 @@ function RestaurantIntelligencePage() {
                   <span className="font-medium">{o.title}</span>
                   <span className="text-xs text-muted-foreground">
                     priority {o.priority} ·{" "}
-                    {o.confidence == null ? "confidence unknown" : `${Math.round(o.confidence * 100)}% confidence`}
+                    {o.confidence == null
+                      ? "confidence unknown"
+                      : `${Math.round(o.confidence * 100)}% confidence`}
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground">{o.summary}</p>
@@ -332,7 +491,9 @@ function RestaurantIntelligencePage() {
                   {(o.evidence as any[]).map((e) => `${e.label}: ${e.value}`).join(" · ")}
                 </p>
                 {(o.blockers as string[]).length > 0 && (
-                  <p className="text-[11px] text-amber-600">Blocked: {(o.blockers as string[]).join(", ")}</p>
+                  <p className="text-[11px] text-amber-600">
+                    Blocked: {(o.blockers as string[]).join(", ")}
+                  </p>
                 )}
               </li>
             ))}
