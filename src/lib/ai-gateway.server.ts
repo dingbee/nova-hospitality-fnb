@@ -12,12 +12,7 @@ export interface AiGatewayCallOptions {
   jsonMode?: boolean;
   model?: string;
   history?: Array<{ role: "user" | "assistant"; content: string }>;
-  endpoint?: {
-    url: string;
-    apiKey: string;
-    model: string;
-    protocol?: "responses" | "chat-completions";
-  };
+  endpoint?: { url: string; apiKey: string; model: string; protocol?: "responses" | "chat-completions" };
   protocol?: "responses" | "chat-completions";
   timeoutMs?: number;
 }
@@ -33,13 +28,7 @@ export interface AiGatewayResult {
 const DEFAULT_TIMEOUT_MS = 20_000;
 
 function extractResponsesText(json: unknown): string {
-  const body = json as {
-    output_text?: string;
-    output?: Array<{
-      type?: string;
-      content?: Array<{ type?: string; text?: string }>;
-    }>;
-  };
+  const body = json as { output_text?: string; output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> };
   if (typeof body.output_text === "string") return body.output_text;
   for (const item of body.output ?? []) {
     for (const part of item.content ?? []) {
@@ -52,9 +41,7 @@ function extractResponsesText(json: unknown): string {
 export async function callAiGateway(opts: AiGatewayCallOptions): Promise<AiGatewayResult> {
   const url = opts.endpoint?.url ?? AI_GATEWAY_URL;
   const key = opts.endpoint?.apiKey ?? process.env["NOVA_AI_API_KEY"];
-  if (!key) {
-    throw new Error("AI advisory is not configured for this deployment (missing NOVA_AI_API_KEY).");
-  }
+  if (!key) throw new Error("AI advisory is not configured for this deployment (missing NOVA_AI_API_KEY).");
 
   const model = opts.model ?? opts.endpoint?.model ?? AI_GATEWAY_DEFAULT_MODEL;
   const protocol = opts.protocol ?? opts.endpoint?.protocol ?? "chat-completions";
@@ -64,51 +51,29 @@ export async function callAiGateway(opts: AiGatewayCallOptions): Promise<AiGatew
   let res: Response;
 
   try {
-    const body =
-      protocol === "responses"
-        ? {
-            model,
-            instructions: opts.system,
-            input: opts.history?.length
-              ? [
-                  ...opts.history.map((message) => ({
-                    role: message.role,
-                    content: message.content,
-                  })),
-                  { role: "user", content: opts.user },
-                ]
-              : opts.user,
-            ...(opts.jsonMode
-              ? {
-                  text: {
-                    format: { type: "json_object" },
-                  },
-                }
-              : {}),
-          }
-        : {
-            model,
-            messages: [
-              { role: "system", content: opts.system },
-              ...(opts.history ?? []),
-              { role: "user", content: opts.user },
-            ],
-            ...(opts.jsonMode ? { response_format: { type: "json_object" } } : {}),
-          };
+    const body = protocol === "responses"
+      ? {
+          model,
+          instructions: opts.system,
+          input: opts.history?.length
+            ? [...opts.history.map((message) => ({ role: message.role, content: message.content })), { role: "user", content: opts.user }]
+            : opts.user,
+          ...(opts.jsonMode ? { text: { format: { type: "json_object" } } } : {}),
+        }
+      : {
+          model,
+          messages: [{ role: "system", content: opts.system }, ...(opts.history ?? []), { role: "user", content: opts.user }],
+          ...(opts.jsonMode ? { response_format: { type: "json_object" } } : {}),
+        };
 
     res = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify(body),
       signal: controller.signal,
     });
   } catch (err) {
-    if ((err as Error).name === "AbortError") {
-      throw new Error(`AI request timed out after ${opts.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms.`);
-    }
+    if ((err as Error).name === "AbortError") throw new Error(`AI request timed out after ${opts.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms.`);
     throw err;
   } finally {
     clearTimeout(timeout);
@@ -123,18 +88,7 @@ export async function callAiGateway(opts: AiGatewayCallOptions): Promise<AiGatew
     throw new Error(`AI request failed (${res.status}): ${text.slice(0, 200)}`);
   }
 
-  const json = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-    output_text?: string;
-    output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
-    usage?: {
-      prompt_tokens?: number;
-      completion_tokens?: number;
-      input_tokens?: number;
-      output_tokens?: number;
-    };
-  };
-
+  const json = await res.json() as { choices?: Array<{ message?: { content?: string } }>; output_text?: string; output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>; usage?: { prompt_tokens?: number; completion_tokens?: number; input_tokens?: number; output_tokens?: number } };
   return {
     content: protocol === "responses" ? extractResponsesText(json) : (json.choices?.[0]?.message?.content ?? ""),
     latencyMs,
@@ -145,27 +99,11 @@ export async function callAiGateway(opts: AiGatewayCallOptions): Promise<AiGatew
 }
 
 export function parseAiJson<T = unknown>(s: string): T | null {
-  try {
-    return JSON.parse(s) as T;
-  } catch {
-    /* fallthrough */
-  }
+  try { return JSON.parse(s) as T; } catch { /* fallthrough */ }
   const fenced = s.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  if (fenced) {
-    try {
-      return JSON.parse(fenced[1]) as T;
-    } catch {
-      /* ignore */
-    }
-  }
+  if (fenced) { try { return JSON.parse(fenced[1]) as T; } catch { /* ignore */ } }
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
-  if (start >= 0 && end > start) {
-    try {
-      return JSON.parse(s.slice(start, end + 1)) as T;
-    } catch {
-      /* ignore */
-    }
-  }
+  if (start >= 0 && end > start) { try { return JSON.parse(s.slice(start, end + 1)) as T; } catch { /* ignore */ } }
   return null;
 }
