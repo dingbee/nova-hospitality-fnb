@@ -1,4 +1,8 @@
 // NOVA Hospitality F&B — INT-01 reasoning provider selector.
+//
+// The Intelligence Reasoning Layer must not contain provider-specific
+// logic: it asks for "openai" or "gemini" and gets back either a real
+// result or an explicit unavailable state, never a fabricated one.
 import {
   callAiGateway,
   type AiGatewayCallOptions,
@@ -7,7 +11,7 @@ import {
 
 export type ReasoningProviderName = "openai" | "gemini";
 
-const OPENAI_PROVIDERS: ReadonlySet<ReasoningProviderName> = new Set(["openai"]);
+const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const GEMINI_OPENAI_COMPAT_URL =
   process.env["NOVA_GEMINI_GATEWAY_URL"] ??
   "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
@@ -18,10 +22,17 @@ export type ReasoningProviderResult =
   | { provider: ReasoningProviderName; unavailable: true; reason: string };
 
 export function isReasoningProviderConfigured(provider: ReasoningProviderName): boolean {
-  if (OPENAI_PROVIDERS.has(provider)) return Boolean(process.env["NOVA_AI_API_KEY"]);
-  return Boolean(process.env["NOVA_GEMINI_API_KEY"]);
+  return provider === "openai"
+    ? Boolean(process.env["NOVA_AI_API_KEY"])
+    : Boolean(process.env["NOVA_GEMINI_API_KEY"]);
 }
 
+/**
+ * Calls the named provider using its correct production transport.
+ * OpenAI GPT-5.6 reasoning models are routed explicitly to Responses API;
+ * existing Staff/Guest NOVA callers continue using the shared Chat
+ * Completions default in ai-gateway.server.ts.
+ */
 export async function callReasoningProvider(
   provider: ReasoningProviderName,
   opts: Omit<AiGatewayCallOptions, "endpoint" | "model"> & { model?: string },
@@ -33,13 +44,23 @@ export async function callReasoningProvider(
       reason:
         provider === "openai"
           ? "OpenAI is not configured for this deployment (missing NOVA_AI_API_KEY)."
-          : "Gemini is not configured for this deployment (missing NOVA_GEMINI_API_KEY). Set NOVA_GEMINI_API_KEY (and optionally NOVA_GEMINI_MODEL) to enable it as a challenger provider.",
+          : "Gemini is not configured for this deployment (missing NOVA_GEMINI_API_KEY).",
     };
   }
+
   try {
     const result =
       provider === "openai"
-        ? await callAiGateway({ ...opts, protocol: "responses" })
+        ? await callAiGateway({
+            ...opts,
+            protocol: "responses",
+            endpoint: {
+              url: OPENAI_RESPONSES_URL,
+              apiKey: process.env["NOVA_AI_API_KEY"] as string,
+              model: opts.model ?? process.env["NOVA_AI_MODEL"] ?? "gpt-5.6-terra",
+              protocol: "responses",
+            },
+          })
         : await callAiGateway({
             ...opts,
             endpoint: {
@@ -49,6 +70,7 @@ export async function callReasoningProvider(
               protocol: "chat-completions",
             },
           });
+
     return { ...result, provider, unavailable: false };
   } catch (err) {
     return { provider, unavailable: true, reason: (err as Error).message };
