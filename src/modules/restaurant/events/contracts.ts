@@ -146,6 +146,8 @@ export const RESTAURANT_EVENT_TYPES = [
   /* --- Import Studio (O7): migration workspaces, staged not autonomous. --- */
   "restaurant.import.workspace.created",
   "restaurant.import.committed",
+  /* --- Business identity / branding (GEP4). --- */
+  "restaurant.tenant.branding.updated",
 ] as const;
 export type RestaurantEventType = (typeof RESTAURANT_EVENT_TYPES)[number];
 
@@ -288,6 +290,7 @@ export const RESTAURANT_EVENT_SEVERITY: Record<
   "restaurant.day.reopened": "high",
   "restaurant.import.workspace.created": "info",
   "restaurant.import.committed": "low",
+  "restaurant.tenant.branding.updated": "info",
 };
 
 export const restaurantEventSchema = z.object({

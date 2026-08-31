@@ -192,6 +192,79 @@ describe("resolveGuestTableContext", () => {
       /not available/,
     );
   });
+
+  it("(GEP4) businessLogoUrl is null when the operator hasn't configured a logo — every guest surface must render gracefully without one", async () => {
+    const ctx = await resolveGuestTableContext(fakeSb(baseRows) as any, "table-1");
+    expect(ctx.businessLogoUrl).toBeNull();
+  });
+
+  it("(GEP4) businessLogoUrl resolves from the same tenant-scoped settings.business the trading name already reads", async () => {
+    const rows = {
+      ...baseRows,
+      restaurant_tenants: [
+        {
+          id: "tenant-1",
+          name: "Demo Tenant",
+          status: "active",
+          settings: {
+            business: {
+              tradingName: "Baobab Grove Lodge",
+              logoUrl: "https://cdn.example/restaurant-tenant-logos/tenant-1/123.png",
+            },
+          },
+        },
+      ],
+    };
+    const ctx = await resolveGuestTableContext(fakeSb(rows) as any, "table-1");
+    expect(ctx.businessLogoUrl).toBe(
+      "https://cdn.example/restaurant-tenant-logos/tenant-1/123.png",
+    );
+  });
+
+  it("(GEP4) a blank/whitespace-only logoUrl is treated as no logo, same as a blank trading name", async () => {
+    const rows = {
+      ...baseRows,
+      restaurant_tenants: [
+        {
+          id: "tenant-1",
+          name: "Demo Tenant",
+          status: "active",
+          settings: { business: { logoUrl: "   " } },
+        },
+      ],
+    };
+    const ctx = await resolveGuestTableContext(fakeSb(rows) as any, "table-1");
+    expect(ctx.businessLogoUrl).toBeNull();
+  });
+
+  it("(GEP4) a table resolving to a different tenant only ever sees that tenant's own logo — no cross-tenant leak", async () => {
+    const rows = {
+      restaurant_tables: [
+        {
+          id: "table-x",
+          code: "TX",
+          name: "Table X",
+          tenant_id: "tenant-2",
+          property_id: null,
+          location_id: null,
+          active: true,
+        },
+      ],
+      restaurant_tenants: [
+        {
+          id: "tenant-1",
+          name: "Tenant One",
+          status: "active",
+          settings: { business: { logoUrl: "https://cdn.example/tenant-1-logo.png" } },
+        },
+        { id: "tenant-2", name: "Tenant Two", status: "active", settings: {} },
+      ],
+      restaurant_currencies: [],
+    };
+    const ctx = await resolveGuestTableContext(fakeSb(rows) as any, "table-x");
+    expect(ctx.tenantId).toBe("tenant-2");
+    expect(ctx.businessLogoUrl).toBeNull();
+  });
 });
 
 /**
@@ -364,6 +437,7 @@ const TABLE_1: GuestTableContext = {
   tenantId: "tenant-1",
   tenantName: "Demo Tenant",
   businessName: "Demo Tenant",
+  businessLogoUrl: null,
   propertyId: "prop-1",
   locationId: "loc-1",
   currency: "USD",

@@ -10,7 +10,11 @@ export const upsertPropertySchema = z.object({
   tenantId: uuid,
   id: uuid.optional(),
   name: z.string().min(2).max(160),
-  slug: z.string().min(2).max(120).regex(/^[a-z0-9-]+$/),
+  slug: z
+    .string()
+    .min(2)
+    .max(120)
+    .regex(/^[a-z0-9-]+$/),
   timezone: z.string().min(2).max(60).default(DEFAULT_TIMEZONE),
   currency: z.string().min(3).max(3).default(DEFAULT_CURRENCY),
   status: z.string().max(30).default("active"),
@@ -52,7 +56,11 @@ export const upsertInventoryCategorySchema = z.object({
   id: uuid.optional(),
   parentId: uuid.nullish(),
   name: z.string().min(2).max(120),
-  slug: z.string().min(2).max(120).regex(/^[a-z0-9-]+$/),
+  slug: z
+    .string()
+    .min(2)
+    .max(120)
+    .regex(/^[a-z0-9-]+$/),
   kind: z.string().min(2).max(40).default("ingredient"),
   sortOrder: z.number().int().min(0).default(0),
   active: z.boolean().default(true),
@@ -66,7 +74,11 @@ export const upsertProductCategorySchema = z.object({
   parentId: uuid.nullish(),
   kind: z.string().min(2).max(40).default("menu"),
   name: z.string().min(2).max(120),
-  slug: z.string().min(2).max(120).regex(/^[a-z0-9-]+$/),
+  slug: z
+    .string()
+    .min(2)
+    .max(120)
+    .regex(/^[a-z0-9-]+$/),
   description: z.string().max(500).optional(),
   sortOrder: z.number().int().min(0).default(0),
   active: z.boolean().default(true),

@@ -65,11 +65,33 @@ export interface RestaurantTenant {
   settings: RestaurantTenantSettings;
 }
 
+/**
+ * The canonical restaurant business identity — legal/trading name and logo.
+ * Written exclusively by upsertBusinessProfile (text fields) and
+ * tenant-logo.server.ts (logoUrl), read by every POS/Guest Portal surface
+ * that needs to display "who this restaurant is." No other field in this
+ * codebase duplicates a restaurant name or logo — this is the one source.
+ */
+export interface RestaurantBusinessIdentity {
+  legalName?: string;
+  tradingName?: string | null;
+  code?: string | null;
+  taxId?: string | null;
+  defaultCurrency?: string;
+  timezone?: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  /** Public URL into the restaurant-tenant-logos bucket. Null/absent = no logo configured; every consumer must fall back gracefully. */
+  logoUrl?: string | null;
+}
+
 /** Configurable per tenant — never hard-coded in the app. */
 export interface RestaurantTenantSettings {
   tax?: { vat_percent?: number; inclusive?: boolean; label?: string };
   service_charge_percent?: number;
   default_currency?: string;
+  business?: RestaurantBusinessIdentity;
 }
 
 export interface RestaurantProperty {

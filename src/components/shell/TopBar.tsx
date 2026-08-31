@@ -62,10 +62,19 @@ export function TopBar({
         </Link>
 
         {workspace?.tenant && (
-          <span className="nova-chip ml-2 hidden md:inline-flex">
-            {workspace.tenant.name}
-            {workspace.properties?.[0]?.name && <span>· {workspace.properties[0].name}</span>}
-            {workspace.locations?.[0]?.name && <span>· {workspace.locations[0].name}</span>}
+          <span className="nova-chip ml-2 hidden items-center gap-1.5 md:inline-flex">
+            {workspace.tenant.settings?.business?.logoUrl && (
+              <img
+                src={workspace.tenant.settings.business.logoUrl}
+                alt=""
+                className="size-5 shrink-0 rounded-sm object-contain"
+              />
+            )}
+            <span>
+              {workspace.tenant.settings?.business?.tradingName || workspace.tenant.name}
+              {workspace.properties?.[0]?.name && <span>· {workspace.properties[0].name}</span>}
+              {workspace.locations?.[0]?.name && <span>· {workspace.locations[0].name}</span>}
+            </span>
           </span>
         )}
 

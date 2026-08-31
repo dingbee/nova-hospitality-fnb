@@ -6,30 +6,29 @@ import {
   Check,
   CheckCircle2,
   Minus,
+  Monitor,
+  Moon,
   Plus,
   Search,
   ShoppingBag,
   Sparkles,
   Star,
+  Sun,
   UtensilsCrossed,
   X,
 } from "lucide-react";
+import { useGuestTheme, type GuestThemePreference } from "@/hooks/use-guest-theme";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
-import {
   Drawer,
+  DrawerClose,
   DrawerContent,
   DrawerHeader,
   DrawerTitle,
+  DrawerDescription,
   DrawerFooter,
 } from "@/components/ui/drawer";
 import { LoadingState } from "@/components/os/LoadingState";
@@ -97,6 +96,44 @@ function money(n: number, currency: string) {
   }
 }
 
+const GUEST_THEME_CYCLE: Record<GuestThemePreference, GuestThemePreference> = {
+  light: "dark",
+  dark: "system",
+  system: "light",
+};
+const GUEST_THEME_ICON: Record<GuestThemePreference, typeof Sun> = {
+  light: Sun,
+  dark: Moon,
+  system: Monitor,
+};
+const GUEST_THEME_LABEL: Record<GuestThemePreference, string> = {
+  light: "Light",
+  dark: "Dark",
+  system: "System",
+};
+
+/** A single compact control cycling Light -> Dark -> System -> Light, so all three required modes stay reachable without a header row of three separate buttons. */
+function GuestThemeToggle({
+  theme,
+  onChange,
+}: {
+  theme: GuestThemePreference;
+  onChange: (next: GuestThemePreference) => void;
+}) {
+  const Icon = GUEST_THEME_ICON[theme];
+  const next = GUEST_THEME_CYCLE[theme];
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(next)}
+      aria-label={`Theme: ${GUEST_THEME_LABEL[theme]}. Tap to switch to ${GUEST_THEME_LABEL[next]}.`}
+      className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
+    >
+      <Icon className="size-[18px]" aria-hidden />
+    </button>
+  );
+}
+
 type MenuItem = {
   id: string;
   name: string;
@@ -129,6 +166,11 @@ function GuestOrderPage() {
   const { tableId } = Route.useParams();
   const menuFn = useServerFn(guestMenuFn);
   const submitFn = useServerFn(submitGuestOrderFn);
+  // GEP4 — applies (and cleans up) the guest portal's own light/dark/system
+  // theme for as long as this route is mounted; called unconditionally
+  // before any of the early returns below so it stays active across every
+  // state (loading, error, welcome, ordering, confirmed).
+  const guestTheme = useGuestTheme();
 
   // networkMode: "always" here and on every other query/mutation on this
   // page: React Query's default ("online") never even calls queryFn while
@@ -486,6 +528,7 @@ function GuestOrderPage() {
     return (
       <GuestWelcome
         businessName={menu.data?.table.businessName ?? "our restaurant"}
+        businessLogoUrl={menu.data?.table.businessLogoUrl}
         onContinue={() => {
           writeWelcomeSeen(tableId);
           setWelcomeSeen(true);
@@ -498,11 +541,21 @@ function GuestOrderPage() {
     <div className="min-h-screen bg-background pb-28 text-foreground">
       <div className="sticky top-0 z-20 bg-background/95 pt-safe backdrop-blur">
         <header className="border-b bg-card/95 px-4 pb-3">
-          <div className="pt-3">
-            <p className="eyebrow">Table {menu.data?.table.tableName}</p>
-            <p className="font-display mt-0.5 text-xl leading-tight text-foreground">
-              {menu.data?.table.businessName}
-            </p>
+          <div className="flex items-center gap-2.5 pt-3">
+            {menu.data?.table.businessLogoUrl && (
+              <img
+                src={menu.data.table.businessLogoUrl}
+                alt=""
+                className="size-9 shrink-0 rounded-lg border bg-background object-contain p-0.5"
+              />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="eyebrow">Table {menu.data?.table.tableName}</p>
+              <p className="font-display mt-0.5 truncate text-xl leading-tight text-foreground">
+                {menu.data?.table.businessName}
+              </p>
+            </div>
+            <GuestThemeToggle theme={guestTheme.theme} onChange={guestTheme.setTheme} />
           </div>
         </header>
 
@@ -770,16 +823,26 @@ function GuestOrderPage() {
  */
 function GuestWelcome({
   businessName,
+  businessLogoUrl,
   onContinue,
 }: {
   businessName: string;
+  businessLogoUrl?: string | null;
   onContinue: () => void;
 }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center pt-safe">
-      <span className="flex size-14 items-center justify-center rounded-full bg-primary/10">
-        <Sparkles className="size-7 text-primary" aria-hidden />
-      </span>
+      {businessLogoUrl ? (
+        <img
+          src={businessLogoUrl}
+          alt={businessName}
+          className="size-16 rounded-2xl border bg-card object-contain p-1.5 shadow-sm"
+        />
+      ) : (
+        <span className="flex size-14 items-center justify-center rounded-full bg-primary/10">
+          <Sparkles className="size-7 text-primary" aria-hidden />
+        </span>
+      )}
       <p className="eyebrow">Welcome to</p>
       <h1 className="font-display text-2xl text-foreground">{businessName}</h1>
       <p className="max-w-xs text-sm text-muted-foreground">
@@ -930,117 +993,169 @@ function ItemPicker({
 
   const missingRequired = isMissingRequiredModifiers(groups, selected);
   const chosenModifiers: SalesLineModifier[] = buildChosenModifiers(groups, selected);
+  // GEP4: the spec's expected structure is IMAGE -> INFO -> VARIANTS ->
+  // REQUIRED MODIFIERS -> OPTIONAL EXTRAS -> NOTE -> ACTION — required
+  // groups are rendered before optional ones regardless of catalogue order,
+  // so a guest always resolves what's mandatory before browsing extras.
+  const requiredGroups = groups.filter((g) => g.required);
+  const optionalGroups = groups.filter((g) => !g.required);
 
+  // GEP4 root-cause fix (was a centered Dialog): a Dialog's close control is
+  // absolutely positioned over its own content box, which collided directly
+  // with the hero image bled to the same top edge, and a fixed-viewport
+  // modal has no natural sticky footer — on a short screen the "Add to
+  // order" button could end up scrolled well below the fold. A bottom
+  // Drawer (the same primitive already used for the cart in this file) is
+  // the actual guest-portal mobile-sheet pattern: a normal-flow, capped-
+  // height sheet with a distinct scrollable content region and a footer
+  // that never scrolls out of reach.
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto rounded-2xl">
-        {/*
-          GEP1: the item's photo now lives here rather than on every row in
-          the compact browsing list — the same "attractive hospitality
-          presentation" the old large cards gave every item, just moved to
-          the moment a guest actually taps in for a closer look.
-        */}
-        {item.image_url && (
-          <div className="-mx-6 -mt-6 aspect-[16/9] w-[calc(100%+3rem)] overflow-hidden rounded-t-2xl bg-muted">
-            <img src={item.image_url} alt="" className="size-full object-cover" />
-          </div>
-        )}
-        <DialogHeader>
-          <DialogTitle className="font-display text-xl">{item.name}</DialogTitle>
-          {item.description && <DialogDescription>{item.description}</DialogDescription>}
-        </DialogHeader>
-        <p className="text-lg font-semibold text-primary">{money(unitPrice, currency)}</p>
-
-        {variants.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-sm font-medium">
-              Choose an option
-              <span className="ml-1 text-xs font-normal text-muted-foreground">Optional</span>
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {variants.map((v) => {
-                const active = v.id === variantId;
-                const vPrice = Number(v.price ?? 0);
-                // Two distinct ways a variant's own price row can read:
-                // a delta on top of the base price ("+2.00"), or a
-                // standalone absolute price ("— 8.00") — never both.
-                const priceLabel = v.price_is_delta
-                  ? vPrice !== 0
-                    ? ` (${vPrice > 0 ? "+" : ""}${money(vPrice, currency)})`
-                    : ""
-                  : ` — ${money(vPrice, currency)}`;
-                return (
-                  <button
-                    key={v.id}
-                    type="button"
-                    onClick={() => setVariantId(active ? undefined : v.id)}
-                    aria-pressed={active}
-                    className={`inline-flex min-h-10 items-center gap-1.5 rounded-full border px-3.5 text-sm transition-colors ${active ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground"}`}
-                  >
-                    {active && <ChipCheck />}
-                    {v.name}
-                    {priceLabel}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {groups.map((g) => (
-          <div key={g.id} className="space-y-2">
-            <p className="text-sm font-medium">
-              {g.name}
-              {g.required ? (
-                <span className="ml-1 text-xs font-semibold text-destructive">Required</span>
-              ) : (
-                <span className="ml-1 text-xs font-normal text-muted-foreground">Optional</span>
-              )}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {g.modifiers.map((m) => {
-                const active = selected[g.id]?.has(m.id) ?? false;
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => toggle(g, m.id)}
-                    aria-pressed={active}
-                    className={`inline-flex min-h-10 items-center gap-1.5 rounded-full border px-3.5 text-sm transition-colors ${active ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground"}`}
-                  >
-                    {active && <ChipCheck />}
-                    {m.name}
-                    {Number(m.price_delta ?? 0) > 0 &&
-                      ` +${money(Number(m.price_delta), currency)}`}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-
-        <div className="space-y-2">
-          <label htmlFor="item-note" className="text-sm font-medium">
-            Note for the kitchen
-            <span className="ml-1 text-xs font-normal text-muted-foreground">Optional</span>
-          </label>
-          <textarea
-            id="item-note"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="e.g. No onions, sauce on the side, mild"
-            rows={2}
-            maxLength={500}
-            className="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary"
-          />
+    <Drawer open onOpenChange={(open) => !open && onClose()}>
+      <DrawerContent className="flex max-h-[92vh] flex-col">
+        <div className="flex items-center justify-end px-3 pt-1">
+          <DrawerClose asChild>
+            <button
+              type="button"
+              aria-label="Close"
+              className="flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
+            >
+              <X className="size-4" />
+            </button>
+          </DrawerClose>
         </div>
 
-        <div className="flex gap-2 pt-2">
-          <Button variant="outline" className="min-h-11" onClick={onClose}>
+        {item.image_url ? (
+          <div className="aspect-[16/9] max-h-52 w-full shrink-0 overflow-hidden bg-muted">
+            <img src={item.image_url} alt="" className="size-full object-cover" />
+          </div>
+        ) : (
+          <div className="flex h-24 w-full shrink-0 items-center justify-center bg-muted">
+            <UtensilsCrossed className="size-8 text-muted-foreground" aria-hidden />
+          </div>
+        )}
+
+        <div className="flex-1 space-y-4 overflow-y-auto px-5 pb-4 pt-3">
+          <DrawerHeader className="space-y-1 p-0 text-left">
+            <DrawerTitle className="font-display text-xl">{item.name}</DrawerTitle>
+            {item.description && <DrawerDescription>{item.description}</DrawerDescription>}
+          </DrawerHeader>
+          <p className="text-lg font-semibold text-primary">{money(unitPrice, currency)}</p>
+
+          {variants.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">
+                Choose an option
+                <span className="ml-1 text-xs font-normal text-muted-foreground">Optional</span>
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {variants.map((v) => {
+                  const active = v.id === variantId;
+                  const vPrice = Number(v.price ?? 0);
+                  // Two distinct ways a variant's own price row can read:
+                  // a delta on top of the base price ("+2.00"), or a
+                  // standalone absolute price ("— 8.00") — never both.
+                  const priceLabel = v.price_is_delta
+                    ? vPrice !== 0
+                      ? ` (${vPrice > 0 ? "+" : ""}${money(vPrice, currency)})`
+                      : ""
+                    : ` — ${money(vPrice, currency)}`;
+                  return (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => setVariantId(active ? undefined : v.id)}
+                      aria-pressed={active}
+                      className={`inline-flex min-h-10 items-center gap-1.5 rounded-full border px-3.5 text-sm transition-colors ${active ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground"}`}
+                    >
+                      {active && <ChipCheck />}
+                      {v.name}
+                      {priceLabel}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {requiredGroups.map((g) => (
+            <div key={g.id} className="space-y-2">
+              <p className="text-sm font-medium">
+                {g.name}
+                <span className="ml-1 text-xs font-semibold text-destructive">Required</span>
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {g.modifiers.map((m) => {
+                  const active = selected[g.id]?.has(m.id) ?? false;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => toggle(g, m.id)}
+                      aria-pressed={active}
+                      className={`inline-flex min-h-10 items-center gap-1.5 rounded-full border px-3.5 text-sm transition-colors ${active ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground"}`}
+                    >
+                      {active && <ChipCheck />}
+                      {m.name}
+                      {Number(m.price_delta ?? 0) > 0 &&
+                        ` +${money(Number(m.price_delta), currency)}`}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          {optionalGroups.map((g) => (
+            <div key={g.id} className="space-y-2">
+              <p className="text-sm font-medium">
+                {g.name}
+                <span className="ml-1 text-xs font-normal text-muted-foreground">Optional</span>
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {g.modifiers.map((m) => {
+                  const active = selected[g.id]?.has(m.id) ?? false;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => toggle(g, m.id)}
+                      aria-pressed={active}
+                      className={`inline-flex min-h-10 items-center gap-1.5 rounded-full border px-3.5 text-sm transition-colors ${active ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground"}`}
+                    >
+                      {active && <ChipCheck />}
+                      {m.name}
+                      {Number(m.price_delta ?? 0) > 0 &&
+                        ` +${money(Number(m.price_delta), currency)}`}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          <div className="space-y-2">
+            <label htmlFor="item-note" className="text-sm font-medium">
+              Note for the kitchen
+              <span className="ml-1 text-xs font-normal text-muted-foreground">Optional</span>
+            </label>
+            <textarea
+              id="item-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. No onions, sauce on the side, mild"
+              rows={2}
+              maxLength={500}
+              className="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary"
+            />
+          </div>
+        </div>
+
+        <DrawerFooter className="flex-row gap-2 border-t pb-safe pt-3">
+          <Button variant="outline" className="min-h-12" onClick={onClose}>
             <X className="size-4" /> Cancel
           </Button>
           <Button
-            className="min-h-11 flex-1"
+            className="min-h-12 flex-1"
             disabled={missingRequired}
             onClick={() =>
               onAdd({
@@ -1054,9 +1169,9 @@ function ItemPicker({
           >
             Add to order
           </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
   );
 }
 

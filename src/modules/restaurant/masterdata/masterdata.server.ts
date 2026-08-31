@@ -26,14 +26,22 @@ export async function upsertProperty(sb: Sb, userId: string, input: UpsertProper
     status: input.status,
   };
   const q = input.id
-    ? sb.from("restaurant_properties").update(row).eq("id", input.id).eq("tenant_id", input.tenantId)
+    ? sb
+        .from("restaurant_properties")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
     : sb.from("restaurant_properties").insert({ ...row, settings: {} });
   const { data, error } = await q.select("id, name, slug, status").single();
   if (error) throw new Error(error.message);
   return data;
 }
 
-export async function upsertBusinessProfile(sb: Sb, userId: string, input: UpsertBusinessProfileInput) {
+export async function upsertBusinessProfile(
+  sb: Sb,
+  userId: string,
+  input: UpsertBusinessProfileInput,
+) {
   await assertCapability(sb, userId, input.tenantId, "tenant.manage");
   const { data: tenant, error: readErr } = await sb
     .from("restaurant_tenants")
@@ -41,6 +49,13 @@ export async function upsertBusinessProfile(sb: Sb, userId: string, input: Upser
     .eq("id", input.tenantId)
     .single();
   if (readErr) throw new Error(readErr.message);
+  // logoUrl is exclusively managed by tenant-logo.server.ts's upload/remove
+  // functions, never by this text-fields form — carry the existing value
+  // forward unchanged so saving the business profile can never silently
+  // drop a configured logo.
+  const existingLogoUrl =
+    (tenant?.settings as { business?: { logoUrl?: string | null } } | null)?.business?.logoUrl ??
+    null;
   const settings = {
     ...(tenant?.settings ?? {}),
     business: {
@@ -53,6 +68,7 @@ export async function upsertBusinessProfile(sb: Sb, userId: string, input: Upser
       phone: input.phone ?? null,
       email: input.email ?? null,
       address: input.address ?? null,
+      logoUrl: existingLogoUrl,
     },
   };
   const { data, error } = await sb
@@ -81,9 +97,15 @@ export async function upsertInventoryUnit(sb: Sb, userId: string, input: UpsertI
     factor: input.factor,
   };
   const q = input.id
-    ? sb.from("restaurant_inventory_units").update(row).eq("id", input.id).eq("tenant_id", input.tenantId)
+    ? sb
+        .from("restaurant_inventory_units")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
     : sb.from("restaurant_inventory_units").insert(row);
-  const { data, error } = await q.select("id, code, name, dimension, factor, base_unit_id").single();
+  const { data, error } = await q
+    .select("id, code, name, dimension, factor, base_unit_id")
+    .single();
   if (error) throw new Error(error.message);
   return data;
 }
@@ -107,7 +129,11 @@ export async function listInventoryCategories(
   return data ?? [];
 }
 
-export async function upsertInventoryCategory(sb: Sb, userId: string, input: UpsertInventoryCategoryInput) {
+export async function upsertInventoryCategory(
+  sb: Sb,
+  userId: string,
+  input: UpsertInventoryCategoryInput,
+) {
   await assertCapability(sb, userId, input.tenantId, "inventory.manage");
   const row = {
     tenant_id: input.tenantId,
@@ -119,7 +145,11 @@ export async function upsertInventoryCategory(sb: Sb, userId: string, input: Ups
     active: input.active,
   };
   const q = input.id
-    ? sb.from("restaurant_inventory_categories").update(row).eq("id", input.id).eq("tenant_id", input.tenantId)
+    ? sb
+        .from("restaurant_inventory_categories")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
     : sb.from("restaurant_inventory_categories").insert(row);
   const { data, error } = await q.select("id, name, kind, active").single();
   if (error) throw new Error(error.message);
@@ -128,7 +158,11 @@ export async function upsertInventoryCategory(sb: Sb, userId: string, input: Ups
 
 /* ---------------- Product / menu categories ---------------- */
 
-export async function upsertProductCategory(sb: Sb, userId: string, input: UpsertProductCategoryInput) {
+export async function upsertProductCategory(
+  sb: Sb,
+  userId: string,
+  input: UpsertProductCategoryInput,
+) {
   await assertCapability(sb, userId, input.tenantId, "menu.manage");
   const row = {
     tenant_id: input.tenantId,
@@ -142,7 +176,11 @@ export async function upsertProductCategory(sb: Sb, userId: string, input: Upser
     active: input.active,
   };
   const q = input.id
-    ? sb.from("restaurant_categories").update(row).eq("id", input.id).eq("tenant_id", input.tenantId)
+    ? sb
+        .from("restaurant_categories")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
     : sb.from("restaurant_categories").insert(row);
   const { data, error } = await q.select("id, name, kind, active").single();
   if (error) throw new Error(error.message);
@@ -151,7 +189,11 @@ export async function upsertProductCategory(sb: Sb, userId: string, input: Upser
 
 /* ---------------- One-call workbench snapshot ---------------- */
 
-export async function listAllMasterData(sb: Sb, userId: string, input: z.infer<typeof listAllMasterDataSchema>) {
+export async function listAllMasterData(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listAllMasterDataSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   const tenantId = input.tenantId;
 
@@ -179,7 +221,11 @@ export async function listAllMasterData(sb: Sb, userId: string, input: z.infer<t
     servicePeriods,
     reasons,
   ] = await Promise.all([
-    sb.from("restaurant_tenants").select("id, slug, name, status, settings").eq("id", tenantId).single(),
+    sb
+      .from("restaurant_tenants")
+      .select("id, slug, name, status, settings")
+      .eq("id", tenantId)
+      .single(),
     sb
       .from("restaurant_properties")
       .select("id, tenant_id, slug, name, timezone, currency, status")

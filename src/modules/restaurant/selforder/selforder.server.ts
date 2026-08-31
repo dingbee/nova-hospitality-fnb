@@ -67,6 +67,13 @@ export type GuestTableContext = {
    * already exists and is already editable by staff today.
    */
   businessName: string;
+  /**
+   * GEP4 — settings.business.logoUrl, the same canonical field
+   * BusinessPanel.tsx's logo uploader writes and TopBar reads for POS.
+   * Null when the operator hasn't configured a logo; every guest surface
+   * must render gracefully without one.
+   */
+  businessLogoUrl: string | null;
   propertyId: string | null;
   locationId: string | null;
   currency: string;
@@ -99,9 +106,11 @@ export async function resolveGuestTableContext(
   if (!tenant || tenant.status !== "active") {
     throw new Error("This table is not available for ordering.");
   }
-  const tradingName = (
-    (tenant.settings as { business?: { tradingName?: string } } | null)?.business?.tradingName ?? ""
-  ).trim();
+  const business = (
+    tenant.settings as { business?: { tradingName?: string; logoUrl?: string | null } } | null
+  )?.business;
+  const tradingName = (business?.tradingName ?? "").trim();
+  const businessLogoUrl = business?.logoUrl?.trim() || null;
   const currency = await (async () => {
     const { data } = await sb
       .from("restaurant_currencies")
@@ -119,6 +128,7 @@ export async function resolveGuestTableContext(
     tenantId: table.tenant_id,
     tenantName: tenant.name,
     businessName: tradingName || tenant.name,
+    businessLogoUrl,
     propertyId: table.property_id ?? null,
     locationId: table.location_id ?? null,
     currency,
