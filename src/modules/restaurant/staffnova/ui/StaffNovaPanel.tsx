@@ -8,8 +8,10 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { askStaffNovaFn } from "../staffnova.functions";
 import { commitNovaPreparationFn } from "../../prepare/prepare.functions";
+import { executeNovaPreparationFn, previewNovaExecutionFn } from "../../act/act.functions";
 import type { NovaIntentContract } from "../../understand/intent.contracts";
 import type { NovaPreparation, NovaPreparationWorkflow } from "../../prepare/prepare.contracts";
+import type { NovaExecutableWorkflow } from "../../act/act.contracts";
 
 const STARTER_PROMPTS = [
   "What should we prepare for tomorrow?",
@@ -89,16 +91,24 @@ function PreparationActions({
 
   if (committed) {
     return (
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        className="mt-2"
-        onClick={() => navigate({ to: route.to, search: route.search })}
-      >
-        Open {label}
-        {committed.documentNumber ? ` (${committed.documentNumber})` : ""}
-      </Button>
+      <div className="mt-2 space-y-1.5">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => navigate({ to: route.to, search: route.search })}
+        >
+          Open {label}
+          {committed.documentNumber ? ` (${committed.documentNumber})` : ""}
+        </Button>
+        {EXECUTABLE_WORKFLOWS.includes(preparation.workflow) && (
+          <ExecutionActions
+            workflow={preparation.workflow as NovaExecutableWorkflow}
+            recordId={committed.createdRecordId}
+            tenantId={tenantId}
+          />
+        )}
+      </div>
     );
   }
 
@@ -121,6 +131,113 @@ function PreparationActions({
           Something went wrong preparing this — please try again.
         </p>
       )}
+    </div>
+  );
+}
+
+const EXECUTABLE_WORKFLOWS: readonly NovaPreparationWorkflow[] = ["stock_transfer"];
+
+/**
+ * I13 — the "Execute" confirmation boundary. Only rendered once I12 has
+ * already committed a real draft (never before, per spec section 4: a user
+ * message must never reach a mutation without this explicit confirmation
+ * step). Fetches a fresh, re-verified preview on mount/retry — never
+ * trusts the chat turn's stale preparation snapshot — and the Execute
+ * button itself calls executeNovaPreparationFn, which re-verifies
+ * everything again server-side before touching anything (see
+ * act.server.ts). Failure never hides behind a generic error: the
+ * server's own operational-language message is shown verbatim.
+ */
+function ExecutionActions({
+  workflow,
+  recordId,
+  tenantId,
+}: {
+  workflow: NovaExecutableWorkflow;
+  recordId: string;
+  tenantId: string;
+}) {
+  const previewFn = useServerFn(previewNovaExecutionFn);
+  const executeFn = useServerFn(executeNovaPreparationFn);
+  const [reviewing, setReviewing] = useState(false);
+
+  const preview = useMutation({
+    mutationFn: () => previewFn({ data: { tenantId, workflow, recordId } }),
+    networkMode: "always",
+  });
+  const execute = useMutation({
+    mutationFn: () => executeFn({ data: { tenantId, workflow, recordId } }),
+    networkMode: "always",
+  });
+
+  if (execute.data) {
+    return execute.data.ok ? (
+      <div className="mt-2 rounded-md border border-green-600/30 bg-green-600/10 px-2 py-1.5 text-xs whitespace-pre-line text-foreground">
+        {execute.data.message}
+      </div>
+    ) : (
+      <p className="mt-2 text-xs text-destructive">{execute.data.message}</p>
+    );
+  }
+
+  if (!reviewing) {
+    return (
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="mt-2"
+        onClick={() => {
+          setReviewing(true);
+          preview.mutate();
+        }}
+      >
+        Review & execute
+      </Button>
+    );
+  }
+
+  if (preview.isPending || !preview.data) {
+    return <p className="mt-2 text-xs text-muted-foreground">Checking…</p>;
+  }
+
+  if (preview.data.readiness !== "ready") {
+    return <p className="mt-2 text-xs text-muted-foreground">{preview.data.message}</p>;
+  }
+
+  return (
+    <div className="mt-2 space-y-1 rounded-md border px-2 py-1.5">
+      <p className="text-xs font-medium">
+        Ready to execute this stock movement:
+        {preview.data.sourceLocationName && preview.data.destinationLocationName
+          ? ` ${preview.data.sourceLocationName} → ${preview.data.destinationLocationName}`
+          : ""}
+      </p>
+      <ul className="text-xs text-muted-foreground">
+        {preview.data.lines.map((l) => (
+          <li key={l.inventoryItemId}>
+            • {l.inventoryItemName} — {l.quantity}
+          </li>
+        ))}
+      </ul>
+      {preview.data.warnings.map((w) => (
+        <p key={w} className="text-xs text-amber-600">
+          {w}
+        </p>
+      ))}
+      <div className="flex gap-1.5 pt-1">
+        <Button type="button" size="sm" variant="ghost" onClick={() => setReviewing(false)}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          disabled={execute.isPending}
+          onClick={() => execute.mutate()}
+        >
+          {execute.isPending ? "Executing…" : "Execute movement"}
+        </Button>
+      </div>
     </div>
   );
 }
