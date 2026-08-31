@@ -29,5 +29,12 @@ export const submitGuestOrderSchema = z.object({
   // order at this table, re-validated server-side on every submission.
   // Never trusted for anything beyond "which session to try to continue".
   sessionToken: z.string().max(256).optional(),
+  // GEP3 — double-submission protection. Client-generated, kept stable
+  // across retries of one confirm attempt (see selforder-recovery.ts),
+  // matching posLineSchema-adjacent clientRequestId bounds used elsewhere
+  // (openPosOrder). Reuses restaurant_orders' existing
+  // (tenant_id, client_request_id) partial unique index — no new column,
+  // no migration.
+  clientRequestId: z.string().min(6).max(80).optional(),
 });
 export type SubmitGuestOrderInput = z.infer<typeof submitGuestOrderSchema>;

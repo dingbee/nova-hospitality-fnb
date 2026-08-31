@@ -24,6 +24,7 @@ export interface KeyValueStorage {
 const STORAGE_PREFIX = "nova.selforder.activeOrder.";
 const SESSION_STORAGE_PREFIX = "nova.selforder.session.";
 const WELCOME_STORAGE_PREFIX = "nova.selforder.welcomeSeen.";
+const CLIENT_REQUEST_STORAGE_PREFIX = "nova.selforder.clientRequestId.";
 
 /** Table-scoped by construction — a key for table A can never collide with, or be read as, table B's. */
 function storageKey(tableId: string): string {
@@ -33,6 +34,11 @@ function storageKey(tableId: string): string {
 /** Table-scoped by construction, same as storageKey — a session token stored for table A is never read as table B's. */
 function sessionStorageKey(tableId: string): string {
   return `${SESSION_STORAGE_PREFIX}${tableId}`;
+}
+
+/** Table-scoped by construction, same as storageKey — a client request id stored for table A is never read as table B's. */
+function clientRequestStorageKey(tableId: string): string {
+  return `${CLIENT_REQUEST_STORAGE_PREFIX}${tableId}`;
 }
 
 /** Table-scoped by construction, same as storageKey — welcomeSeen for table A never affects table B. */
@@ -127,6 +133,52 @@ export function clearStoredSessionToken(
 ): void {
   try {
     storage?.removeItem(sessionStorageKey(tableId));
+  } catch {
+    // See safeStorage.
+  }
+}
+
+/**
+ * GEP3 — the clientRequestId a guest's current confirm attempt carries,
+ * kept stable across whatever interrupts the attempt (a dropped response,
+ * a refresh, a double-tap) so a retry presents the exact same id and lands
+ * on submitGuestOrder's idempotency short-circuit instead of a fresh
+ * insert. A hint only, same trust model as everything else in this file —
+ * the server never treats a presented id as anything more than "which
+ * order to check for first"; the (tenant_id, client_request_id) unique
+ * index is the actual backstop.
+ */
+export function readStoredClientRequestId(
+  tableId: string,
+  storage: KeyValueStorage | null = safeStorage(),
+): string | null {
+  try {
+    return storage?.getItem(clientRequestStorageKey(tableId)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Called as soon as a confirm attempt begins (before the request is sent), so a refresh mid-flight still has the same id to retry with. */
+export function writeStoredClientRequestId(
+  tableId: string,
+  clientRequestId: string,
+  storage: KeyValueStorage | null = safeStorage(),
+): void {
+  try {
+    storage?.setItem(clientRequestStorageKey(tableId), clientRequestId);
+  } catch {
+    // See safeStorage — a write failure is never surfaced to the guest.
+  }
+}
+
+/** Called once an order is confirmed successfully — that id's job is done, so the next confirm attempt (a new order) gets a fresh one. */
+export function clearStoredClientRequestId(
+  tableId: string,
+  storage: KeyValueStorage | null = safeStorage(),
+): void {
+  try {
+    storage?.removeItem(clientRequestStorageKey(tableId));
   } catch {
     // See safeStorage.
   }

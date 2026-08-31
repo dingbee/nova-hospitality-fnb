@@ -626,6 +626,17 @@ export async function createGuestOrder(
     guestName?: string | null;
     currency: string;
     lines: SalesLineInput[];
+    /**
+     * GEP3 — the same (tenant_id, client_request_id) partial-unique index
+     * openPosOrder already relies on (restaurant_orders, migration 0001).
+     * submitGuestOrder pre-checks this before ever calling here, but two
+     * concurrent submissions (double-tap, a slow retry racing the original
+     * request) can both pass that pre-check before either has inserted —
+     * the unique index is the real backstop, caught below and recovered
+     * exactly like every other correlation-id race in this codebase
+     * (restaurant_purchase_requests, restaurant_prices, etc.).
+     */
+    clientRequestId?: string | null;
   },
 ) {
   const { data: order, error } = await sb
@@ -644,10 +655,27 @@ export async function createGuestOrder(
       source: "self_order",
       server_user_id: null,
       created_by: null,
+      client_request_id: input.clientRequestId ?? null,
     })
     .select("id, order_number, currency")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (String((error as any).code) === "23505" && input.clientRequestId) {
+      const { data: winner, error: recoverErr } = await sb
+        .from("restaurant_orders")
+        .select("id, order_number, currency")
+        .eq("tenant_id", input.tenantId)
+        .eq("client_request_id", input.clientRequestId)
+        .maybeSingle();
+      if (recoverErr || !winner) throw new Error(error.message);
+      return {
+        ...winner,
+        ...(await recalcOrder(sb, input.tenantId, winner.id)),
+        idempotent: true,
+      };
+    }
+    throw new Error(error.message);
+  }
 
   const baseCurrency = await tenantBaseCurrency(sb, input.tenantId);
   const exchangeRate = await currentFxRate(sb, input.tenantId, baseCurrency, input.currency);
@@ -677,7 +705,11 @@ export async function createGuestOrder(
   // trail; wiring guest orders into the Intelligence Core event stream is a
   // separate, later decision about what actor a guest-originated event
   // should carry.
-  return { ...order, ...(await recalcOrder(sb, input.tenantId, order.id)) };
+  return {
+    ...order,
+    ...(await recalcOrder(sb, input.tenantId, order.id)),
+    idempotent: false,
+  };
 }
 
 export async function addOrderItems(sb: Sb, userId: string, input: AddOrderItemsInput) {

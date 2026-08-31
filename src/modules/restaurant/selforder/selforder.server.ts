@@ -24,7 +24,7 @@
  * never require re-proving a live session (see selforder-recovery.ts).
  */
 import { fetchSellableCatalog } from "../sales/pos.server";
-import { createGuestOrder, type SalesLineInput } from "../sales/sales.server";
+import { createGuestOrder, recalcOrder, type SalesLineInput } from "../sales/sales.server";
 import { fireGuestOrder } from "../kitchen/kitchen.server";
 import type { GuestLineInput } from "./selforder.contracts";
 
@@ -283,9 +283,51 @@ export function pickGuestOrderableLines(
 
 export async function submitGuestOrder(
   sb: Sb,
-  input: { tableId: string; guestName?: string; lines: GuestLineInput[]; sessionToken?: string },
+  input: {
+    tableId: string;
+    guestName?: string;
+    lines: GuestLineInput[];
+    sessionToken?: string;
+    /**
+     * GEP3 — double-submission protection. Kept stable by the client across
+     * retries of the *same* confirm attempt (double-tap, network retry, a
+     * refresh mid-submission — see selforder-recovery.ts's
+     * readStoredClientRequestId), and regenerated only once an order has
+     * actually been created. A presented id that already resolved to a
+     * real order for this exact table short-circuits straight back to that
+     * order — never a second one, and never touches the sellable catalogue
+     * or fires anything a second time.
+     */
+    clientRequestId?: string;
+  },
 ) {
   const table = await resolveGuestTableContext(sb, input.tableId);
+
+  if (input.clientRequestId) {
+    const { data: existing } = await sb
+      .from("restaurant_orders")
+      .select("id, order_number, currency, table_id")
+      .eq("tenant_id", table.tenantId)
+      .eq("client_request_id", input.clientRequestId)
+      .maybeSingle();
+    if (existing) {
+      if (existing.table_id !== table.tableId) {
+        // A clientRequestId is only ever generated for one table's basket;
+        // a mismatch can only mean a stale/tampered id, never a legitimate
+        // retry — fail closed rather than ever handing back another
+        // table's order.
+        throw new Error("This order could not be found for this table.");
+      }
+      const sessionToken = await resolveOrStartGuestSession(sb, table, input.sessionToken);
+      return {
+        ...existing,
+        ...(await recalcOrder(sb, table.tenantId, existing.id)),
+        guestSessionToken: sessionToken,
+        idempotent: true,
+      };
+    }
+  }
+
   const sessionToken = await resolveOrStartGuestSession(sb, table, input.sessionToken);
   const catalog = await fetchSellableCatalog(sb, table.tenantId, {
     propertyId: table.propertyId ?? undefined,
@@ -335,6 +377,7 @@ export async function submitGuestOrder(
     guestName: input.guestName ?? null,
     currency: table.currency,
     lines: salesLines,
+    clientRequestId: input.clientRequestId ?? null,
   });
 
   // A guest tapping "Send order" IS the send-to-kitchen action — there is no
@@ -346,7 +389,16 @@ export async function submitGuestOrder(
   // firing hiccup here must never fail an order the guest already placed
   // successfully — it just leaves the order for a staff member to fire
   // manually, exactly like every order this path doesn't reach.
-  await fireGuestOrder(sb, { tenantId: table.tenantId, orderId: order.id });
+  //
+  // GEP3: skipped when createGuestOrder recovered a concurrent request's
+  // winning order (order.idempotent) rather than creating this one — that
+  // request already fires it. fireGuestOrder is itself idempotent (only
+  // items still "ordered" are fired; a second call on the same order finds
+  // nothing left and returns {fired: 0}), so this is a belt-and-suspenders
+  // skip, not a correctness requirement.
+  if (!order.idempotent) {
+    await fireGuestOrder(sb, { tenantId: table.tenantId, orderId: order.id });
+  }
 
   // Additive: every existing field on `order` is untouched, so any caller
   // reading order.id/order_number/total keeps working unchanged. Only a new

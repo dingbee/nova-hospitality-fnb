@@ -72,9 +72,11 @@ import {
 import {
   classifyRecoveredOrder,
   clearStoredOrderId,
+  readStoredClientRequestId,
   readStoredOrderId,
   readStoredSessionToken,
   readWelcomeSeen,
+  writeStoredClientRequestId,
   writeStoredOrderId,
   writeStoredSessionToken,
   writeWelcomeSeen,
@@ -180,10 +182,22 @@ function GuestOrderPage() {
   // moment (skip straight to the menu on reload) and never gates
   // authorization, so a hydration mismatch here has no security meaning.
   const [welcomeSeen, setWelcomeSeen] = useState(false);
+  // GEP3 — double-submission protection. Kept stable across whatever
+  // interrupts one confirm attempt (double-tap, a dropped response, a
+  // refresh) so a retry presents the same id and lands on
+  // submitGuestOrder's idempotency short-circuit instead of a fresh order.
+  // Read only after mount, same hydration reasoning as the other stored
+  // hints above — it decides nothing about authorization, only which id a
+  // retry presents.
+  const [clientRequestId, setClientRequestId] = useState<string | null>(null);
   useEffect(() => {
     setStoredOrderId(readStoredOrderId(tableId));
     setSessionToken(readStoredSessionToken(tableId));
     setWelcomeSeen(readWelcomeSeen(tableId));
+    const existingRequestId = readStoredClientRequestId(tableId);
+    const requestId = existingRequestId ?? crypto.randomUUID();
+    if (!existingRequestId) writeStoredClientRequestId(tableId, requestId);
+    setClientRequestId(requestId);
   }, [tableId]);
 
   const dismissRecovery = () => {
@@ -351,6 +365,7 @@ function GuestOrderPage() {
           guestName: guestName || undefined,
           lines: cart.map(toGuestOrderLine),
           sessionToken: sessionToken ?? undefined,
+          clientRequestId: clientRequestId ?? undefined,
         },
       }),
     networkMode: "always",
@@ -372,6 +387,11 @@ function GuestOrderPage() {
       });
       setCart([]);
       setCartOpen(false);
+      // This attempt's id has done its job (an order now exists for it) —
+      // the next confirm is a genuinely new order, so it gets a fresh one.
+      const nextRequestId = crypto.randomUUID();
+      writeStoredClientRequestId(tableId, nextRequestId);
+      setClientRequestId(nextRequestId);
     },
   });
 
@@ -661,7 +681,8 @@ function GuestOrderPage() {
                       {money(
                         l.unitPrice + l.modifiers.reduce((s, m) => s + m.priceDelta, 0),
                         currency,
-                      )}
+                      )}{" "}
+                      each
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2.5">
@@ -684,6 +705,13 @@ function GuestOrderPage() {
                     >
                       <Plus className="size-3.5" />
                     </Button>
+                    <span className="w-16 shrink-0 text-right text-sm font-semibold">
+                      {money(
+                        (l.unitPrice + l.modifiers.reduce((s, m) => s + m.priceDelta, 0)) *
+                          l.quantity,
+                        currency,
+                      )}
+                    </span>
                   </div>
                 </div>
               ))
@@ -712,7 +740,7 @@ function GuestOrderPage() {
             )}
             <Button
               className="min-h-12 rounded-full text-base"
-              disabled={cart.length === 0 || submit.isPending}
+              disabled={cart.length === 0 || submit.isPending || !clientRequestId}
               onClick={() => submit.mutate()}
             >
               {submit.isPending ? "Sending…" : "Send order"}
