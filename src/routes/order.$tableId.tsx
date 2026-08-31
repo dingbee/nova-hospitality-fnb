@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Minus,
   Plus,
+  Search,
   ShoppingBag,
   Sparkles,
   Star,
@@ -77,6 +78,7 @@ import {
   writeWelcomeSeen,
 } from "@/modules/restaurant/selforder/selforder-recovery";
 import type { SalesLineModifier } from "@/modules/restaurant/sales/sales.server";
+import { searchMenuItems } from "@/modules/restaurant/selforder/selforder-search";
 
 export const Route = createFileRoute("/order/$tableId")({
   head: () => ({ meta: [{ title: "Order" }, { name: "robots", content: "noindex,nofollow" }] }),
@@ -143,6 +145,10 @@ function GuestOrderPage() {
   });
 
   const [categoryId, setCategoryId] = useState<string | null>(null);
+  // GEP1: universal menu search. Purely client-side over the items
+  // guestMenuFn already fetched — no second network call per keystroke, no
+  // second catalogue. See selforder-search.ts for the ranking rules.
+  const [query, setQuery] = useState("");
   const [pickerItem, setPickerItem] = useState<MenuItem | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
@@ -221,7 +227,25 @@ function GuestOrderPage() {
     for (const g of (menu.data?.modifierGroups ?? []) as ModifierGroup[]) map.set(g.id, g);
     return map;
   }, [menu.data]);
-  const filtered = categoryId ? items.filter((i) => i.category_id === categoryId) : items;
+  // Keyed off menu.data (stable across renders once loaded) rather than the
+  // `items`/`categories` derived arrays above, which are fresh `?? []`
+  // references every render and would defeat the memo — same reasoning as
+  // groupsById just above.
+  const categoryNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of (menu.data?.categories ?? []) as { id: string; name: string }[])
+      map.set(c.id, c.name);
+    return map;
+  }, [menu.data]);
+  const searchActive = query.trim().length > 0;
+  // Search spans the whole published menu regardless of the selected
+  // category (spec: "search overriding category filtering when a search is
+  // active"); clearing the search restores ordinary category browsing.
+  const filtered = useMemo(() => {
+    if (searchActive) return searchMenuItems(items, query, categoryNameById);
+    return categoryId ? items.filter((i) => i.category_id === categoryId) : items;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `items` is a fresh `?? []` reference every render (see comment above); menu.data is the real, stable dependency
+  }, [menu.data, query, searchActive, categoryId, categoryNameById]);
 
   const cartTotal = cart.reduce(
     (s, l) =>
@@ -414,12 +438,42 @@ function GuestOrderPage() {
           </div>
         </header>
 
+        <div className="px-4 pt-2.5">
+          <div className="relative">
+            <Search
+              className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+              aria-hidden
+            />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search the menu — try “fish”, “burger”, “vegetarian”…"
+              aria-label="Search the menu"
+              enterKeyHint="search"
+              className="h-11 rounded-full bg-card pl-10 pr-10 text-sm"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                aria-label="Clear search"
+                className="absolute right-1.5 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
+              >
+                <X className="size-4" />
+              </button>
+            )}
+          </div>
+        </div>
+
         <div className="flex gap-2 overflow-x-auto px-4 py-2.5">
           <Button
             size="sm"
-            variant={categoryId ? "outline" : "default"}
+            variant={!searchActive && !categoryId ? "default" : "outline"}
             className="min-h-9 shrink-0 rounded-full"
-            onClick={() => setCategoryId(null)}
+            onClick={() => {
+              setCategoryId(null);
+              setQuery("");
+            }}
           >
             All
           </Button>
@@ -427,9 +481,12 @@ function GuestOrderPage() {
             <Button
               key={c.id}
               size="sm"
-              variant={categoryId === c.id ? "default" : "outline"}
+              variant={!searchActive && categoryId === c.id ? "default" : "outline"}
               className="min-h-9 shrink-0 rounded-full"
-              onClick={() => setCategoryId(c.id)}
+              onClick={() => {
+                setCategoryId(c.id);
+                setQuery("");
+              }}
             >
               {c.name}
             </Button>
@@ -460,23 +517,29 @@ function GuestOrderPage() {
         </span>
       </button>
 
-      <main className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3">
+      <main className="p-4">
         {filtered.length === 0 && (
-          <div className="col-span-full">
-            <EmptyState
-              title="Nothing here yet"
-              description="Check back soon, or try another category."
-            />
+          <EmptyState
+            title={searchActive ? "No matches" : "Nothing here yet"}
+            description={
+              searchActive
+                ? `Nothing matched "${query.trim()}". Try a different word, or clear the search to browse by category.`
+                : "Check back soon, or try another category."
+            }
+          />
+        )}
+        {filtered.length > 0 && (
+          <div className="flex flex-col gap-2">
+            {filtered.map((item) => (
+              <MenuItemRow
+                key={item.id}
+                item={item}
+                currency={currency}
+                onSelect={() => setPickerItem(item)}
+              />
+            ))}
           </div>
         )}
-        {filtered.map((item) => (
-          <MenuItemCard
-            key={item.id}
-            item={item}
-            currency={currency}
-            onSelect={() => setPickerItem(item)}
-          />
-        ))}
       </main>
 
       {pickerItem && (
@@ -682,7 +745,15 @@ function RecoveryPrompt({
  * "view" vs "add" affordance to tap around, which keeps one-handed
  * ordering fast.
  */
-function MenuItemCard({
+/**
+ * GEP1: a compact, scannable row — the same interaction (tap -> ItemPicker
+ * -> existing cart/order flow) as the old large card, just laid out so a
+ * 100+ item menu (or a page of search results) doesn't force a guest to
+ * scroll past oversized cards to find an ordinary product. The bigger,
+ * fuller hospitality presentation (a larger photo, full description) now
+ * lives in ItemPicker itself, which a tap always opens.
+ */
+function MenuItemRow({
   item,
   currency,
   onSelect,
@@ -697,34 +768,36 @@ function MenuItemCard({
       type="button"
       disabled={disabled}
       onClick={onSelect}
-      className="flex flex-col overflow-hidden rounded-2xl border bg-card text-left shadow-sm transition-colors hover:border-primary disabled:opacity-50"
+      className="flex min-h-[4.5rem] w-full items-center gap-3 rounded-2xl border bg-card p-2.5 text-left shadow-sm transition-colors hover:border-primary disabled:opacity-50"
     >
-      <div className="flex aspect-[4/5] w-full items-center justify-center bg-muted">
+      <div className="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted">
         {item.image_url ? (
           <img src={item.image_url} alt="" className="size-full object-cover" />
         ) : (
-          <UtensilsCrossed className="size-8 text-muted-foreground" aria-hidden />
+          <UtensilsCrossed className="size-5 text-muted-foreground" aria-hidden />
         )}
       </div>
-      <div className="flex flex-1 flex-col gap-1 p-3">
-        <span className="text-sm font-medium leading-tight">{item.name}</span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium leading-tight">{item.name}</p>
         {item.description && (
-          <span className="line-clamp-2 text-xs text-muted-foreground">{item.description}</span>
+          <p className="line-clamp-1 text-xs text-muted-foreground">{item.description}</p>
         )}
-        <span className="mt-auto pt-1 text-sm font-semibold text-primary">
-          {money(Number(item.price ?? 0), currency)}
-        </span>
-        {item.available === false ? (
-          <Badge variant="secondary" className="w-fit">
-            Unavailable
-          </Badge>
-        ) : (
-          (item.variants ?? []).length > 0 && (
-            <Badge variant="secondary" className="w-fit">
-              {item.variants!.length} options
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span className="text-sm font-semibold text-primary">
+            {money(Number(item.price ?? 0), currency)}
+          </span>
+          {item.available === false ? (
+            <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+              Unavailable
             </Badge>
-          )
-        )}
+          ) : (
+            (item.variants ?? []).length > 0 && (
+              <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                {item.variants!.length} options
+              </Badge>
+            )
+          )}
+        </div>
       </div>
     </button>
   );
@@ -777,6 +850,17 @@ function ItemPicker({
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[85vh] overflow-y-auto rounded-2xl">
+        {/*
+          GEP1: the item's photo now lives here rather than on every row in
+          the compact browsing list — the same "attractive hospitality
+          presentation" the old large cards gave every item, just moved to
+          the moment a guest actually taps in for a closer look.
+        */}
+        {item.image_url && (
+          <div className="-mx-6 -mt-6 aspect-[16/9] w-[calc(100%+3rem)] overflow-hidden rounded-t-2xl bg-muted">
+            <img src={item.image_url} alt="" className="size-full object-cover" />
+          </div>
+        )}
         <DialogHeader>
           <DialogTitle className="font-display text-xl">{item.name}</DialogTitle>
           {item.description && <DialogDescription>{item.description}</DialogDescription>}

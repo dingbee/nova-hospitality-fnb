@@ -1,13 +1,28 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- fake Supabase rows are untyped at this boundary. */
-import { describe, expect, it } from "vitest";
-import {
+import { describe, expect, it, vi } from "vitest";
+import type { GuestLineInput } from "./selforder.contracts";
+import type { GuestTableContext } from "./selforder.server";
+
+// GEP1: guestMenu() composes resolveGuestTableContext (tested below) with
+// fetchSellableCatalog — the exact same tenant/property/location-scoped,
+// published-only, priced catalogue query the POS itself uses, already
+// exhaustively tested for tenant isolation and published-only visibility in
+// pos.server.test.ts ("fetchSellableCatalog — multiple published menus").
+// Mocking it here isolates the one thing guestMenu() actually adds on top —
+// hiding items staff marked unavailable or that have no resolvable price —
+// without re-deriving fetchSellableCatalog's own multi-table fake harness.
+const fetchSellableCatalogMock = vi.fn();
+vi.mock("../sales/pos.server", () => ({
+  fetchSellableCatalog: (...args: unknown[]) => fetchSellableCatalogMock(...args),
+}));
+
+const {
   closeActiveGuestSession,
+  guestMenu,
   pickGuestOrderableLines,
   resolveGuestTableContext,
   resolveOrStartGuestSession,
-  type GuestTableContext,
-} from "./selforder.server";
-import type { GuestLineInput } from "./selforder.contracts";
+} = await import("./selforder.server");
 
 function line(overrides: Partial<GuestLineInput> = {}): GuestLineInput {
   return {
@@ -175,6 +190,88 @@ describe("resolveGuestTableContext", () => {
     };
     await expect(resolveGuestTableContext(fakeSb(rows) as any, "table-1")).rejects.toThrow(
       /not available/,
+    );
+  });
+});
+
+/**
+ * GEP1 — guestMenu()'s own composition on top of the already-tested
+ * resolveGuestTableContext + fetchSellableCatalog: it hides any item staff
+ * marked unavailable, and any item with no resolvable price
+ * (priceConfigured: false) — never letting a guest tap something the order
+ * path would only refuse afterwards. Tenant/published-only scoping is
+ * fetchSellableCatalog's own, already-covered contract (pos.server.test.ts);
+ * fetchSellableCatalog is mocked here purely to isolate this one filter.
+ */
+describe("guestMenu", () => {
+  const tableRows = {
+    restaurant_tables: [
+      {
+        id: "table-1",
+        code: "T1",
+        name: "Table 1",
+        tenant_id: "tenant-1",
+        property_id: "prop-1",
+        location_id: "loc-1",
+        active: true,
+      },
+    ],
+    restaurant_tenants: [{ id: "tenant-1", name: "Demo Tenant", status: "active" }],
+    restaurant_currencies: [],
+  };
+
+  it("M: hides an item staff marked unavailable, and one with no resolvable price, while keeping ordinary items", async () => {
+    fetchSellableCatalogMock.mockResolvedValueOnce({
+      menus: [],
+      activeMenuId: null,
+      categories: [],
+      items: [
+        { id: "item-ok", name: "Grilled Fish", available: true, priceConfigured: true },
+        {
+          id: "item-unavailable",
+          name: "Sold Out Special",
+          available: false,
+          priceConfigured: true,
+        },
+        { id: "item-unpriced", name: "No Price Set", available: true, priceConfigured: false },
+      ],
+    });
+    const menu = await guestMenu(fakeSb(tableRows) as any, "table-1");
+    expect(menu.items.map((i: any) => i.id)).toEqual(["item-ok"]);
+  });
+
+  it("passes the resolved tenant/property/location through to fetchSellableCatalog — never trusts a client-supplied value (only tableId is ever accepted)", async () => {
+    fetchSellableCatalogMock.mockResolvedValueOnce({
+      menus: [],
+      activeMenuId: null,
+      categories: [],
+      items: [],
+    });
+    await guestMenu(fakeSb(tableRows) as any, "table-1");
+    expect(fetchSellableCatalogMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "tenant-1",
+      expect.objectContaining({ propertyId: "prop-1", locationId: "loc-1" }),
+    );
+  });
+
+  it("N: a table that resolves to a different tenant only ever reaches fetchSellableCatalog with that tenant's id — no cross-tenant leak is possible from guestMenu's own composition", async () => {
+    const otherTenantRows = {
+      ...tableRows,
+      restaurant_tables: [{ ...tableRows.restaurant_tables[0], tenant_id: "tenant-2" }],
+      restaurant_tenants: [{ id: "tenant-2", name: "Other Tenant", status: "active" }],
+    };
+    fetchSellableCatalogMock.mockResolvedValueOnce({
+      menus: [],
+      activeMenuId: null,
+      categories: [],
+      items: [],
+    });
+    await guestMenu(fakeSb(otherTenantRows) as any, "table-1");
+    expect(fetchSellableCatalogMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "tenant-2",
+      expect.anything(),
     );
   });
 });
