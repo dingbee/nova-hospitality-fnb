@@ -20,5 +20,22 @@ export const askNovaSchema = z.object({
     )
     .max(6)
     .optional(),
+  /**
+   * GEP2 — the guest's current basket, exactly as the client already
+   * represents it (see selforder-cart.ts's CartLine), reduced to what NOVA
+   * needs to resolve "remove"/"set_quantity"/"add another one" references.
+   * A hint only, same trust model as everything else on this surface: the
+   * server never derives price/availability/identity from it, only uses it
+   * to know which real items are already in front of the guest.
+   */
+  basket: z
+    .array(
+      z.object({
+        menuItemId: z.string().uuid(),
+        quantity: z.number().int().min(1).max(999),
+      }),
+    )
+    .max(50)
+    .optional(),
 });
 export type AskNovaInput = z.infer<typeof askNovaSchema>;

@@ -259,6 +259,7 @@ describe("askNova", () => {
           categoryId: CATEGORY_MAINS,
         },
       ],
+      operations: [],
     });
   });
 
@@ -275,6 +276,7 @@ describe("askNova", () => {
       ok: true,
       reply: "Try our chef's special truffle risotto!",
       recommendedItems: [],
+      operations: [],
     });
   });
 
@@ -428,5 +430,217 @@ describe("askNova", () => {
     expect(salad.tags).toEqual(["vegetarian"]);
     expect(burger.allergens).toEqual(["gluten", "dairy"]);
     expect(burger.tags).toEqual([]);
+  });
+});
+
+/**
+ * GEP2 — conversational order preparation. These exercise askNova() end to
+ * end (real guestMenu()/fetchSellableCatalog(), a scripted AI response)
+ * proving the server, never the model, is authoritative over what actually
+ * changes in the guest's basket.
+ */
+describe("askNova — proposed basket operations (GEP2)", () => {
+  it("F/G: resolves a real 'add' operation the model proposed, e.g. after the guest says yes to a recommendation", async () => {
+    const sb = fakeDb(baseRows());
+    const ai = scriptedAi(
+      JSON.stringify({
+        reply: "Certainly — I've added the Garden Salad. Would you like anything else?",
+        recommendedItemIds: [],
+        operations: [{ action: "add", itemId: ITEM_SALAD, quantity: 1 }],
+      }),
+    );
+    const result = await askNova(sb as any, { tableId: TABLE, message: "Yes please" }, ai);
+    expect(result).toMatchObject({ ok: true });
+    expect((result as any).operations).toEqual([
+      {
+        status: "applied",
+        action: "add",
+        itemId: ITEM_SALAD,
+        name: "Garden Salad",
+        quantity: 1,
+        modifierNames: [],
+      },
+    ]);
+  });
+
+  it("C: rejects (not_found) an operation referencing an item id the model invented — never guesses", async () => {
+    const sb = fakeDb(baseRows());
+    const ai = scriptedAi(
+      JSON.stringify({
+        reply: "Done!",
+        recommendedItemIds: [],
+        operations: [{ action: "add", itemId: "invented-item-id" }],
+      }),
+    );
+    const result = await askNova(sb as any, { tableId: TABLE, message: "Add the special" }, ai);
+    expect((result as any).operations).toEqual([
+      { status: "not_found", itemId: "invented-item-id" },
+    ]);
+  });
+
+  it("L: a required modifier with no real modifiers defined is never silently fabricated — the guest is asked instead", async () => {
+    // GROUP_SIDE is required on the burger but baseRows defines zero real
+    // modifiers for it — proving there is no "default" this code could
+    // silently invent to satisfy the requirement.
+    const sb = fakeDb(baseRows());
+    const ai = scriptedAi(
+      JSON.stringify({
+        reply: "Sure — the Beef Burger comes with a choice of side.",
+        recommendedItemIds: [],
+        operations: [{ action: "add", itemId: ITEM_BURGER }],
+      }),
+    );
+    const result = await askNova(sb as any, { tableId: TABLE, message: "Add the burger" }, ai);
+    expect((result as any).operations).toEqual([
+      {
+        status: "needs_modifier",
+        itemId: ITEM_BURGER,
+        name: "Beef Burger",
+        groupName: "Choice of side",
+        options: [],
+      },
+    ]);
+  });
+
+  it("G/H: resolves 'remove' only against an item genuinely present in the basket the guest actually has", async () => {
+    const sb = fakeDb(baseRows());
+    const ai = scriptedAi(
+      JSON.stringify({
+        reply: "Done — I've removed the salad.",
+        operations: [{ action: "remove", itemId: ITEM_SALAD }],
+      }),
+    );
+    const withInBasket = await askNova(
+      sb as any,
+      {
+        tableId: TABLE,
+        message: "Remove the salad",
+        basket: [{ menuItemId: ITEM_SALAD, quantity: 1 }],
+      },
+      ai,
+    );
+    expect((withInBasket as any).operations).toEqual([
+      { status: "applied", action: "remove", itemId: ITEM_SALAD, name: "Garden Salad" },
+    ]);
+
+    const withoutInBasket = await askNova(
+      sb as any,
+      { tableId: TABLE, message: "Remove the salad", basket: [] },
+      ai,
+    );
+    expect((withoutInBasket as any).operations).toEqual([
+      { status: "not_in_basket", itemId: ITEM_SALAD, name: "Garden Salad" },
+    ]);
+  });
+
+  it("I: resolves a real quantity change ('make that two') against the current basket", async () => {
+    const sb = fakeDb(baseRows());
+    const ai = scriptedAi(
+      JSON.stringify({
+        reply: "Done — that's two Garden Salads.",
+        operations: [{ action: "set_quantity", itemId: ITEM_SALAD, quantity: 2 }],
+      }),
+    );
+    const result = await askNova(
+      sb as any,
+      {
+        tableId: TABLE,
+        message: "Make that two",
+        basket: [{ menuItemId: ITEM_SALAD, quantity: 1 }],
+      },
+      ai,
+    );
+    expect((result as any).operations).toEqual([
+      {
+        status: "applied",
+        action: "set_quantity",
+        itemId: ITEM_SALAD,
+        name: "Garden Salad",
+        quantity: 2,
+      },
+    ]);
+  });
+
+  it("M: a stale recommendation for an item that has since become unavailable is never applied — it no longer resolves at all", async () => {
+    // Item was available when NOVA recommended it earlier in the
+    // conversation; by the time the guest confirms ("yes, prepare that"),
+    // it has been marked unavailable. guestMenu() re-fetches fresh on
+    // every call, so it is no longer part of this turn's real catalogue —
+    // the operation safely fails closed (not_found) rather than adding a
+    // now-stale item.
+    const rows = baseRows();
+    rows.restaurant_menu_items = rows.restaurant_menu_items.map((i) =>
+      i.id === ITEM_SALAD ? { ...i, available: false } : i,
+    );
+    const sb = fakeDb(rows);
+    const ai = scriptedAi(
+      JSON.stringify({
+        reply: "Certainly — I've prepared the Garden Salad.",
+        operations: [{ action: "add", itemId: ITEM_SALAD }],
+      }),
+    );
+    const result = await askNova(sb as any, { tableId: TABLE, message: "Yes, prepare that" }, ai);
+    expect((result as any).operations).toEqual([{ status: "not_found", itemId: ITEM_SALAD }]);
+  });
+
+  it("K: a well-behaved model asks a clarifying question instead of guessing between two real items — nothing is applied", async () => {
+    // The prompt instructs the model not to guess when a request could
+    // match more than one real item; this proves the server-side contract
+    // that holds regardless: an assistant reply with no operations changes
+    // nothing in the basket, whatever the reply text says.
+    const sb = fakeDb(baseRows());
+    const ai = scriptedAi(
+      JSON.stringify({
+        reply: "We have the Beef Burger and the Garden Salad — which would you like?",
+        recommendedItemIds: [],
+      }),
+    );
+    const result = await askNova(sb as any, { tableId: TABLE, message: "Add the usual" }, ai);
+    expect((result as any).operations).toEqual([]);
+  });
+
+  it("N: an applied 'add' operation never carries a price — the client re-derives it from the same real catalogue item, exactly like a manual add", async () => {
+    const sb = fakeDb(baseRows());
+    const ai = scriptedAi(
+      JSON.stringify({ reply: "Sure!", operations: [{ action: "add", itemId: ITEM_SALAD }] }),
+    );
+    const result = await askNova(sb as any, { tableId: TABLE, message: "Add the salad" }, ai);
+    const applied = (result as any).operations[0];
+    expect(applied.status).toBe("applied");
+    expect(Object.keys(applied).sort()).toEqual(
+      ["status", "action", "itemId", "name", "quantity", "modifierNames"].sort(),
+    );
+  });
+
+  it("O/P: operations are resolved purely against this table's own tenant catalogue and basket — no cross-tenant reference is possible", async () => {
+    const sb = fakeDb(baseRows());
+    // A basket line naming an item id that simply doesn't exist in this
+    // tenant's own catalogue at all (standing in for "an id copied from a
+    // different tenant/table") can never be resolved to a real add/remove.
+    const ai = scriptedAi(
+      JSON.stringify({
+        reply: "hi",
+        operations: [{ action: "remove", itemId: "item-from-another-tenant" }],
+      }),
+    );
+    const result = await askNova(
+      sb as any,
+      {
+        tableId: TABLE,
+        message: "remove it",
+        basket: [{ menuItemId: "item-from-another-tenant", quantity: 1 }],
+      },
+      ai,
+    );
+    expect((result as any).operations).toEqual([
+      { status: "not_found", itemId: "item-from-another-tenant" },
+    ]);
+  });
+
+  it("W: a malformed/absent operations field never throws and never applies anything", async () => {
+    const sb = fakeDb(baseRows());
+    const ai = scriptedAi(JSON.stringify({ reply: "hi", recommendedItemIds: [] }));
+    const result = await askNova(sb as any, { tableId: TABLE, message: "hi" }, ai);
+    expect((result as any).operations).toEqual([]);
   });
 });

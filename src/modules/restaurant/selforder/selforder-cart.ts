@@ -85,6 +85,33 @@ export function isMissingRequiredModifiers(
   return groups.some((g) => g.required && (selected[g.id]?.size ?? 0) < Math.max(1, g.min_select));
 }
 
+/**
+ * GEP2 — turns the modifier names the server already resolved and validated
+ * (selfnova.server.ts's ResolvedNovaOperation, via resolveNovaOperations)
+ * into the same SalesLineModifier shape a manual ItemPicker selection
+ * produces. This never trusts a name on its own: it only ever matches
+ * against the real modifiers already present in `groups`, so a name that
+ * doesn't resolve to a real modifier here is silently dropped, exactly like
+ * a manual selection can never pick a modifier that doesn't exist.
+ */
+export function matchModifiersByName(
+  groups: ModifierGroup[],
+  names: string[],
+): SalesLineModifier[] {
+  const normalized = names.map((n) => n.trim().toLowerCase());
+  return groups.flatMap((g) =>
+    g.modifiers
+      .filter((m) => normalized.includes(m.name.trim().toLowerCase()))
+      .map((m) => ({
+        modifierId: m.id,
+        groupId: g.id,
+        name: m.name,
+        priceDelta: Number(m.price_delta ?? 0),
+        quantity: 1,
+      })),
+  );
+}
+
 /** Expands the selected modifier ids into the SalesLineModifier shape the guest order path submits. */
 export function buildChosenModifiers(
   groups: ModifierGroup[],

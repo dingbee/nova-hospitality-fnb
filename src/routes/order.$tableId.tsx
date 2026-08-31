@@ -57,9 +57,11 @@ import {
 } from "@/modules/restaurant/selforder/selffeedback.functions";
 import { askNovaFn } from "@/modules/restaurant/selforder/selfnova.functions";
 import type { AskNovaRecommendedItem } from "@/modules/restaurant/selforder/selfnova.server";
+import type { ResolvedNovaOperation } from "@/modules/restaurant/selforder/selforder-asknova";
 import {
   buildChosenModifiers,
   isMissingRequiredModifiers,
+  matchModifiersByName,
   resolveVariantUnitPrice,
   toggleModifierSelection,
   toGuestOrderLine,
@@ -293,6 +295,52 @@ function GuestOrderPage() {
         return next <= 0 ? [] : [{ ...l, quantity: next }];
       }),
     );
+  };
+
+  /**
+   * GEP2 — the single funnel every basket change NOVA proposes goes
+   * through, whether it came from a free-text request the model resolved
+   * ("add a coke") or from the deterministic "Add to my order" button next
+   * to a recommendation. Applies only operations already validated
+   * server-side (status "applied") — anything else (unavailable,
+   * needs_modifier, not_found, not_in_basket) is left for the caller to
+   * explain, never guessed into a cart change here. This never calls
+   * submitFn: preparing/changing the basket and actually sending the order
+   * remain two separate, guest-gated steps (see the cart drawer's own
+   * "Send order" button, unchanged).
+   */
+  const applyNovaOperations = (ops: ResolvedNovaOperation[]) => {
+    setCart((current) => {
+      let next = current;
+      for (const op of ops) {
+        if (op.status !== "applied") continue;
+        if (op.action === "add") {
+          const item = items.find((i) => i.id === op.itemId);
+          if (!item) continue;
+          const groups = (item.modifier_group_ids ?? [])
+            .map((id) => groupsById.get(id))
+            .filter((g): g is ModifierGroup => Boolean(g));
+          next = [
+            ...next,
+            {
+              key: `${item.id}:${Date.now()}:${Math.random()}`,
+              menuItemId: item.id,
+              name: item.name,
+              unitPrice: Number(item.price ?? 0),
+              quantity: op.quantity,
+              modifiers: matchModifiersByName(groups, op.modifierNames),
+            },
+          ];
+        } else if (op.action === "remove") {
+          next = next.filter((l) => l.menuItemId !== op.itemId);
+        } else if (op.action === "set_quantity") {
+          next = next.map((l) =>
+            l.menuItemId === op.itemId ? { ...l, quantity: op.quantity } : l,
+          );
+        }
+      }
+      return next;
+    });
   };
 
   const submit = useMutation({
@@ -561,9 +609,17 @@ function GuestOrderPage() {
         onOpenChange={setNovaOpen}
         tableId={tableId}
         items={items}
+        groupsById={groupsById}
+        cart={cart}
+        currency={currency}
         onPickItem={(item) => {
           setNovaOpen(false);
           setPickerItem(item);
+        }}
+        onApplyOperations={applyNovaOperations}
+        onReviewOrder={() => {
+          setNovaOpen(false);
+          setCartOpen(true);
         }}
       />
 
@@ -1448,8 +1504,40 @@ function GuestFeedbackPanel({ tableId, orderId }: { tableId: string; orderId: st
 
 type NovaTurn =
   | { id: string; role: "user"; content: string }
-  | { id: string; role: "assistant"; content: string; recommendedItems: AskNovaRecommendedItem[] }
+  | {
+      id: string;
+      role: "assistant";
+      content: string;
+      recommendedItems: AskNovaRecommendedItem[];
+      /** GEP2 — what the server actually resolved and (for "applied") already changed in the basket. The ground truth for what happened, independent of the model's own prose. */
+      operations: ResolvedNovaOperation[];
+    }
   | { id: string; role: "fallback"; categories: { id: string; name: string }[] };
+
+/** GEP2 — warm-language summary of a basket change that genuinely happened, shown as the ground truth next to NOVA's own reply. */
+function describeAppliedOperation(
+  op: Extract<ResolvedNovaOperation, { status: "applied" }>,
+): string {
+  if (op.action === "add") return `Added ${op.name}${op.quantity > 1 ? ` ×${op.quantity}` : ""}`;
+  if (op.action === "remove") return `Removed ${op.name}`;
+  return `${op.name} — now ×${op.quantity}`;
+}
+
+/** GEP2 — the guest never sees a technical rejection reason; only a plain, hospitality-worded note, per op status. */
+function describeUnresolvedOperation(
+  op: Exclude<ResolvedNovaOperation, { status: "applied" }>,
+): string {
+  switch (op.status) {
+    case "unavailable":
+      return `${op.name} is currently unavailable.`;
+    case "needs_modifier":
+      return `${op.name} needs a choice: ${op.groupName}.`;
+    case "not_in_basket":
+      return `I couldn't find ${op.name} in your order.`;
+    case "not_found":
+      return "I couldn't find that on today's menu.";
+  }
+}
 
 function newTurnId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -1472,13 +1560,25 @@ function AskNovaDrawer({
   onOpenChange,
   tableId,
   items,
+  groupsById,
+  cart,
+  currency,
   onPickItem,
+  onApplyOperations,
+  onReviewOrder,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tableId: string;
   items: MenuItem[];
+  groupsById: Map<string, ModifierGroup>;
+  cart: CartLine[];
+  currency: string;
   onPickItem: (item: MenuItem) => void;
+  /** GEP2 — applies only the operations the server already validated ("applied") to the real basket. Never called with anything else. */
+  onApplyOperations: (ops: ResolvedNovaOperation[]) => void;
+  /** GEP2 — opens the existing cart drawer for the guest's own explicit "Send order" tap. NOVA itself never submits an order. */
+  onReviewOrder: () => void;
 }) {
   const askFn = useServerFn(askNovaFn);
   const [turns, setTurns] = useState<NovaTurn[]>([]);
@@ -1495,10 +1595,12 @@ function AskNovaDrawer({
             t.role === "user" || t.role === "assistant",
         )
         .map((t) => ({ role: t.role, content: t.content }));
-      return askFn({ data: { tableId, message, history } });
+      const basket = cart.map((l) => ({ menuItemId: l.menuItemId, quantity: l.quantity }));
+      return askFn({ data: { tableId, message, history, basket } });
     },
     networkMode: "always",
     onSuccess: (result) => {
+      if (result.ok) onApplyOperations(result.operations);
       setTurns((t) => [
         ...t,
         result.ok
@@ -1507,6 +1609,7 @@ function AskNovaDrawer({
               role: "assistant",
               content: result.reply,
               recommendedItems: result.recommendedItems,
+              operations: result.operations,
             }
           : { id: newTurnId(), role: "fallback", categories: result.categories },
       ]);
@@ -1526,6 +1629,33 @@ function AskNovaDrawer({
   const starters = hasVegetarianTag
     ? [...NOVA_STARTER_PROMPTS, "Vegetarian options"]
     : NOVA_STARTER_PROMPTS;
+
+  // GEP2 — the explicit, deterministic "Add to my order" action (section 6):
+  // no AI round-trip, just the same real catalogue/modifier data the page
+  // already has. An item with a required modifier group can't be silently
+  // completed here, so it opens the existing picker instead — the same
+  // proven manual flow, never a second modifier-selection surface.
+  const quickAdd = (item: MenuItem) => {
+    const hasRequiredModifier = (item.modifier_group_ids ?? []).some((id) => {
+      const g = groupsById.get(id);
+      return g && g.required && g.min_select >= 1;
+    });
+    if (hasRequiredModifier) {
+      onPickItem(item);
+      return;
+    }
+    onApplyOperations([
+      {
+        status: "applied",
+        action: "add",
+        itemId: item.id,
+        name: item.name,
+        quantity: 1,
+        modifierNames: [],
+      },
+    ]);
+  };
+  const cartCount = cart.reduce((s, l) => s + l.quantity, 0);
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
@@ -1562,20 +1692,62 @@ function AskNovaDrawer({
                   {t.recommendedItems.map((r) => {
                     const full = findItem(r.id);
                     return (
-                      <button
+                      <div
                         key={r.id}
-                        type="button"
-                        disabled={!full}
-                        onClick={() => full && onPickItem(full)}
-                        className="flex min-h-11 w-full items-center justify-between rounded-xl border bg-card px-3 py-2 text-left disabled:opacity-50"
+                        className="flex items-center gap-2 rounded-xl border bg-card px-3 py-2"
                       >
-                        <span className="text-sm font-medium">{r.name}</span>
-                        <span className="text-sm text-muted-foreground">
-                          {money(r.price, r.currency)}
-                        </span>
-                      </button>
+                        <button
+                          type="button"
+                          disabled={!full}
+                          onClick={() => full && onPickItem(full)}
+                          className="flex min-h-9 min-w-0 flex-1 flex-col items-start text-left disabled:opacity-50"
+                        >
+                          <span className="truncate text-sm font-medium">{r.name}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {money(r.price, r.currency)}
+                          </span>
+                        </button>
+                        {full && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="min-h-9 shrink-0 rounded-full text-xs"
+                            onClick={() => quickAdd(full)}
+                          >
+                            Add to my order
+                          </Button>
+                        )}
+                      </div>
                     );
                   })}
+                  {/* GEP2 — the ground truth for this turn's basket changes, computed from what the server actually resolved, never from the reply text alone. */}
+                  {t.operations.length > 0 && (
+                    <div className="space-y-1 pl-1">
+                      {t.operations.map((op, i) =>
+                        op.status === "applied" ? (
+                          <p key={i} className="text-xs font-medium text-primary">
+                            ✓ {describeAppliedOperation(op)}
+                          </p>
+                        ) : (
+                          <div key={i} className="flex items-center gap-2">
+                            <p className="text-xs text-muted-foreground">
+                              {describeUnresolvedOperation(op)}
+                            </p>
+                            {op.status === "needs_modifier" && findItem(op.itemId) && (
+                              <button
+                                type="button"
+                                className="text-xs font-medium text-primary underline underline-offset-2"
+                                onClick={() => onPickItem(findItem(op.itemId)!)}
+                              >
+                                Choose
+                              </button>
+                            )}
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             }
@@ -1613,6 +1785,41 @@ function AskNovaDrawer({
                 {s}
               </button>
             ))}
+          </div>
+        )}
+
+        {/*
+          GEP2 confirmation boundary: this is the ONLY place NOVA's
+          conversation can lead toward an order actually being sent, and it
+          never sends one itself — it just opens the existing cart drawer,
+          whose unchanged "Send order" button is the real, explicit
+          confirmation. No wording NOVA says, however emphatic, can trigger
+          a real submission; only this deliberate tap can.
+        */}
+        {cartCount > 0 && (
+          <div className="px-4 pb-2">
+            <button
+              type="button"
+              onClick={onReviewOrder}
+              className="flex min-h-12 w-full items-center justify-between rounded-xl bg-primary/10 px-4 text-sm font-medium text-primary"
+            >
+              <span>
+                Review &amp; send order ({cartCount} item{cartCount === 1 ? "" : "s"})
+              </span>
+              <span>
+                {money(
+                  cart.reduce(
+                    (s, l) =>
+                      s +
+                      (l.unitPrice +
+                        l.modifiers.reduce((m, mod) => m + mod.priceDelta * mod.quantity, 0)) *
+                        l.quantity,
+                    0,
+                  ),
+                  currency,
+                )}
+              </span>
+            </button>
           </div>
         )}
 

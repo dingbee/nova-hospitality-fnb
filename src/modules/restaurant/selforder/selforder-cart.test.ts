@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildChosenModifiers,
   isMissingRequiredModifiers,
+  matchModifiersByName,
   resolveVariantUnitPrice,
   toggleModifierSelection,
   toGuestOrderLine,
@@ -230,5 +231,30 @@ describe("toGuestOrderLine — submitted payload, guest notes", () => {
       modifiers,
     });
     expect(line.modifiers).toBe(modifiers);
+  });
+});
+
+describe("matchModifiersByName — GEP2", () => {
+  it("resolves a real modifier name (case-insensitive) to its full SalesLineModifier shape", () => {
+    const result = matchModifiersByName([toppingsGroup], ["cheese"]);
+    expect(result).toEqual([
+      {
+        modifierId: "mod-cheese",
+        groupId: "group-toppings",
+        name: "Cheese",
+        priceDelta: 1.5,
+        quantity: 1,
+      },
+    ]);
+  });
+
+  it("never fabricates a modifier for a name that doesn't exist in any group", () => {
+    const result = matchModifiersByName([toppingsGroup], ["Truffle shavings"]);
+    expect(result).toEqual([]);
+  });
+
+  it("resolves multiple real names across multiple groups", () => {
+    const result = matchModifiersByName([sizeGroup, toppingsGroup], ["Hot", "bacon"]);
+    expect(result.map((m) => m.name).sort()).toEqual(["Bacon", "Hot"]);
   });
 });
