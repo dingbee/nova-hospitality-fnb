@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation } from "@tanstack/react-query";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { askStaffNovaFn } from "../staffnova.functions";
+import type { NovaIntentContract } from "../../understand/intent.contracts";
 
 const STARTER_PROMPTS = [
   "What should we prepare for tomorrow?",
@@ -16,10 +17,45 @@ const STARTER_PROMPTS = [
 
 type StaffNovaTurn =
   | { id: string; role: "user"; content: string }
-  | { id: string; role: "assistant"; content: string; degraded: boolean };
+  | {
+      id: string;
+      role: "assistant";
+      content: string;
+      degraded: boolean;
+      understanding?: NovaIntentContract;
+    };
 
 function newTurnId() {
   return Math.random().toString(36).slice(2);
+}
+
+/**
+ * I11: the small "Understanding" card shown instead of a plain answer when
+ * a staff message was classified as an operational instruction rather
+ * than a question — reuses this panel's own chat bubble, no new UI
+ * surface. The summary text alone (content) already states everything
+ * resolved/missing/ambiguous in plain English; this only adds a visual
+ * label plus, when present, the concrete list of unresolved candidates so
+ * a manager can see at a glance what still needs clarifying.
+ */
+function UnderstandingBadgeAndCandidates({ understanding }: { understanding: NovaIntentContract }) {
+  const needsClarification =
+    understanding.ambiguities.length > 0 || understanding.missingInformation.length > 0;
+  return (
+    <div className="mb-1.5 space-y-1.5">
+      <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+        <Wand2 className="size-3" aria-hidden />
+        Understanding{needsClarification ? " — needs clarification" : ""}
+      </div>
+      {understanding.ambiguities.map((a) => (
+        <div key={a.field} className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+          {a.candidates.length > 0
+            ? `Did you mean: ${a.candidates.map((c) => c.name).join(", ")}?`
+            : a.reason}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -51,7 +87,13 @@ export function StaffNovaPanel({
     onSuccess: (result) => {
       setTurns((t) => [
         ...t,
-        { id: newTurnId(), role: "assistant", content: result.answer, degraded: result.degraded },
+        {
+          id: newTurnId(),
+          role: "assistant",
+          content: result.answer,
+          degraded: result.degraded,
+          understanding: result.understanding,
+        },
       ]);
     },
     onError: () => {
@@ -107,6 +149,9 @@ export function StaffNovaPanel({
                   t.degraded ? "bg-muted text-muted-foreground" : "bg-card"
                 }`}
               >
+                {t.understanding && (
+                  <UnderstandingBadgeAndCandidates understanding={t.understanding} />
+                )}
                 {t.content}
               </div>
             ),

@@ -51,6 +51,11 @@ vi.mock("@/lib/ai-gateway.server", () => ({
   callAiGateway: (...args: unknown[]) => callAiGatewayMock(...args),
 }));
 
+const understandNovaInstructionMock = vi.fn();
+vi.mock("../understand/understand.server", () => ({
+  understandNovaInstruction: (...args: unknown[]) => understandNovaInstructionMock(...args),
+}));
+
 const { askStaffNova } = await import("./staffnova.server");
 
 const TENANT_A = "11111111-1111-1111-1111-111111111111";
@@ -278,6 +283,82 @@ describe("askStaffNova — no fabrication on AI failure (G)", () => {
     );
 
     expect(result.degraded).toBe(true);
+  });
+});
+
+describe("askStaffNova — I11: operational instructions are intercepted, plain questions are not", () => {
+  it("a command-shaped message never reaches the free-text AI gateway — it's routed to understandNovaInstruction instead", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    const fakeContract = {
+      intent: "operational_command",
+      domain: "stock_movement",
+      action: "prepare_stock_movement",
+      entities: [],
+      locations: { source: null, destination: null },
+      supplier: null,
+      temporal: null,
+      constraints: [],
+      requestedExecution: "prepare",
+      confidence: 0.85,
+      missingInformation: [],
+      ambiguities: [],
+    };
+    understandNovaInstructionMock.mockResolvedValue({
+      contract: fakeContract,
+      summary: "I understand this as a stock movement.",
+    });
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({
+        tenantId: TENANT_A,
+        message: "Prepare a stock movement for 3kg beef from Main Store to Kitchen",
+      }),
+    );
+
+    expect(understandNovaInstructionMock).toHaveBeenCalledWith({}, USER_ID, {
+      tenantId: TENANT_A,
+      message: "Prepare a stock movement for 3kg beef from Main Store to Kitchen",
+    });
+    expect(callAiGatewayMock).not.toHaveBeenCalled();
+    expect(posBoardMock).not.toHaveBeenCalled(); // no grounding context is even built for an intercepted instruction
+    expect(result.answer).toBe("I understand this as a stock movement.");
+    expect(result.degraded).toBe(false);
+    expect(result.understanding).toEqual(fakeContract);
+  });
+
+  it("a plain question never calls understandNovaInstruction — the existing free-text Q&A flow is unaffected", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    callAiGatewayMock.mockResolvedValue({ content: "You served 40 guests today." });
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "How many guests today?" }),
+    );
+
+    expect(understandNovaInstructionMock).not.toHaveBeenCalled();
+    expect(callAiGatewayMock).toHaveBeenCalledTimes(1);
+    expect(result.understanding).toBeUndefined();
+  });
+
+  it("a lookup failure inside understanding degrades to a safe apology, never a crash or a fabricated understanding", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    understandNovaInstructionMock.mockRejectedValue(new Error("db unavailable"));
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "Approve the purchase order" }),
+    );
+
+    expect(result.degraded).toBe(true);
+    expect(result.understanding).toBeUndefined();
+    expect(callAiGatewayMock).not.toHaveBeenCalled();
   });
 });
 

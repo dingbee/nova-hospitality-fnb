@@ -33,8 +33,17 @@
  *
  * No autonomous action: this module only ever reads. It never writes to
  * intelligence_decisions, restaurant operational tables, or anything else.
+ *
+ * I11 "NOVA UNDERSTAND": a command-shaped staff message ("Prepare a stock
+ * movement for 3kg beef...") is intercepted before the free-text AI call
+ * below and answered with a structured NovaIntentContract instead (see
+ * understand/understand.server.ts) — a plain question still goes through
+ * the unmodified grounded Q&A flow this file already had. Classification
+ * is a pure, cheap, DB-free check, so every staff message pays for it.
  */
 import { assertCapability } from "../core/access.server";
+import { classifyInstruction } from "../understand/classify";
+import type { NovaIntentContract } from "../understand/intent.contracts";
 import type { StaffNovaAskInput } from "./staffnova.contracts";
 
 type Sb = any;
@@ -48,6 +57,8 @@ export interface StaffNovaAnswer {
   /** True only when the AI gateway itself could not be reached/errored — the grounding data was still gathered correctly; the caller degrades to a plain apology rather than fabricating an answer. */
   degraded: boolean;
   generatedAt: string;
+  /** I11: set only when the message was classified as an operational instruction rather than a plain question — the structured understanding, never an executed action. See understand/understand.server.ts. */
+  understanding?: NovaIntentContract;
 }
 
 /** Best-effort loader: a single engine's failure never takes down the whole answer — it's simply marked unavailable in the context, and the system prompt tells the model to say so rather than guess. */
@@ -234,8 +245,35 @@ export async function askStaffNova(
   // guest surface into this function.
   await assertCapability(sb, userId, input.tenantId, "intelligence.read");
 
-  const context = await buildStaffNovaContext(sb, userId, input.tenantId);
   const generatedAt = new Date().toISOString();
+
+  // I11: a command-shaped message never reaches the free-text AI call
+  // below — it's understood structurally instead, deterministically, with
+  // zero operational mutation. A plain question (the classifier's default)
+  // falls straight through to the existing flow, unchanged.
+  const quickClassification = classifyInstruction(input.message);
+  if (quickClassification.intent !== "information_query") {
+    try {
+      const { understandNovaInstruction } = await import("../understand/understand.server");
+      const { contract, summary } = await understandNovaInstruction(sb, userId, {
+        tenantId: input.tenantId,
+        message: input.message,
+      });
+      return { answer: summary, degraded: false, generatedAt, understanding: contract };
+    } catch {
+      // Same "fail closed to a plain apology, never fabricate" discipline
+      // as the free-text AI path below — a lookup failure here must not
+      // crash the whole Ask NOVA panel.
+      return {
+        answer:
+          "I'm unable to work out the details of that request right now. Please try again in a moment, or phrase it as a question and I'll answer from what I know.",
+        degraded: true,
+        generatedAt,
+      };
+    }
+  }
+
+  const context = await buildStaffNovaContext(sb, userId, input.tenantId);
 
   try {
     const { callAiGateway } = await import("@/lib/ai-gateway.server");
