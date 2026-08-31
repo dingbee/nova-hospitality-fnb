@@ -1,12 +1,15 @@
 import { useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { Sparkles, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { askStaffNovaFn } from "../staffnova.functions";
+import { commitNovaPreparationFn } from "../../prepare/prepare.functions";
 import type { NovaIntentContract } from "../../understand/intent.contracts";
+import type { NovaPreparation, NovaPreparationWorkflow } from "../../prepare/prepare.contracts";
 
 const STARTER_PROMPTS = [
   "What should we prepare for tomorrow?",
@@ -23,7 +26,104 @@ type StaffNovaTurn =
       content: string;
       degraded: boolean;
       understanding?: NovaIntentContract;
+      preparation?: NovaPreparation;
     };
+
+/** I12: the existing route + tab each preparable workflow's draft is reviewed in — never a new NOVA-specific page. */
+const WORKFLOW_ROUTE: Record<
+  NovaPreparationWorkflow,
+  { to: string; search?: Record<string, string> }
+> = {
+  purchase_request: { to: "/admin/restaurant/procurement", search: { tab: "requests" } },
+  stock_transfer: { to: "/admin/restaurant/inventory-control", search: { tab: "transfers" } },
+  requisition: { to: "/admin/restaurant/requisitions" },
+};
+const WORKFLOW_LABEL: Record<NovaPreparationWorkflow, string> = {
+  purchase_request: "purchase request",
+  stock_transfer: "stock transfer",
+  requisition: "requisition",
+};
+
+/**
+ * I12: the "Prepare & open" action. Nothing is written until this button
+ * is clicked — previewNovaPreparation (already run automatically) only
+ * ever classified readiness. A click calls commitNovaPreparationFn, which
+ * independently re-verifies everything again server-side before creating
+ * the one real (draft-status, non-operational) row; once that succeeds the
+ * button becomes "Open", which only ever navigates to the EXISTING
+ * workflow page — that page remains the authoritative place to review,
+ * edit, and eventually submit/approve/dispatch it.
+ */
+function PreparationActions({
+  preparation,
+  contract,
+  tenantId,
+}: {
+  preparation: NovaPreparation;
+  contract: NovaIntentContract;
+  tenantId: string;
+}) {
+  const navigate = useNavigate();
+  const commitFn = useServerFn(commitNovaPreparationFn);
+  const [committed, setCommitted] = useState<{
+    createdRecordId: string;
+    documentNumber: string | null;
+  } | null>(null);
+
+  const commit = useMutation({
+    mutationFn: () => commitFn({ data: { tenantId, contract } }),
+    networkMode: "always",
+    onSuccess: (result) => {
+      if (result.createdRecordId) {
+        setCommitted({
+          createdRecordId: result.createdRecordId,
+          documentNumber: result.documentNumber,
+        });
+      }
+    },
+  });
+
+  if (!preparation.workflow) return null;
+  const label = WORKFLOW_LABEL[preparation.workflow];
+  const route = WORKFLOW_ROUTE[preparation.workflow];
+
+  if (committed) {
+    return (
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="mt-2"
+        onClick={() => navigate({ to: route.to, search: route.search })}
+      >
+        Open {label}
+        {committed.documentNumber ? ` (${committed.documentNumber})` : ""}
+      </Button>
+    );
+  }
+
+  if (preparation.readiness !== "ready" && preparation.readiness !== "ready_with_warnings") {
+    return <p className="mt-2 text-xs text-muted-foreground">{preparation.message}</p>;
+  }
+
+  return (
+    <div className="mt-2 space-y-1">
+      {preparation.warnings.map((w) => (
+        <p key={w} className="text-xs text-muted-foreground">
+          {w}
+        </p>
+      ))}
+      <Button type="button" size="sm" disabled={commit.isPending} onClick={() => commit.mutate()}>
+        {commit.isPending ? "Preparing…" : `Prepare & open ${label}`}
+      </Button>
+      {commit.isError && (
+        <p className="text-xs text-destructive">
+          Something went wrong preparing this — please try again.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function newTurnId() {
   return Math.random().toString(36).slice(2);
@@ -93,6 +193,7 @@ export function StaffNovaPanel({
           content: result.answer,
           degraded: result.degraded,
           understanding: result.understanding,
+          preparation: result.preparation,
         },
       ]);
     },
@@ -153,6 +254,13 @@ export function StaffNovaPanel({
                   <UnderstandingBadgeAndCandidates understanding={t.understanding} />
                 )}
                 {t.content}
+                {t.preparation && t.understanding && (
+                  <PreparationActions
+                    preparation={t.preparation}
+                    contract={t.understanding}
+                    tenantId={tenantId}
+                  />
+                )}
               </div>
             ),
           )}

@@ -44,6 +44,7 @@
 import { assertCapability } from "../core/access.server";
 import { classifyInstruction } from "../understand/classify";
 import type { NovaIntentContract } from "../understand/intent.contracts";
+import type { NovaPreparation } from "../prepare/prepare.contracts";
 import type { StaffNovaAskInput } from "./staffnova.contracts";
 
 type Sb = any;
@@ -59,6 +60,8 @@ export interface StaffNovaAnswer {
   generatedAt: string;
   /** I11: set only when the message was classified as an operational instruction rather than a plain question — the structured understanding, never an executed action. See understand/understand.server.ts. */
   understanding?: NovaIntentContract;
+  /** I12: computed read-only alongside `understanding` — never a write. See prepare/prepare.server.ts. */
+  preparation?: NovaPreparation;
 }
 
 /** Best-effort loader: a single engine's failure never takes down the whole answer — it's simply marked unavailable in the context, and the system prompt tells the model to say so rather than guess. */
@@ -259,7 +262,31 @@ export async function askStaffNova(
         tenantId: input.tenantId,
         message: input.message,
       });
-      return { answer: summary, degraded: false, generatedAt, understanding: contract };
+
+      // I12: read-only preview of what NOVA could prepare from this
+      // understanding — computed automatically, but it is only ever a
+      // preview. Nothing is written unless the human later clicks
+      // "Prepare & open" (commitNovaPreparationFn), a separate, explicit
+      // call. A failure here degrades to just the I11 understanding with
+      // no preparation attached, rather than losing the whole answer.
+      let preparation: NovaPreparation | undefined;
+      try {
+        const { previewNovaPreparation } = await import("../prepare/prepare.server");
+        preparation = await previewNovaPreparation(sb, userId, {
+          tenantId: input.tenantId,
+          contract,
+        });
+      } catch {
+        preparation = undefined;
+      }
+
+      return {
+        answer: summary,
+        degraded: false,
+        generatedAt,
+        understanding: contract,
+        preparation,
+      };
     } catch {
       // Same "fail closed to a plain apology, never fabricate" discipline
       // as the free-text AI path below — a lookup failure here must not

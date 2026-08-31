@@ -56,6 +56,11 @@ vi.mock("../understand/understand.server", () => ({
   understandNovaInstruction: (...args: unknown[]) => understandNovaInstructionMock(...args),
 }));
 
+const previewNovaPreparationMock = vi.fn();
+vi.mock("../prepare/prepare.server", () => ({
+  previewNovaPreparation: (...args: unknown[]) => previewNovaPreparationMock(...args),
+}));
+
 const { askStaffNova } = await import("./staffnova.server");
 
 const TENANT_A = "11111111-1111-1111-1111-111111111111";
@@ -327,6 +332,91 @@ describe("askStaffNova — I11: operational instructions are intercepted, plain 
     expect(result.answer).toBe("I understand this as a stock movement.");
     expect(result.degraded).toBe(false);
     expect(result.understanding).toEqual(fakeContract);
+  });
+
+  it("I12: previewNovaPreparation is called automatically (read-only) alongside understanding, and its result is attached", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    const fakeContract = {
+      intent: "operational_command",
+      domain: "stock_movement",
+      action: "prepare_stock_movement",
+      entities: [],
+      locations: { source: null, destination: null },
+      supplier: null,
+      temporal: null,
+      constraints: [],
+      requestedExecution: "prepare",
+      confidence: 0.85,
+      missingInformation: [],
+      ambiguities: [],
+    };
+    understandNovaInstructionMock.mockResolvedValue({ contract: fakeContract, summary: "..." });
+    const fakePreparation = {
+      workflow: "stock_transfer",
+      action: "prepare_stock_movement",
+      readiness: "ready",
+      fields: null,
+      missingFields: [],
+      ambiguousFields: [],
+      warnings: [],
+      createdRecordId: null,
+      documentNumber: null,
+      message: "Ready to prepare this stock transfer.",
+    };
+    previewNovaPreparationMock.mockResolvedValue(fakePreparation);
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({
+        tenantId: TENANT_A,
+        message: "Prepare a stock movement for 3kg beef",
+      }),
+    );
+
+    expect(previewNovaPreparationMock).toHaveBeenCalledWith({}, USER_ID, {
+      tenantId: TENANT_A,
+      contract: fakeContract,
+    });
+    expect(result.preparation).toEqual(fakePreparation);
+  });
+
+  it("I12: a failure inside previewNovaPreparation degrades gracefully to just the understanding, never loses the whole answer", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    const fakeContract = {
+      intent: "operational_command",
+      domain: "stock_movement",
+      action: "prepare_stock_movement",
+      entities: [],
+      locations: { source: null, destination: null },
+      supplier: null,
+      temporal: null,
+      constraints: [],
+      requestedExecution: "prepare",
+      confidence: 0.85,
+      missingInformation: [],
+      ambiguities: [],
+    };
+    understandNovaInstructionMock.mockResolvedValue({
+      contract: fakeContract,
+      summary: "I understand this.",
+    });
+    previewNovaPreparationMock.mockRejectedValue(new Error("boom"));
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({
+        tenantId: TENANT_A,
+        message: "Prepare a stock movement for 3kg beef",
+      }),
+    );
+
+    expect(result.degraded).toBe(false);
+    expect(result.understanding).toEqual(fakeContract);
+    expect(result.preparation).toBeUndefined();
   });
 
   it("a plain question never calls understandNovaInstruction — the existing free-text Q&A flow is unaffected", async () => {
