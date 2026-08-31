@@ -4,10 +4,9 @@
  * same guest-authorization boundary (resolveGuestTableContext, via
  * guestMenu) and the exact same sellable catalogue (fetchSellableCatalog)
  * the self-order screen and the POS already use. No second AI transport is
- * created here — this calls the one existing callAiGateway() the
- * Intelligence module's decision narration already uses (see
- * ../intelligence/decisions/decision.server.ts's narrate()), the same
- * try/catch-and-degrade pattern too.
+ * created here — this calls the one existing callReasoningProvider()
+ * (../../lib/reasoning-provider.server.ts) Menu Intelligence already uses,
+ * the same try/catch-and-degrade pattern too.
  *
  * The one thing this module exists to guarantee: the model's own words are
  * never trusted as fact. Its structured JSON output is validated
