@@ -303,8 +303,15 @@ export async function askStaffNova(
   const context = await buildStaffNovaContext(sb, userId, input.tenantId);
 
   try {
-    const { callAiGateway } = await import("@/lib/ai-gateway.server");
-    const { content } = await callAiGateway({
+    // Corrective pass: this used to call ai-gateway.server.ts directly,
+    // which defaults to the OpenAI Chat Completions endpoint — but the
+    // model this deployment configures is Responses-API-only (the same
+    // reason INT-01 built reasoning-provider.server.ts's explicit
+    // "responses" routing for Menu Intelligence in the first place). Staff
+    // Ask NOVA now goes through that same, already-proven-working provider
+    // abstraction instead of a second, silently-incompatible path.
+    const { callReasoningProvider } = await import("@/lib/reasoning-provider.server");
+    const result = await callReasoningProvider("openai", {
       system: STAFF_NOVA_SYSTEM_PROMPT,
       user: JSON.stringify({
         context,
@@ -312,7 +319,8 @@ export async function askStaffNova(
         question: input.message,
       }),
     });
-    const answer = content.trim();
+    if (result.unavailable) throw new Error(result.reason);
+    const answer = result.content.trim();
     if (!answer) throw new Error("Empty response from AI gateway");
     return { answer, degraded: false, generatedAt };
   } catch {

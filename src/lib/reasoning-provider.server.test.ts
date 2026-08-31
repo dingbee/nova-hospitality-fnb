@@ -44,11 +44,15 @@ describe("callReasoningProvider", () => {
 
   it("openai provider calls the default gateway and returns a real result shape, including token usage when the provider reports it", async () => {
     vi.stubEnv("NOVA_AI_API_KEY", "sk-test");
+    // OpenAI is always routed through the Responses API protocol (see
+    // callReasoningProvider's explicit "responses" override below), so the
+    // fake fetch must return a Responses-shaped body (output_text +
+    // input_tokens/output_tokens), not a Chat Completions one.
     global.fetch = vi.fn(async () => ({
       ok: true,
       json: async () => ({
-        choices: [{ message: { content: "hello" } }],
-        usage: { prompt_tokens: 10, completion_tokens: 5 },
+        output_text: "hello",
+        usage: { input_tokens: 10, output_tokens: 5 },
       }),
     })) as any;
     const result = await callReasoningProvider("openai", { system: "s", user: "u" });
@@ -105,22 +109,34 @@ describe("callReasoningProvider", () => {
     if (result.unavailable) expect(result.reason).toMatch(/timed out/i);
   });
 
-  it("the same normalized call shape (system/user/jsonMode) reaches both providers — the reasoning layer never branches on vendor", async () => {
+  it("callers supply the same normalized {system, user, jsonMode} shape to both providers — the reasoning layer's own callers never branch on vendor, even though OpenAI (Responses API) and Gemini (Chat Completions) are deliberately routed to different wire protocols under the hood", async () => {
     vi.stubEnv("NOVA_AI_API_KEY", "sk-openai");
     vi.stubEnv("NOVA_GEMINI_API_KEY", "sk-gemini");
     const bodies: any[] = [];
     global.fetch = vi.fn(async (_url: string, opts: any) => {
       bodies.push(JSON.parse(opts.body));
-      return { ok: true, json: async () => ({ choices: [{ message: { content: "ok" } }] }) };
+      return {
+        ok: true,
+        json: async () => ({
+          output_text: "ok",
+          choices: [{ message: { content: "ok" } }],
+        }),
+      };
     }) as any;
     const opts = { system: "SYS", user: "USER", jsonMode: true };
     await callReasoningProvider("openai", opts);
     await callReasoningProvider("gemini", opts);
     expect(bodies).toHaveLength(2);
-    for (const body of bodies) {
-      expect(body.messages[0]).toEqual({ role: "system", content: "SYS" });
-      expect(body.messages.at(-1)).toEqual({ role: "user", content: "USER" });
-      expect(body.response_format).toEqual({ type: "json_object" });
-    }
+
+    const [openaiBody, geminiBody] = bodies;
+    // OpenAI: Responses API shape — "json" is appended to the actual input
+    // content per the INT-01 400 fix, not just instructions.
+    expect(openaiBody.instructions).toContain("SYS");
+    expect(openaiBody.input).toBe("USER\n\n(Respond with JSON.)");
+    expect(openaiBody.text).toEqual({ format: { type: "json_object" } });
+    // Gemini: Chat Completions shape, untouched by that fix.
+    expect(geminiBody.messages[0]).toEqual({ role: "system", content: "SYS" });
+    expect(geminiBody.messages.at(-1)).toEqual({ role: "user", content: "USER" });
+    expect(geminiBody.response_format).toEqual({ type: "json_object" });
   });
 });

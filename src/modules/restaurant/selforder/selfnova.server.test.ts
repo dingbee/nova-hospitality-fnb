@@ -1,6 +1,23 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- fake Supabase rows are untyped at this boundary. */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { askNova } from "./selfnova.server";
+
+/**
+ * Every other test in this file injects a scripted `ai` caller directly
+ * into askNova's third parameter, which bypasses the module's own
+ * `defaultAiCaller` — the real production wiring — entirely. That gap is
+ * exactly how the corrective-pass regression (Guest Ask NOVA silently
+ * calling ai-gateway.server.ts's Chat Completions default instead of the
+ * Responses-API-only provider) went untested. This mock exists solely to
+ * exercise the real default wiring in the "real transport wiring" describe
+ * block below — it proves defaultAiCaller actually calls
+ * callReasoningProvider("openai", ...), the same provider abstraction
+ * Menu Intelligence already uses successfully.
+ */
+const callReasoningProviderMock = vi.fn();
+vi.mock("@/lib/reasoning-provider.server", () => ({
+  callReasoningProvider: (...args: unknown[]) => callReasoningProviderMock(...args),
+}));
 
 const TENANT = "tenant-1";
 const OTHER_TENANT = "tenant-2";
@@ -642,5 +659,41 @@ describe("askNova — proposed basket operations (GEP2)", () => {
     const ai = scriptedAi(JSON.stringify({ reply: "hi", recommendedItemIds: [] }));
     const result = await askNova(sb as any, { tableId: TABLE, message: "hi" }, ai);
     expect((result as any).operations).toEqual([]);
+  });
+});
+
+describe("askNova — real transport wiring (corrective pass regression)", () => {
+  afterEach(() => {
+    callReasoningProviderMock.mockReset();
+  });
+
+  it("with no aiCaller override (the real production call, exactly as staffnova/selfnova.functions.ts invoke it), Guest Ask NOVA routes through callReasoningProvider('openai', ...) — the same provider abstraction Menu Intelligence already uses, not a second, silently-incompatible ai-gateway.server.ts default", async () => {
+    const sb = fakeDb(baseRows());
+    callReasoningProviderMock.mockResolvedValue({
+      content: JSON.stringify({ reply: "Sure, the burger is great!", recommendedItemIds: [] }),
+      provider: "openai",
+      unavailable: false,
+    });
+
+    const result = await askNova(sb as any, { tableId: TABLE, message: "What's good?" });
+
+    expect(callReasoningProviderMock).toHaveBeenCalledTimes(1);
+    expect(callReasoningProviderMock.mock.calls[0][0]).toBe("openai");
+    expect((result as any).ok).toBe(true);
+    expect((result as any).reply).toBe("Sure, the burger is great!");
+  });
+
+  it("when the provider reports unavailable, Guest Ask NOVA degrades to the honest ai_unavailable state — never a fabricated reply", async () => {
+    const sb = fakeDb(baseRows());
+    callReasoningProviderMock.mockResolvedValue({
+      provider: "openai",
+      unavailable: true,
+      reason: "AI advisory is not configured for this deployment (missing NOVA_AI_API_KEY).",
+    });
+
+    const result = await askNova(sb as any, { tableId: TABLE, message: "What's good?" });
+
+    expect((result as any).ok).toBe(false);
+    expect((result as any).reason).toBe("ai_unavailable");
   });
 });

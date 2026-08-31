@@ -34,10 +34,24 @@ type AiTurn = { role: "user" | "assistant"; content: string };
 type AiCallOptions = { system: string; user: string; history?: AiTurn[]; jsonMode?: boolean };
 type AiCaller = (opts: AiCallOptions) => Promise<{ content: string }>;
 
-/** The real transport, loaded lazily so a test can inject a fake one instead — same DI shape selfpay.server.ts already uses for its payment provider. */
+/**
+ * The real transport, loaded lazily so a test can inject a fake one instead
+ * — same DI shape selfpay.server.ts already uses for its payment provider.
+ *
+ * Corrective pass: this used to call ai-gateway.server.ts directly, which
+ * defaults to the OpenAI Chat Completions endpoint — but the model this
+ * deployment configures is Responses-API-only (the same reason INT-01
+ * built reasoning-provider.server.ts's explicit "responses" routing for
+ * Menu Intelligence in the first place). Guest Ask NOVA now goes through
+ * that same, already-proven-working provider abstraction instead of a
+ * second, silently-incompatible path — the AiCaller interface (and every
+ * caller of it) is unchanged.
+ */
 async function defaultAiCaller(opts: AiCallOptions): Promise<{ content: string }> {
-  const { callAiGateway } = await import("@/lib/ai-gateway.server");
-  return callAiGateway(opts);
+  const { callReasoningProvider } = await import("@/lib/reasoning-provider.server");
+  const result = await callReasoningProvider("openai", opts);
+  if (result.unavailable) throw new Error(result.reason);
+  return { content: result.content };
 }
 
 const NOVA_SYSTEM_PROMPT = `You are NOVA, a friendly restaurant ordering assistant helping a guest at their table decide what to order and, when they ask, preparing a proposed order for them to review.

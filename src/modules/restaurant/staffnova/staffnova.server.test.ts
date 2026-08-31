@@ -46,9 +46,9 @@ vi.mock("../decisions/decisions.server", () => ({
   getRestaurantDecisionBoard: (...args: unknown[]) => getRestaurantDecisionBoardMock(...args),
 }));
 
-const callAiGatewayMock = vi.fn();
-vi.mock("@/lib/ai-gateway.server", () => ({
-  callAiGateway: (...args: unknown[]) => callAiGatewayMock(...args),
+const callReasoningProviderMock = vi.fn();
+vi.mock("@/lib/reasoning-provider.server", () => ({
+  callReasoningProvider: (...args: unknown[]) => callReasoningProviderMock(...args),
 }));
 
 const understandNovaInstructionMock = vi.fn();
@@ -148,7 +148,11 @@ describe("askStaffNova — authorization (A, C, E)", () => {
   it("A: an authorized staff member's question reaches the AI gateway", async () => {
     assertCapabilityMock.mockResolvedValue(undefined);
     stubEngines();
-    callAiGatewayMock.mockResolvedValue({ content: "You served 40 guests today." });
+    callReasoningProviderMock.mockResolvedValue({
+      content: "You served 40 guests today.",
+      provider: "openai",
+      unavailable: false,
+    });
 
     const result = await askStaffNova(
       {} as any,
@@ -157,6 +161,10 @@ describe("askStaffNova — authorization (A, C, E)", () => {
     );
 
     expect(assertCapabilityMock).toHaveBeenCalledWith({}, USER_ID, TENANT_A, "intelligence.read");
+    expect(callReasoningProviderMock).toHaveBeenCalledWith(
+      "openai",
+      expect.objectContaining({ system: expect.any(String), user: expect.any(String) }),
+    );
     expect(result.degraded).toBe(false);
     expect(result.answer).toBe("You served 40 guests today.");
   });
@@ -175,13 +183,17 @@ describe("askStaffNova — authorization (A, C, E)", () => {
 
     expect(posBoardMock).not.toHaveBeenCalled();
     expect(getMenuIntelligenceMock).not.toHaveBeenCalled();
-    expect(callAiGatewayMock).not.toHaveBeenCalled();
+    expect(callReasoningProviderMock).not.toHaveBeenCalled();
   });
 
   it("B: the exact tenantId from the request is what's passed to every grounding engine — never a different, client-confusable value", async () => {
     assertCapabilityMock.mockResolvedValue(undefined);
     stubEngines();
-    callAiGatewayMock.mockResolvedValue({ content: "answer" });
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
 
     await askStaffNova(
       {} as any,
@@ -220,7 +232,11 @@ describe("askStaffNova — grounding (F)", () => {
       costReview: [],
       insights: [],
     });
-    callAiGatewayMock.mockResolvedValue({ content: "Revenue this window was 4242." });
+    callReasoningProviderMock.mockResolvedValue({
+      content: "Revenue this window was 4242.",
+      provider: "openai",
+      unavailable: false,
+    });
 
     await askStaffNova(
       {} as any,
@@ -228,8 +244,9 @@ describe("askStaffNova — grounding (F)", () => {
       staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "How is the menu doing?" }),
     );
 
-    expect(callAiGatewayMock).toHaveBeenCalledTimes(1);
-    const call = callAiGatewayMock.mock.calls[0][0] as { system: string; user: string };
+    expect(callReasoningProviderMock).toHaveBeenCalledTimes(1);
+    expect(callReasoningProviderMock.mock.calls[0][0]).toBe("openai");
+    const call = callReasoningProviderMock.mock.calls[0][1] as { system: string; user: string };
     const sentPayload = JSON.parse(call.user);
     // The real computed revenue figure is present in what the model receives...
     expect(sentPayload.context.menu.totals.revenue).toBe(4242);
@@ -243,7 +260,11 @@ describe("askStaffNova — grounding (F)", () => {
     assertCapabilityMock.mockResolvedValue(undefined);
     stubEngines();
     getKitchenIntelligenceMock.mockRejectedValue(new Error("kitchen query failed"));
-    callAiGatewayMock.mockResolvedValue({ content: "answer" });
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
 
     const result = await askStaffNova(
       {} as any,
@@ -252,7 +273,7 @@ describe("askStaffNova — grounding (F)", () => {
     );
 
     expect(result.degraded).toBe(false);
-    const call = callAiGatewayMock.mock.calls[0][0] as { user: string };
+    const call = callReasoningProviderMock.mock.calls[0][1] as { user: string };
     const sentPayload = JSON.parse(call.user);
     expect(sentPayload.context.kitchen.unavailable).toBe(true);
     // The other categories were unaffected by the kitchen engine's failure.
@@ -261,10 +282,14 @@ describe("askStaffNova — grounding (F)", () => {
 });
 
 describe("askStaffNova — no fabrication on AI failure (G)", () => {
-  it("G: when the AI gateway itself fails, the answer degrades to a fixed, honest message — never a guess", async () => {
+  it("G: when the provider reports unavailable (the real callReasoningProvider contract — it never throws), the answer degrades to a fixed, honest message — never a guess", async () => {
     assertCapabilityMock.mockResolvedValue(undefined);
     stubEngines();
-    callAiGatewayMock.mockRejectedValue(new Error("gateway unreachable"));
+    callReasoningProviderMock.mockResolvedValue({
+      provider: "openai",
+      unavailable: true,
+      reason: "AI advisory is not configured for this deployment (missing NOVA_AI_API_KEY).",
+    });
 
     const result = await askStaffNova(
       {} as any,
@@ -276,10 +301,43 @@ describe("askStaffNova — no fabrication on AI failure (G)", () => {
     expect(result.answer).toMatch(/unable to reach the nova assistant/i);
   });
 
+  it("a hard throw from the provider call (defense in depth, beyond its normal never-throws contract) also degrades safely rather than crashing the request", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    callReasoningProviderMock.mockRejectedValue(new Error("gateway unreachable"));
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "What should we prepare tomorrow?" }),
+    );
+
+    expect(result.degraded).toBe(true);
+    expect(result.answer).toMatch(/unable to reach the nova assistant/i);
+  });
+
+  it("a malformed provider response — missing/undefined content on an otherwise-available result — degrades safely instead of throwing a TypeError", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    callReasoningProviderMock.mockResolvedValue({ provider: "openai", unavailable: false });
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "What should we prepare tomorrow?" }),
+    );
+
+    expect(result.degraded).toBe(true);
+  });
+
   it("an empty AI response is also treated as a failure, not an empty/blank answer shown to the user", async () => {
     assertCapabilityMock.mockResolvedValue(undefined);
     stubEngines();
-    callAiGatewayMock.mockResolvedValue({ content: "   " });
+    callReasoningProviderMock.mockResolvedValue({
+      content: "   ",
+      provider: "openai",
+      unavailable: false,
+    });
 
     const result = await askStaffNova(
       {} as any,
@@ -327,7 +385,7 @@ describe("askStaffNova — I11: operational instructions are intercepted, plain 
       tenantId: TENANT_A,
       message: "Prepare a stock movement for 3kg beef from Main Store to Kitchen",
     });
-    expect(callAiGatewayMock).not.toHaveBeenCalled();
+    expect(callReasoningProviderMock).not.toHaveBeenCalled();
     expect(posBoardMock).not.toHaveBeenCalled(); // no grounding context is even built for an intercepted instruction
     expect(result.answer).toBe("I understand this as a stock movement.");
     expect(result.degraded).toBe(false);
@@ -422,7 +480,11 @@ describe("askStaffNova — I11: operational instructions are intercepted, plain 
   it("a plain question never calls understandNovaInstruction — the existing free-text Q&A flow is unaffected", async () => {
     assertCapabilityMock.mockResolvedValue(undefined);
     stubEngines();
-    callAiGatewayMock.mockResolvedValue({ content: "You served 40 guests today." });
+    callReasoningProviderMock.mockResolvedValue({
+      content: "You served 40 guests today.",
+      provider: "openai",
+      unavailable: false,
+    });
 
     const result = await askStaffNova(
       {} as any,
@@ -431,7 +493,7 @@ describe("askStaffNova — I11: operational instructions are intercepted, plain 
     );
 
     expect(understandNovaInstructionMock).not.toHaveBeenCalled();
-    expect(callAiGatewayMock).toHaveBeenCalledTimes(1);
+    expect(callReasoningProviderMock).toHaveBeenCalledTimes(1);
     expect(result.understanding).toBeUndefined();
   });
 
@@ -448,7 +510,7 @@ describe("askStaffNova — I11: operational instructions are intercepted, plain 
 
     expect(result.degraded).toBe(true);
     expect(result.understanding).toBeUndefined();
-    expect(callAiGatewayMock).not.toHaveBeenCalled();
+    expect(callReasoningProviderMock).not.toHaveBeenCalled();
   });
 });
 
@@ -456,7 +518,11 @@ describe("askStaffNova — no autonomous action", () => {
   it("never touches any write-capable module — only read functions are imported/called", async () => {
     assertCapabilityMock.mockResolvedValue(undefined);
     stubEngines();
-    callAiGatewayMock.mockResolvedValue({ content: "answer" });
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
 
     await askStaffNova(
       {} as any,
@@ -468,6 +534,6 @@ describe("askStaffNova — no autonomous action", () => {
     // action (verified above); structurally, this module simply never
     // imports or calls any write path (insertLines, runRestaurantDecisionPass,
     // decideDecision, etc.) regardless of what's asked.
-    expect(callAiGatewayMock).toHaveBeenCalledTimes(1);
+    expect(callReasoningProviderMock).toHaveBeenCalledTimes(1);
   });
 });
