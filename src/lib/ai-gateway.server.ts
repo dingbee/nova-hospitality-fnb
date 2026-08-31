@@ -1,11 +1,9 @@
 // NOVA Hospitality F&B — server-side AI transport.
-//
-// OpenAI's current reasoning models are served through the Responses API.
-// Gemini challenger calls may still use an OpenAI-compatible chat-completions
-// endpoint via the per-call endpoint override below.
+// Existing Staff/Guest NOVA callers use Chat Completions; INT-01 reasoning
+// can explicitly opt into the OpenAI Responses API without changing them.
 
 export const AI_GATEWAY_URL =
-  process.env["NOVA_AI_GATEWAY_URL"] ?? "https://api.openai.com/v1/responses";
+  process.env["NOVA_AI_GATEWAY_URL"] ?? "https://api.openai.com/v1/chat/completions";
 export const AI_GATEWAY_DEFAULT_MODEL = process.env["NOVA_AI_MODEL"] ?? "gpt-5.6-terra";
 
 export interface AiGatewayCallOptions {
@@ -20,6 +18,7 @@ export interface AiGatewayCallOptions {
     model: string;
     protocol?: "responses" | "chat-completions";
   };
+  protocol?: "responses" | "chat-completions";
   timeoutMs?: number;
 }
 
@@ -58,7 +57,7 @@ export async function callAiGateway(opts: AiGatewayCallOptions): Promise<AiGatew
   }
 
   const model = opts.model ?? opts.endpoint?.model ?? AI_GATEWAY_DEFAULT_MODEL;
-  const protocol = opts.endpoint?.protocol ?? (opts.endpoint ? "chat-completions" : "responses");
+  const protocol = opts.protocol ?? opts.endpoint?.protocol ?? "chat-completions";
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const started = Date.now();
@@ -70,10 +69,22 @@ export async function callAiGateway(opts: AiGatewayCallOptions): Promise<AiGatew
         ? {
             model,
             instructions: opts.system,
-            input: [
-              ...(opts.history ?? []),
-              { role: "user", content: opts.user },
-            ],
+            input: opts.history?.length
+              ? [
+                  ...opts.history.map((message) => ({
+                    role: message.role,
+                    content: message.content,
+                  })),
+                  { role: "user", content: opts.user },
+                ]
+              : opts.user,
+            ...(opts.jsonMode
+              ? {
+                  text: {
+                    format: { type: "json_object" },
+                  },
+                }
+              : {}),
           }
         : {
             model,
@@ -124,13 +135,8 @@ export async function callAiGateway(opts: AiGatewayCallOptions): Promise<AiGatew
     };
   };
 
-  const content =
-    protocol === "responses"
-      ? extractResponsesText(json)
-      : (json.choices?.[0]?.message?.content ?? "");
-
   return {
-    content,
+    content: protocol === "responses" ? extractResponsesText(json) : (json.choices?.[0]?.message?.content ?? ""),
     latencyMs,
     model,
     inputTokens: json.usage?.input_tokens ?? json.usage?.prompt_tokens,
