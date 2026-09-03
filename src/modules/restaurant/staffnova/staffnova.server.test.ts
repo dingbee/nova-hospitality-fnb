@@ -63,6 +63,11 @@ vi.mock("../prepare/prepare.server", () => ({
   previewNovaPreparation: (...args: unknown[]) => previewNovaPreparationMock(...args),
 }));
 
+const recallRestaurantMemoryMock = vi.fn();
+vi.mock("../memory/memory.server", () => ({
+  recallRestaurantMemory: (...args: unknown[]) => recallRestaurantMemoryMock(...args),
+}));
+
 const { askStaffNova } = await import("./staffnova.server");
 
 const TENANT_A = "11111111-1111-1111-1111-111111111111";
@@ -73,6 +78,7 @@ function stubEngines() {
   // role-aware trimming existed) keeps seeing the full context, exactly as
   // it did before — role-specific tests override this explicitly.
   rolesInTenantMock.mockResolvedValue(["owner"]);
+  recallRestaurantMemoryMock.mockResolvedValue([]);
   posBoardMock.mockResolvedValue({
     stats: { openBills: 2, openValue: 100, revenueToday: 500, coversToday: 40, averageCheck: 25 },
   });
@@ -742,5 +748,101 @@ describe("askStaffNova — I14: deterministic priorities/changes/correlations re
     const sentPayload = JSON.parse(call.user);
     expect(sentPayload.context.topPriorities).toEqual([]);
     expect(sentPayload.context.correlations).toEqual([]);
+  });
+});
+
+describe("askStaffNova — I15: memory recall reaches the model as bounded, already-scoped DATA", () => {
+  it("N: recalled memory (personal + tenant) reaches the model context, called with this caller's own tenant/user", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    recallRestaurantMemoryMock.mockResolvedValue([
+      {
+        scope: "tenant",
+        memoryType: "operational_note",
+        memoryValue: "Fridays run tight",
+        source: "user_stated",
+      },
+      {
+        scope: "user",
+        memoryType: "preference",
+        memoryValue: "Prefers itemized receipts",
+        source: "user_stated",
+      },
+    ]);
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
+
+    await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "What's our usual on Fridays?" }),
+    );
+
+    expect(recallRestaurantMemoryMock).toHaveBeenCalledWith(
+      {},
+      USER_ID,
+      expect.objectContaining({ tenantId: TENANT_A }),
+    );
+    const call = callReasoningProviderMock.mock.calls[0][1] as { user: string };
+    const sentPayload = JSON.parse(call.user);
+    expect(sentPayload.context.memory).toHaveLength(2);
+    expect(sentPayload.context.memory[0].note).toBe("Fridays run tight");
+  });
+
+  it("O: memory unavailable degrades to an empty/unavailable section — never blocks the rest of the answer, never fabricates a memory", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    recallRestaurantMemoryMock.mockRejectedValue(new Error("memory store unavailable"));
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "What's our usual supplier?" }),
+    );
+
+    expect(result.degraded).toBe(false); // the rest of the answer still succeeds
+    const call = callReasoningProviderMock.mock.calls[0][1] as { user: string };
+    const sentPayload = JSON.parse(call.user);
+    expect(sentPayload.context.memory).toEqual(expect.objectContaining({ unavailable: true }));
+  });
+
+  it("P: memory is never role-gated away — a bartender's trimmed context still carries the memory section", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    rolesInTenantMock.mockResolvedValue(["bartender"]);
+    recallRestaurantMemoryMock.mockResolvedValue([
+      {
+        scope: "tenant",
+        memoryType: "operational_note",
+        memoryValue: "Shared note",
+        source: "user_stated",
+      },
+    ]);
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
+
+    await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "What do you remember?" }),
+    );
+
+    const call = callReasoningProviderMock.mock.calls[0][1] as { user: string };
+    const sentPayload = JSON.parse(call.user);
+    expect(sentPayload.context.memory).toHaveLength(1);
+    // A bartender's role still doesn't see e.g. "purchasing" — confirming
+    // trimming still applies to gated sections alongside the ungated memory.
+    expect(sentPayload.context.purchasing).toBeUndefined();
   });
 });

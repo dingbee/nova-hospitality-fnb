@@ -18,6 +18,14 @@
  * manual Inventory Control UI already calls — the same governance
  * boundaries (transfer.approve vs transfer.manage) apply whether a human
  * clicks through the form or NOVA drives it (spec section 30).
+ *
+ * I15: once (and only once) independent verification confirms a real
+ * effect happened, a tenant-wide verified-outcome memory is recorded —
+ * never before verification, never from the executor's own return value
+ * alone (see rememberOutcome below and memory.server.ts's
+ * rememberVerifiedOutcome doc comment). A memory-write failure is
+ * swallowed: it must never turn an already-verified execution into a
+ * reported failure.
  */
 import { assertCapability } from "../core/access.server";
 import { locationNameMap } from "../inventory/locations.server";
@@ -324,6 +332,7 @@ export async function executeNovaPreparation(
       classified.transfer,
       classified.lines,
     );
+    if (verification.verified) await rememberOutcome(sb, input.tenantId, receipt);
     return {
       ok: true,
       readiness: "ready",
@@ -385,6 +394,8 @@ export async function executeNovaPreparation(
     };
   }
 
+  await rememberOutcome(sb, tenantId, receipt);
+
   return {
     ok: true,
     readiness: "ready",
@@ -392,6 +403,28 @@ export async function executeNovaPreparation(
     verification,
     message: buildReceiptMessage(receipt),
   };
+}
+
+/**
+ * I15 — best-effort, post-verification only. memoryValue references the
+ * record (workflow + document number + status), never the operational
+ * numbers themselves (spec section 51: memory indexes, never duplicates).
+ * Current stock/authority/state must always be re-read fresh by whoever
+ * recalls this later; this row only ever says a movement happened and
+ * points back at it.
+ */
+async function rememberOutcome(sb: Sb, tenantId: string, receipt: NovaExecutionReceipt) {
+  try {
+    const { rememberVerifiedOutcome } = await import("../memory/memory.server");
+    const ref = receipt.documentNumber ?? receipt.recordId;
+    await rememberVerifiedOutcome(sb, tenantId, {
+      memoryKey: `stock_transfer:${receipt.recordId}`,
+      memoryValue: `Stock movement ${ref} executed and independently verified (status: ${receipt.status}).`,
+      sourceEventId: null,
+    });
+  } catch {
+    // Memory is never allowed to affect the reported execution outcome.
+  }
 }
 
 function buildReceiptMessage(receipt: NovaExecutionReceipt): string {

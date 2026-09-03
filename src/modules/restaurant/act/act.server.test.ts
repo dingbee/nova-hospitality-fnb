@@ -58,7 +58,9 @@ function makeFakeSupabase(opts: {
   const transfers: Record<string, any> = {};
   const transferLines: Record<string, any> = {};
   const movements: any[] = [];
+  const intelligenceMemory: any[] = [];
   let seq = 0;
+  let memSeq = 0;
 
   /** Mirrors restaurant_apply_stock_movement: net quantity onto the item, dedupe_key unique per (tenant,dedupe_key). */
   function applyMovement(row: any) {
@@ -103,6 +105,10 @@ function makeFakeSupabase(opts: {
       },
       in: (col: string, vals: unknown[]) => {
         inFilters[col] = vals;
+        return api;
+      },
+      is: (col: string, val: unknown) => {
+        filters[col] = val;
         return api;
       },
       order: () => api,
@@ -220,6 +226,33 @@ function makeFakeSupabase(opts: {
         return { data: rows, error: null };
       }
 
+      if (table === "intelligence_memory") {
+        if (op === "insert") {
+          memSeq += 1;
+          const now = new Date().toISOString();
+          const row = { id: `mem-${memSeq}`, created_at: now, updated_at: now, ...payload };
+          intelligenceMemory.push(row);
+          return { data: row, error: null };
+        }
+        if (op === "update") {
+          const id = filters.id as string;
+          const idx = intelligenceMemory.findIndex((r) => r.id === id);
+          if (idx >= 0) intelligenceMemory[idx] = { ...intelligenceMemory[idx], ...payload };
+          return {
+            data: single ? intelligenceMemory[idx] : [intelligenceMemory[idx]],
+            error: null,
+          };
+        }
+        const rows = intelligenceMemory.filter(
+          (r) =>
+            (filters.tenant_id === undefined || r.tenant_id === filters.tenant_id) &&
+            (filters.scope === undefined || r.scope === filters.scope) &&
+            (filters.memory_key === undefined || r.memory_key === filters.memory_key) &&
+            (filters.user_id === undefined || r.user_id === filters.user_id),
+        );
+        return { data: single ? (rows[0] ?? null) : rows, error: null };
+      }
+
       if (table === "restaurant_stock_movements") {
         if (op === "insert") {
           return applyMovement({
@@ -269,6 +302,7 @@ function makeFakeSupabase(opts: {
     movements,
     transfers,
     transferLines,
+    intelligenceMemory,
     onHandAt,
   };
 }
@@ -414,6 +448,19 @@ describe("executeNovaPreparation — the one place I13 writes anything", () => {
     expect(fake.onHandAt(SOURCE)).toBe(-3);
     expect(fake.onHandAt(DEST)).toBe(3);
     expect(fake.item.current_quantity).toBe(20); // net across locations, unchanged
+
+    // I15: a tenant-wide, pre-accepted, reference-only memory row is
+    // written ONLY after independent verification succeeded — never before,
+    // never duplicating the operational numbers themselves.
+    expect(fake.intelligenceMemory).toHaveLength(1);
+    const mem = fake.intelligenceMemory[0];
+    expect(mem.tenant_id).toBe(TENANT_A);
+    expect(mem.scope).toBe("tenant");
+    expect(mem.user_id).toBeNull();
+    expect(mem.memory_type).toBe("verified_outcome");
+    expect(mem.status).toBe("accepted");
+    expect(mem.memory_value).toMatch(/TRF-2026-00001/);
+    expect(mem.memory_value).not.toMatch(/\b3\s*kg\b/i); // never a duplicate of the operational quantity
   });
 
   it("H: never directly updates the inventory item's balance column — every quantity change flows through insertMovement (the ledger)", async () => {
@@ -462,6 +509,9 @@ describe("executeNovaPreparation — the one place I13 writes anything", () => {
     expect(fake.movements).toHaveLength(2); // unchanged — no duplicate consequential mutation
     expect(fake.onHandAt(SOURCE)).toBe(-3);
     expect(fake.onHandAt(DEST)).toBe(3);
+    // I15: the retry reinforces the SAME memory row in place — never a
+    // second, duplicate verified-outcome memory for the same movement.
+    expect(fake.intelligenceMemory).toHaveLength(1);
   });
 
   it("J: two concurrent executions of the same draft converge to exactly one consequential movement per line — the second call's dispatch/receive attempt is refused by the transfer's own status guard after the first has advanced it", async () => {

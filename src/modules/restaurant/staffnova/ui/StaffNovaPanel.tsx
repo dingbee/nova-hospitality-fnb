@@ -1,14 +1,15 @@
 import { useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Sparkles, Wand2 } from "lucide-react";
+import { Brain, Sparkles, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { askStaffNovaFn } from "../staffnova.functions";
 import { commitNovaPreparationFn } from "../../prepare/prepare.functions";
 import { executeNovaPreparationFn, previewNovaExecutionFn } from "../../act/act.functions";
+import { forgetRestaurantMemoryFn, recallRestaurantMemoryFn } from "../../memory/memory.functions";
 import type { NovaIntentContract } from "../../understand/intent.contracts";
 import type { NovaPreparation, NovaPreparationWorkflow } from "../../prepare/prepare.contracts";
 import type { NovaExecutableWorkflow } from "../../act/act.contracts";
@@ -276,6 +277,78 @@ function UnderstandingBadgeAndCandidates({ understanding }: { understanding: Nov
 }
 
 /**
+ * I15 — "what NOVA remembers", deliberately compact (spec: not a
+ * complicated memory dashboard). Lists this tenant's shared operating
+ * memory plus the signed-in staff member's own personal memory (never
+ * another staff member's — recallRestaurantMemoryFn already enforces
+ * that server-side) with a one-click Forget per row. Forgetting marks the
+ * row dismissed server-side, never a hard delete.
+ */
+function MemoryPanel({ tenantId, onClose }: { tenantId: string; onClose: () => void }) {
+  const recallFn = useServerFn(recallRestaurantMemoryFn);
+  const forgetFn = useServerFn(forgetRestaurantMemoryFn);
+  const queryClient = useQueryClient();
+  const queryKey = ["staff-nova-memory", tenantId];
+
+  const memories = useQuery({
+    queryKey,
+    queryFn: () => recallFn({ data: { tenantId, limit: 20 } }),
+  });
+
+  const forget = useMutation({
+    mutationFn: (memoryId: string) => forgetFn({ data: { tenantId, memoryId } }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+  });
+
+  return (
+    <div className="mb-2 rounded-md border bg-card p-2">
+      <div className="mb-1.5 flex items-center justify-between">
+        <div className="flex items-center gap-1 text-xs font-medium">
+          <Brain className="size-3" aria-hidden /> What NOVA remembers
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <X className="size-3.5" aria-hidden />
+        </button>
+      </div>
+      {memories.isLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {memories.data && memories.data.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          Nothing remembered yet. Tell NOVA a preference and it can remember it here.
+        </p>
+      )}
+      <ul className="space-y-1">
+        {(memories.data ?? []).map((m) => (
+          <li
+            key={m.id}
+            className="flex items-start justify-between gap-2 rounded bg-muted/50 px-1.5 py-1 text-xs"
+          >
+            <span>
+              <span className="mr-1 rounded bg-muted px-1 text-[10px] uppercase text-muted-foreground">
+                {m.scope === "user" ? "Personal" : "Restaurant"}
+              </span>
+              {m.memoryValue}
+            </span>
+            <button
+              type="button"
+              disabled={forget.isPending}
+              onClick={() => forget.mutate(m.id)}
+              className="shrink-0 text-muted-foreground hover:text-destructive"
+            >
+              Forget
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
  * Staff Ask NOVA — a bounded conversational panel over this tenant's own
  * already-computed operational data. See staffnova.server.ts for the
  * grounding/security design. This component owns only chat UI state
@@ -294,6 +367,7 @@ export function StaffNovaPanel({
   const askFn = useServerFn(askStaffNovaFn);
   const [turns, setTurns] = useState<StaffNovaTurn[]>([]);
   const [input, setInput] = useState("");
+  const [memoryOpen, setMemoryOpen] = useState(false);
 
   const ask = useMutation({
     mutationFn: (message: string) => {
@@ -339,10 +413,21 @@ export function StaffNovaPanel({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="flex w-full flex-col sm:max-w-md">
         <SheetHeader>
-          <SheetTitle className="flex items-center gap-1.5">
-            <Sparkles className="size-4 text-primary" aria-hidden /> Ask NOVA
+          <SheetTitle className="flex items-center justify-between gap-1.5">
+            <span className="flex items-center gap-1.5">
+              <Sparkles className="size-4 text-primary" aria-hidden /> Ask NOVA
+            </span>
+            <button
+              type="button"
+              onClick={() => setMemoryOpen((v) => !v)}
+              className="flex items-center gap-1 text-xs font-normal text-muted-foreground hover:text-foreground"
+            >
+              <Brain className="size-3.5" aria-hidden /> Memory
+            </button>
           </SheetTitle>
         </SheetHeader>
+
+        {memoryOpen && <MemoryPanel tenantId={tenantId} onClose={() => setMemoryOpen(false)} />}
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-2">
           {turns.length === 0 && (
