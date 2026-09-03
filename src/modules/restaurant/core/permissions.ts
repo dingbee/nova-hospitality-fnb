@@ -303,6 +303,13 @@ const CAPABILITY_ROLES: Record<RestaurantCapability, readonly RestaurantRole[]> 
     "kitchen_manager",
     "accountant",
   ],
+  // I14: bartender added — the spec's own role-aware intelligence table
+  // (section 10) names bartender as a role that should receive scoped
+  // operational intelligence (bar inventory/production/service); the
+  // existing capability list omitted them entirely, which meant Staff Ask
+  // NOVA rejected a bartender outright. Same capability as every other
+  // role here, not a new one — bartender still only ever sees the
+  // sections attention.ts's contextSectionsForRole scopes to them.
   "intelligence.read": [
     "owner",
     "general_manager",
@@ -312,6 +319,7 @@ const CAPABILITY_ROLES: Record<RestaurantCapability, readonly RestaurantRole[]> 
     "inventory_manager",
     "purchasing_officer",
     "accountant",
+    "bartender",
   ],
   "pricing.manage": ["owner", "general_manager", "restaurant_manager", "accountant"],
   "pricing.approve": ["owner", "general_manager"],

@@ -12,8 +12,10 @@ import { staffNovaAskSchema } from "./staffnova.contracts";
  */
 
 const assertCapabilityMock = vi.fn();
+const rolesInTenantMock = vi.fn();
 vi.mock("../core/access.server", () => ({
   assertCapability: (...args: unknown[]) => assertCapabilityMock(...args),
+  rolesInTenant: (...args: unknown[]) => rolesInTenantMock(...args),
 }));
 
 const posBoardMock = vi.fn();
@@ -67,6 +69,10 @@ const TENANT_A = "11111111-1111-1111-1111-111111111111";
 const USER_ID = "user-1";
 
 function stubEngines() {
+  // I14: default to "owner" so every pre-existing test (written before
+  // role-aware trimming existed) keeps seeing the full context, exactly as
+  // it did before — role-specific tests override this explicitly.
+  rolesInTenantMock.mockResolvedValue(["owner"]);
   posBoardMock.mockResolvedValue({
     stats: { openBills: 2, openValue: 100, revenueToday: 500, coversToday: 40, averageCheck: 25 },
   });
@@ -535,5 +541,206 @@ describe("askStaffNova — no autonomous action", () => {
     // imports or calls any write path (insertLines, runRestaurantDecisionPass,
     // decideDecision, etc.) regardless of what's asked.
     expect(callReasoningProviderMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("askStaffNova — I14: role-aware intelligence (server-side, never merely a prompt instruction)", () => {
+  it("H: rolesInTenant is called with the exact tenantId/userId from the request — role gating is re-derived server-side, never client-supplied", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
+
+    await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "What should I prioritize?" }),
+    );
+
+    expect(rolesInTenantMock).toHaveBeenCalledWith({}, USER_ID, TENANT_A);
+  });
+
+  it("I: a bartender's context is trimmed to their scoped sections — sales/menu/purchasing financials never reach the model, even though the same engines were queried for everyone", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    rolesInTenantMock.mockResolvedValue(["bartender"]);
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
+
+    await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "What's happening tonight?" }),
+    );
+
+    const call = callReasoningProviderMock.mock.calls[0][1] as { user: string };
+    const sentPayload = JSON.parse(call.user);
+    expect(sentPayload.context.sales).toBeUndefined();
+    expect(sentPayload.context.menu).toBeUndefined();
+    expect(sentPayload.context.purchasing).toBeUndefined();
+    expect(sentPayload.context.inventory).toBeDefined();
+    expect(sentPayload.context.decisions).toBeDefined();
+  });
+
+  it("J: an owner (all sections) still receives the full context — role trimming never restricts a role the spec grants full access to", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    rolesInTenantMock.mockResolvedValue(["owner"]);
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
+
+    await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "Give me today's briefing" }),
+    );
+
+    const call = callReasoningProviderMock.mock.calls[0][1] as { user: string };
+    const sentPayload = JSON.parse(call.user);
+    expect(sentPayload.context.sales).toBeDefined();
+    expect(sentPayload.context.menu).toBeDefined();
+    expect(sentPayload.context.inventory).toBeDefined();
+    expect(sentPayload.context.kitchen).toBeDefined();
+    expect(sentPayload.context.purchasing).toBeDefined();
+    expect(sentPayload.context.decisions).toBeDefined();
+  });
+
+  it("K: a role with no capability mapping is never reached — assertCapability(intelligence.read) already rejects before rolesInTenant/context assembly run", async () => {
+    assertCapabilityMock.mockRejectedValue(new Error("Forbidden"));
+
+    await expect(
+      askStaffNova(
+        {} as any,
+        USER_ID,
+        staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "What's happening?" }),
+      ),
+    ).rejects.toThrow("Forbidden");
+    expect(rolesInTenantMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("askStaffNova — I14: deterministic priorities/changes/correlations reach the model as-is", () => {
+  it("L: topPriorities/changes/correlations are populated from the decision board's raw findings/stored decisions, never invented in the context builder", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    const fakeDecision = {
+      key: "restaurant.t1.finding.beef",
+      module: "restaurant",
+      domain: "inventory",
+      title: "Beef replenishment",
+      trigger: "Beef stock projected below 1 day of cover",
+      status: "proposed",
+      riskLevel: "critical",
+      confidence: 0.8,
+      requiresApproval: true,
+      criteriaWeights: {},
+      constraints: [],
+      options: [],
+      recommendedOptionKey: null,
+      reasoning: {
+        whatIsHappening: "x",
+        whyItMatters: "Dinner service risk",
+        whatIsLikely: "Stockout before dinner peak",
+        optionsConsidered: [],
+        tradeOffs: [],
+        selectedOption: "Reorder",
+        whySelected: "x",
+        whatCouldGoWrong: [],
+        whatHappensNext: ["Review replenishment"],
+      },
+      expectedOutcomes: [],
+      evidence: [{ label: "Stock", value: "8kg" }],
+      assumptions: [],
+      uncertainties: [],
+      risks: [],
+      reasoningSources: [],
+      predictionKeys: [],
+      plan: { objective: "x", status: "draft", steps: [] },
+      action: null,
+    };
+    const fakeFinding = {
+      key: "finding.beef",
+      kind: "inventory_shortage",
+      severity: "critical",
+      subject: "Beef",
+      headline: "Beef is running low",
+      detail: "detail",
+      metric: null,
+      evidence: [],
+      prediction: {
+        key: "prediction.beef",
+        statement: "statement",
+        value: null,
+        unit: "",
+        horizonDays: 1,
+        confidence: 0.8,
+        direction: "down",
+      },
+      facts: { inventoryItemId: "item-beef" },
+    };
+    getRestaurantDecisionBoardMock.mockResolvedValue({
+      generated_at: new Date().toISOString(),
+      tenant_id: TENANT_A,
+      window_days: 30,
+      headline: "",
+      findings: [
+        fakeFinding,
+        { ...fakeFinding, kind: "purchasing_replenishment", key: "finding.beef.2" },
+      ],
+      candidates: [],
+      stored: [fakeDecision],
+    });
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
+
+    await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "What should I prioritize?" }),
+    );
+
+    const call = callReasoningProviderMock.mock.calls[0][1] as { user: string };
+    const sentPayload = JSON.parse(call.user);
+    expect(sentPayload.context.topPriorities).toHaveLength(1);
+    expect(sentPayload.context.topPriorities[0].what).toBe(
+      "Beef stock projected below 1 day of cover",
+    );
+    expect(sentPayload.context.topPriorities[0].riskLevel).toBe("critical");
+    expect(sentPayload.context.correlations).toHaveLength(1);
+    expect(sentPayload.context.correlations[0].type).toBe("inferred");
+  });
+
+  it("M: when the decision board is unavailable, topPriorities/correlations degrade to empty arrays — never a fabricated priority", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    getRestaurantDecisionBoardMock.mockRejectedValue(new Error("board unavailable"));
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
+
+    await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "What should I prioritize?" }),
+    );
+
+    const call = callReasoningProviderMock.mock.calls[0][1] as { user: string };
+    const sentPayload = JSON.parse(call.user);
+    expect(sentPayload.context.topPriorities).toEqual([]);
+    expect(sentPayload.context.correlations).toEqual([]);
   });
 });
