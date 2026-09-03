@@ -11,6 +11,18 @@ export const PRODUCT = {
   tagline: "Restaurant & Bar OS",
   vendor: "NOVA Hospitality",
   supportEmail: "support@nova-hospitality.local",
+  /**
+   * The customer/operator-facing name of the AI intelligence experience —
+   * "Ask LexiBite", "LexiBite's interpretation", "LexiBite recommendation",
+   * "LexiBite Intelligence". This is the ONLY place that name is defined:
+   * every screen reads it from here rather than hardcoding the string, so
+   * the underlying LLM provider/model can change without touching any
+   * customer-facing UI. Never render the underlying provider, model,
+   * model version, latency, token counts, or any other technical/AI
+   * telemetry in product UI — those remain available server-side for
+   * engineering observability only.
+   */
+  aiName: "LexiBite",
 } as const;
 
 export function productTitle(page: string): string {

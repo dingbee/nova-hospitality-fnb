@@ -86,7 +86,7 @@ export function TopBar({
               className="nova-action inline-flex min-h-10 items-center gap-2 bg-[color:var(--nova-accent)]/10 px-3 text-xs font-medium text-[color:var(--nova-accent)]"
             >
               <Sparkles className="size-3.5" />
-              <span className="hidden sm:inline">Ask NOVA</span>
+              <span className="hidden sm:inline">Ask {PRODUCT.aiName}</span>
             </button>
           )}
 

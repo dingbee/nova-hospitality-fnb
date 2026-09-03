@@ -116,9 +116,20 @@ export function NovaShell({ children }: { children: ReactNode }) {
           onToggleGroup={toggleGroup}
         />
 
-        <main id="nova-main" className="min-w-0 flex-1 p-4 sm:p-6">
-          {current && <Breadcrumb currentGroup={currentGroup} currentLabel={current.label} />}
-          <div className="mx-auto max-w-[1600px] space-y-6">{children}</div>
+        <main
+          id="nova-main"
+          className="flex h-[calc(100vh-4rem)] min-w-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6"
+        >
+          {current && (
+            <div className="shrink-0">
+              <Breadcrumb currentGroup={currentGroup} currentLabel={current.label} />
+            </div>
+          )}
+          {/* min-h-0 lets a workspace page (e.g. POS, KDS) opt into filling exactly
+              the remaining height with its own `h-full` root and manage its own
+              internal scroll regions — main itself is the one scroll container for
+              every other page, unchanged. */}
+          <div className="mx-auto min-h-0 w-full max-w-[1600px] flex-1 space-y-6">{children}</div>
         </main>
       </div>
 
