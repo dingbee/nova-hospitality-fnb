@@ -65,6 +65,7 @@ export function PanelList({
   toggling,
   emptyTitle = "Nothing yet",
   emptyDescription,
+  renderRowExtra,
 }: {
   items: PanelItem[];
   onEdit: (id: string) => void;
@@ -72,6 +73,8 @@ export function PanelList({
   toggling?: string | null;
   emptyTitle?: string;
   emptyDescription?: string;
+  /** Optional per-row content rendered before the active toggle — e.g. TablesPanel's "Guest QR" action. Every other panel leaves this unset and renders exactly as before. */
+  renderRowExtra?: (id: string) => React.ReactNode;
 }) {
   if (items.length === 0) {
     return <EmptyState title={emptyTitle} description={emptyDescription} />;
@@ -80,15 +83,14 @@ export function PanelList({
     <ul className="divide-y">
       {items.map((it) => (
         <li key={it.id} className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-3">
-          <button
-            type="button"
-            onClick={() => onEdit(it.id)}
-            className="min-w-0 flex-1 text-left"
-          >
+          <button type="button" onClick={() => onEdit(it.id)} className="min-w-0 flex-1 text-left">
             <p className="truncate text-sm font-medium">{it.title}</p>
-            {it.subtitle ? <p className="truncate text-xs text-muted-foreground">{it.subtitle}</p> : null}
+            {it.subtitle ? (
+              <p className="truncate text-xs text-muted-foreground">{it.subtitle}</p>
+            ) : null}
           </button>
           <div className="flex items-center gap-2">
+            {renderRowExtra ? renderRowExtra(it.id) : null}
             <StatusChip tone={it.active ? "success" : "neutral"}>
               {it.active ? "Active" : "Inactive"}
             </StatusChip>
