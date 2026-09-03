@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import { SectionCard } from "@/components/os/SectionCard";
 import { StatCard } from "@/components/os/StatCard";
 import { EmptyState } from "@/components/os/EmptyState";
@@ -103,7 +104,10 @@ export type PosLens = "restaurant" | "bar";
  * All money and stock consequences happen server-side in the sales core; this
  * component only stages what the server has not yet accepted.
  */
-export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
+export function PosWorkspace({
+  lens = "restaurant",
+  className,
+}: { lens?: PosLens; className?: string } = {}) {
   const isBar = lens === "bar";
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
@@ -531,31 +535,38 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Open bills" value={String(stats?.openBills ?? 0)} icon={Users} />
-        <StatCard
-          label="Open value"
-          value={money(stats?.openValue ?? 0, currency)}
-          icon={CreditCard}
-        />
-        <StatCard
-          label="Revenue today"
-          value={money(stats?.revenueToday ?? 0, currency)}
-          icon={CreditCard}
-        />
-        <StatCard
-          label="Average check"
-          value={money(stats?.averageCheck ?? 0, currency)}
-          icon={ChefHat}
-        />
+    <div className={cn("flex flex-col gap-4 lg:h-full lg:min-h-0", className)}>
+      <div className="shrink-0 space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Open bills" value={String(stats?.openBills ?? 0)} icon={Users} />
+          <StatCard
+            label="Open value"
+            value={money(stats?.openValue ?? 0, currency)}
+            icon={CreditCard}
+          />
+          <StatCard
+            label="Revenue today"
+            value={money(stats?.revenueToday ?? 0, currency)}
+            icon={CreditCard}
+          />
+          <StatCard
+            label="Average check"
+            value={money(stats?.averageCheck ?? 0, currency)}
+            icon={ChefHat}
+          />
+        </div>
+
+        {orderId && <GuestContextBanner tenantId={tenantId} orderId={orderId} />}
       </div>
 
-      {orderId && <GuestContextBanner tenantId={tenantId} orderId={orderId} />}
-
-      {/* Tablet-first: 8"/10" portrait (<1024px) stays single column so the
-          floor, catalogue and bill each keep full-width touch targets. */}
-      <div className="grid gap-4 lg:grid-cols-2 min-[1700px]:grid-cols-[260px_minmax(0,1fr)_340px]">
+      {/* Tablet-first: 8"/10" portrait (<1024px) stays single column, in normal
+          document flow, so the floor, catalogue and bill each keep full-width
+          touch targets and the page scrolls as before. At lg+ this becomes a
+          fixed workspace: the grid fills the remaining viewport height and
+          each pane below manages its own independent scroll region, so the
+          bill's totals and primary actions never move off-screen while
+          browsing a long menu. */}
+      <div className="grid gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-2 min-[1700px]:grid-cols-[260px_minmax(0,1fr)_340px]">
         {/* Floor */}
         <SectionCard
           title={isBar ? "Bar floor & tabs" : "Floor"}
@@ -564,69 +575,74 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
               ? "Counter, bar seats and tables — colour follows the tab."
               : "Colour follows the bill, not just the table row."
           }
+          className="lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden"
         >
-          <div className="grid grid-cols-2 gap-2">
-            {((board.data as any)?.tables ?? []).map((t: any) => {
-              const tableLife = t.order
-                ? deriveLifecycle({
-                    order: t.order,
-                    items: t.order.items ?? [],
-                    tickets: t.order.tickets ?? [],
-                  })
-                : null;
-              const tone = tableTone(t, tableLife);
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() =>
-                    t.order
-                      ? setOrderId(t.order.id)
-                      : openBill.mutate({ tableId: t.id, guestCount: t.seats ?? 2 })
-                  }
-                  className={`relative min-h-20 rounded-lg border p-3 text-left transition-colors hover:border-primary ${
-                    TABLE_TONE_CLASS[tone]
-                  } ${orderId && t.order?.id === orderId ? "ring-2 ring-primary" : ""}`}
-                >
-                  {t.serviceRequest && (
-                    <span
-                      className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border border-destructive/50 bg-destructive/10 text-destructive"
-                      title="Guest needs staff"
-                      aria-label="Guest needs staff"
-                    >
-                      <Bell className="size-3.5" />
+          <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+            <div className="grid grid-cols-2 gap-2">
+              {((board.data as any)?.tables ?? []).map((t: any) => {
+                const tableLife = t.order
+                  ? deriveLifecycle({
+                      order: t.order,
+                      items: t.order.items ?? [],
+                      tickets: t.order.tickets ?? [],
+                    })
+                  : null;
+                const tone = tableTone(t, tableLife);
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() =>
+                      t.order
+                        ? setOrderId(t.order.id)
+                        : openBill.mutate({ tableId: t.id, guestCount: t.seats ?? 2 })
+                    }
+                    className={`relative min-h-20 rounded-lg border p-3 text-left transition-colors hover:border-primary ${
+                      TABLE_TONE_CLASS[tone]
+                    } ${orderId && t.order?.id === orderId ? "ring-2 ring-primary" : ""}`}
+                  >
+                    {t.serviceRequest && (
+                      <span
+                        className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border border-destructive/50 bg-destructive/10 text-destructive"
+                        title="Guest needs staff"
+                        aria-label="Guest needs staff"
+                      >
+                        <Bell className="size-3.5" />
+                      </span>
+                    )}
+                    <span className="block text-sm font-semibold">{t.code}</span>
+                    <span className="block text-xs text-muted-foreground">{t.zone ?? t.name}</span>
+                    <span className="mt-1 block text-xs">
+                      {t.order ? money(Number(t.order.total ?? 0), currency) : `${t.seats} seats`}
                     </span>
-                  )}
-                  <span className="block text-sm font-semibold">{t.code}</span>
-                  <span className="block text-xs text-muted-foreground">{t.zone ?? t.name}</span>
-                  <span className="mt-1 block text-xs">
-                    {t.order ? money(Number(t.order.total ?? 0), currency) : `${t.seats} seats`}
-                  </span>
-                  <span className="block text-[11px] text-muted-foreground">
-                    {TABLE_TONE_LABEL[tone]}
-                  </span>
-                </button>
-              );
-            })}
+                    <span className="block text-[11px] text-muted-foreground">
+                      {TABLE_TONE_LABEL[tone]}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div className="mt-3 flex flex-wrap gap-1">
-            {FLOOR_LEGEND.map((tone) => (
-              <span
-                key={tone}
-                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${TABLE_TONE_CLASS[tone]}`}
-              >
-                {TABLE_TONE_LABEL[tone]}
-              </span>
-            ))}
+          <div className="lg:shrink-0">
+            <div className="mt-3 flex flex-wrap gap-1">
+              {FLOOR_LEGEND.map((tone) => (
+                <span
+                  key={tone}
+                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${TABLE_TONE_CLASS[tone]}`}
+                >
+                  {TABLE_TONE_LABEL[tone]}
+                </span>
+              ))}
+            </div>
+            <Button
+              variant="outline"
+              className="mt-3 min-h-11 w-full"
+              onClick={() => openBill.mutate({ guestCount: 1 })}
+              disabled={openBill.isPending}
+            >
+              {isBar ? "Open counter tab" : "Walk-in / bar tab"}
+            </Button>
           </div>
-          <Button
-            variant="outline"
-            className="mt-3 min-h-11 w-full"
-            onClick={() => openBill.mutate({ guestCount: 1 })}
-            disabled={openBill.isPending}
-          >
-            {isBar ? "Open counter tab" : "Walk-in / bar tab"}
-          </Button>
         </SectionCard>
 
         {/* Catalogue */}
@@ -637,59 +653,64 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
               ? "Tap a drink, pick the serve (single, double, bottle, glass) and add it to the tab."
               : "Tap an item to configure and stage it on the bill."
           }
+          className="lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden"
         >
-          <div className="relative mb-2">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={catalogSearch}
-              onChange={(e) => setCatalogSearch(e.target.value)}
-              placeholder={isBar ? "Search drinks…" : "Search the menu…"}
-              className="h-10 pl-8"
-            />
-          </div>
-          <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
-            <Button
-              variant={categoryId ? "outline" : "default"}
-              className="min-h-10 shrink-0 rounded-full"
-              onClick={() => setCategoryId(null)}
-            >
-              All
-            </Button>
-            {categories.map((c) => (
+          <div className="lg:shrink-0">
+            <div className="relative mb-2">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={catalogSearch}
+                onChange={(e) => setCatalogSearch(e.target.value)}
+                placeholder={isBar ? "Search drinks…" : "Search the menu…"}
+                className="h-10 pl-8"
+              />
+            </div>
+            <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
               <Button
-                key={c.id}
-                variant={categoryId === c.id ? "default" : "outline"}
+                variant={categoryId ? "outline" : "default"}
                 className="min-h-10 shrink-0 rounded-full"
-                onClick={() => setCategoryId(c.id)}
+                onClick={() => setCategoryId(null)}
               >
-                {c.name}
+                All
               </Button>
-            ))}
-          </div>
-          {filtered.length === 0 ? (
-            <EmptyState
-              title={catalogSearch ? "No matches" : isBar ? "No drinks" : "No items"}
-              description={
-                catalogSearch
-                  ? "Try a different search or category."
-                  : isBar
-                    ? "Publish a beverage menu to sell from the bar till."
-                    : "Publish a menu to sell from this till."
-              }
-            />
-          ) : (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-              {filtered.map((i) => (
-                <PosMenuItemCard
-                  key={i.id}
-                  item={i}
-                  currency={currency}
-                  disabled={!orderId || i.available === false || i.priceConfigured === false}
-                  onSelect={() => setPickerItem(i)}
-                />
+              {categories.map((c) => (
+                <Button
+                  key={c.id}
+                  variant={categoryId === c.id ? "default" : "outline"}
+                  className="min-h-10 shrink-0 rounded-full"
+                  onClick={() => setCategoryId(c.id)}
+                >
+                  {c.name}
+                </Button>
               ))}
             </div>
-          )}
+          </div>
+          <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+            {filtered.length === 0 ? (
+              <EmptyState
+                title={catalogSearch ? "No matches" : isBar ? "No drinks" : "No items"}
+                description={
+                  catalogSearch
+                    ? "Try a different search or category."
+                    : isBar
+                      ? "Publish a beverage menu to sell from the bar till."
+                      : "Publish a menu to sell from this till."
+                }
+              />
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+                {filtered.map((i) => (
+                  <PosMenuItemCard
+                    key={i.id}
+                    item={i}
+                    currency={currency}
+                    disabled={!orderId || i.available === false || i.priceConfigured === false}
+                    onSelect={() => setPickerItem(i)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </SectionCard>
 
         {/* Bill */}
@@ -705,6 +726,7 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
               </Badge>
             ) : undefined
           }
+          className="lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden"
         >
           {!orderId ? (
             <EmptyState
@@ -712,9 +734,9 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
               description="Tap a table or start a walk-in tab."
             />
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3 lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:space-y-0">
               {life && (
-                <div className="space-y-2 rounded-lg border bg-muted/30 p-2">
+                <div className="space-y-2 rounded-lg border bg-muted/30 p-2 lg:shrink-0">
                   <ServiceLifecycleBar life={life} compact />
                   <p className="text-xs text-muted-foreground">{life.reason}</p>
                   <div className="flex flex-wrap gap-1 text-[11px]">
@@ -761,7 +783,7 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                   </Button>
                 </div>
               )}
-              <div className="space-y-3">
+              <div className="space-y-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pt-3">
                 {live.length > 0 && (
                   <div className="space-y-2">
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -873,141 +895,143 @@ export function PosWorkspace({ lens = "restaurant" }: { lens?: PosLens } = {}) {
                     ))}
                   </div>
                 )}
+
+                <details className="rounded-lg border bg-card p-2">
+                  <summary className="cursor-pointer text-xs font-medium">Service timeline</summary>
+                  <div className="mt-2">
+                    <OrderTimeline
+                      order={orderRow}
+                      items={serverItems}
+                      tickets={orderTickets}
+                      payments={orderPayments}
+                      receipt={(bill.data as any)?.receipt ?? null}
+                    />
+                  </div>
+                </details>
               </div>
 
-              <div className="flex items-center justify-between border-t-2 pt-3 text-base font-semibold">
-                <span>Total</span>
-                <span className="tabular-nums">{money(billTotal, currency)}</span>
-              </div>
+              <div className="space-y-3 lg:shrink-0 lg:pt-3">
+                <div className="flex items-center justify-between border-t-2 pt-3 text-base font-semibold">
+                  <span>Total</span>
+                  <span className="tabular-nums">{money(billTotal, currency)}</span>
+                </div>
 
-              <div className="grid gap-2">
-                <Button
-                  className="min-h-11"
-                  disabled={cart.length === 0 || sendLines.isPending}
-                  onClick={() => sendLines.mutate({ fire: true })}
-                >
-                  <Send className="size-4" /> {sendLabel}
-                </Button>
-                <Button
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={cart.length === 0 || sendLines.isPending}
-                  onClick={() => sendLines.mutate({ fire: false })}
-                >
-                  Hold on bill
-                </Button>
-                <Button
-                  variant="secondary"
-                  className="min-h-11"
-                  disabled={cart.length > 0 || !orderRow || Number(orderRow.total ?? 0) <= 0}
-                  onClick={() => setBillOpen(true)}
-                >
-                  <ReceiptText className="size-4" /> Bill &amp; payment
-                </Button>
-                {orderRow?.status === "closed" && orderRow?.table_id && (
+                <div className="grid gap-2">
+                  <Button
+                    className="min-h-11"
+                    disabled={cart.length === 0 || sendLines.isPending}
+                    onClick={() => sendLines.mutate({ fire: true })}
+                  >
+                    <Send className="size-4" /> {sendLabel}
+                  </Button>
                   <Button
                     variant="outline"
                     className="min-h-11"
-                    onClick={() => releaseTable.mutate({ orderId })}
+                    disabled={cart.length === 0 || sendLines.isPending}
+                    onClick={() => sendLines.mutate({ fire: false })}
                   >
-                    <DoorOpen className="size-4" /> Release table
+                    Hold on bill
                   </Button>
-                )}
-
-                <div className="mt-1 space-y-2 border-t pt-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    More
-                  </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      variant="ghost"
-                      className="min-h-11"
-                      onClick={() => {
-                        const code = window.prompt(
-                          "Move to which table code? Leave blank to detach.",
-                        );
-                        if (code === null) return;
-                        const match = ((board.data as any)?.tables ?? []).find(
-                          (t: any) => String(t.code).toLowerCase() === code.trim().toLowerCase(),
-                        );
-                        transfer.mutate({ tableId: match?.id ?? null });
-                      }}
-                    >
-                      Move table
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      className="min-h-11"
-                      onClick={() => showReceipt.mutate({ orderId: orderId, reprint: false })}
-                    >
-                      <Printer className="size-4" /> Receipt
-                    </Button>
-                  </div>
-                  {canReopen && orderRow?.status === "closed" && (
+                  <Button
+                    variant="secondary"
+                    className="min-h-11"
+                    disabled={cart.length > 0 || !orderRow || Number(orderRow.total ?? 0) <= 0}
+                    onClick={() => setBillOpen(true)}
+                  >
+                    <ReceiptText className="size-4" /> Bill &amp; payment
+                  </Button>
+                  {orderRow?.status === "closed" && orderRow?.table_id && (
                     <Button
                       variant="outline"
-                      className="min-h-11 w-full"
-                      onClick={() => reopen.mutate({ orderId })}
+                      className="min-h-11"
+                      onClick={() => releaseTable.mutate({ orderId })}
                     >
-                      <RotateCcw className="size-4" /> Reopen bill
+                      <DoorOpen className="size-4" /> Release table
                     </Button>
                   )}
-                  {canVoid && orderRow?.status !== "cancelled" && (
-                    <Button
-                      variant="ghost"
-                      className="min-h-11 w-full text-destructive"
-                      disabled={cancelBill.isPending}
-                      onClick={() => {
-                        const reason = window.prompt("Cancel this whole bill. Reason?");
-                        if (reason && reason.trim().length >= 3)
-                          cancelBill.mutate({ orderId, reason: reason.trim() });
-                      }}
-                    >
-                      Cancel bill
-                    </Button>
-                  )}
-                  {canVoid &&
-                    orderPayments.some(
-                      (p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded",
-                    ) && (
+
+                  <div className="mt-1 space-y-2 border-t pt-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      More
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        variant="ghost"
+                        className="min-h-11"
+                        onClick={() => {
+                          const code = window.prompt(
+                            "Move to which table code? Leave blank to detach.",
+                          );
+                          if (code === null) return;
+                          const match = ((board.data as any)?.tables ?? []).find(
+                            (t: any) => String(t.code).toLowerCase() === code.trim().toLowerCase(),
+                          );
+                          transfer.mutate({ tableId: match?.id ?? null });
+                        }}
+                      >
+                        Move table
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="min-h-11"
+                        onClick={() => showReceipt.mutate({ orderId: orderId, reprint: false })}
+                      >
+                        <Printer className="size-4" /> Receipt
+                      </Button>
+                    </div>
+                    {canReopen && orderRow?.status === "closed" && (
+                      <Button
+                        variant="outline"
+                        className="min-h-11 w-full"
+                        onClick={() => reopen.mutate({ orderId })}
+                      >
+                        <RotateCcw className="size-4" /> Reopen bill
+                      </Button>
+                    )}
+                    {canVoid && orderRow?.status !== "cancelled" && (
                       <Button
                         variant="ghost"
                         className="min-h-11 w-full text-destructive"
+                        disabled={cancelBill.isPending}
                         onClick={() => {
-                          const target = orderPayments.find(
-                            (p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded",
-                          );
-                          if (!target) return;
-                          const reason = window.prompt(
-                            `Refund ${money(Number(target.amount), currency)} taken by ${target.method}. Reason?`,
-                          );
-                          if (reason && reason.trim().length >= 3) {
-                            refund.mutate({
-                              paymentId: target.id,
-                              amount: Number(target.amount),
-                              reason: reason.trim(),
-                            });
-                          }
+                          const reason = window.prompt("Cancel this whole bill. Reason?");
+                          if (reason && reason.trim().length >= 3)
+                            cancelBill.mutate({ orderId, reason: reason.trim() });
                         }}
                       >
-                        <CreditCard className="size-4" /> Refund a payment
+                        Cancel bill
                       </Button>
                     )}
+                    {canVoid &&
+                      orderPayments.some(
+                        (p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded",
+                      ) && (
+                        <Button
+                          variant="ghost"
+                          className="min-h-11 w-full text-destructive"
+                          onClick={() => {
+                            const target = orderPayments.find(
+                              (p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded",
+                            );
+                            if (!target) return;
+                            const reason = window.prompt(
+                              `Refund ${money(Number(target.amount), currency)} taken by ${target.method}. Reason?`,
+                            );
+                            if (reason && reason.trim().length >= 3) {
+                              refund.mutate({
+                                paymentId: target.id,
+                                amount: Number(target.amount),
+                                reason: reason.trim(),
+                              });
+                            }
+                          }}
+                        >
+                          <CreditCard className="size-4" /> Refund a payment
+                        </Button>
+                      )}
+                  </div>
                 </div>
               </div>
-
-              <details className="rounded-lg border bg-card p-2">
-                <summary className="cursor-pointer text-xs font-medium">Service timeline</summary>
-                <div className="mt-2">
-                  <OrderTimeline
-                    order={orderRow}
-                    items={serverItems}
-                    tickets={orderTickets}
-                    payments={orderPayments}
-                    receipt={(bill.data as any)?.receipt ?? null}
-                  />
-                </div>
-              </details>
             </div>
           )}
         </SectionCard>

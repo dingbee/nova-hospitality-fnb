@@ -17,6 +17,7 @@ import {
   UtensilsCrossed,
   X,
 } from "lucide-react";
+import { PRODUCT } from "@/config/product";
 import { useGuestTheme, type GuestThemePreference } from "@/hooks/use-guest-theme";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -634,7 +635,7 @@ function GuestOrderPage() {
           <span className="block text-sm font-semibold text-foreground">
             Not sure what to order?
           </span>
-          <span className="block text-xs text-muted-foreground">Ask NOVA</span>
+          <span className="block text-xs text-muted-foreground">Ask {PRODUCT.aiName}</span>
         </span>
       </button>
 
@@ -1805,7 +1806,7 @@ function AskNovaDrawer({
       <DrawerContent>
         <DrawerHeader>
           <DrawerTitle className="font-display flex items-center gap-1.5 text-xl">
-            <Sparkles className="size-4 text-primary" /> Ask NOVA
+            <Sparkles className="size-4 text-primary" /> Ask {PRODUCT.aiName}
           </DrawerTitle>
         </DrawerHeader>
 
@@ -1897,7 +1898,8 @@ function AskNovaDrawer({
             return (
               <div key={t.id} className="mr-auto max-w-[90%] space-y-2">
                 <div className="rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
-                  NOVA isn't available right now — here's the menu by category instead.
+                  {PRODUCT.aiName} isn't available right now — here's the menu by category
+                  instead.
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {t.categories.map((c) => (

@@ -17,7 +17,7 @@ export function SectionCard({
   return (
     <section className={cn("os-card os-fade-in p-6", className)}>
       {(title || actions) && (
-        <header className="mb-4 flex items-start justify-between gap-4">
+        <header className="mb-4 flex shrink-0 items-start justify-between gap-4">
           <div className="min-w-0">
             {title && (
               <h2 className="font-display text-xl leading-tight tracking-tight text-[color:var(--os-ink)]">

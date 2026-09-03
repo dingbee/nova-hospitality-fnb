@@ -98,7 +98,7 @@ export async function listTickets(
   const [{ data: items }, { data: orders }] = await Promise.all([
     sb
       .from("restaurant_kitchen_ticket_items")
-      .select("id, ticket_id, description, quantity, status, notes")
+      .select("id, ticket_id, description, quantity, status, notes, order_item_id")
       .eq("tenant_id", input.tenantId)
       .in(
         "ticket_id",
@@ -136,6 +136,25 @@ export async function listTickets(
     ]),
   );
 
+  // Ticket items don't carry modifiers themselves — the guest's chosen
+  // modifiers live on the order item they were fired from. One batch lookup
+  // (same "not one per ticket" pattern as the order/table lookups above) so
+  // the pass can show "no ice, extra spicy" instead of just the item name.
+  const orderItemIds = [
+    ...new Set(((items ?? []) as any[]).map((i) => i.order_item_id).filter(Boolean)),
+  ];
+  const { data: orderItemRows } =
+    orderItemIds.length > 0
+      ? await sb
+          .from("restaurant_order_items")
+          .select("id, modifiers")
+          .eq("tenant_id", input.tenantId)
+          .in("id", orderItemIds)
+      : { data: [] };
+  const modifiersByOrderItemId = new Map(
+    ((orderItemRows ?? []) as any[]).map((oi) => [oi.id, oi.modifiers ?? []]),
+  );
+
   const now = Date.now();
   return tickets.map((t) => {
     const elapsed = Math.round((now - new Date(t.queued_at).getTime()) / 1000);
@@ -147,7 +166,12 @@ export async function listTickets(
         t.status === "queued" || t.status === "preparing"
           ? elapsed > t.target_minutes * 60
           : t.is_delayed,
-      items: ((items ?? []) as any[]).filter((i) => i.ticket_id === t.id),
+      items: ((items ?? []) as any[])
+        .filter((i) => i.ticket_id === t.id)
+        .map((i) => ({
+          ...i,
+          modifiers: i.order_item_id ? (modifiersByOrderItemId.get(i.order_item_id) ?? []) : [],
+        })),
       order_number: orderById.get(t.order_id)?.order_number ?? null,
       table_code: orderById.get(t.order_id)?.table_code ?? null,
     };

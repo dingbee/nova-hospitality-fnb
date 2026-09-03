@@ -5,11 +5,13 @@ import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import { Brain, ChefHat, Boxes, ShoppingCart, Sparkles, Utensils } from "lucide-react";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
+import { PRODUCT } from "@/config/product";
 import { PageHeader } from "@/components/os/PageHeader";
-import { SectionCard } from "@/components/os/SectionCard";
 import { StatCard } from "@/components/os/StatCard";
 import { EmptyState } from "@/components/os/EmptyState";
-import { StatusChip } from "@/components/os/StatusChip";
+import { StatusChip, type StatusTone } from "@/components/os/StatusChip";
+import { IntelligenceModule } from "@/components/os/IntelligenceModule";
+import { ReadMore } from "@/components/os/ReadMore";
 import { Button } from "@/components/ui/button";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import {
@@ -20,12 +22,14 @@ import {
 } from "@/modules/restaurant/intelligence/insights.functions";
 import { getInventoryMenuOpportunitiesFn } from "@/modules/restaurant/intelligence/inventory-menu.functions";
 import {
+  INSIGHT_SEVERITIES,
   MENU_CLASS_LABEL,
   type InsightSeverity,
   type RestaurantInsight,
 } from "@/modules/restaurant/intelligence/types";
 import { runMenuIntelligenceReasoningFn } from "@/modules/restaurant/intelligence/menuReasoning.functions";
 import { MENU_INTELLIGENCE_STARTER_QUESTIONS } from "@/modules/restaurant/intelligence/menuReasoning.contracts";
+import { confidenceBand } from "@/modules/restaurant/intelligence/confidence";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/intelligence")({
   head: () => ({
@@ -51,6 +55,43 @@ const TONE: Record<InsightSeverity, "neutral" | "success" | "warning" | "danger"
   high: "danger",
   critical: "danger",
 };
+
+const SEVERITY_LABEL: Record<InsightSeverity, string> = {
+  info: "Info",
+  low: "Low priority",
+  medium: "Medium priority",
+  high: "High priority",
+  critical: "Critical priority",
+};
+
+/**
+ * The single highest-severity insight in a list — the same
+ * INSIGHT_SEVERITIES ordering the engines already use, nothing new
+ * computed. Feeds a collapsed module's headline/priority chip so the
+ * collapsed summary is never a fabricated "everything's fine" when a
+ * real signal exists (spec Part 4/7: collapsed state must communicate
+ * what matters now).
+ */
+function topInsight(insights: RestaurantInsight[]): RestaurantInsight | null {
+  if (insights.length === 0) return null;
+  return [...insights].sort(
+    (a, b) => INSIGHT_SEVERITIES.indexOf(b.severity) - INSIGHT_SEVERITIES.indexOf(a.severity),
+  )[0];
+}
+
+/** Collapsed-module summary derived from an already-loaded insight list — no new computation, just a headline/priority/meta projection. */
+function moduleSummary(insights: RestaurantInsight[], emptyHeadline: string) {
+  const top = topInsight(insights);
+  return {
+    headline: top ? top.title : emptyHeadline,
+    priorityLabel: top ? SEVERITY_LABEL[top.severity] : undefined,
+    priorityTone: top ? (TONE[top.severity] as StatusTone) : ("neutral" as StatusTone),
+    meta:
+      insights.length > 0
+        ? `${insights.length} active insight${insights.length === 1 ? "" : "s"}`
+        : undefined,
+  };
+}
 
 function InsightList({ insights }: { insights: RestaurantInsight[] }) {
   if (insights.length === 0) {
@@ -90,12 +131,15 @@ const PRIORITY_TONE: Record<string, "neutral" | "success" | "warning" | "danger"
 };
 
 /**
- * INT-01 — the first model-powered panel in this codebase. Deliberately
- * kept visually distinct from the deterministic facts rendered just above
- * it in the same SectionCard: this panel is NOVA's interpretation and
- * recommendation, never a restatement of the numbers themselves, and its
- * self-reported "confidence" is explicitly labeled as such — never shown
- * as if it were a statistical measure.
+ * LexiBite intelligence panel — the model-powered layer of the Menu
+ * Intelligence module, presented as LexiBite's own interpretation and
+ * recommendation (never a restatement of the deterministic facts above
+ * it). The underlying provider/model/latency/prompt version are NEVER
+ * rendered here — they remain available server-side in the same
+ * evaluation event menuReasoning.server.ts already writes, for
+ * engineering observability only (spec Part 1/16). Self-reported
+ * confidence is shown as a coarse High/Medium/Low band (confidence.ts),
+ * never a bare percentage presented as a statistic (spec Part 9).
  */
 function MenuReasoningPanel({
   tenantId,
@@ -116,12 +160,13 @@ function MenuReasoningPanel({
 
   if (!tenantId) return null;
   const outcome = ask.data;
+  const band = outcome && outcome.ok ? confidenceBand(outcome.result.confidence) : null;
 
   return (
     <div className="space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
       <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
         <Sparkles className="size-4 text-primary" aria-hidden />
-        Ask NOVA about this menu
+        Ask {PRODUCT.aiName} about this menu
       </div>
       <div className="flex flex-wrap gap-2">
         {MENU_INTELLIGENCE_STARTER_QUESTIONS.map((q) => (
@@ -142,17 +187,17 @@ function MenuReasoningPanel({
 
       {ask.isPending && (
         <p className="text-xs text-muted-foreground">
-          NOVA is reasoning over this window's numbers…
+          {PRODUCT.aiName} is reasoning over this window's numbers…
         </p>
       )}
 
       {outcome && !outcome.ok && (
         <p className="text-xs text-muted-foreground">
           {outcome.reason === "provider_unavailable"
-            ? `NOVA's reasoning layer isn't available right now (${outcome.detail}). The deterministic numbers above are unaffected.`
+            ? `${PRODUCT.aiName}'s reasoning layer isn't available right now. The deterministic numbers above are unaffected.`
             : outcome.reason === "insufficient_data"
               ? outcome.detail
-              : "NOVA couldn't produce a reliable answer this time — please try again."}
+              : `${PRODUCT.aiName} couldn't produce a reliable answer this time — please try again.`}
         </p>
       )}
 
@@ -160,28 +205,22 @@ function MenuReasoningPanel({
         <div className="space-y-2 text-sm">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              NOVA's interpretation
+              {PRODUCT.aiName}'s interpretation
             </p>
-            <p className="mt-0.5 text-foreground">{outcome.result.insight}</p>
+            <ReadMore text={outcome.result.insight} className="mt-0.5" />
           </div>
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Recommendation
+              {PRODUCT.aiName} recommendation
             </p>
-            <p className="mt-0.5 text-foreground">{outcome.result.recommendation}</p>
+            <ReadMore text={outcome.result.recommendation} className="mt-0.5" />
           </div>
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <StatusChip tone={PRIORITY_TONE[outcome.result.priority] ?? "neutral"}>
               {outcome.result.priority} priority
             </StatusChip>
-            <span className="text-xs text-muted-foreground">
-              NOVA's self-reported confidence: {Math.round(outcome.result.confidence * 100)}% (not a
-              statistical measure)
-            </span>
+            {band && <StatusChip tone="neutral">{band}</StatusChip>}
           </div>
-          <p className="text-[0.7rem] text-muted-foreground">
-            {outcome.provider} · {outcome.model} · {outcome.latencyMs}ms · {outcome.promptVersion}
-          </p>
         </div>
       )}
     </div>
@@ -235,6 +274,41 @@ function RestaurantIntelligencePage() {
   const pur = purchasing.data as any;
   const opp = opportunities.data as any;
   const money = (n: number, c = m?.currency ?? "TZS") => `${c} ${Number(n ?? 0).toLocaleString()}`;
+
+  // Collapsed-module summaries — one projection per domain, computed once.
+  // Nothing here is new intelligence: each summary only re-labels the SAME
+  // insight list the (unchanged) InsightList below already renders.
+  const menuSummary = moduleSummary(
+    (m?.insights ?? []) as RestaurantInsight[],
+    "Profit drivers, margin losers and promotion candidates for this window",
+  );
+  const inventorySummary = moduleSummary(
+    (inv?.insights ?? []) as RestaurantInsight[],
+    "Stock runway, wastage trend and supplier price threats",
+  );
+  const kitchenSummary = moduleSummary(
+    (kit?.insights ?? []) as RestaurantInsight[],
+    "Station prep times, dinner-peak pressure and week-on-week movement",
+  );
+  const purchasingSummary = moduleSummary(
+    (pur?.insights ?? []) as RestaurantInsight[],
+    "Recommended purchase quantities and supplier reliability",
+  );
+  const oppList = (opp?.opportunities ?? []) as any[];
+  const topOpportunity = oppList[0];
+  const opportunitySummary = {
+    headline: topOpportunity ? topOpportunity.title : "Nothing crossing a threshold right now",
+    priorityLabel: topOpportunity
+      ? SEVERITY_LABEL[topOpportunity.priority as InsightSeverity]
+      : undefined,
+    priorityTone: topOpportunity
+      ? ((PRIORITY_TONE[topOpportunity.priority] ?? "neutral") as StatusTone)
+      : ("neutral" as StatusTone),
+    meta:
+      oppList.length > 0
+        ? `${oppList.length} opportunit${oppList.length === 1 ? "y" : "ies"}`
+        : undefined,
+  };
 
   return (
     <div className="space-y-4">
@@ -290,11 +364,20 @@ function RestaurantIntelligencePage() {
         />
       </div>
 
-      <SectionCard
+      <IntelligenceModule
+        icon={<Utensils className="size-4" />}
         title="Menu intelligence"
-        description="Profit drivers, margin losers, declining dishes, promotion candidates and recipes needing a cost review."
+        headline={menuSummary.headline}
+        priorityLabel={menuSummary.priorityLabel}
+        priorityTone={menuSummary.priorityTone}
+        meta={menuSummary.meta}
+        defaultOpen={menuSummary.priorityTone === "danger"}
       >
         <div className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Profit drivers, margin losers, declining dishes, promotion candidates and recipes
+            needing a cost review.
+          </p>
           <InsightList insights={(m?.insights ?? []) as RestaurantInsight[]} />
           {(m?.items ?? []).length > 0 ? (
             <ul className="divide-y text-sm">
@@ -338,13 +421,21 @@ function RestaurantIntelligencePage() {
           )}
           <MenuReasoningPanel tenantId={tenantId} windowDays={windowDays} />
         </div>
-      </SectionCard>
+      </IntelligenceModule>
 
-      <SectionCard
+      <IntelligenceModule
+        icon={<Boxes className="size-4" />}
         title="Inventory intelligence"
-        description="Stock runway from consumption velocity, wastage trend and supplier price threats."
+        headline={inventorySummary.headline}
+        priorityLabel={inventorySummary.priorityLabel}
+        priorityTone={inventorySummary.priorityTone}
+        meta={inventorySummary.meta}
+        defaultOpen={inventorySummary.priorityTone === "danger"}
       >
         <div className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Stock runway from consumption velocity, wastage trend and supplier price threats.
+          </p>
           <InsightList insights={(inv?.insights ?? []) as RestaurantInsight[]} />
           {(inv?.atRisk ?? []).length > 0 ? (
             <ul className="divide-y text-sm">
@@ -369,13 +460,21 @@ function RestaurantIntelligencePage() {
             />
           )}
         </div>
-      </SectionCard>
+      </IntelligenceModule>
 
-      <SectionCard
+      <IntelligenceModule
+        icon={<ChefHat className="size-4" />}
         title="Kitchen performance intelligence"
-        description="Station prep times against targets, dinner-peak pressure and week-on-week movement."
+        headline={kitchenSummary.headline}
+        priorityLabel={kitchenSummary.priorityLabel}
+        priorityTone={kitchenSummary.priorityTone}
+        meta={kitchenSummary.meta}
+        defaultOpen={kitchenSummary.priorityTone === "danger"}
       >
         <div className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Station prep times against targets, dinner-peak pressure and week-on-week movement.
+          </p>
           <InsightList insights={(kit?.insights ?? []) as RestaurantInsight[]} />
           {(kit?.stations ?? []).length > 0 ? (
             <ul className="divide-y text-sm">
@@ -403,13 +502,22 @@ function RestaurantIntelligencePage() {
             />
           )}
         </div>
-      </SectionCard>
+      </IntelligenceModule>
 
-      <SectionCard
+      <IntelligenceModule
+        icon={<ShoppingCart className="size-4" />}
         title="Purchasing intelligence"
-        description="Recommended purchase quantities from forecast demand, supplier reliability and expected cost impact."
+        headline={purchasingSummary.headline}
+        priorityLabel={purchasingSummary.priorityLabel}
+        priorityTone={purchasingSummary.priorityTone}
+        meta={purchasingSummary.meta}
+        defaultOpen={purchasingSummary.priorityTone === "danger"}
       >
         <div className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Recommended purchase quantities from forecast demand, supplier reliability and expected
+            cost impact.
+          </p>
           <InsightList insights={(pur?.insights ?? []) as RestaurantInsight[]} />
           {(pur?.suggestions ?? []).length > 0 ? (
             <ul className="divide-y text-sm">
@@ -461,13 +569,22 @@ function RestaurantIntelligencePage() {
             </div>
           ) : null}
         </div>
-      </SectionCard>
+      </IntelligenceModule>
 
-      <SectionCard
+      <IntelligenceModule
+        icon={<Brain className="size-4" />}
         title="Inventory → menu opportunities"
-        description="Findings with evidence. Confidence is derived from measured facts only — advisory, never automatic."
+        headline={opportunitySummary.headline}
+        priorityLabel={opportunitySummary.priorityLabel}
+        priorityTone={opportunitySummary.priorityTone}
+        meta={opportunitySummary.meta}
+        defaultOpen={opportunitySummary.priorityTone === "danger"}
       >
-        {((opp?.opportunities ?? []) as any[]).length === 0 ? (
+        <p className="mb-3 text-xs text-muted-foreground">
+          Findings with evidence. Confidence is derived from measured facts only — advisory, never
+          automatic.
+        </p>
+        {oppList.length === 0 ? (
           <EmptyState
             title="No opportunities detected"
             description="Stock cover, expiry and margin are within normal ranges for this window."
@@ -475,31 +592,34 @@ function RestaurantIntelligencePage() {
           />
         ) : (
           <ul className="divide-y text-sm">
-            {(opp.opportunities as any[]).slice(0, 12).map((o) => (
-              <li key={o.key} className="space-y-1 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium">{o.title}</span>
-                  <span className="text-xs text-muted-foreground">
-                    priority {o.priority} ·{" "}
-                    {o.confidence == null
-                      ? "confidence unknown"
-                      : `${Math.round(o.confidence * 100)}% confidence`}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground">{o.summary}</p>
-                <p className="text-[11px] text-muted-foreground">
-                  {(o.evidence as any[]).map((e) => `${e.label}: ${e.value}`).join(" · ")}
-                </p>
-                {(o.blockers as string[]).length > 0 && (
-                  <p className="text-[11px] text-amber-600">
-                    Blocked: {(o.blockers as string[]).join(", ")}
+            {oppList.slice(0, 12).map((o) => {
+              const band = confidenceBand(o.confidence);
+              return (
+                <li key={o.key} className="space-y-1 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium">{o.title}</span>
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <StatusChip tone={(PRIORITY_TONE[o.priority] ?? "neutral") as StatusTone}>
+                        {o.priority}
+                      </StatusChip>
+                      {band ?? "Confidence unknown"}
+                    </span>
+                  </div>
+                  <ReadMore text={o.summary} previewChars={160} className="text-xs" />
+                  <p className="text-[11px] text-muted-foreground">
+                    {(o.evidence as any[]).map((e) => `${e.label}: ${e.value}`).join(" · ")}
                   </p>
-                )}
-              </li>
-            ))}
+                  {(o.blockers as string[]).length > 0 && (
+                    <p className="text-[11px] text-amber-600">
+                      Blocked: {(o.blockers as string[]).join(", ")}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
-      </SectionCard>
+      </IntelligenceModule>
     </div>
   );
 }

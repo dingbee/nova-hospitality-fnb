@@ -3,6 +3,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Brain, Sparkles, Wand2, X } from "lucide-react";
+import { PRODUCT } from "@/config/product";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -304,7 +305,7 @@ function MemoryPanel({ tenantId, onClose }: { tenantId: string; onClose: () => v
     <div className="mb-2 rounded-md border bg-card p-2">
       <div className="mb-1.5 flex items-center justify-between">
         <div className="flex items-center gap-1 text-xs font-medium">
-          <Brain className="size-3" aria-hidden /> What NOVA remembers
+          <Brain className="size-3" aria-hidden /> What {PRODUCT.aiName} remembers
         </div>
         <button
           type="button"
@@ -318,7 +319,7 @@ function MemoryPanel({ tenantId, onClose }: { tenantId: string; onClose: () => v
       {memories.isLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
       {memories.data && memories.data.length === 0 && (
         <p className="text-xs text-muted-foreground">
-          Nothing remembered yet. Tell NOVA a preference and it can remember it here.
+          Nothing remembered yet. Tell {PRODUCT.aiName} a preference and it can remember it here.
         </p>
       )}
       <ul className="space-y-1">
@@ -394,7 +395,7 @@ export function StaffNovaPanel({
         {
           id: newTurnId(),
           role: "assistant",
-          content: "Something went wrong reaching NOVA. Please try again.",
+          content: `Something went wrong reaching ${PRODUCT.aiName}. Please try again.`,
           degraded: true,
         },
       ]);
@@ -415,7 +416,7 @@ export function StaffNovaPanel({
         <SheetHeader>
           <SheetTitle className="flex items-center justify-between gap-1.5">
             <span className="flex items-center gap-1.5">
-              <Sparkles className="size-4 text-primary" aria-hidden /> Ask NOVA
+              <Sparkles className="size-4 text-primary" aria-hidden /> Ask {PRODUCT.aiName}
             </span>
             <button
               type="button"
@@ -433,8 +434,9 @@ export function StaffNovaPanel({
           {turns.length === 0 && (
             <p className="text-sm text-muted-foreground">
               Ask about sales, menu performance, inventory, purchasing, kitchen performance, or
-              current findings and decisions for this restaurant. NOVA only answers from this
-              restaurant's own data — if it doesn't have what you're asking for, it'll say so.
+              current findings and decisions for this restaurant. {PRODUCT.aiName} only answers
+              from this restaurant's own data — if it doesn't have what you're asking for, it'll
+              say so.
             </p>
           )}
           {turns.map((t) =>
@@ -498,7 +500,7 @@ export function StaffNovaPanel({
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask NOVA about your restaurant…"
+            placeholder={`Ask ${PRODUCT.aiName} about your restaurant…`}
             maxLength={2000}
             className="h-11"
           />
