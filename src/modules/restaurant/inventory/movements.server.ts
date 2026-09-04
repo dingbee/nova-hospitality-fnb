@@ -17,6 +17,7 @@ import type {
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { evaluateNegativeStock } from "./policy";
+import { componentToStock, type UnitRow } from "./units";
 
 type Sb = any;
 
@@ -25,7 +26,11 @@ export class NegativeStockError extends Error {
   readonly code = "negative_stock";
   constructor(
     message: string,
-    readonly detail: { inventoryItemId: string; movementType: StockMovementType; shortfall: number },
+    readonly detail: {
+      inventoryItemId: string;
+      movementType: StockMovementType;
+      shortfall: number;
+    },
   ) {
     super(message);
     this.name = "NegativeStockError";
@@ -41,13 +46,21 @@ const OUTBOUND: readonly StockMovementType[] = [
   "return_to_supplier",
 ];
 
-export function signedQuantity(type: StockMovementType, magnitude: number, signedAllowed = false): number {
+export function signedQuantity(
+  type: StockMovementType,
+  magnitude: number,
+  signedAllowed = false,
+): number {
   // `adjustment` and `reversal` carry their own sign; everything else derives it.
   if (type === "adjustment" || type === "reversal") return signedAllowed ? magnitude : magnitude;
   return OUTBOUND.includes(type) ? -Math.abs(magnitude) : Math.abs(magnitude);
 }
 
-export async function listMovements(sb: Sb, userId: string, input: z.infer<typeof listMovementsSchema>) {
+export async function listMovements(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listMovementsSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_stock_movements")
@@ -163,7 +176,9 @@ export async function insertMovement(
       dedupe_key: row.dedupeKey ?? null,
       created_by: userId,
     })
-    .select("id, quantity, unit_cost, total_cost, balance_after, movement_type, inventory_item_id, location_id")
+    .select(
+      "id, quantity, unit_cost, total_cost, balance_after, movement_type, inventory_item_id, location_id",
+    )
     .single();
   if (error) {
     // Idempotency: the same fact must never move stock twice.
@@ -224,7 +239,10 @@ export async function recordMovement(sb: Sb, userId: string, input: RecordMoveme
     },
   });
 
-  if (item.reorder_point != null && Number(moved.balance_after ?? 0) <= Number(item.reorder_point)) {
+  if (
+    item.reorder_point != null &&
+    Number(moved.balance_after ?? 0) <= Number(item.reorder_point)
+  ) {
     await emitRestaurantEvent(sb, userId, {
       type: "restaurant.inventory.low",
       tenantId: input.tenantId,
@@ -332,9 +350,28 @@ export async function consumeForOrderItem(
 
   const { data: inv } = await sb
     .from("restaurant_inventory_items")
-    .select("id, average_cost, currency, location_id, property_id")
-    .in("id", rows.map((c) => c.inventory_item_id));
+    .select("id, name, average_cost, currency, location_id, property_id, unit_id")
+    .in(
+      "id",
+      rows.map((c) => c.inventory_item_id),
+    );
   const costs = new Map<string, any>(((inv ?? []) as any[]).map((r) => [r.id, r]));
+
+  // average_cost is priced per the item's own stock unit — a recipe
+  // component written in a different unit must be converted to stock units
+  // before it is costed or deducted (see units.ts#componentToStock).
+  const unitIds = [
+    ...new Set(
+      [...rows.map((c) => c.unit_id), ...[...costs.values()].map((v) => v.unit_id)].filter(Boolean),
+    ),
+  ] as string[];
+  const { data: unitRows } = unitIds.length
+    ? await sb
+        .from("restaurant_inventory_units")
+        .select("id, code, name, dimension, factor, base_unit_id")
+        .in("id", unitIds)
+    : { data: [] as any[] };
+  const unitById = new Map(((unitRows ?? []) as UnitRow[]).map((u) => [u.id, u]));
 
   let actualCost = 0;
   for (const c of rows) {
@@ -344,14 +381,21 @@ export async function consumeForOrderItem(
     const consumed = perServing * args.quantity;
     if (consumed <= 0) continue;
 
+    const converted = componentToStock(consumed, c.unit_id, meta ?? {}, unitById);
+    if (!converted.exact) {
+      throw new Error(
+        `"${meta?.name ?? c.inventory_item_id}": recipe component is in a unit that cannot be converted to this item's stock unit (${converted.reason ?? "unknown conversion"}). Fix the component's unit, or the item's stock unit, before this order can close.`,
+      );
+    }
+
     const moved = await insertMovement(sb, userId, {
       tenantId: args.tenantId,
       propertyId: args.propertyId ?? meta?.property_id ?? null,
       locationId: args.locationId ?? meta?.location_id ?? null,
       inventoryItemId: c.inventory_item_id,
-      unitId: c.unit_id ?? null,
+      unitId: meta?.unit_id ?? c.unit_id ?? null,
       movementType: "consumption",
-      quantity: -consumed,
+      quantity: -converted.quantity,
       unitCost,
       currency: meta?.currency ?? "TZS",
       reason: "Sales consumption",
@@ -362,7 +406,7 @@ export async function consumeForOrderItem(
       dedupeKey: `consume:${args.orderItemId}:${c.id}`,
     });
     // Duplicate (already consumed) still contributes to the recorded cost figure.
-    actualCost += consumed * unitCost;
+    actualCost += converted.quantity * unitCost;
     if (!moved) continue;
   }
   return Number(actualCost.toFixed(4));

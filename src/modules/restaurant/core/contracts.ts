@@ -222,7 +222,15 @@ export const upsertInventoryItemSchema = tenantScopeSchema.extend({
   allowNegative: z.boolean().default(false),
   purchaseUnitId: uuid.optional(),
   consumptionUnitId: uuid.optional(),
-  packSize: z.number().min(0).optional(),
+  /**
+   * How many stock units one purchase unit contains (a 30-egg PACK is
+   * pack size 30 when stock is counted per PC; a loose-KG item is pack
+   * size 1). restaurant_inventory_items.pack_size is NOT NULL — this is
+   * real conversion-factor configuration, never an optional cosmetic
+   * field, so it is required here rather than silently defaulted server-
+   * side (see units.ts#purchaseToStock).
+   */
+  packSize: z.number().positive(),
   shelfLifeDays: z.number().int().min(0).max(3650).optional(),
   /** Beverage / bar configuration — existing columns on restaurant_inventory_items. */
   isBeverage: z.boolean().optional(),

@@ -9,6 +9,7 @@
  * costing methodology: it only resolves the dependency chain and applies the
  * yield adjustment already declared on each component.
  */
+import { componentToStock, type UnitRow } from "../inventory/units";
 import type { RecipeCostLine, RecipeCostResult } from "./contracts";
 
 type Sb = any;
@@ -56,25 +57,39 @@ export async function resolveRecipeCost(
 
   const { data: lines } = await sb
     .from("restaurant_recipe_lines")
-    .select("id, component_kind, inventory_item_id, sub_recipe_id, quantity, unit_id, yield_percent, is_optional, sort_order")
+    .select(
+      "id, component_kind, inventory_item_id, sub_recipe_id, quantity, unit_id, yield_percent, is_optional, sort_order",
+    )
     .eq("tenant_id", tenantId)
     .eq("recipe_id", recipeId)
     .order("sort_order");
   const rows = (lines ?? []) as any[];
 
   const itemIds = rows.map((r) => r.inventory_item_id).filter(Boolean);
-  const unitIds = rows.map((r) => r.unit_id).filter(Boolean);
 
-  const [{ data: items }, { data: units }] = await Promise.all([
-    itemIds.length
-      ? sb.from("restaurant_inventory_items").select("id, name, average_cost, unit_id").in("id", itemIds)
-      : Promise.resolve({ data: [] }),
-    unitIds.length
-      ? sb.from("restaurant_inventory_units").select("id, code, dimension, factor").in("id", unitIds)
-      : Promise.resolve({ data: [] }),
-  ]);
+  const { data: items } = itemIds.length
+    ? await sb
+        .from("restaurant_inventory_items")
+        .select("id, name, average_cost, unit_id")
+        .in("id", itemIds)
+    : { data: [] as any[] };
   const itemMap = new Map<string, any>(((items ?? []) as any[]).map((r) => [r.id, r]));
-  const unitMap = new Map<string, any>(((units ?? []) as any[]).map((r) => [r.id, r]));
+
+  // Every line's own unit AND every referenced item's stock unit —
+  // componentToStock needs both sides of a conversion resolved.
+  const unitIds = [
+    ...new Set([
+      ...rows.map((r) => r.unit_id).filter(Boolean),
+      ...((items ?? []) as any[]).map((i) => i.unit_id).filter(Boolean),
+    ]),
+  ] as string[];
+  const { data: units } = unitIds.length
+    ? await sb
+        .from("restaurant_inventory_units")
+        .select("id, code, name, dimension, factor, base_unit_id")
+        .in("id", unitIds)
+    : { data: [] as any[] };
+  const unitMap = new Map<string, UnitRow>(((units ?? []) as UnitRow[]).map((r) => [r.id, r]));
 
   const costLines: RecipeCostLine[] = [];
   let ingredientCost = 0;
@@ -107,19 +122,28 @@ export async function resolveRecipeCost(
 
     const meta = row.inventory_item_id ? itemMap.get(row.inventory_item_id) : undefined;
     const unitCost = Number(meta?.average_cost ?? 0);
-    const lineCost = effectiveQuantity * unitCost;
+    // average_cost is priced per the item's own stock unit — a line entered
+    // in a different unit (a KG item costed in G, say) must be converted
+    // before it is priced, or a gram costs as much as a kilogram.
+    const exact = meta ? componentToStock(effectiveQuantity, row.unit_id, meta, unitMap) : null;
+    const unresolved = !meta || !exact!.exact;
+    const lineCost = meta && exact!.exact ? exact!.quantity * unitCost : 0;
     ingredientCost += lineCost;
     costLines.push({
       kind: "inventory_item",
       refId: row.inventory_item_id ?? null,
-      name: meta?.name ?? "Unmapped component",
+      name: !meta
+        ? "Unmapped component"
+        : !exact!.exact
+          ? `${meta.name} (unit mismatch — not costed)`
+          : meta.name,
       quantity,
       unitCode,
       yieldPercent,
       effectiveQuantity: Number(effectiveQuantity.toFixed(4)),
-      unitCost: Number(unitCost.toFixed(4)),
+      unitCost: meta && exact!.exact ? Number(unitCost.toFixed(4)) : 0,
       lineCost: Number(lineCost.toFixed(4)),
-      unresolved: !meta,
+      unresolved,
     });
   }
 
@@ -164,6 +188,6 @@ export async function assertNoCycle(sb: Sb, tenantId: string, parentId: string, 
       .eq("tenant_id", tenantId)
       .eq("recipe_id", current)
       .not("sub_recipe_id", "is", null);
-    for (const row of ((data ?? []) as any[])) if (row.sub_recipe_id) stack.push(row.sub_recipe_id);
+    for (const row of (data ?? []) as any[]) if (row.sub_recipe_id) stack.push(row.sub_recipe_id);
   }
 }

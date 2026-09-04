@@ -12,6 +12,7 @@
  * voids and reversals therefore never create unexplained stock loss.
  */
 import { insertMovement } from "../inventory/movements.server";
+import { componentToStock, type UnitRow } from "../inventory/units";
 import { CircularRecipeError } from "./recipe-cost.server";
 
 type Sb = any;
@@ -44,13 +45,16 @@ async function explode(
 
   const { data: lines } = await sb
     .from("restaurant_recipe_lines")
-    .select("id, component_kind, inventory_item_id, sub_recipe_id, quantity, unit_id, yield_percent")
+    .select(
+      "id, component_kind, inventory_item_id, sub_recipe_id, quantity, unit_id, yield_percent",
+    )
     .eq("tenant_id", tenantId)
     .eq("recipe_id", recipeId);
 
-  for (const line of ((lines ?? []) as any[])) {
+  for (const line of (lines ?? []) as any[]) {
     const yieldPercent = Number(line.yield_percent ?? 100);
-    const effective = (Number(line.quantity ?? 0) / (yieldPercent > 0 ? yieldPercent / 100 : 1)) * multiplier;
+    const effective =
+      (Number(line.quantity ?? 0) / (yieldPercent > 0 ? yieldPercent / 100 : 1)) * multiplier;
     if (effective <= 0) continue;
 
     if (line.component_kind === "sub_recipe" && line.sub_recipe_id) {
@@ -120,22 +124,45 @@ export async function consumeForRecipeSale(
   const ids = [...new Set(demand.map((d) => d.inventoryItemId))];
   const { data: items } = await sb
     .from("restaurant_inventory_items")
-    .select("id, average_cost, currency, location_id, property_id")
+    .select("id, name, average_cost, currency, location_id, property_id, unit_id")
     .in("id", ids);
   const meta = new Map<string, any>(((items ?? []) as any[]).map((r) => [r.id, r]));
+
+  // average_cost is priced per the item's own stock unit — a recipe line
+  // written in a different unit (a KG item consumed in G, say) must be
+  // converted to stock units before it is costed or deducted, or a gram
+  // silently costs and depletes stock as much as a kilogram.
+  const unitIds = [
+    ...new Set(
+      [...demand.map((d) => d.unitId), ...[...meta.values()].map((v) => v.unit_id)].filter(Boolean),
+    ),
+  ] as string[];
+  const { data: unitRows } = unitIds.length
+    ? await sb
+        .from("restaurant_inventory_units")
+        .select("id, code, name, dimension, factor, base_unit_id")
+        .in("id", unitIds)
+    : { data: [] as any[] };
+  const unitById = new Map(((unitRows ?? []) as UnitRow[]).map((u) => [u.id, u]));
 
   let actualCost = 0;
   for (const line of demand) {
     const info = meta.get(line.inventoryItemId);
     const unitCost = Number(info?.average_cost ?? 0);
+    const converted = componentToStock(line.quantity, line.unitId, info ?? {}, unitById);
+    if (!converted.exact) {
+      throw new Error(
+        `"${info?.name ?? line.inventoryItemId}": recipe line is in a unit that cannot be converted to this item's stock unit (${converted.reason ?? "unknown conversion"}). Fix the recipe line's unit, or the item's stock unit, before this order can close.`,
+      );
+    }
     await insertMovement(sb, userId, {
       tenantId: args.tenantId,
       propertyId: args.propertyId ?? info?.property_id ?? null,
       locationId: args.locationId ?? info?.location_id ?? null,
       inventoryItemId: line.inventoryItemId,
-      unitId: line.unitId,
+      unitId: info?.unit_id ?? line.unitId,
       movementType: "consumption",
-      quantity: -line.quantity,
+      quantity: -converted.quantity,
       unitCost,
       currency: info?.currency ?? "TZS",
       reason: "Sales consumption",
@@ -145,7 +172,7 @@ export async function consumeForRecipeSale(
       occurredAt: args.occurredAt,
       dedupeKey: `consume:${args.orderItemId}:${line.key}`,
     });
-    actualCost += line.quantity * unitCost;
+    actualCost += converted.quantity * unitCost;
   }
   return Number(actualCost.toFixed(4));
 }

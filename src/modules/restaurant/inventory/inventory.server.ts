@@ -102,6 +102,18 @@ async function nextInventorySku(sb: Sb, tenantId: string): Promise<string> {
 
 export async function upsertInventoryItem(sb: Sb, userId: string, input: UpsertInventoryItemInput) {
   await assertCapability(sb, userId, input.tenantId, "inventory.manage");
+  // Defense in depth: the zod schema already requires packSize for callers
+  // that go through a server function's inputValidator, but this service is
+  // also called directly (import.server.ts's commit path) with no zod layer
+  // in between. restaurant_inventory_items.pack_size is NOT NULL — a caller
+  // that skips this check would silently drop the key from the insert
+  // payload and let the column's own DEFAULT 1 win with no error at all,
+  // which is exactly the "arbitrary default" this contract must not allow.
+  if (!(Number(input.packSize) > 0)) {
+    throw new Error(
+      `"${input.name}": pack size is required — how many stock units one purchase unit contains (a loose-KG item is 1, a 30-egg PACK counted in PC is 30).`,
+    );
+  }
   const isCreate = !input.id;
   const sku = input.sku ?? (isCreate ? await nextInventorySku(sb, input.tenantId) : undefined);
   const row = {
@@ -130,7 +142,11 @@ export async function upsertInventoryItem(sb: Sb, userId: string, input: UpsertI
     allow_negative: input.allowNegative,
     purchase_unit_id: input.purchaseUnitId ?? null,
     consumption_unit_id: input.consumptionUnitId ?? null,
-    pack_size: input.packSize ?? null,
+    // Required by the schema (see contracts.ts) — never written as null:
+    // restaurant_inventory_items.pack_size is NOT NULL, and a silently
+    // nulled write here would defeat the column's own DEFAULT 1 and crash
+    // the insert instead of failing validation earlier and explicitly.
+    pack_size: input.packSize,
     shelf_life_days: input.shelfLifeDays ?? null,
     ...(input.isBeverage === undefined ? {} : { is_beverage: input.isBeverage }),
     ...(input.servingSize === undefined ? {} : { serving_size: input.servingSize }),

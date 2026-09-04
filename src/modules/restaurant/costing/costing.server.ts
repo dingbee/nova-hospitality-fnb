@@ -8,14 +8,21 @@ import {
 } from "../core/contracts";
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
+import { componentToStock, type UnitRow } from "../inventory/units";
 
 type Sb = any;
 
-export async function listRecipeComponents(sb: Sb, userId: string, input: z.infer<typeof recipeSchema>) {
+export async function listRecipeComponents(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof recipeSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   const { data, error } = await sb
     .from("restaurant_recipe_components")
-    .select("id, menu_item_id, inventory_item_id, component_menu_item_id, unit_id, quantity, yield_percent, notes")
+    .select(
+      "id, menu_item_id, inventory_item_id, component_menu_item_id, unit_id, quantity, yield_percent, notes",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("menu_item_id", input.menuItemId);
   if (error) throw new Error(error.message);
@@ -39,7 +46,11 @@ export async function upsertRecipeComponent(
     updated_at: new Date().toISOString(),
   };
   const q = input.id
-    ? sb.from("restaurant_recipe_components").update(row).eq("id", input.id).eq("tenant_id", input.tenantId)
+    ? sb
+        .from("restaurant_recipe_components")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
     : sb.from("restaurant_recipe_components").insert(row);
   const { data, error } = await q.select("id").single();
   if (error) throw new Error(error.message);
@@ -71,23 +82,47 @@ export async function computeRecipeCost(sb: Sb, userId: string, input: ComputeRe
       .single(),
     sb
       .from("restaurant_recipe_components")
-      .select("quantity, yield_percent, inventory_item_id")
+      .select("quantity, yield_percent, inventory_item_id, unit_id")
       .eq("tenant_id", input.tenantId)
       .eq("menu_item_id", input.menuItemId),
   ]);
   if (!item) throw new Error("Menu item not found.");
 
   const ids = (components ?? []).map((c: any) => c.inventory_item_id).filter(Boolean);
-  const costs = new Map<string, { cost: number; name: string }>();
+  const costs = new Map<string, { cost: number; name: string; unit_id: string | null }>();
   if (ids.length > 0) {
     const { data: inv } = await sb
       .from("restaurant_inventory_items")
-      .select("id, name, average_cost")
+      .select("id, name, average_cost, unit_id")
       .in("id", ids);
     for (const row of (inv ?? []) as any[]) {
-      costs.set(row.id, { cost: Number(row.average_cost ?? 0), name: row.name });
+      costs.set(row.id, {
+        cost: Number(row.average_cost ?? 0),
+        name: row.name,
+        unit_id: row.unit_id ?? null,
+      });
     }
   }
+
+  // average_cost is priced per the item's own stock unit — a component
+  // whose recipe line was entered in a different unit (a KG item consumed
+  // in G, say) must be converted before that price applies, or a gram
+  // silently costs as much as a kilogram (see units.ts#componentToStock).
+  const unitIds = [
+    ...new Set(
+      [
+        ...(components ?? []).map((c: any) => c.unit_id),
+        ...[...costs.values()].map((v) => v.unit_id),
+      ].filter(Boolean),
+    ),
+  ] as string[];
+  const { data: unitRows } = unitIds.length
+    ? await sb
+        .from("restaurant_inventory_units")
+        .select("id, code, name, dimension, factor, base_unit_id")
+        .in("id", unitIds)
+    : { data: [] as any[] };
+  const unitById = new Map(((unitRows ?? []) as UnitRow[]).map((u) => [u.id, u]));
 
   const breakdown: Array<{
     inventory_item_id: string | null;
@@ -99,13 +134,34 @@ export async function computeRecipeCost(sb: Sb, userId: string, input: ComputeRe
   }> = (components ?? []).map((c: any) => {
     const meta = c.inventory_item_id ? costs.get(c.inventory_item_id) : undefined;
     const effectiveQty = Number(c.quantity) / (Number(c.yield_percent ?? 100) / 100);
-    const lineCost = effectiveQty * (meta?.cost ?? 0);
+    if (!meta) {
+      return {
+        inventory_item_id: c.inventory_item_id,
+        name: "Unmapped component",
+        quantity: Number(c.quantity),
+        yield_percent: Number(c.yield_percent ?? 100),
+        unit_cost: 0,
+        line_cost: 0,
+      };
+    }
+    const converted = componentToStock(effectiveQty, c.unit_id, meta, unitById);
+    if (!converted.exact) {
+      return {
+        inventory_item_id: c.inventory_item_id,
+        name: `${meta.name} (unit mismatch — not costed)`,
+        quantity: Number(c.quantity),
+        yield_percent: Number(c.yield_percent ?? 100),
+        unit_cost: 0,
+        line_cost: 0,
+      };
+    }
+    const lineCost = converted.quantity * meta.cost;
     return {
       inventory_item_id: c.inventory_item_id,
-      name: meta?.name ?? "Unmapped component",
+      name: meta.name,
       quantity: Number(c.quantity),
       yield_percent: Number(c.yield_percent ?? 100),
-      unit_cost: meta?.cost ?? 0,
+      unit_cost: meta.cost,
       line_cost: Number(lineCost.toFixed(4)),
     };
   });
@@ -170,7 +226,9 @@ export async function listRecipeCosts(sb: Sb, userId: string, tenantId: string) 
   await assertTenantRead(sb, userId, tenantId);
   const { data, error } = await sb
     .from("restaurant_recipe_costs")
-    .select("id, menu_item_id, computed_at, total_cost, food_cost_percent, suggested_price, currency")
+    .select(
+      "id, menu_item_id, computed_at, total_cost, food_cost_percent, suggested_price, currency",
+    )
     .eq("tenant_id", tenantId)
     .order("computed_at", { ascending: false })
     .limit(100);

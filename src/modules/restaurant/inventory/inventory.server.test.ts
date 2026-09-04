@@ -128,6 +128,7 @@ describe("upsertInventoryItem — opening balance goes through the ledger", () =
       currency: "TZS",
       trackBatches: false,
       allowNegative: false,
+      packSize: 1,
     } as any);
 
     expect(result.current_quantity).toBe(25);
@@ -153,6 +154,7 @@ describe("upsertInventoryItem — opening balance goes through the ledger", () =
       currency: "TZS",
       trackBatches: false,
       allowNegative: false,
+      packSize: 1,
     } as any);
     expect(result.current_quantity).toBe(0);
     expect(fake.movements).toHaveLength(0);
@@ -170,6 +172,7 @@ describe("upsertInventoryItem — opening balance goes through the ledger", () =
       currency: "TZS",
       trackBatches: false,
       allowNegative: false,
+      packSize: 1,
     } as any);
     expect(fake.items[created.id].current_quantity).toBe(40);
 
@@ -187,6 +190,7 @@ describe("upsertInventoryItem — opening balance goes through the ledger", () =
       currency: "TZS",
       trackBatches: false,
       allowNegative: false,
+      packSize: 1,
     } as any);
 
     // The edit must never overwrite the ledger-derived balance.
@@ -209,6 +213,7 @@ describe("upsertInventoryItem — opening balance goes through the ledger", () =
       currency: "TZS",
       trackBatches: false,
       allowNegative: false,
+      packSize: 1,
     } as any);
     expect(fake.items[created.id].current_quantity).toBe(12);
 
@@ -241,6 +246,7 @@ describe("upsertInventoryItem — SKU generation and barcode identity", () => {
       currency: "TZS",
       trackBatches: false,
       allowNegative: false,
+      packSize: 1,
     } as any);
     expect(fake.items[result.id].sku).toBe("ITM-2026-00001");
   });
@@ -257,6 +263,7 @@ describe("upsertInventoryItem — SKU generation and barcode identity", () => {
       currency: "TZS",
       trackBatches: false,
       allowNegative: false,
+      packSize: 1,
     } as any);
     expect(fake.items[result.id].sku).toBe("SUPPLIER-CODE-42");
   });
@@ -272,6 +279,7 @@ describe("upsertInventoryItem — SKU generation and barcode identity", () => {
       currency: "TZS",
       trackBatches: false,
       allowNegative: false,
+      packSize: 1,
     } as any);
     const originalSku = fake.items[created.id].sku;
 
@@ -285,6 +293,7 @@ describe("upsertInventoryItem — SKU generation and barcode identity", () => {
       currency: "TZS",
       trackBatches: false,
       allowNegative: false,
+      packSize: 1,
     } as any);
     expect(fake.items[created.id].sku).toBe(originalSku); // untouched by the edit
   });
@@ -301,6 +310,7 @@ describe("upsertInventoryItem — SKU generation and barcode identity", () => {
       currency: "TZS",
       trackBatches: false,
       allowNegative: false,
+      packSize: 1,
     } as any);
     expect(fake.items[result.id].barcode).toBe("5449000000996");
     expect(fake.items[result.id].barcode).not.toBe(fake.items[result.id].sku);
@@ -320,7 +330,82 @@ describe("upsertInventoryItem — SKU generation and barcode identity", () => {
         currency: "TZS",
         trackBatches: false,
         allowNegative: false,
+        packSize: 1,
       } as any),
     ).rejects.toThrow(/barcode.*already on file/i);
+  });
+});
+
+describe("upsertInventoryItem — pack size is real conversion configuration, never a silent default", () => {
+  // restaurant_inventory_items.pack_size is NOT NULL DEFAULT 1. A prior bug
+  // wrote `pack_size: input.packSize ?? null` — undefined became an explicit
+  // null, which overrides the column default and trips the constraint.
+  // packSize is now required by the schema; this proves the value the
+  // caller supplied is the value that lands on the row, not 1 by accident.
+  it("persists a caller-supplied pack size distinct from the column default", async () => {
+    const fake = makeFakeSupabase();
+    const result = await upsertInventoryItem(fake.supabase, USER, {
+      tenantId: TENANT,
+      name: "Eggs (30-pack)",
+      itemType: "ingredient",
+      currentQuantity: 0,
+      averageCost: 0,
+      currency: "TZS",
+      trackBatches: false,
+      allowNegative: false,
+      packSize: 30,
+    } as any);
+    expect(fake.items[result.id].pack_size).toBe(30);
+  });
+
+  it("never nulls pack_size when a caller omits it from the payload object entirely", async () => {
+    // Regression for the exact defect: even if a caller constructs the
+    // input without the key at all (not even `packSize: undefined`), the
+    // row written must carry a real number, never null.
+    const fake = makeFakeSupabase();
+    const input: Record<string, unknown> = {
+      tenantId: TENANT,
+      name: "Regression item",
+      itemType: "ingredient",
+      currentQuantity: 0,
+      averageCost: 0,
+      currency: "TZS",
+      trackBatches: false,
+      allowNegative: false,
+      packSize: 1,
+    };
+    delete input.packSize;
+    await expect(upsertInventoryItem(fake.supabase, USER, input as any)).rejects.toThrow();
+  });
+
+  it("keeps the item's existing pack size untouched when editing unrelated metadata", async () => {
+    const fake = makeFakeSupabase();
+    const created = await upsertInventoryItem(fake.supabase, USER, {
+      tenantId: TENANT,
+      name: "Cooking oil",
+      itemType: "ingredient",
+      currentQuantity: 0,
+      averageCost: 0,
+      currency: "TZS",
+      trackBatches: false,
+      allowNegative: false,
+      packSize: 5,
+    } as any);
+    expect(fake.items[created.id].pack_size).toBe(5);
+
+    await upsertInventoryItem(fake.supabase, USER, {
+      tenantId: TENANT,
+      id: created.id,
+      name: "Cooking oil (sunflower)",
+      itemType: "ingredient",
+      currentQuantity: 0,
+      averageCost: 0,
+      currency: "TZS",
+      trackBatches: false,
+      allowNegative: false,
+      packSize: 5,
+    } as any);
+    expect(fake.items[created.id].pack_size).toBe(5);
+    expect(fake.items[created.id].name).toBe("Cooking oil (sunflower)");
   });
 });
