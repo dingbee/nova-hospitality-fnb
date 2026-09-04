@@ -12,28 +12,44 @@ const DAY = 864e5;
 const DINNER_FROM = 17;
 const DINNER_TO = 22;
 
-const avg = (v: number[]): number | null => (v.length === 0 ? null : round(v.reduce((s, n) => s + n, 0) / v.length, 1));
+const avg = (v: number[]): number | null =>
+  v.length === 0 ? null : round(v.reduce((s, n) => s + n, 0) / v.length, 1);
 
 export async function getKitchenIntelligence(
   sb: Sb,
   userId: string,
-  input: { tenantId: string; windowDays: number },
+  input: {
+    tenantId: string;
+    windowDays: number;
+    propertyId?: string | null;
+    locationId?: string | null;
+  },
 ): Promise<KitchenIntelligence> {
   const { tenantId, windowDays } = input;
-  await assertTenantRead(sb, userId, tenantId);
+  await assertTenantRead(sb, userId, tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
 
   const now = Date.now();
   const start = new Date(now - windowDays * DAY).toISOString();
   const prevStart = new Date(now - 2 * windowDays * DAY).toISOString();
 
-  const [ticketsRes, stationsRes] = await Promise.all([
-    sb
-      .from("restaurant_kitchen_tickets")
-      .select("id, station_id, status, queued_at, prep_seconds, is_delayed, target_minutes")
-      .eq("tenant_id", tenantId)
-      .gte("queued_at", prevStart),
-    sb.from("restaurant_stations").select("id, name, target_prep_minutes, active").eq("tenant_id", tenantId),
-  ]);
+  let ticketsQuery = sb
+    .from("restaurant_kitchen_tickets")
+    .select("id, station_id, status, queued_at, prep_seconds, is_delayed, target_minutes")
+    .eq("tenant_id", tenantId)
+    .gte("queued_at", prevStart);
+  if (input.locationId) ticketsQuery = ticketsQuery.eq("location_id", input.locationId);
+
+  let stationsQuery = sb
+    .from("restaurant_stations")
+    .select("id, name, target_prep_minutes, active")
+    .eq("tenant_id", tenantId);
+  if (input.propertyId) stationsQuery = stationsQuery.eq("property_id", input.propertyId);
+  if (input.locationId) stationsQuery = stationsQuery.eq("location_id", input.locationId);
+
+  const [ticketsRes, stationsRes] = await Promise.all([ticketsQuery, stationsQuery]);
 
   const tickets = ((ticketsRes.data ?? []) as any[]).filter((t) => Number(t.prep_seconds ?? 0) > 0);
   const current = tickets.filter((t) => t.queued_at >= start);
@@ -68,18 +84,26 @@ export async function getKitchenIntelligence(
 
   const averagePrep = avg(current.map(mins));
   const previousAverage = avg(previous.map(mins));
-  const trend = averagePrep != null && previousAverage != null ? percentChange(averagePrep, previousAverage) : null;
+  const trend =
+    averagePrep != null && previousAverage != null
+      ? percentChange(averagePrep, previousAverage)
+      : null;
 
   const insights: RestaurantInsight[] = [];
   for (const s of stations) {
-    if (s.targetMinutes != null && s.dinnerPeakMinutes != null && s.dinnerPeakMinutes > s.targetMinutes) {
+    if (
+      s.targetMinutes != null &&
+      s.dinnerPeakMinutes != null &&
+      s.dinnerPeakMinutes > s.targetMinutes
+    ) {
       insights.push({
         key: `kitchen.peak.${s.stationId}`,
         severity: s.dinnerPeakMinutes > s.targetMinutes * 1.5 ? "high" : "medium",
         title: `${s.name} exceeds acceptable preparation time during dinner peak`,
         detail: `${s.dinnerPeakMinutes} min average between ${DINNER_FROM}:00 and ${DINNER_TO}:00 against a ${s.targetMinutes} min target across ${s.tickets} tickets.`,
         metric: `${s.dinnerPeakMinutes} min vs ${s.targetMinutes} min`,
-        recommendation: "Add prep-ahead mise en place or a second hand on this station for dinner service.",
+        recommendation:
+          "Add prep-ahead mise en place or a second hand on this station for dinner service.",
       });
     } else if (s.overTarget) {
       insights.push({

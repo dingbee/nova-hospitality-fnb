@@ -583,6 +583,13 @@ export const upsertMemberSchema = z.object({
   tenantId: uuid,
   userId: uuid,
   role: z.enum(RESTAURANT_ROLES),
+  /**
+   * Which property this role applies to. Omitted/null = tenant-wide — the
+   * role applies at every property in the tenant (the correct choice for
+   * owner/GM-style oversight roles). Set it to scope a role like
+   * restaurant_manager/bartender/chef/cashier to one property only.
+   */
+  propertyId: uuid.nullish(),
 });
 
 export const removeMemberSchema = z.object({ tenantId: uuid, memberId: uuid });

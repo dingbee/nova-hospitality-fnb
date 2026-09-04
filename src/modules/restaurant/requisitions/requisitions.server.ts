@@ -63,10 +63,18 @@ async function itemNameMap(sb: Sb, tenantId: string, ids: string[]): Promise<Map
 }
 
 function outstandingOf(line: any): number {
-  return Math.max(0, Number(line.approved_quantity ?? line.requested_quantity ?? 0) - Number(line.issued_quantity ?? 0));
+  return Math.max(
+    0,
+    Number(line.approved_quantity ?? line.requested_quantity ?? 0) -
+      Number(line.issued_quantity ?? 0),
+  );
 }
 
-export async function listRequisitions(sb: Sb, userId: string, input: z.infer<typeof listRequisitionsSchema>) {
+export async function listRequisitions(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listRequisitionsSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_requisitions")
@@ -98,11 +106,20 @@ export async function listRequisitions(sb: Sb, userId: string, input: z.infer<ty
   });
 }
 
-export async function getRequisition(sb: Sb, userId: string, tenantId: string, requisitionId: string) {
+export async function getRequisition(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  requisitionId: string,
+) {
   await assertTenantRead(sb, userId, tenantId);
   const { requisition, lines } = await loadRequisition(sb, tenantId, requisitionId);
   const locations = await locationNameMap(sb, tenantId);
-  const items = await itemNameMap(sb, tenantId, lines.map((l) => l.inventory_item_id));
+  const items = await itemNameMap(
+    sb,
+    tenantId,
+    lines.map((l) => l.inventory_item_id),
+  );
   return {
     ...requisition,
     source_name: locations.get(requisition.source_location_id) ?? "—",
@@ -116,14 +133,27 @@ export async function getRequisition(sb: Sb, userId: string, tenantId: string, r
 }
 
 /** Create or update a requisition header + lines while it is still a draft. */
-export async function saveRequisitionDraft(sb: Sb, userId: string, input: SaveRequisitionDraftInput) {
+export async function saveRequisitionDraft(
+  sb: Sb,
+  userId: string,
+  input: SaveRequisitionDraftInput,
+) {
   await assertCapability(sb, userId, input.tenantId, "requisition.create");
   if (input.sourceLocationId === input.destinationLocationId) {
     throw new Error("Source store and destination must be different locations.");
   }
-  await assertLocationInTenant(sb, input.tenantId, input.sourceLocationId, input.destinationLocationId);
+  await assertLocationInTenant(
+    sb,
+    input.tenantId,
+    input.sourceLocationId,
+    input.destinationLocationId,
+  );
 
-  const items = await itemNameMap(sb, input.tenantId, input.lines.map((l) => l.inventoryItemId));
+  const items = await itemNameMap(
+    sb,
+    input.tenantId,
+    input.lines.map((l) => l.inventoryItemId),
+  );
   if (items.size !== new Set(input.lines.map((l) => l.inventoryItemId)).size) {
     throw new Error("One or more inventory items do not belong to this tenant.");
   }
@@ -154,7 +184,11 @@ export async function saveRequisitionDraft(sb: Sb, userId: string, input: SaveRe
       .eq("id", requisitionId)
       .eq("tenant_id", input.tenantId);
     if (error) throw new Error(error.message);
-    await sb.from("restaurant_requisition_lines").delete().eq("requisition_id", requisitionId).eq("tenant_id", input.tenantId);
+    await sb
+      .from("restaurant_requisition_lines")
+      .delete()
+      .eq("requisition_id", requisitionId)
+      .eq("tenant_id", input.tenantId);
   } else {
     reference = await nextRequisitionNumber(sb, input.tenantId, input.kind);
     const { data: created, error } = await sb
@@ -201,7 +235,12 @@ export async function saveRequisitionDraft(sb: Sb, userId: string, input: SaveRe
     entityType: "restaurant_requisition",
     entityId: requisitionId!,
     source: "restaurant-os",
-    payload: { reference, kind: input.kind, lines: input.lines.length, to_location_id: input.destinationLocationId },
+    payload: {
+      reference,
+      kind: input.kind,
+      lines: input.lines.length,
+      to_location_id: input.destinationLocationId,
+    },
   });
   if (input.kind === "bar") {
     await emitRestaurantEvent(sb, userId, {
@@ -233,7 +272,11 @@ export async function saveRequisitionDraft(sb: Sb, userId: string, input: SaveRe
   return { id: requisitionId as string, reference, status: input.submit ? "submitted" : "draft" };
 }
 
-export async function submitRequisition(sb: Sb, userId: string, input: { tenantId: string; requisitionId: string }) {
+export async function submitRequisition(
+  sb: Sb,
+  userId: string,
+  input: { tenantId: string; requisitionId: string },
+) {
   await assertCapability(sb, userId, input.tenantId, "requisition.create");
   const { requisition } = await loadRequisition(sb, input.tenantId, input.requisitionId);
   if (requisition.status !== "draft") {
@@ -262,8 +305,10 @@ export async function submitRequisition(sb: Sb, userId: string, input: { tenantI
 }
 
 export async function approveRequisition(sb: Sb, userId: string, input: ApproveRequisitionInput) {
-  await assertCapability(sb, userId, input.tenantId, "requisition.approve");
   const { requisition, lines } = await loadRequisition(sb, input.tenantId, input.requisitionId);
+  await assertCapability(sb, userId, input.tenantId, "requisition.approve", {
+    propertyId: requisition.property_id ?? null,
+  });
   if (!["submitted"].includes(requisition.status)) {
     throw new Error(`Requisition cannot be approved from status "${requisition.status}".`);
   }
@@ -306,15 +351,23 @@ export async function rejectRequisition(
   userId: string,
   input: { tenantId: string; requisitionId: string; reason: string },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "requisition.approve");
   const { requisition } = await loadRequisition(sb, input.tenantId, input.requisitionId);
+  await assertCapability(sb, userId, input.tenantId, "requisition.approve", {
+    propertyId: requisition.property_id ?? null,
+  });
   if (!["submitted"].includes(requisition.status)) {
     throw new Error(`Requisition cannot be rejected from status "${requisition.status}".`);
   }
   const now = new Date().toISOString();
   const { error } = await sb
     .from("restaurant_requisitions")
-    .update({ status: "rejected", approved_by: userId, approved_at: now, rejected_reason: input.reason, updated_at: now })
+    .update({
+      status: "rejected",
+      approved_by: userId,
+      approved_at: now,
+      rejected_reason: input.reason,
+      updated_at: now,
+    })
     .eq("id", input.requisitionId)
     .eq("tenant_id", input.tenantId);
   if (error) throw new Error(error.message);
@@ -345,7 +398,11 @@ export async function cancelRequisition(
   }
   const { error } = await sb
     .from("restaurant_requisitions")
-    .update({ status: "cancelled", notes: input.reason ?? requisition.notes, updated_at: new Date().toISOString() })
+    .update({
+      status: "cancelled",
+      notes: input.reason ?? requisition.notes,
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", input.requisitionId)
     .eq("tenant_id", input.tenantId);
   if (error) throw new Error(error.message);
@@ -354,13 +411,19 @@ export async function cancelRequisition(
 
 /** Issue: stock moves source → destination through the ledger, line by line. */
 export async function issueRequisition(sb: Sb, userId: string, input: IssueRequisitionInput) {
-  await assertCapability(sb, userId, input.tenantId, "requisition.issue");
   const { requisition, lines } = await loadRequisition(sb, input.tenantId, input.requisitionId);
+  await assertCapability(sb, userId, input.tenantId, "requisition.issue", {
+    propertyId: requisition.property_id ?? null,
+  });
   if (!["approved", "partially_issued"].includes(requisition.status)) {
     throw new Error(`Requisition cannot be issued from status "${requisition.status}".`);
   }
   const lineById = new Map(lines.map((l) => [l.id as string, l]));
-  const items = await itemNameMap(sb, input.tenantId, lines.map((l) => l.inventory_item_id));
+  const items = await itemNameMap(
+    sb,
+    input.tenantId,
+    lines.map((l) => l.inventory_item_id),
+  );
   const now = new Date().toISOString();
 
   let anyIssued = false;
@@ -370,7 +433,9 @@ export async function issueRequisition(sb: Sb, userId: string, input: IssueRequi
     if (!line) throw new Error("Line does not belong to this requisition.");
     const outstanding = outstandingOf(line);
     if (req.issueQuantity - outstanding > 0.0001) {
-      throw new Error(`Cannot issue more than the outstanding quantity for ${line.inventory_item_id}.`);
+      throw new Error(
+        `Cannot issue more than the outstanding quantity for ${line.inventory_item_id}.`,
+      );
     }
     const item = items.get(line.inventory_item_id);
     if (!item) throw new Error("Inventory item not found.");

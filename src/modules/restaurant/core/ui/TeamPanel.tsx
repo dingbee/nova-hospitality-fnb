@@ -10,6 +10,7 @@ import { inviteStaffUser, listStaffUsers } from "@/lib/staff.functions";
 import { RESTAURANT_ROLES } from "@/modules/restaurant/core/contracts";
 import { RESTAURANT_ROLE_LABELS } from "@/modules/restaurant/core/permissions";
 import {
+  getRestaurantWorkspaceFn,
   listRestaurantMembersFn,
   removeRestaurantMemberFn,
   upsertRestaurantMemberFn,
@@ -19,12 +20,14 @@ export function TeamPanel({ tenantId, canManage }: { tenantId: string; canManage
   const qc = useQueryClient();
   const membersFn = useServerFn(listRestaurantMembersFn);
   const staffFn = useServerFn(listStaffUsers);
+  const workspaceFn = useServerFn(getRestaurantWorkspaceFn);
   const addFn = useServerFn(upsertRestaurantMemberFn);
   const removeFn = useServerFn(removeRestaurantMemberFn);
   const inviteFn = useServerFn(inviteStaffUser);
 
   const [userId, setUserId] = useState("");
   const [role, setRole] = useState<string>("viewer");
+  const [propertyId, setPropertyId] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
 
@@ -37,15 +40,26 @@ export function TeamPanel({ tenantId, canManage }: { tenantId: string; canManage
     queryFn: () => staffFn(),
     enabled: canManage,
   });
+  const workspace = useQuery({
+    queryKey: ["restaurant.workspace.forTeam", tenantId],
+    queryFn: () => workspaceFn({ data: { tenantId } }),
+    enabled: canManage,
+  });
+  const properties = ((workspace.data as any)?.properties ?? []) as { id: string; name: string }[];
+  const propertyById = new Map(properties.map((p) => [p.id, p.name]));
 
   const invalidate = () =>
     void qc.invalidateQueries({ queryKey: ["restaurant.members", tenantId] });
 
   const add = useAdminMutation({
-    mutationFn: () => addFn({ data: { tenantId, userId, role: role as any } }),
+    mutationFn: () =>
+      addFn({
+        data: { tenantId, userId, role: role as any, propertyId: propertyId || undefined },
+      }),
     successMessage: "Role granted",
     onSuccess: () => {
       setUserId("");
+      setPropertyId("");
       invalidate();
     },
   });
@@ -89,6 +103,10 @@ export function TeamPanel({ tenantId, canManage }: { tenantId: string; canManage
                   <p className="text-xs text-muted-foreground">
                     {RESTAURANT_ROLE_LABELS[m.role as keyof typeof RESTAURANT_ROLE_LABELS] ??
                       m.role}
+                    {" · "}
+                    {m.property_id
+                      ? (propertyById.get(m.property_id) ?? "One property")
+                      : "Every property"}
                     {u?.email ? ` · ${u.email}` : ""}
                   </p>
                 </div>
@@ -138,37 +156,56 @@ export function TeamPanel({ tenantId, canManage }: { tenantId: string; canManage
       ) : null}
 
       {canManage ? (
-        <div className="mt-4 grid gap-2 sm:grid-cols-[2fr_1fr_auto]">
-          <select
-            className="rounded-md border bg-transparent px-2 py-2 text-sm"
-            value={userId}
-            onChange={(e) => setUserId(e.target.value)}
-          >
-            <option value="">Select staff member…</option>
-            {(staff.data ?? []).map((u: any) => (
-              <option key={u.user_id} value={u.user_id}>
-                {u.full_name ?? u.email ?? u.user_id}
-              </option>
-            ))}
-          </select>
-          <select
-            className="rounded-md border bg-transparent px-2 py-2 text-sm"
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-          >
-            {RESTAURANT_ROLES.map((r) => (
-              <option key={r} value={r}>
-                {RESTAURANT_ROLE_LABELS[r]}
-              </option>
-            ))}
-          </select>
-          <Button
-            size="sm"
-            disabled={!userId || add.isPending}
-            onClick={() => add.mutate(undefined)}
-          >
-            Grant role
-          </Button>
+        <div className="mt-4 space-y-2">
+          <div className="grid gap-2 sm:grid-cols-[2fr_1fr_1fr_auto]">
+            <select
+              className="rounded-md border bg-transparent px-2 py-2 text-sm"
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+            >
+              <option value="">Select staff member…</option>
+              {(staff.data ?? []).map((u: any) => (
+                <option key={u.user_id} value={u.user_id}>
+                  {u.full_name ?? u.email ?? u.user_id}
+                </option>
+              ))}
+            </select>
+            <select
+              className="rounded-md border bg-transparent px-2 py-2 text-sm"
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+            >
+              {RESTAURANT_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {RESTAURANT_ROLE_LABELS[r]}
+                </option>
+              ))}
+            </select>
+            <select
+              className="rounded-md border bg-transparent px-2 py-2 text-sm"
+              value={propertyId}
+              onChange={(e) => setPropertyId(e.target.value)}
+            >
+              <option value="">Every property (tenant-wide)</option>
+              {properties.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <Button
+              size="sm"
+              disabled={!userId || add.isPending}
+              onClick={() => add.mutate(undefined)}
+            >
+              Grant role
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Pick a property to scope this role to it only — the person will have no access to the
+            tenant&apos;s other properties. Leave "Every property" for oversight roles like owner or
+            general manager.
+          </p>
         </div>
       ) : null}
     </SectionCard>

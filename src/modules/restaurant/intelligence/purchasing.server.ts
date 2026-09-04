@@ -21,26 +21,42 @@ const DEFAULT_LEAD_TIME = 3;
 export async function getPurchasingIntelligence(
   sb: Sb,
   userId: string,
-  input: { tenantId: string; windowDays: number },
+  input: {
+    tenantId: string;
+    windowDays: number;
+    propertyId?: string | null;
+    locationId?: string | null;
+  },
 ): Promise<PurchasingIntelligence> {
   const { tenantId, windowDays } = input;
-  await assertTenantRead(sb, userId, tenantId);
+  await assertTenantRead(sb, userId, tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
 
   const now = Date.now();
   const start = new Date(now - windowDays * DAY).toISOString();
   const monthStart = new Date(now - 30 * DAY).toISOString();
   const prevMonthStart = new Date(now - 60 * DAY).toISOString();
 
+  let itemsQuery = sb
+    .from("restaurant_inventory_items")
+    .select("id, name, current_quantity, average_cost, currency")
+    .eq("tenant_id", tenantId);
+  if (input.propertyId) itemsQuery = itemsQuery.eq("property_id", input.propertyId);
+  if (input.locationId) itemsQuery = itemsQuery.eq("location_id", input.locationId);
+
+  let movesQuery = sb
+    .from("restaurant_stock_movements")
+    .select("inventory_item_id, movement_type, quantity, total_cost, occurred_at")
+    .eq("tenant_id", tenantId)
+    .gte("occurred_at", prevMonthStart);
+  if (input.propertyId) movesQuery = movesQuery.eq("property_id", input.propertyId);
+  if (input.locationId) movesQuery = movesQuery.eq("location_id", input.locationId);
+
   const [itemsRes, movesRes, productsRes, suppliersRes, poRes] = await Promise.all([
-    sb
-      .from("restaurant_inventory_items")
-      .select("id, name, current_quantity, average_cost, currency")
-      .eq("tenant_id", tenantId),
-    sb
-      .from("restaurant_stock_movements")
-      .select("inventory_item_id, movement_type, quantity, total_cost, occurred_at")
-      .eq("tenant_id", tenantId)
-      .gte("occurred_at", prevMonthStart),
+    itemsQuery,
+    movesQuery,
     sb
       .from("restaurant_supplier_products")
       .select("supplier_id, inventory_item_id, unit_price, lead_time_days, active")
@@ -89,9 +105,15 @@ export async function getPurchasingIntelligence(
     const product = bestProduct.get(it.id);
     const supplier = product ? supplierById.get(product.supplier_id) : null;
     const leadTime =
-      Number(product?.lead_time_days ?? supplier?.lead_time_days ?? DEFAULT_LEAD_TIME) || DEFAULT_LEAD_TIME;
+      Number(product?.lead_time_days ?? supplier?.lead_time_days ?? DEFAULT_LEAD_TIME) ||
+      DEFAULT_LEAD_TIME;
     const unitPrice = Number(product?.unit_price ?? it.average_cost ?? 0);
-    const qty = recommendedPurchaseQuantity(Number(it.current_quantity ?? 0), velocity, leadTime, COVER_DAYS);
+    const qty = recommendedPurchaseQuantity(
+      Number(it.current_quantity ?? 0),
+      velocity,
+      leadTime,
+      COVER_DAYS,
+    );
     expectedMonthlySpend += velocity * 30 * unitPrice;
     if (qty <= 0) continue;
     suggestions.push({
@@ -112,12 +134,16 @@ export async function getPurchasingIntelligence(
   const orders = (poRes.data ?? []) as any[];
   const ranking: SupplierReliability[] = suppliers.map((s) => {
     const own = orders.filter((o) => o.supplier_id === s.id && o.received_at);
-    const onTime = own.filter((o) => !o.expected_at || o.received_at.slice(0, 10) <= o.expected_at).length;
+    const onTime = own.filter(
+      (o) => !o.expected_at || o.received_at.slice(0, 10) <= o.expected_at,
+    ).length;
     const leadTimes = own
       .filter((o) => o.order_date)
       .map((o) => (new Date(o.received_at).getTime() - new Date(o.order_date).getTime()) / DAY);
     const averageLead =
-      leadTimes.length > 0 ? round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length, 1) : null;
+      leadTimes.length > 0
+        ? round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length, 1)
+        : null;
     const onTimePercent = own.length > 0 ? round((onTime / own.length) * 100, 1) : null;
     const declared = s.lead_time_days == null ? null : Number(s.lead_time_days);
     return {

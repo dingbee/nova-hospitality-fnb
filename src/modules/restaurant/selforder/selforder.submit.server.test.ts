@@ -509,3 +509,247 @@ describe("submitGuestOrder — double-submission protection (GEP3)", () => {
     expect(sb.store.restaurant_orders[0].status).toBe("sent");
   });
 });
+
+/**
+ * P0 remediation — guest order pricing integrity (spec Part 17 attack matrix).
+ *
+ * Every test here calls submitGuestOrder directly with an adversarial
+ * payload, bypassing any UI. Before this sprint, discount and
+ * modifiers[].priceDelta were trusted verbatim from the request — a guest
+ * could drive any line, and therefore the whole order, to $0 or less. These
+ * assert the server now derives both unconditionally.
+ */
+const GROUP_EXTRAS = "group-extras";
+const MODIFIER_CHEESE = "modifier-cheese"; // belongs to Cola's group, +500
+const MODIFIER_FRIES_ONLY = "modifier-fries-only"; // belongs to Fries' group, not Cola's
+const MODIFIER_INACTIVE = "modifier-inactive"; // belongs to Cola's group, active:false
+
+function pricingAttackRows() {
+  return baseRows({
+    restaurant_modifier_groups: [
+      { id: GROUP_EXTRAS, code: "extras", name: "Extras", tenant_id: TENANT, active: true },
+      {
+        id: "group-fries-only",
+        code: "fries-extras",
+        name: "Fries extras",
+        tenant_id: TENANT,
+        active: true,
+      },
+    ],
+    restaurant_modifiers: [
+      {
+        id: MODIFIER_CHEESE,
+        group_id: GROUP_EXTRAS,
+        name: "Extra cheese",
+        price_delta: 500,
+        effect: "none",
+        active: true,
+        tenant_id: TENANT,
+      },
+      {
+        id: MODIFIER_FRIES_ONLY,
+        group_id: "group-fries-only",
+        name: "Extra sauce",
+        price_delta: 300,
+        effect: "none",
+        active: true,
+        tenant_id: TENANT,
+      },
+      {
+        id: MODIFIER_INACTIVE,
+        group_id: GROUP_EXTRAS,
+        name: "Discontinued topping",
+        price_delta: 100,
+        effect: "none",
+        active: false,
+        tenant_id: TENANT,
+      },
+    ],
+    restaurant_product_modifier_groups: [
+      { product_id: PRODUCT_COLA, group_id: GROUP_EXTRAS, tenant_id: TENANT },
+      { product_id: PRODUCT_FRIES, group_id: "group-fries-only", tenant_id: TENANT },
+    ],
+  });
+}
+
+describe("submitGuestOrder — guest pricing integrity (P0 remediation)", () => {
+  it("negative modifier priceDelta is ignored — the line prices at the real catalogue amount, not a fabricated discount", async () => {
+    const sb = makeFakeSupabase(pricingAttackRows());
+    await submitGuestOrder(sb, {
+      tableId: TABLE,
+      lines: [
+        colaLine({
+          modifiers: [
+            { modifierId: MODIFIER_CHEESE, name: "FAKE", priceDelta: -1999, quantity: 1 },
+          ],
+        }),
+      ],
+      clientRequestId: "req-neg-mod",
+    });
+    const item = sb.store.restaurant_order_items[0];
+    // Real modifier price is +500, never the attacker's -1999.
+    expect(item.unit_price).toBe(2500);
+    expect(item.line_total).toBe(2500);
+  });
+
+  it("an enormous negative modifier priceDelta still resolves to the real +500, never driving the line to $0 or negative", async () => {
+    const sb = makeFakeSupabase(pricingAttackRows());
+    await submitGuestOrder(sb, {
+      tableId: TABLE,
+      lines: [
+        colaLine({
+          modifiers: [
+            { modifierId: MODIFIER_CHEESE, name: "FAKE", priceDelta: -999999, quantity: 1 },
+          ],
+        }),
+      ],
+      clientRequestId: "req-huge-neg-mod",
+    });
+    const item = sb.store.restaurant_order_items[0];
+    expect(item.unit_price).toBe(2500);
+    expect(item.line_total).toBeGreaterThan(0);
+  });
+
+  it("a fabricated modifierId that doesn't exist is rejected outright — no order is created", async () => {
+    const sb = makeFakeSupabase(pricingAttackRows());
+    await expect(
+      submitGuestOrder(sb, {
+        tableId: TABLE,
+        lines: [
+          colaLine({
+            modifiers: [
+              {
+                modifierId: "modifier-does-not-exist",
+                name: "FAKE",
+                priceDelta: -2000,
+                quantity: 1,
+              },
+            ],
+          }),
+        ],
+        clientRequestId: "req-fake-mod",
+      }),
+    ).rejects.toThrow(/not available for this item/);
+    // The order header may exist (it's created before lines are priced —
+    // an orphaned open order is a pre-existing atomicity question, not a
+    // pricing one), but no order item — and therefore no money — was ever
+    // recorded for the fabricated/wrong/inactive modifier.
+    expect(sb.store.restaurant_order_items).toHaveLength(0);
+  });
+
+  it("a modifier that belongs to a different menu item's group is rejected, not silently repriced with its own delta", async () => {
+    const sb = makeFakeSupabase(pricingAttackRows());
+    await expect(
+      submitGuestOrder(sb, {
+        tableId: TABLE,
+        // MODIFIER_FRIES_ONLY is only linked to Fries' group, not Cola's.
+        lines: [
+          colaLine({
+            modifiers: [
+              {
+                modifierId: MODIFIER_FRIES_ONLY,
+                name: "Extra sauce",
+                priceDelta: 300,
+                quantity: 1,
+              },
+            ],
+          }),
+        ],
+        clientRequestId: "req-wrong-item-mod",
+      }),
+    ).rejects.toThrow(/not available for this item/);
+    // The order header may exist (it's created before lines are priced —
+    // an orphaned open order is a pre-existing atomicity question, not a
+    // pricing one), but no order item — and therefore no money — was ever
+    // recorded for the fabricated/wrong/inactive modifier.
+    expect(sb.store.restaurant_order_items).toHaveLength(0);
+  });
+
+  it("an inactive modifier is rejected, not honoured", async () => {
+    const sb = makeFakeSupabase(pricingAttackRows());
+    await expect(
+      submitGuestOrder(sb, {
+        tableId: TABLE,
+        lines: [
+          colaLine({
+            modifiers: [
+              {
+                modifierId: MODIFIER_INACTIVE,
+                name: "Discontinued topping",
+                priceDelta: 100,
+                quantity: 1,
+              },
+            ],
+          }),
+        ],
+        clientRequestId: "req-inactive-mod",
+      }),
+    ).rejects.toThrow(/not available for this item/);
+    // The order header may exist (it's created before lines are priced —
+    // an orphaned open order is a pre-existing atomicity question, not a
+    // pricing one), but no order item — and therefore no money — was ever
+    // recorded for the fabricated/wrong/inactive modifier.
+    expect(sb.store.restaurant_order_items).toHaveLength(0);
+  });
+
+  it("discount: 100% of the line is ignored entirely — the guest pays the real catalogue price, not $0", async () => {
+    const sb = makeFakeSupabase(pricingAttackRows());
+    await submitGuestOrder(sb, {
+      tableId: TABLE,
+      lines: [colaLine({ discount: 2000 })], // 100% of the 2000 line
+      clientRequestId: "req-discount-100",
+    });
+    const item = sb.store.restaurant_order_items[0];
+    expect(item.discount).toBe(0);
+    expect(item.line_total).toBe(2000);
+  });
+
+  it("discount > 100% of the line (an absurd/negative-implying value) is still fully ignored", async () => {
+    const sb = makeFakeSupabase(pricingAttackRows());
+    await submitGuestOrder(sb, {
+      tableId: TABLE,
+      lines: [colaLine({ discount: 999999 })],
+      clientRequestId: "req-discount-huge",
+    });
+    const item = sb.store.restaurant_order_items[0];
+    expect(item.discount).toBe(0);
+    expect(item.line_total).toBe(2000);
+  });
+
+  it("combining a forged unitPrice, a 100% discount and a large negative modifier still yields the real, positive catalogue total — not $0", async () => {
+    const sb = makeFakeSupabase(pricingAttackRows());
+    const result = await submitGuestOrder(sb, {
+      tableId: TABLE,
+      lines: [
+        colaLine({
+          unitPrice: 0.01,
+          discount: 999999,
+          modifiers: [
+            { modifierId: MODIFIER_CHEESE, name: "FAKE", priceDelta: -999999, quantity: 1 },
+          ],
+        }),
+      ],
+      clientRequestId: "req-combined-attack",
+    });
+    const item = sb.store.restaurant_order_items[0];
+    expect(item.discount).toBe(0);
+    expect(item.unit_price).toBe(2500); // real price 2000 + real modifier 500
+    expect(item.line_total).toBe(2500);
+    expect(Number(result.total)).toBe(2500);
+    // The exact scenario this sprint closes: a guest order can never settle at 0.
+    expect(Number(result.total)).toBeGreaterThan(0);
+  });
+
+  it("the persisted discount column always agrees with what line_total was actually computed from — never the caller's raw request field", async () => {
+    const sb = makeFakeSupabase(pricingAttackRows());
+    await submitGuestOrder(sb, {
+      tableId: TABLE,
+      lines: [colaLine({ discount: 500 })], // trusted-caller-style value that is not honoured for a guest
+      clientRequestId: "req-discount-consistency",
+    });
+    const item = sb.store.restaurant_order_items[0];
+    // Every cent of the true 2000 price is still charged.
+    expect(item.line_total + item.discount).toBe(2000);
+    expect(item.discount).toBe(0);
+  });
+});

@@ -343,8 +343,6 @@ const NEXT_ITEM_STATUS: Record<string, string> = {
 };
 
 export async function advanceTicket(sb: Sb, userId: string, input: AdvanceTicketInput) {
-  await assertCapability(sb, userId, input.tenantId, "kitchen.manage");
-
   const { data: ticket } = await sb
     .from("restaurant_kitchen_tickets")
     .select(
@@ -354,6 +352,11 @@ export async function advanceTicket(sb: Sb, userId: string, input: AdvanceTicket
     .eq("id", input.ticketId)
     .single();
   if (!ticket) throw new Error("Ticket not found.");
+  // Scoped by the ticket's own location — a kitchen.manage grant limited to
+  // one property must not be able to advance another property's ticket.
+  await assertCapability(sb, userId, input.tenantId, "kitchen.manage", {
+    locationId: ticket.location_id,
+  });
 
   const now = new Date();
   const patch: Record<string, unknown> = { status: input.status };

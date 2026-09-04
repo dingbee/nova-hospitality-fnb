@@ -13,6 +13,7 @@ import type { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { insertMovement } from "../inventory/movements.server";
+import { assertLocationInTenant } from "../inventory/locations.server";
 import { purchaseToStock, convertUnits, type UnitRow } from "../inventory/units";
 import {
   assertPurchaseOrderReceivable,
@@ -78,8 +79,6 @@ export async function getGoodsReceipt(sb: Sb, userId: string, tenantId: string, 
 
 /** Create a delivery record. Posting (stock entry) is a separate, explicit act. */
 export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateReceiptInput) {
-  await assertCapability(sb, userId, input.tenantId, "receiving.manage");
-
   let po: any = null;
   if (input.purchaseOrderId) {
     const { data } = await sb
@@ -95,6 +94,9 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
     assertPurchaseOrderReceivable(data.status);
     po = data;
   }
+  await assertCapability(sb, userId, input.tenantId, "receiving.manage", {
+    propertyId: input.propertyId ?? po?.property_id ?? null,
+  });
 
   for (const l of input.lines) {
     if (l.acceptedQuantity + l.rejectedQuantity + l.damagedQuantity > l.receivedQuantity + 0.0001) {
@@ -166,12 +168,26 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
   const subtotal = input.lines.reduce((s, l) => s + l.receivedQuantity * l.unitCost, 0);
   const acceptedValue = input.lines.reduce((s, l) => s + l.acceptedQuantity * l.unitCost, 0);
 
+  // The receiving location previously had no validation at all — a
+  // caller-supplied locationId/storageLocationId flowed straight into the
+  // stock ledger, misattributing received stock to the wrong property's
+  // location. At minimum it must belong to this tenant; per-line storage
+  // locations get the same check below.
+  const resolvedLocationId = input.locationId ?? po?.location_id ?? null;
+  await assertLocationInTenant(sb, input.tenantId, resolvedLocationId);
+  const lineStorageLocationIds = [
+    ...new Set(input.lines.map((l) => l.storageLocationId).filter(Boolean) as string[]),
+  ];
+  if (lineStorageLocationIds.length > 0) {
+    await assertLocationInTenant(sb, input.tenantId, ...lineStorageLocationIds);
+  }
+
   const { data: receipt, error } = await sb
     .from("restaurant_goods_receipts")
     .insert({
       tenant_id: input.tenantId,
       property_id: input.propertyId ?? po?.property_id ?? null,
-      location_id: input.locationId ?? po?.location_id ?? null,
+      location_id: resolvedLocationId,
       purchase_order_id: po?.id ?? null,
       supplier_id: input.supplierId ?? po?.supplier_id ?? null,
       document_number: documentNumber,

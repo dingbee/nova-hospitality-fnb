@@ -359,13 +359,16 @@ export async function submitGuestOrder(
     throw new Error("The order has no orderable items.");
   }
 
-  // unitPrice/discount are the till's proposal fields too; insertLines only
-  // ever honours them as a *proposal* for catalogued lines (strict pricing
-  // recomputes unit_price/discount/tax from the rule set in force), so a
-  // guest-supplied value here carries no more authority than the POS
-  // sending one does. taxAmount is never client-supplied even at the POS
-  // (pos.server.ts's toSalesLines hardcodes it to 0 too) — always
-  // server-derived from the rule set.
+  // unitPrice/discount/modifiers[].priceDelta are carried through here only
+  // as values on the wire — none of them are money-authoritative.
+  // createGuestOrder calls insertLines with `trusted: false`, which forces
+  // strict pricing for every catalogued line (unitPrice/tax always
+  // recomputed from the rule set), ignores this discount entirely (a guest
+  // order's only discount is whatever active promotions the rule set grants
+  // automatically), and re-resolves every modifier's name/priceDelta from
+  // its own configured row rather than trusting this snapshot. See
+  // insertLines' `trusted` doc comment in sales.server.ts for the full
+  // guest-vs-staff trust boundary.
   const salesLines: SalesLineInput[] = valid.map((l) => ({
     menuItemId: l.menuItemId,
     variantId: l.variantId,

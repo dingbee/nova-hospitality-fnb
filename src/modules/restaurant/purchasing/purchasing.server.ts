@@ -22,7 +22,9 @@ export async function listPurchaseOrders(
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_purchase_orders")
-    .select("id, reference, status, supplier_id, order_date, expected_at, received_at, subtotal, total, currency, location_id")
+    .select(
+      "id, reference, status, supplier_id, order_date, expected_at, received_at, subtotal, total, currency, location_id",
+    )
     .eq("tenant_id", input.tenantId)
     .order("created_at", { ascending: false })
     .limit(input.limit);
@@ -133,15 +135,19 @@ export async function transitionPurchaseOrder(
   input: z.infer<typeof transitionPurchaseOrderSchema>,
 ) {
   const capability = input.status === "approved" ? "purchasing.approve" : "purchasing.manage";
-  await assertCapability(sb, userId, input.tenantId, capability);
 
   const { data: current, error: readErr } = await sb
     .from("restaurant_purchase_orders")
-    .select("id, reference, document_number, status, total, location_id, property_id, correlation_id, created_by, buyer_id")
+    .select(
+      "id, reference, document_number, status, total, location_id, property_id, correlation_id, created_by, buyer_id",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("id", input.id)
     .single();
   if (readErr || !current) throw new Error("Purchase order not found.");
+  await assertCapability(sb, userId, input.tenantId, capability, {
+    propertyId: current.property_id ?? null,
+  });
 
   // Idempotent: repeating the same decision is not a second business effect.
   if (current.status === input.status) {
@@ -161,14 +167,20 @@ export async function transitionPurchaseOrder(
   if (input.status === "cancelled" && !input.reason) {
     throw new Error("A reason is required to cancel a purchase order.");
   }
-  if (input.status === "approved" && (current.created_by === userId || current.buyer_id === userId)) {
+  if (
+    input.status === "approved" &&
+    (current.created_by === userId || current.buyer_id === userId)
+  ) {
     const { isPlatformAdmin } = await import("../core/access.server");
     if (!(await isPlatformAdmin(sb, userId))) {
       throw new Error("Separation of duties — the buyer who raised this order cannot approve it.");
     }
   }
 
-  const patch: Record<string, unknown> = { status: input.status, updated_at: new Date().toISOString() };
+  const patch: Record<string, unknown> = {
+    status: input.status,
+    updated_at: new Date().toISOString(),
+  };
   if (input.status === "approved") {
     patch.approved_by = userId;
     patch.approved_at = new Date().toISOString();
@@ -252,7 +264,11 @@ export async function getPurchaseOrderDetail(sb: Sb, userId: string, tenantId: s
       .eq("tenant_id", tenantId)
       .eq("purchase_order_id", id),
     order.supplier_id
-      ? sb.from("restaurant_suppliers").select("id, name, code, payment_terms").eq("id", order.supplier_id).single()
+      ? sb
+          .from("restaurant_suppliers")
+          .select("id, name, code, payment_terms")
+          .eq("id", order.supplier_id)
+          .single()
       : Promise.resolve({ data: null }),
     sb
       .from("restaurant_supplier_confirmations")
@@ -262,7 +278,9 @@ export async function getPurchaseOrderDetail(sb: Sb, userId: string, tenantId: s
       .order("created_at", { ascending: false }),
     sb
       .from("restaurant_goods_receipts")
-      .select("id, document_number, status, received_at, accepted_value, currency, delivery_note_ref")
+      .select(
+        "id, document_number, status, received_at, accepted_value, currency, delivery_note_ref",
+      )
       .eq("tenant_id", tenantId)
       .eq("purchase_order_id", id)
       .order("received_at", { ascending: false }),
