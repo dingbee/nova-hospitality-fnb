@@ -21,34 +21,56 @@ export async function getInventoryOverview(
   userId: string,
   input: z.infer<typeof inventoryOverviewSchema>,
 ): Promise<InventoryOverview> {
-  await assertTenantRead(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const soon = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
 
+  // Every one of these previously ignored input.propertyId/input.locationId
+  // entirely despite the schema declaring them — a property-scoped
+  // dashboard silently returned a tenant-wide blend of every property.
+  let itemsQuery = sb
+    .from("restaurant_inventory_items")
+    .select("id, currency, current_quantity, average_cost, reorder_point, location_id, property_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("status", "active");
+  if (input.propertyId) itemsQuery = itemsQuery.eq("property_id", input.propertyId);
+  if (input.locationId) itemsQuery = itemsQuery.eq("location_id", input.locationId);
+
+  let movementsQuery = sb
+    .from("restaurant_stock_movements")
+    .select("movement_type, total_cost")
+    .eq("tenant_id", input.tenantId)
+    .eq("movement_type", "wastage")
+    .gte("occurred_at", since);
+  if (input.propertyId) movementsQuery = movementsQuery.eq("property_id", input.propertyId);
+  if (input.locationId) movementsQuery = movementsQuery.eq("location_id", input.locationId);
+
+  let locationsQuery = sb
+    .from("restaurant_locations")
+    .select("id")
+    .eq("tenant_id", input.tenantId)
+    .eq("is_storage", true);
+  if (input.propertyId) locationsQuery = locationsQuery.eq("property_id", input.propertyId);
+  if (input.locationId) locationsQuery = locationsQuery.eq("id", input.locationId);
+
   const [items, transfers, movements, batches, locations, incoming] = await Promise.all([
-    sb
-      .from("restaurant_inventory_items")
-      .select("id, currency, current_quantity, average_cost, reorder_point")
-      .eq("tenant_id", input.tenantId)
-      .eq("status", "active"),
+    itemsQuery,
     sb
       .from("restaurant_stock_transfers")
       .select("id, status")
       .eq("tenant_id", input.tenantId)
       .in("status", ["requested", "approved", "dispatched", "partially_received"]),
-    sb
-      .from("restaurant_stock_movements")
-      .select("movement_type, total_cost")
-      .eq("tenant_id", input.tenantId)
-      .eq("movement_type", "wastage")
-      .gte("occurred_at", since),
+    movementsQuery,
     sb
       .from("restaurant_inventory_batches")
       .select("id")
       .eq("tenant_id", input.tenantId)
       .gt("quantity", 0)
       .lte("expiry_date", soon),
-    sb.from("restaurant_locations").select("id").eq("tenant_id", input.tenantId).eq("is_storage", true),
+    locationsQuery,
     incomingIndex(sb, input.tenantId),
   ]);
 
@@ -79,7 +101,9 @@ export async function getInventoryOverview(
     stocktakeVariances: (variances ?? []).length,
     expiringSoon: (batches.data ?? []).length,
     recentWasteValue: Number(
-      ((movements.data ?? []) as any[]).reduce((s, m) => s + Number(m.total_cost ?? 0), 0).toFixed(2),
+      ((movements.data ?? []) as any[])
+        .reduce((s, m) => s + Number(m.total_cost ?? 0), 0)
+        .toFixed(2),
     ),
     locations: (locations.data ?? []).length,
   };

@@ -10,8 +10,129 @@
 import { insertMovement } from "../inventory/movements.server";
 import { componentToStock, type UnitRow } from "../inventory/units";
 import { consumeForRecipeSale } from "../products/consumption.server";
+import type { SalesLineModifier } from "./sales.server";
 
 type Sb = any;
+
+/**
+ * Pricing authority for modifiers on an untrusted (guest) line.
+ *
+ * A guest may identify a modifier by id; the name and price delta that
+ * actually affect money are never taken from the request — they are always
+ * read back from the modifier's own configured row, the same row the till's
+ * own catalogue read (`fetchSellableCatalog`) shows the guest in the first
+ * place. A modifier that does not exist, is inactive, or does not belong to
+ * a group actually linked to this menu item's product is rejected outright
+ * rather than silently dropped or silently repriced — the caller should
+ * treat a thrown error here as "reject the whole line".
+ *
+ * Batched per menu item (not per line) so a 50-line guest order costs a
+ * bounded number of queries, matching the batching style already used for
+ * stations/costs/recipes earlier in insertLines.
+ */
+export async function resolveAuthoritativeModifiersForMenuItems(
+  sb: Sb,
+  tenantId: string,
+  menuItemIds: string[],
+): Promise<Map<string, Map<string, { groupId: string; name: string; priceDelta: number }>>> {
+  const ids = [...new Set(menuItemIds)];
+  const byMenuItem = new Map<
+    string,
+    Map<string, { groupId: string; name: string; priceDelta: number }>
+  >();
+  if (ids.length === 0) return byMenuItem;
+
+  const { data: productRows } = await sb
+    .from("restaurant_products")
+    .select("id, menu_item_id")
+    .eq("tenant_id", tenantId)
+    .in("menu_item_id", ids);
+  const productByMenuItem = new Map<string, string>(
+    ((productRows ?? []) as any[]).map((p) => [p.menu_item_id, p.id]),
+  );
+  const productIds = [...new Set([...productByMenuItem.values()])];
+  if (productIds.length === 0) {
+    for (const id of ids) byMenuItem.set(id, new Map());
+    return byMenuItem;
+  }
+
+  const { data: linkRows } = await sb
+    .from("restaurant_product_modifier_groups")
+    .select("product_id, group_id")
+    .eq("tenant_id", tenantId)
+    .in("product_id", productIds);
+  const groupIdsByProduct = new Map<string, Set<string>>();
+  for (const l of (linkRows ?? []) as any[]) {
+    if (!groupIdsByProduct.has(l.product_id)) groupIdsByProduct.set(l.product_id, new Set());
+    groupIdsByProduct.get(l.product_id)!.add(l.group_id);
+  }
+  const allGroupIds = [...new Set((linkRows ?? []).map((l: any) => l.group_id))];
+
+  const { data: modifierRows } = allGroupIds.length
+    ? await sb
+        .from("restaurant_modifiers")
+        .select("id, group_id, name, price_delta, active")
+        .eq("tenant_id", tenantId)
+        .eq("active", true)
+        .in("group_id", allGroupIds)
+    : { data: [] };
+  const modifiersByGroup = new Map<string, any[]>();
+  for (const m of (modifierRows ?? []) as any[]) {
+    if (!modifiersByGroup.has(m.group_id)) modifiersByGroup.set(m.group_id, []);
+    modifiersByGroup.get(m.group_id)!.push(m);
+  }
+
+  for (const menuItemId of ids) {
+    const productId = productByMenuItem.get(menuItemId);
+    const validModifiers = new Map<string, { groupId: string; name: string; priceDelta: number }>();
+    const groupIds = productId
+      ? (groupIdsByProduct.get(productId) ?? new Set<string>())
+      : new Set<string>();
+    for (const groupId of groupIds) {
+      for (const m of modifiersByGroup.get(groupId) ?? []) {
+        validModifiers.set(m.id, {
+          groupId,
+          name: m.name,
+          priceDelta: Number(m.price_delta ?? 0),
+        });
+      }
+    }
+    byMenuItem.set(menuItemId, validModifiers);
+  }
+  return byMenuItem;
+}
+
+/**
+ * Resolves one line's guest-supplied modifier selections against the
+ * authoritative map above. Throws — never silently drops or reprices — on
+ * any modifier that is unknown, inactive, or not actually offered on this
+ * menu item, so an invalid selection fails the whole line loudly.
+ */
+export function resolveLineModifiersStrict(
+  menuItemId: string | null | undefined,
+  requested: { modifierId?: string; quantity?: number }[],
+  validByMenuItem: Map<string, Map<string, { groupId: string; name: string; priceDelta: number }>>,
+): SalesLineModifier[] {
+  if (requested.length === 0) return [];
+  if (!menuItemId) {
+    throw new Error("Modifiers were supplied for a line with no catalogue item to attach them to.");
+  }
+  const valid = validByMenuItem.get(menuItemId) ?? new Map();
+  return requested.map((r) => {
+    if (!r.modifierId || !valid.has(r.modifierId)) {
+      throw new Error("This modifier is not available for this item.");
+    }
+    const def = valid.get(r.modifierId)!;
+    const quantity = Number(r.quantity ?? 1);
+    return {
+      modifierId: r.modifierId,
+      groupId: def.groupId,
+      name: def.name,
+      priceDelta: def.priceDelta,
+      quantity,
+    };
+  });
+}
 
 export async function consumeLineModifiers(
   sb: Sb,

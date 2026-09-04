@@ -18,6 +18,7 @@ import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { evaluateNegativeStock } from "./policy";
 import { componentToStock, type UnitRow } from "./units";
+import { assertLocationInTenant } from "./locations.server";
 
 type Sb = any;
 
@@ -189,8 +190,6 @@ export async function insertMovement(
 }
 
 export async function recordMovement(sb: Sb, userId: string, input: RecordMovementInput) {
-  await assertCapability(sb, userId, input.tenantId, "stock.manage");
-
   const { data: item, error: itemErr } = await sb
     .from("restaurant_inventory_items")
     .select("id, name, average_cost, currency, reorder_point, unit_id, location_id, property_id")
@@ -198,6 +197,14 @@ export async function recordMovement(sb: Sb, userId: string, input: RecordMoveme
     .eq("id", input.inventoryItemId)
     .single();
   if (itemErr || !item) throw new Error("Inventory item not found.");
+
+  // A caller-supplied location must at minimum belong to this tenant — it
+  // was previously accepted with no validation at all.
+  await assertLocationInTenant(sb, input.tenantId, input.locationId);
+  await assertCapability(sb, userId, input.tenantId, "stock.manage", {
+    propertyId: input.propertyId ?? item.property_id,
+    locationId: input.locationId ?? item.location_id,
+  });
 
   const unitCost = input.unitCost ?? Number(item.average_cost ?? 0);
   const quantity = signedQuantity(input.movementType, input.quantity);
@@ -263,7 +270,6 @@ export async function recordMovement(sb: Sb, userId: string, input: RecordMoveme
 
 /** A transfer is two ledger entries so both outlets keep an auditable history. */
 export async function transferStock(sb: Sb, userId: string, input: TransferStockInput) {
-  await assertCapability(sb, userId, input.tenantId, "stock.manage");
   const { data: item } = await sb
     .from("restaurant_inventory_items")
     .select("id, name, average_cost, currency, unit_id, location_id, property_id")
@@ -271,6 +277,20 @@ export async function transferStock(sb: Sb, userId: string, input: TransferStock
     .eq("id", input.inventoryItemId)
     .single();
   if (!item) throw new Error("Inventory item not found.");
+
+  // The destination previously had no tenant check at all — any
+  // stock.manage holder could move stock to any locationId they knew,
+  // including one belonging to a different tenant entirely.
+  await assertLocationInTenant(
+    sb,
+    input.tenantId,
+    input.locationId ?? item.location_id,
+    input.destinationLocationId,
+  );
+  await assertCapability(sb, userId, input.tenantId, "stock.manage", {
+    propertyId: input.propertyId ?? item.property_id,
+    locationId: input.locationId ?? item.location_id,
+  });
 
   const unitCost = Number(item.average_cost ?? 0);
   const base = {

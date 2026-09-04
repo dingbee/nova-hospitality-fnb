@@ -22,7 +22,6 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { SectionCard } from "@/components/os/SectionCard";
-import { StatCard } from "@/components/os/StatCard";
 import { EmptyState } from "@/components/os/EmptyState";
 import { StatusChip, type StatusTone } from "@/components/os/StatusChip";
 import { GuestContextBanner } from "./GuestContextBanner";
@@ -548,25 +547,41 @@ export function PosWorkspace({
   }
 
   return (
-    <div className={cn("flex flex-col gap-4 lg:h-full lg:min-h-0", className)}>
-      <div className="shrink-0 space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard label="Open bills" value={String(stats?.openBills ?? 0)} icon={Users} />
-          <StatCard
-            label="Open value"
-            value={money(stats?.openValue ?? 0, currency)}
-            icon={CreditCard}
-          />
-          <StatCard
-            label="Revenue today"
-            value={money(stats?.revenueToday ?? 0, currency)}
-            icon={CreditCard}
-          />
-          <StatCard
-            label="Average check"
-            value={money(stats?.averageCheck ?? 0, currency)}
-            icon={ChefHat}
-          />
+    <div className={cn("flex flex-col gap-3 lg:h-full lg:min-h-0", className)}>
+      <div className="shrink-0 space-y-3">
+        {/* Compact operational strip: the four figures a cashier glances at,
+            in one row, not four large cards — the selling workspace below
+            (Floor/Menu/Bill) is the thing this screen exists for, and it
+            must own the viewport, not compete with KPI tiles for it. */}
+        <div className="os-card os-fade-in flex flex-wrap items-center gap-x-6 gap-y-1.5 px-4 py-2.5">
+          {[
+            { label: "Open bills", value: String(stats?.openBills ?? 0), icon: Users },
+            {
+              label: "Open value",
+              value: money(stats?.openValue ?? 0, currency),
+              icon: CreditCard,
+            },
+            {
+              label: "Revenue today",
+              value: money(stats?.revenueToday ?? 0, currency),
+              icon: CreditCard,
+            },
+            {
+              label: "Average check",
+              value: money(stats?.averageCheck ?? 0, currency),
+              icon: ChefHat,
+            },
+          ].map((m) => (
+            <div key={m.label} className="flex items-center gap-1.5">
+              <m.icon className="size-3.5 shrink-0 text-[color:var(--os-ink-3)]" />
+              <span className="text-[0.62rem] font-medium uppercase tracking-wide text-[color:var(--os-ink-3)]">
+                {m.label}
+              </span>
+              <span className="text-sm font-semibold tabular-nums text-[color:var(--os-ink)]">
+                {m.value}
+              </span>
+            </div>
+          ))}
         </div>
 
         {orderId && <GuestContextBanner tenantId={tenantId} orderId={orderId} />}
@@ -579,13 +594,12 @@ export function PosWorkspace({
           each pane below manages its own independent scroll region, so the
           bill's totals and primary actions never move off-screen while
           browsing a long menu. */}
-      {/* Side-pane widths widen at xl/2xl rather than staying fixed from lg —
-          at the narrow edge of lg (1024px) the persistent 256px nav sidebar
-          leaves only ~720px of content width, so a single generous fixed
-          width for Floor+Bill would squeeze Menu (the dominant pane) to
-          near nothing. minmax(…,1fr) on Menu is the actual floor: it never
-          shrinks below that regardless of viewport. */}
-      <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[200px_minmax(200px,1fr)_280px] xl:gap-4 xl:grid-cols-[240px_minmax(240px,1fr)_320px] 2xl:grid-cols-[280px_minmax(280px,1fr)_360px]">
+      {/* Proportional at lg+: Floor ~25%, Menu/Drinks ~45%, Bill ~30% of the
+          space left after gaps, via fr units (not fixed px) so the ratio
+          holds from 1024px up through ultrawide. minmax(...) floors keep
+          each pane from collapsing at the narrow edge of lg where the
+          persistent nav sidebar eats a chunk of the viewport. */}
+      <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(180px,25fr)_minmax(260px,45fr)_minmax(220px,30fr)] xl:gap-4">
         {/* Floor */}
         <SectionCard
           title={isBar ? "Bar floor & tabs" : "Floor"}

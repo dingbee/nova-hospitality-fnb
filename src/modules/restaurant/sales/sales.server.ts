@@ -21,11 +21,16 @@ import type {
   upsertTableSchema,
 } from "../core/contracts";
 import { assertCapability, assertTenantRead } from "../core/access.server";
+import { resolveOrderScope } from "./orderScope.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { consumeForOrderItem } from "../inventory/movements.server";
 import { activeRecipeForMenuItem } from "../products/recipes.server";
 import { consumeForRecipeSale } from "../products/consumption.server";
 import { currentFxRate, loadRuleSet, quoteWithRuleSet } from "../pricing/resolution.server";
+import {
+  resolveAuthoritativeModifiersForMenuItems,
+  resolveLineModifiersStrict,
+} from "./modifiers.server";
 import { isBeverageCategory } from "../bar/lens";
 import { BAR_STATION_TYPES } from "../bar/contracts";
 import {
@@ -330,8 +335,20 @@ export async function insertLines(
     orderType?: string;
     exchangeRate?: number;
     userId?: string;
+    /**
+     * Whether the caller supplying these lines is a trusted, capability-checked
+     * staff actor (POS/admin order pad — the default, for backward
+     * compatibility) or an unauthenticated guest. A guest line's `discount`
+     * and `modifiers[].priceDelta` are never money-authoritative: discount
+     * comes only from whatever the commercial rule set itself grants (active
+     * promotions, applied automatically by quoteLine — no client input
+     * needed), and every modifier is re-resolved to its own configured
+     * name/price from the catalogue, never trusted verbatim off the wire.
+     */
+    trusted?: boolean;
   },
 ) {
+  const trusted = ctx.trusted !== false;
   const ids = lines.map((l) => l.menuItemId).filter(Boolean) as string[];
   // Station authority: a client-proposed stationId (from the till, the bar
   // POS, or a direct API call) is a proposal only. The server re-derives the
@@ -365,6 +382,13 @@ export async function insertLines(
   const ruleSet = await loadRuleSet(sb, tenantId, { menuItemIds: ids });
   const at = new Date();
 
+  // Guest-line modifier authority: resolved once per distinct menu item
+  // (never per line) so an untrusted caller's request payload can supply a
+  // modifierId, but never the name or price that actually moves money.
+  const authoritativeModifiers = trusted
+    ? new Map<string, Map<string, { groupId: string; name: string; priceDelta: number }>>()
+    : await resolveAuthoritativeModifiersForMenuItems(sb, tenantId, [...new Set(ids)]);
+
   const rows = lines.map((l) => {
     const pinned = l.menuItemId ? recipeByMenuItem.get(l.menuItemId) : undefined;
     const unitCost = pinned
@@ -379,6 +403,27 @@ export async function insertLines(
     // open item (no menu item, no product) may carry an operator-entered price.
     const catalogued = Boolean(l.menuItemId ?? pinned?.productId);
     const proposedUnitPrice = Number(l.unitPrice ?? 0);
+    // Modifier authority: a trusted (staff) caller's snapshot is honoured as
+    // sent (it was itself built from the same catalogue the till read). An
+    // untrusted (guest) caller's modifierId selections are re-resolved
+    // against the authoritative map built above — name and priceDelta are
+    // never taken from the request. resolveLineModifiersStrict throws on any
+    // modifier that doesn't genuinely belong to this menu item, which fails
+    // the whole insert rather than silently accepting a fabricated one.
+    const chosen = trusted
+      ? (l.modifiers ?? [])
+      : resolveLineModifiersStrict(
+          l.menuItemId,
+          (l.modifiers ?? []).map((m) => ({ modifierId: m.modifierId, quantity: m.quantity })),
+          authoritativeModifiers,
+        );
+    // Discount authority: a trusted caller's line discount is honoured
+    // (governed separately by the discount-approval flow before it ever
+    // reaches here). An untrusted caller's discount is never honoured — the
+    // only discount a guest line can receive is whatever the commercial rule
+    // set's own active promotions grant automatically inside quoteLine,
+    // requiring no client input at all.
+    const requestedDiscount = trusted ? l.discount : 0;
     const quote = quoteWithRuleSet(
       ruleSet,
       {
@@ -395,12 +440,11 @@ export async function insertLines(
       {
         unitPrice: catalogued ? undefined : proposedUnitPrice,
         currency: ctx.currency,
-        lineDiscount: l.discount,
-        modifiers: l.modifiers ?? [],
+        lineDiscount: requestedDiscount,
+        modifiers: chosen,
         strict: catalogued,
       },
     );
-    const chosen = l.modifiers ?? [];
     // Modifiers are priced inside the engine so the receipt, the bill preview
     // and the pricing trace can never disagree about the same number.
     const modifierPerUnit = chosen.reduce(
@@ -432,8 +476,11 @@ export async function insertLines(
       quantity: l.quantity,
       unit_price: Number((quote.unitPrice + modifierPerUnit).toFixed(4)),
       base_unit_price: quote.basePrice,
-      discount: l.discount,
-      tax_amount: l.taxAmount > 0 ? l.taxAmount : quote.taxTotal,
+      // Always the amount quoteLine actually subtracted to reach lineTotal —
+      // never the caller's raw request field — so the persisted column can
+      // never disagree with what the line was actually sold for.
+      discount: quote.discount,
+      tax_amount: trusted && l.taxAmount > 0 ? l.taxAmount : quote.taxTotal,
       line_total: quote.lineTotal,
       currency: quote.currency,
       exchange_rate: ctx.exchangeRate ?? 1,
@@ -530,14 +577,17 @@ export async function recalcOrder(sb: Sb, tenantId: string, orderId: string) {
 }
 
 export async function createOrder(sb: Sb, userId: string, input: CreateOrderInput) {
-  await assertCapability(sb, userId, input.tenantId, "sales.manage");
+  // The table (when there is one) is the sole source of truth for property/
+  // location — never the caller's own claim. See orderScope.server.ts.
+  const scope = await resolveOrderScope(sb, input.tenantId, input);
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", scope);
 
   const { data: order, error } = await sb
     .from("restaurant_orders")
     .insert({
       tenant_id: input.tenantId,
-      property_id: input.propertyId ?? null,
-      location_id: input.locationId ?? null,
+      property_id: scope.propertyId,
+      location_id: scope.locationId,
       table_id: input.tableId ?? null,
       service_period_id: input.servicePeriodId ?? null,
       order_number: reference("ORD"),
@@ -570,8 +620,8 @@ export async function createOrder(sb: Sb, userId: string, input: CreateOrderInpu
   if (input.lines.length > 0) {
     await insertLines(sb, input.tenantId, order.id, input.lines, {
       currency: input.currency,
-      propertyId: input.propertyId ?? null,
-      locationId: input.locationId ?? null,
+      propertyId: scope.propertyId,
+      locationId: scope.locationId,
       orderType: input.orderType,
       exchangeRate,
       userId,
@@ -589,8 +639,8 @@ export async function createOrder(sb: Sb, userId: string, input: CreateOrderInpu
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.order.opened",
     tenantId: input.tenantId,
-    propertyId: input.propertyId,
-    locationId: input.locationId,
+    propertyId: scope.propertyId ?? undefined,
+    locationId: scope.locationId ?? undefined,
     entityType: "restaurant_order",
     entityId: order.id,
     source: "restaurant-os",
@@ -691,6 +741,10 @@ export async function createGuestOrder(
     locationId: input.locationId,
     orderType: "dine_in",
     exchangeRate,
+    // This is the guest ordering path: no staff principal authorized these
+    // lines, so their discount and modifier price fields are never
+    // money-authoritative — see insertLines' `trusted` doc comment.
+    trusted: false,
   });
 
   await sb

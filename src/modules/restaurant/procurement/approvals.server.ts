@@ -7,7 +7,7 @@
  * `access.server.ts` still runs first.
  */
 import type { RestaurantRole } from "../core/contracts";
-import { isPlatformAdmin, rolesInTenant } from "../core/access.server";
+import { isPlatformAdmin, memberGrantsInTenant } from "../core/access.server";
 import type { ApprovalRuleInput } from "./contracts";
 
 type Sb = any;
@@ -126,10 +126,21 @@ export async function assertMayApprove(
 
   if (await isPlatformAdmin(sb, userId)) return rule;
 
-  const roles = await rolesInTenant(sb, userId, scope.tenantId);
+  // A per-property approval rule only narrows which ROLE may approve — it
+  // never restricted WHICH property's staff may exercise that role, because
+  // rolesInTenant answered "does this user hold role X anywhere in the
+  // tenant". Re-checked here against the document's own property/location so
+  // a restaurant_manager scoped to Property B cannot approve Property A's
+  // request just by holding the same role name.
+  const grants = await memberGrantsInTenant(sb, userId, scope.tenantId);
   const allowed = rule.approverRoles as readonly string[];
-  if (!roles.some((r) => allowed.includes(r))) {
+  const matching = grants.filter((g) => allowed.includes(g.role));
+  if (matching.length === 0) {
     throw new Error(`Approval requires one of: ${allowed.join(", ")}.`);
+  }
+  const propertyId = scope.propertyId ?? null;
+  if (propertyId && !matching.some((g) => g.propertyId === null || g.propertyId === propertyId)) {
+    throw new Error("You are not authorized to approve at this property.");
   }
   return rule;
 }

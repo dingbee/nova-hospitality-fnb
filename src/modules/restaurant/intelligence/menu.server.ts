@@ -17,23 +17,41 @@ const COST_DRIFT_PERCENT = 15;
 export async function getMenuIntelligence(
   sb: Sb,
   userId: string,
-  input: { tenantId: string; windowDays: number },
+  input: {
+    tenantId: string;
+    windowDays: number;
+    propertyId?: string | null;
+    locationId?: string | null;
+  },
 ): Promise<MenuIntelligence> {
   const { tenantId, windowDays } = input;
-  await assertTenantRead(sb, userId, tenantId);
+  await assertTenantRead(sb, userId, tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
 
   const now = Date.now();
   const start = new Date(now - windowDays * DAY).toISOString();
   const prevStart = new Date(now - 2 * windowDays * DAY).toISOString();
 
+  // Unscoped (no propertyId/locationId) intentionally stays tenant-wide —
+  // a consolidated view for a caller with tenant-wide reach. Scoped, this
+  // narrows every downstream aggregate to the one property/location.
+  let ordersQuery = sb
+    .from("restaurant_orders")
+    .select("id, closed_at, currency, status")
+    .eq("tenant_id", tenantId)
+    .gte("closed_at", prevStart)
+    .not("closed_at", "is", null);
+  if (input.propertyId) ordersQuery = ordersQuery.eq("property_id", input.propertyId);
+  if (input.locationId) ordersQuery = ordersQuery.eq("location_id", input.locationId);
+
   const [ordersRes, itemsRes, costsRes] = await Promise.all([
+    ordersQuery,
     sb
-      .from("restaurant_orders")
-      .select("id, closed_at, currency, status")
-      .eq("tenant_id", tenantId)
-      .gte("closed_at", prevStart)
-      .not("closed_at", "is", null),
-    sb.from("restaurant_menu_items").select("id, name, price, currency, cost_price").eq("tenant_id", tenantId),
+      .from("restaurant_menu_items")
+      .select("id, name, price, currency, cost_price")
+      .eq("tenant_id", tenantId),
     sb
       .from("restaurant_recipe_costs")
       .select(
@@ -101,7 +119,8 @@ export async function getMenuIntelligence(
     } else if (Date.now() - new Date(recipe.computed_at).getTime() > STALE_COST_DAYS * DAY) {
       costReviewReason = `Recipe cost last computed over ${STALE_COST_DAYS} days ago`;
     } else if (actualUnitCost != null && Number(recipe.total_cost) > 0) {
-      const drift = ((actualUnitCost - Number(recipe.total_cost)) / Number(recipe.total_cost)) * 100;
+      const drift =
+        ((actualUnitCost - Number(recipe.total_cost)) / Number(recipe.total_cost)) * 100;
       if (Math.abs(drift) >= COST_DRIFT_PERCENT) {
         costReviewReason = `Actual cost drifted ${round(drift, 1)}% from the recipe`;
       }
@@ -143,8 +162,7 @@ export async function getMenuIntelligence(
     i.classification = classifyMenuItem(i.quantitySold, i.marginPercent, medQty, medMargin);
     // Promote: high margin but under-sold, or a star losing volume.
     i.promote =
-      i.classification === "puzzle" ||
-      (i.classification === "star" && (i.trendPercent ?? 0) < 0);
+      i.classification === "puzzle" || (i.classification === "star" && (i.trendPercent ?? 0) < 0);
   }
 
   items.sort((a, b) => b.grossProfit - a.grossProfit);
@@ -159,7 +177,9 @@ export async function getMenuIntelligence(
     .sort((a, b) => (a.trendPercent ?? 0) - (b.trendPercent ?? 0))
     .slice(0, 8);
   const promote = items.filter((i) => i.promote).slice(0, 8);
-  const costReview = items.filter((i) => i.needsCostReview && (i.quantitySold > 0 || i.price != null)).slice(0, 12);
+  const costReview = items
+    .filter((i) => i.needsCostReview && (i.quantitySold > 0 || i.price != null))
+    .slice(0, 12);
 
   const totals = sold.reduce(
     (acc, i) => ({
@@ -199,7 +219,8 @@ export async function getMenuIntelligence(
       title: `${d.name} is declining`,
       detail: `Volume fell ${Math.abs(d.trendPercent ?? 0)}% versus the previous ${windowDays} days.`,
       metric: `${d.trendPercent ?? 0}%`,
-      recommendation: "Check availability and prep quality, or retire the dish at the next menu change.",
+      recommendation:
+        "Check availability and prep quality, or retire the dish at the next menu change.",
     });
   }
   if (costReview.length > 0) {

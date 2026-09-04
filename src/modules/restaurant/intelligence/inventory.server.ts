@@ -19,26 +19,42 @@ const PRICE_THREAT_PERCENT = 10;
 export async function getInventoryIntelligence(
   sb: Sb,
   userId: string,
-  input: { tenantId: string; windowDays: number },
+  input: {
+    tenantId: string;
+    windowDays: number;
+    propertyId?: string | null;
+    locationId?: string | null;
+  },
 ): Promise<InventoryIntelligence> {
   const { tenantId, windowDays } = input;
-  await assertTenantRead(sb, userId, tenantId);
+  await assertTenantRead(sb, userId, tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
 
   const now = Date.now();
   const start = new Date(now - windowDays * DAY).toISOString();
   const weekStart = new Date(now - 7 * DAY).toISOString();
   const prevWeekStart = new Date(now - 14 * DAY).toISOString();
 
+  let itemsQuery = sb
+    .from("restaurant_inventory_items")
+    .select("id, name, current_quantity, reorder_point, average_cost, currency, status")
+    .eq("tenant_id", tenantId);
+  if (input.propertyId) itemsQuery = itemsQuery.eq("property_id", input.propertyId);
+  if (input.locationId) itemsQuery = itemsQuery.eq("location_id", input.locationId);
+
+  let movesQuery = sb
+    .from("restaurant_stock_movements")
+    .select("inventory_item_id, movement_type, quantity, total_cost, occurred_at")
+    .eq("tenant_id", tenantId)
+    .gte("occurred_at", new Date(now - Math.max(windowDays, 14) * DAY).toISOString());
+  if (input.propertyId) movesQuery = movesQuery.eq("property_id", input.propertyId);
+  if (input.locationId) movesQuery = movesQuery.eq("location_id", input.locationId);
+
   const [itemsRes, movesRes, supplierProductsRes, suppliersRes] = await Promise.all([
-    sb
-      .from("restaurant_inventory_items")
-      .select("id, name, current_quantity, reorder_point, average_cost, currency, status")
-      .eq("tenant_id", tenantId),
-    sb
-      .from("restaurant_stock_movements")
-      .select("inventory_item_id, movement_type, quantity, total_cost, occurred_at")
-      .eq("tenant_id", tenantId)
-      .gte("occurred_at", new Date(now - Math.max(windowDays, 14) * DAY).toISOString()),
+    itemsQuery,
+    movesQuery,
     sb
       .from("restaurant_supplier_products")
       .select("supplier_id, inventory_item_id, name, unit_price, active")
@@ -75,7 +91,9 @@ export async function getInventoryIntelligence(
   });
   runway.sort((a, b) => (a.daysOfCover ?? 9999) - (b.daysOfCover ?? 9999));
 
-  const atRisk = runway.filter((r) => (r.daysOfCover != null && r.daysOfCover <= 5) || r.belowReorder).slice(0, 12);
+  const atRisk = runway
+    .filter((r) => (r.daysOfCover != null && r.daysOfCover <= 5) || r.belowReorder)
+    .slice(0, 12);
 
   const wasteRows = moves.filter((m) => m.movement_type === "wastage");
   const currentWaste = wasteRows
@@ -94,11 +112,17 @@ export async function getInventoryIntelligence(
     wasteByItem.set(m.inventory_item_id, cur);
   }
   const topWaste = [...wasteByItem.entries()]
-    .map(([id, v]) => ({ name: nameById.get(id) ?? "Item", cost: round(v.cost), quantity: round(v.quantity, 2) }))
+    .map(([id, v]) => ({
+      name: nameById.get(id) ?? "Item",
+      cost: round(v.cost),
+      quantity: round(v.quantity, 2),
+    }))
     .sort((a, b) => b.cost - a.cost)
     .slice(0, 5);
 
-  const supplierNames = new Map(((suppliersRes.data ?? []) as any[]).map((s) => [s.id, s.name as string]));
+  const supplierNames = new Map(
+    ((suppliersRes.data ?? []) as any[]).map((s) => [s.id, s.name as string]),
+  );
   const avgCost = new Map(items.map((i) => [i.id, Number(i.average_cost ?? 0)]));
   const priceThreats: SupplierPriceThreat[] = ((supplierProductsRes.data ?? []) as any[])
     .filter((p) => p.active !== false && p.inventory_item_id)
@@ -122,7 +146,8 @@ export async function getInventoryIntelligence(
   for (const r of atRisk.slice(0, 4)) {
     insights.push({
       key: `inventory.runway.${r.inventoryItemId}`,
-      severity: (r.daysOfCover ?? 99) <= 2 ? "critical" : (r.daysOfCover ?? 99) <= 4 ? "high" : "medium",
+      severity:
+        (r.daysOfCover ?? 99) <= 2 ? "critical" : (r.daysOfCover ?? 99) <= 4 ? "high" : "medium",
       title:
         r.daysOfCover == null
           ? `${r.name} is below its reorder point`

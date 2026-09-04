@@ -17,7 +17,11 @@ import type { RoundingMode } from "./decimal";
 export class CommercialRuleError extends Error {
   readonly code: "no_price" | "ambiguous_price";
   readonly detail: Record<string, unknown>;
-  constructor(code: "no_price" | "ambiguous_price", message: string, detail: Record<string, unknown> = {}) {
+  constructor(
+    code: "no_price" | "ambiguous_price",
+    message: string,
+    detail: Record<string, unknown> = {},
+  ) {
     super(message);
     this.name = "CommercialRuleError";
     this.code = code;
@@ -162,6 +166,13 @@ export type PricingQuote = {
   modifierTotal: number;
   promotionId: string | null;
   promotionDiscount: number;
+  /**
+   * The line-discount amount actually applied (already clamped to gross).
+   * This — never the caller's raw request field — is what a caller must
+   * persist as the order item's own `discount` column, so the stored value
+   * can never disagree with what `lineTotal` was actually computed from.
+   */
+  discount: number;
   lineNet: number;
   serviceCharge: number;
   serviceChargeId: string | null;
@@ -365,7 +376,9 @@ export function applicableCharges(rules: ChargeRule[], ctx: PricingContext): Cha
 }
 
 function chargeAmount(rule: ChargeRule, base: number, quantity: number): number {
-  return rule.basis === "percent" ? round(pct(base, rule.rate)) : round(mul(rule.fixedAmount, quantity));
+  return rule.basis === "percent"
+    ? round(pct(base, rule.rate))
+    : round(mul(rule.fixedAmount, quantity));
 }
 
 /** The rounding policy in force for a target, or a plain 2-decimal default. */
@@ -479,7 +492,11 @@ export function quoteLine(args: {
   );
   const modifierTotal = round(mul(modifierPerUnit, ctx.quantity));
   if (modifierTotal !== 0)
-    trace.push({ step: "modifiers", detail: `${args.modifiers?.length ?? 0} selected`, amount: modifierTotal });
+    trace.push({
+      step: "modifiers",
+      detail: `${args.modifiers?.length ?? 0} selected`,
+      amount: modifierTotal,
+    });
 
   const gross = round(add(mul(unitPrice, ctx.quantity), modifierTotal));
   const discount = round(Math.min(args.lineDiscount ?? 0, gross));
@@ -497,13 +514,12 @@ export function quoteLine(args: {
 
   const taxRules = applicableCharges(taxes, ctx);
   const inclusive = base?.taxInclusive ?? taxRules.some((r) => r.inclusive);
-  const taxableBase =
-    add(
-      afterDiscount,
-      svcRules
-        .filter((r) => r.taxable)
-        .reduce((s, r) => add(s, chargeAmount(r, afterDiscount, ctx.quantity)), 0),
-    );
+  const taxableBase = add(
+    afterDiscount,
+    svcRules
+      .filter((r) => r.taxable)
+      .reduce((s, r) => add(s, chargeAmount(r, afterDiscount, ctx.quantity)), 0),
+  );
   const tax = computeTax(taxRules, taxableBase, ctx.quantity, inclusive);
   if (tax.total > 0) {
     trace.push({
@@ -515,12 +531,14 @@ export function quoteLine(args: {
 
   const rawTotal = inclusive ? add(afterDiscount, svc) : add(afterDiscount, svc, tax.total);
   const rounding = resolveRounding(args.roundingRules ?? [], "line", ctx, currency);
-  const lineTotal = rounding
-    ? applyRounding(rawTotal, rounding)
-    : money(rawTotal);
+  const lineTotal = rounding ? applyRounding(rawTotal, rounding) : money(rawTotal);
   const roundingAdjustment = round(sub(lineTotal, money(rawTotal)));
   if (roundingAdjustment !== 0)
-    trace.push({ step: "rounding", detail: rounding?.code ?? "default", amount: roundingAdjustment });
+    trace.push({
+      step: "rounding",
+      detail: rounding?.code ?? "default",
+      amount: roundingAdjustment,
+    });
   trace.push({ step: "line_total", detail: currency, amount: lineTotal });
 
   return {
@@ -534,6 +552,7 @@ export function quoteLine(args: {
     modifierTotal,
     promotionId,
     promotionDiscount: round(mul(Math.max(0, sub(basePrice, unitPrice)), ctx.quantity)),
+    discount,
     lineNet: inclusive ? tax.net : afterDiscount,
     serviceCharge: money(svc),
     serviceChargeId: svcRules[0]?.id ?? null,

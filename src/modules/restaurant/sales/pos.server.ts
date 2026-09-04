@@ -177,7 +177,15 @@ export async function posCatalog(
   userId: string,
   input: { tenantId: string; propertyId?: string; locationId?: string; menuId?: string },
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  // Property/location here are a narrowing filter over an intentionally
+  // tenant-wide catalogue (menus/prices are shared across a tenant's
+  // properties by design), but a caller must still be scoped to the
+  // property they're asking to preview — otherwise a property-scoped
+  // till could be pointed at a different property's price list.
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   return fetchSellableCatalog(sb, input.tenantId, input);
 }
 
@@ -395,8 +403,6 @@ export async function openPosOrder(sb: Sb, userId: string, input: OpenPosOrderIn
 }
 
 export async function addPosLines(sb: Sb, userId: string, input: AddPosLinesInput) {
-  await assertCapability(sb, userId, input.tenantId, "sales.manage");
-
   const { data: order } = await sb
     .from("restaurant_orders")
     .select(
@@ -406,6 +412,13 @@ export async function addPosLines(sb: Sb, userId: string, input: AddPosLinesInpu
     .eq("id", input.orderId)
     .single();
   if (!order) throw new Error("Order not found.");
+  // Property/location scope re-checked against the order's own row, not the
+  // caller's claim — a sales.manage grant scoped to Property A must not
+  // reach Property B's order just because its id was discoverable.
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", {
+    propertyId: order.property_id,
+    locationId: order.location_id,
+  });
   if (!OPEN_STATES.includes(order.status))
     throw new Error("This bill is closed and can no longer be modified.");
 
@@ -446,8 +459,6 @@ export async function addPosLines(sb: Sb, userId: string, input: AddPosLinesInpu
  * silent inventory loss, which is exactly what UAT-1 exists to stop.
  */
 export async function voidPosLine(sb: Sb, userId: string, input: VoidPosLineInput) {
-  await assertCapability(sb, userId, input.tenantId, "sales.void");
-
   const { data: item } = await sb
     .from("restaurant_order_items")
     .select("id, order_id, description, quantity, line_total, line_cost, status")
@@ -456,6 +467,17 @@ export async function voidPosLine(sb: Sb, userId: string, input: VoidPosLineInpu
     .single();
   if (!item || item.order_id !== input.orderId) throw new Error("Line not found on this bill.");
   if (item.status === "voided") throw new Error("This line is already voided.");
+
+  const { data: order } = await sb
+    .from("restaurant_orders")
+    .select("property_id, location_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .maybeSingle();
+  await assertCapability(sb, userId, input.tenantId, "sales.void", {
+    propertyId: order?.property_id ?? null,
+    locationId: order?.location_id ?? null,
+  });
 
   // Ledger first: if the correction cannot be written, the line stays live and
   // the operator sees why, rather than money and stock disagreeing.
@@ -503,8 +525,6 @@ export async function voidPosLine(sb: Sb, userId: string, input: VoidPosLineInpu
 
 /** Moves a bill to another table (or off the floor) and keeps table states honest. */
 export async function transferPosOrder(sb: Sb, userId: string, input: TransferPosOrderInput) {
-  await assertCapability(sb, userId, input.tenantId, "sales.manage");
-
   const { data: order } = await sb
     .from("restaurant_orders")
     .select("id, order_number, status, table_id, location_id, property_id")
@@ -512,6 +532,10 @@ export async function transferPosOrder(sb: Sb, userId: string, input: TransferPo
     .eq("id", input.orderId)
     .single();
   if (!order) throw new Error("Order not found.");
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", {
+    propertyId: order.property_id,
+    locationId: order.location_id,
+  });
   if (!OPEN_STATES.includes(order.status)) throw new Error("A closed bill cannot be transferred.");
 
   const patch: Record<string, unknown> = {};
@@ -567,7 +591,17 @@ export async function transferPosOrder(sb: Sb, userId: string, input: TransferPo
  * (and closes) only when the paid total reaches the bill.
  */
 export async function takePosPayment(sb: Sb, userId: string, input: PosPaymentInput) {
-  await assertCapability(sb, userId, input.tenantId, "sales.manage");
+  const { data: order } = await sb
+    .from("restaurant_orders")
+    .select("property_id, location_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .maybeSingle();
+  if (!order) throw new Error("Order not found.");
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", {
+    propertyId: order.property_id,
+    locationId: order.location_id,
+  });
 
   const { data: duplicate } = await sb
     .from("restaurant_payments")
@@ -693,8 +727,6 @@ export async function recordGuestPayment(
 
 /** Reopens a closed bill for correction. Supervisor-only and always evidenced. */
 export async function reopenPosOrder(sb: Sb, userId: string, input: ReopenPosOrderInput) {
-  await assertCapability(sb, userId, input.tenantId, "sales.reopen");
-
   const { data: order } = await sb
     .from("restaurant_orders")
     .select("id, order_number, status, location_id, property_id, table_id")
@@ -702,6 +734,10 @@ export async function reopenPosOrder(sb: Sb, userId: string, input: ReopenPosOrd
     .eq("id", input.orderId)
     .single();
   if (!order) throw new Error("Order not found.");
+  await assertCapability(sb, userId, input.tenantId, "sales.reopen", {
+    propertyId: order.property_id,
+    locationId: order.location_id,
+  });
   if (order.status !== "closed") throw new Error("Only a closed bill can be reopened.");
 
   const { data: updated, error } = await sb
