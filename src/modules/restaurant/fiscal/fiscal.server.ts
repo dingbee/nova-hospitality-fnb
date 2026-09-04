@@ -13,7 +13,13 @@
  * wrap requestFiscalization in try/catch exactly as emitRestaurantEvent
  * callers already do for intelligence events.
  */
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import {
+  accessibleLocationIds,
+  assertCapability,
+  assertTenantRead,
+  getTenantScope,
+  NO_MATCH_ID,
+} from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import type { FiscalProviderAdapter, FiscalSubmissionInput } from "./adapter";
 import { createTestFiscalAdapter } from "./providers/testAdapter.server";
@@ -59,7 +65,9 @@ export async function getFiscalConfiguration(
   userId: string,
   input: { tenantId: string; locationId: string },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "fiscal.view");
+  await assertCapability(sb, userId, input.tenantId, "fiscal.view", {
+    locationId: input.locationId,
+  });
   const { data } = await sb
     .from("restaurant_fiscal_configurations")
     .select("*, restaurant_fiscal_devices(*)")
@@ -75,14 +83,26 @@ export async function upsertFiscalConfiguration(
   raw: UpsertFiscalConfigurationInput,
 ) {
   const input = upsertFiscalConfigurationSchema.parse(raw);
-  await assertCapability(sb, userId, input.tenantId, "fiscal.manage");
+  await assertCapability(sb, userId, input.tenantId, "fiscal.manage", {
+    locationId: input.locationId,
+  });
+
+  // Authoritative property comes from the location row, never the client's
+  // separate propertyId field (same rule as mobile money's account upsert).
+  const { data: location } = await sb
+    .from("restaurant_locations")
+    .select("id, property_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.locationId)
+    .maybeSingle();
+  if (!location) throw new Error("Location not found for this tenant.");
 
   const { data: config, error } = await sb
     .from("restaurant_fiscal_configurations")
     .upsert(
       {
         tenant_id: input.tenantId,
-        property_id: input.propertyId ?? null,
+        property_id: location.property_id,
         location_id: input.locationId,
         business_name: input.businessName,
         tin: input.tin ?? null,
@@ -112,7 +132,7 @@ export async function upsertFiscalConfiguration(
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.fiscal.configuration.updated",
     tenantId: input.tenantId,
-    propertyId: input.propertyId ?? undefined,
+    propertyId: location.property_id ?? undefined,
     locationId: input.locationId,
     entityType: "restaurant_fiscal_configuration",
     entityId: config.id,
@@ -537,7 +557,16 @@ export async function getFiscalStatusForOrder(
   userId: string,
   input: { tenantId: string; orderId: string },
 ): Promise<FiscalStatusView> {
-  await assertTenantRead(sb, userId, input.tenantId);
+  const { data: order } = await sb
+    .from("restaurant_orders")
+    .select("property_id, location_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .maybeSingle();
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: order?.property_id ?? null,
+    locationId: order?.location_id ?? null,
+  });
   const { data } = await sb
     .from("restaurant_fiscal_receipts")
     .select("*")
@@ -552,7 +581,10 @@ export async function listFiscalReceipts(
   userId: string,
   input: { tenantId: string; locationId?: string; limit?: number },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "fiscal.view");
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertCapability(sb, userId, input.tenantId, "fiscal.view", {
+    locationId: input.locationId ?? null,
+  });
   let query = sb
     .from("restaurant_fiscal_receipts")
     .select(
@@ -561,7 +593,12 @@ export async function listFiscalReceipts(
     .eq("tenant_id", input.tenantId)
     .order("created_at", { ascending: false })
     .limit(input.limit ?? 50);
-  if (input.locationId) query = query.eq("location_id", input.locationId);
+  if (input.locationId) {
+    query = query.eq("location_id", input.locationId);
+  } else {
+    const ids = await accessibleLocationIds(sb, scope);
+    if (ids !== null) query = query.in("location_id", ids.length ? ids : [NO_MATCH_ID]);
+  }
   const { data } = await query;
   return data ?? [];
 }
@@ -571,7 +608,10 @@ export async function getFiscalHealth(
   userId: string,
   input: { tenantId: string; locationId?: string },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "fiscal.view");
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertCapability(sb, userId, input.tenantId, "fiscal.view", {
+    locationId: input.locationId ?? null,
+  });
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
@@ -580,7 +620,12 @@ export async function getFiscalHealth(
     .select("state, fiscalized_at, created_at")
     .eq("tenant_id", input.tenantId)
     .gte("created_at", startOfDay.toISOString());
-  if (input.locationId) query = query.eq("location_id", input.locationId);
+  if (input.locationId) {
+    query = query.eq("location_id", input.locationId);
+  } else {
+    const ids = await accessibleLocationIds(sb, scope);
+    if (ids !== null) query = query.in("location_id", ids.length ? ids : [NO_MATCH_ID]);
+  }
   const { data } = await query;
   const rows = (data ?? []) as any[];
 
@@ -613,7 +658,9 @@ export async function prepareZReportDraft(
   userId: string,
   input: { tenantId: string; locationId: string; businessDate: string },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "fiscal.manage");
+  await assertCapability(sb, userId, input.tenantId, "fiscal.manage", {
+    locationId: input.locationId,
+  });
 
   const dayStart = new Date(`${input.businessDate}T00:00:00.000Z`);
   const dayEnd = new Date(`${input.businessDate}T23:59:59.999Z`);

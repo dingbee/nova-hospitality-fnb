@@ -38,6 +38,8 @@ async function assertDecisionScope(
   userId: string,
   module: string,
   tenantId: string | null | undefined,
+  propertyId?: string | null,
+  locationId?: string | null,
 ): Promise<void> {
   const checker = getTenantScopeChecker(module as IntelModule);
   if (!checker) {
@@ -48,7 +50,7 @@ async function assertDecisionScope(
   if (!tenantId) {
     throw new Error("This record has no recorded tenant scope — refusing to act on it.");
   }
-  await checker(supabase, userId, { tenantId });
+  await checker(supabase, userId, { tenantId, propertyId, locationId });
 }
 
 function rowToStored(row: any, steps: any[]): StoredDecision {
@@ -298,7 +300,14 @@ export async function decideDecision(supabase: Sb, userId: string, input: Decide
     .eq("id", input.id)
     .single();
   if (loadError || !row) throw new Error(loadError?.message ?? "Decision not found.");
-  await assertDecisionScope(supabase, userId, row.module, row.tenant_id);
+  await assertDecisionScope(
+    supabase,
+    userId,
+    row.module,
+    row.tenant_id,
+    row.property_id ?? null,
+    row.location_id ?? null,
+  );
 
   const now = new Date().toISOString();
   const selectedKey = input.selectedOptionKey ?? row.recommended_option_key;
@@ -453,11 +462,18 @@ export async function updatePlanStep(supabase: Sb, userId: string, input: Update
 
   const { data: decision, error: decisionError } = await supabase
     .from("intelligence_decisions")
-    .select("module, tenant_id")
+    .select("module, tenant_id, property_id, location_id")
     .eq("id", plan.decision_id)
     .single();
   if (decisionError || !decision) throw new Error(decisionError?.message ?? "Decision not found.");
-  await assertDecisionScope(supabase, userId, decision.module, decision.tenant_id);
+  await assertDecisionScope(
+    supabase,
+    userId,
+    decision.module,
+    decision.tenant_id,
+    decision.property_id ?? null,
+    decision.location_id ?? null,
+  );
 
   const patch: Record<string, unknown> = { status: input.status };
   if (input.note) patch.note = input.note;

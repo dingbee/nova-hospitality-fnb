@@ -140,6 +140,8 @@ async function assertActionScope(
   userId: string,
   module: string,
   tenantId: string,
+  propertyId?: string | null,
+  locationId?: string | null,
 ): Promise<void> {
   const checker = getTenantScopeChecker(module as any);
   if (!checker) {
@@ -147,7 +149,7 @@ async function assertActionScope(
       `No tenant scope authorization is registered for module "${module}" — refusing to execute this action.`,
     );
   }
-  await checker(sb, userId, { tenantId });
+  await checker(sb, userId, { tenantId, propertyId, locationId });
 }
 
 async function loadActionAndDecision(sb: Sb, actionId: string) {
@@ -311,7 +313,14 @@ export async function executeRestaurantAction(
 
   // Fails closed via the same registry I2 built and I3 reused — no bespoke
   // authorization path for this executor.
-  await assertActionScope(sb, userId, decision.module, decision.tenant_id);
+  await assertActionScope(
+    sb,
+    userId,
+    decision.module,
+    decision.tenant_id,
+    decision.property_id ?? null,
+    decision.location_id ?? null,
+  );
   const tenantId = decision.tenant_id as string;
   const module = decision.module as string;
 
@@ -1418,7 +1427,14 @@ export async function verifyRestaurantAction(
     throw new Error(`No executor registered for module "${action.module}".`);
   }
 
-  await assertActionScope(sb, userId, decision.module, decision.tenant_id);
+  await assertActionScope(
+    sb,
+    userId,
+    decision.module,
+    decision.tenant_id,
+    decision.property_id ?? null,
+    decision.location_id ?? null,
+  );
   const tenantId = decision.tenant_id as string;
   const module = decision.module as string;
 

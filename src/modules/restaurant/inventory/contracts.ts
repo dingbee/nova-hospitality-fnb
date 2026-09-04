@@ -43,7 +43,11 @@ export const upsertLocationSchema = z.object({
   propertyId: uuid,
   parentId: uuid.nullish(),
   name: z.string().min(2).max(120),
-  slug: z.string().min(2).max(120).regex(/^[a-z0-9-]+$/),
+  slug: z
+    .string()
+    .min(2)
+    .max(120)
+    .regex(/^[a-z0-9-]+$/),
   code: z.string().max(40).optional(),
   locationType: z.string().min(2).max(40).default("store"),
   isStorage: z.boolean().default(true),
@@ -153,9 +157,7 @@ export const dispatchTransferSchema = z.object({
   tenantId: uuid,
   transferId: uuid,
   notes: z.string().max(1000).optional(),
-  lines: z
-    .array(z.object({ lineId: uuid, dispatchedQuantity: z.number().min(0) }))
-    .min(1),
+  lines: z.array(z.object({ lineId: uuid, dispatchedQuantity: z.number().min(0) })).min(1),
 });
 export type DispatchTransferInput = z.infer<typeof dispatchTransferSchema>;
 
@@ -219,7 +221,11 @@ export const upsertReasonSchema = z.object({
   tenantId: uuid,
   id: uuid.optional(),
   kind: z.enum(REASON_KINDS),
-  code: z.string().min(2).max(40).regex(/^[a-z0-9_]+$/),
+  code: z
+    .string()
+    .min(2)
+    .max(40)
+    .regex(/^[a-z0-9_]+$/),
   label: z.string().min(2).max(120),
   requiresApproval: z.boolean().default(false),
   requiresNote: z.boolean().default(false),
@@ -314,7 +320,14 @@ export const releaseReservationSchema = z.object({
 
 /* ---------------- Stocktake ---------------- */
 
-export const STOCKTAKE_STATUSES = ["draft", "counting", "review", "approved", "posted", "cancelled"] as const;
+export const STOCKTAKE_STATUSES = [
+  "draft",
+  "counting",
+  "review",
+  "approved",
+  "posted",
+  "cancelled",
+] as const;
 export type StocktakeStatus = (typeof STOCKTAKE_STATUSES)[number];
 
 export const STOCKTAKE_SCOPES = ["full", "location", "category", "selected"] as const;
@@ -414,6 +427,8 @@ export interface InventoryOverview {
 export const reconciliationSchema = z.object({
   tenantId: uuid,
   limit: z.number().int().min(1).max(500).default(200),
+  propertyId: uuid.optional(),
+  locationId: uuid.optional(),
 });
 
 /* ---------------- Presentation helpers (shared by UI + exports) ---------------- */

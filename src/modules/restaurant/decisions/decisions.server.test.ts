@@ -604,3 +604,187 @@ describe("I10 — full decision lifecycle stays representable (K)", () => {
     expect(fake.decisions.get(id).status).toBe("approved");
   });
 });
+
+/**
+ * P1 property scope — Decisions Board adversarial access matrix (spec:
+ * "server-side scoping, not UI-filter-after-fetch"; "exclude unattributable
+ * legacy intelligence records from property-scoped views, never guess").
+ *
+ * makeFakeSb's members here carry a real property_id, so
+ * getTenantScope/assertTenantRead/assertCapability run for real —
+ * proving getRestaurantDecisionBoard/runRestaurantDecisionPass actually
+ * deny cross-property access, that a property-scoped caller with no
+ * explicit propertyId defaults to their own property (never "everything"),
+ * and that legacy NULL-property decisions never leak into a property-
+ * scoped view.
+ */
+describe("P1 property scope — Decisions Board access matrix", () => {
+  const PROPERTY_A1 = "a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1";
+  const PROPERTY_A2 = "a2a2a2a2-a2a2-a2a2-a2a2-a2a2a2a2a2a2";
+  const A1_MANAGER = "10000000-user-0000-0000-0000000000a1";
+  const A2_MANAGER = "10000000-user-0000-0000-0000000000a2";
+  const A1_MEMBER = {
+    tenant_id: TENANT_A,
+    user_id: A1_MANAGER,
+    role: "owner",
+    property_id: PROPERTY_A1,
+  };
+  const A2_MEMBER = {
+    tenant_id: TENANT_A,
+    user_id: A2_MANAGER,
+    role: "owner",
+    property_id: PROPERTY_A2,
+  };
+
+  it("A1-manager's board request with no explicit propertyId defaults to their own property — never an unscoped aggregate", async () => {
+    stubEngines([]);
+    const fake = makeFakeSb([A1_MEMBER]);
+    await getRestaurantDecisionBoard(fake.sb, A1_MANAGER, {
+      tenantId: TENANT_A,
+      windowDays: 30,
+    } as any);
+    expect(getMenuIntelligenceMock).toHaveBeenCalledWith(
+      fake.sb,
+      A1_MANAGER,
+      expect.objectContaining({ propertyId: PROPERTY_A1 }),
+    );
+  });
+
+  it("A1-manager cannot request Property A2's board — DENY, even though both properties are in the same tenant", async () => {
+    stubEngines([]);
+    const fake = makeFakeSb([A1_MEMBER]);
+    await expect(
+      getRestaurantDecisionBoard(fake.sb, A1_MANAGER, {
+        tenantId: TENANT_A,
+        windowDays: 30,
+        propertyId: PROPERTY_A2,
+      } as any),
+    ).rejects.toThrow(/do not have access to this property/);
+  });
+
+  it("A2-manager mirrors: their own property defaults in, A1 is denied", async () => {
+    stubEngines([]);
+    const fake = makeFakeSb([A2_MEMBER]);
+    await getRestaurantDecisionBoard(fake.sb, A2_MANAGER, {
+      tenantId: TENANT_A,
+      windowDays: 30,
+    } as any);
+    expect(getMenuIntelligenceMock).toHaveBeenCalledWith(
+      fake.sb,
+      A2_MANAGER,
+      expect.objectContaining({ propertyId: PROPERTY_A2 }),
+    );
+    await expect(
+      getRestaurantDecisionBoard(fake.sb, A2_MANAGER, {
+        tenantId: TENANT_A,
+        windowDays: 30,
+        propertyId: PROPERTY_A1,
+      } as any),
+    ).rejects.toThrow(/do not have access to this property/);
+  });
+
+  it("a tenant-wide owner's board request stays unscoped (aggregate across every property) when no propertyId is given", async () => {
+    stubEngines([]);
+    const fake = makeFakeSb([OWNER_MEMBER]); // OWNER_MEMBER has no property_id => tenant-wide
+    await getRestaurantDecisionBoard(fake.sb, MANAGER, {
+      tenantId: TENANT_A,
+      windowDays: 30,
+    } as any);
+    expect(getMenuIntelligenceMock).toHaveBeenCalledWith(
+      fake.sb,
+      MANAGER,
+      expect.objectContaining({ propertyId: undefined }),
+    );
+  });
+
+  it("runRestaurantDecisionPass: A1-manager is denied running a pass explicitly requested for Property A2", async () => {
+    stubEngines([]);
+    const fake = makeFakeSb([A1_MEMBER]);
+    await expect(
+      runRestaurantDecisionPass(fake.sb, A1_MANAGER, {
+        tenantId: TENANT_A,
+        windowDays: 30,
+        persist: false,
+        propertyId: PROPERTY_A2,
+      } as any),
+    ).rejects.toThrow(/not granted to you at this property/);
+  });
+
+  it("LEGACY DATA: a pre-P1 decision with property_id NULL never leaks into a property-scoped board view — excluded, not guessed at", async () => {
+    stubEngines([]);
+    const fake = makeFakeSb([A1_MEMBER]);
+    fake.decisions.set("legacy-1", {
+      id: "legacy-1",
+      module: "restaurant",
+      tenant_id: TENANT_A,
+      property_id: null, // unattributable legacy row
+      domain: "inventory",
+      decision_key: "legacy-shortage",
+      status: "proposed",
+      title: "Legacy shortage",
+      trigger: "x",
+      risk_level: "low",
+      rationale: "y",
+      recommended_actions: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    const board = await getRestaurantDecisionBoard(fake.sb, A1_MANAGER, {
+      tenantId: TENANT_A,
+      windowDays: 30,
+    } as any);
+    expect(board.stored.find((d: any) => d.id === "legacy-1")).toBeUndefined();
+
+    // But it IS visible to a tenant-wide caller with no property filter —
+    // never deleted, never fabricated an owner, just correctly excluded
+    // from the narrower view.
+    const ownerFake = makeFakeSb([OWNER_MEMBER]);
+    ownerFake.decisions.set("legacy-1", fake.decisions.get("legacy-1"));
+    const ownerBoard = await getRestaurantDecisionBoard(ownerFake.sb, MANAGER, {
+      tenantId: TENANT_A,
+      windowDays: 30,
+    } as any);
+    expect(ownerBoard.stored.find((d: any) => d.id === "legacy-1")).toBeDefined();
+  });
+
+  it("EXPIRY SWEEP SCOPING: a property-scoped pass never expires a different property's still-open decision", async () => {
+    const fake = makeFakeSb([A1_MEMBER]);
+    fake.decisions.set("a2-open", {
+      id: "a2-open",
+      module: "restaurant",
+      tenant_id: TENANT_A,
+      property_id: PROPERTY_A2,
+      domain: "inventory",
+      decision_key: "a2-shortage",
+      status: "proposed",
+      title: "A2 shortage",
+      trigger: "x",
+      risk_level: "low",
+      rationale: "y",
+      recommended_actions: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    stubEngines([]); // A1's pass finds nothing current
+    await runRestaurantDecisionPass(fake.sb, A1_MANAGER, {
+      tenantId: TENANT_A,
+      windowDays: 30,
+      persist: true,
+      propertyId: PROPERTY_A1,
+    } as any);
+    // A1's own-property sweep must never touch A2's still-open decision.
+    expect(fake.decisions.get("a2-open").status).toBe("proposed");
+  });
+
+  it("cross-tenant: Tenant B has no membership row under Tenant A at all — denied outright", async () => {
+    stubEngines([]);
+    const TENANT_B_USER = "10000000-user-0000-0000-0000000000b1";
+    const fake = makeFakeSb([]); // no membership anywhere
+    await expect(
+      getRestaurantDecisionBoard(fake.sb, TENANT_B_USER, {
+        tenantId: TENANT_A,
+        windowDays: 30,
+      } as any),
+    ).rejects.toThrow(/do not belong to this restaurant tenant/);
+  });
+});

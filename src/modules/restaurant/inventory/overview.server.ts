@@ -8,7 +8,13 @@
  * a manual write, and either way staff should see it.
  */
 import { z } from "zod";
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import {
+  accessibleLocationIds,
+  assertCapability,
+  assertTenantRead,
+  getTenantScope,
+  NO_MATCH_ID,
+} from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { incomingIndex } from "./positions.server";
 import { locationNameMap } from "./locations.server";
@@ -114,12 +120,25 @@ export async function listReconciliation(
   userId: string,
   input: z.infer<typeof reconciliationSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "reconciliation.run");
-  const { data, error } = await sb
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertCapability(sb, userId, input.tenantId, "reconciliation.run", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
+  let query = sb
     .from("restaurant_stock_reconciliation_v")
     .select("*")
     .eq("tenant_id", input.tenantId)
     .limit(input.limit);
+  if (input.locationId) {
+    query = query.eq("location_id", input.locationId);
+  } else if (input.propertyId) {
+    query = query.eq("property_id", input.propertyId);
+  } else {
+    const ids = await accessibleLocationIds(sb, scope);
+    if (ids !== null) query = query.in("location_id", ids.length ? ids : [NO_MATCH_ID]);
+  }
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
 
   const locations = await locationNameMap(sb, input.tenantId);

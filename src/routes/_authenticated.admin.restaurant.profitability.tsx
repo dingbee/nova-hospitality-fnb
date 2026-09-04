@@ -23,7 +23,8 @@ export const Route = createFileRoute("/_authenticated/admin/restaurant/profitabi
       { title: "Menu Profitability — Restaurant & Bar OS" },
       {
         name: "description",
-        content: "Recipe cost versus actual consumption: gross profit, margin and food cost variance per menu item.",
+        content:
+          "Recipe cost versus actual consumption: gross profit, margin and food cost variance per menu item.",
       },
       { name: "robots", content: "noindex,nofollow" },
     ],
@@ -40,13 +41,27 @@ function ProfitabilityPage() {
 
   const [from, setFrom] = useState(iso(new Date(Date.now() - 29 * 864e5)));
   const [to, setTo] = useState(iso(new Date()));
+  // ws.data.properties is already scoped server-side to what this caller may
+  // access (see getWorkspace) — never a manually-typed/unvalidated id. A
+  // single accessible property auto-selects; only a tenant-wide caller with
+  // several ever sees the picker.
+  const properties = ws.data?.properties ?? [];
+  const [propertyId, setPropertyId] = useState<string>("");
+  const effectivePropertyId = propertyId || (properties.length === 1 ? properties[0].id : "");
 
   const listFn = useServerFn(listRestaurantProfitabilityFn);
   const computeFn = useServerFn(computeRestaurantProfitabilityFn);
 
   const snapshots = useQuery({
-    queryKey: ["restaurant.profitability", tenantId],
-    queryFn: () => listFn({ data: { tenantId: tenantId!, limit: 100 } }),
+    queryKey: ["restaurant.profitability", tenantId, effectivePropertyId],
+    queryFn: () =>
+      listFn({
+        data: {
+          tenantId: tenantId!,
+          limit: 100,
+          propertyId: effectivePropertyId || undefined,
+        },
+      }),
     enabled: Boolean(tenantId),
   });
 
@@ -59,6 +74,7 @@ function ProfitabilityPage() {
           to: `${to}T23:59:59.999Z`,
           persist: true,
           limit: 100,
+          propertyId: effectivePropertyId || undefined,
         },
       }),
     onSuccessToast: (d) => `${(d as { rows: unknown[] }).rows.length} menu item(s) analysed`,
@@ -66,7 +82,12 @@ function ProfitabilityPage() {
   });
 
   if (!ws.isLoading && !ws.data?.tenant) {
-    return <EmptyState title="No restaurant tenant" description="You are not a member of a Restaurant & Bar OS tenant." />;
+    return (
+      <EmptyState
+        title="No restaurant tenant"
+        description="You are not a member of a Restaurant & Bar OS tenant."
+      />
+    );
   }
 
   const result = compute.data;
@@ -83,8 +104,33 @@ function ProfitabilityPage() {
 
       <SectionCard title="Analysis period" description="Only closed orders are included.">
         <div className="flex flex-wrap items-end gap-2">
-          <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-auto" />
-          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-auto" />
+          {properties.length > 1 && (
+            <select
+              className="h-9 rounded-md border bg-background px-2 text-sm"
+              value={propertyId}
+              onChange={(e) => setPropertyId(e.target.value)}
+              aria-label="Property"
+            >
+              <option value="">All properties</option>
+              {properties.map((p: any) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <Input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            className="w-auto"
+          />
+          <Input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className="w-auto"
+          />
           <Button size="sm" disabled={compute.isPending} onClick={() => compute.mutate(undefined)}>
             Compute profitability
           </Button>
@@ -93,11 +139,22 @@ function ProfitabilityPage() {
 
       {result && (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard label="Revenue" value={money(result.totals.revenue)} icon={PiggyBank} tone="gold" />
-          <StatCard label="Actual food cost" value={money(result.totals.actual_cost)} icon={Calculator} />
+          <StatCard
+            label="Revenue"
+            value={money(result.totals.revenue)}
+            icon={PiggyBank}
+            tone="gold"
+          />
+          <StatCard
+            label="Actual food cost"
+            value={money(result.totals.actual_cost)}
+            icon={Calculator}
+          />
           <StatCard
             label="Food cost %"
-            value={result.totals.food_cost_percent != null ? `${result.totals.food_cost_percent}%` : "—"}
+            value={
+              result.totals.food_cost_percent != null ? `${result.totals.food_cost_percent}%` : "—"
+            }
             icon={Calculator}
             tone={(result.totals.food_cost_percent ?? 0) > 35 ? "warn" : "green"}
           />
@@ -111,7 +168,10 @@ function ProfitabilityPage() {
         </div>
       )}
 
-      <SectionCard title="By menu item" description={rows.length > 0 ? `${rows.length} item(s) in period.` : undefined}>
+      <SectionCard
+        title="By menu item"
+        description={rows.length > 0 ? `${rows.length} item(s) in period.` : undefined}
+      >
         {rows.length === 0 ? (
           <EmptyState
             title="No analysis yet"
@@ -120,11 +180,15 @@ function ProfitabilityPage() {
         ) : (
           <ul className="divide-y text-sm">
             {rows.map((r: any) => (
-              <li key={r.menu_item_id ?? r.menu_item_name} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <li
+                key={r.menu_item_id ?? r.menu_item_name}
+                className="flex flex-wrap items-center justify-between gap-2 py-2"
+              >
                 <div className="min-w-0">
                   <span className="font-medium">{r.menu_item_name}</span>
                   <p className="text-xs text-muted-foreground">
-                    {r.quantity_sold} sold · revenue {money(r.revenue)} · cost {money(r.actual_cost)}
+                    {r.quantity_sold} sold · revenue {money(r.revenue)} · cost{" "}
+                    {money(r.actual_cost)}
                     {r.variance !== 0 ? ` · variance ${money(r.variance)}` : ""}
                   </p>
                 </div>
@@ -139,16 +203,23 @@ function ProfitabilityPage() {
         )}
       </SectionCard>
 
-      <SectionCard title="Saved snapshots" description="Every computation is stored so trends survive price and recipe changes.">
+      <SectionCard
+        title="Saved snapshots"
+        description="Every computation is stored so trends survive price and recipe changes."
+      >
         {(snapshots.data ?? []).length === 0 ? (
-          <EmptyState title="No snapshots" description="Computed results are saved here automatically." />
+          <EmptyState
+            title="No snapshots"
+            description="Computed results are saved here automatically."
+          />
         ) : (
           <ul className="divide-y text-sm">
             {(snapshots.data ?? []).slice(0, 25).map((s: any) => (
               <li key={s.id} className="flex items-center justify-between py-2">
                 <span>{s.menu_item_name}</span>
                 <span className="text-xs text-muted-foreground">
-                  {s.period_start} → {s.period_end} · {s.currency} {Number(s.gross_profit).toLocaleString()} GP
+                  {s.period_start} → {s.period_end} · {s.currency}{" "}
+                  {Number(s.gross_profit).toLocaleString()} GP
                   {s.food_cost_percent != null ? ` · ${s.food_cost_percent}% food cost` : ""}
                 </span>
               </li>

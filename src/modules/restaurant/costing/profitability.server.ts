@@ -12,7 +12,13 @@
  */
 import { z } from "zod";
 import type { ProfitabilityInput, listProfitabilitySchema } from "../core/contracts";
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import {
+  accessibleLocationIds,
+  assertCapability,
+  assertTenantRead,
+  getTenantScope,
+  NO_MATCH_ID,
+} from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 
 type Sb = any;
@@ -35,8 +41,16 @@ export async function computeProfitability(
   sb: Sb,
   userId: string,
   input: ProfitabilityInput,
-): Promise<{ periodStart: string; periodEnd: string; rows: ProfitabilityRow[]; totals: Omit<ProfitabilityRow, "menu_item_id" | "menu_item_name"> }> {
-  await assertCapability(sb, userId, input.tenantId, "profitability.manage");
+): Promise<{
+  periodStart: string;
+  periodEnd: string;
+  rows: ProfitabilityRow[];
+  totals: Omit<ProfitabilityRow, "menu_item_id" | "menu_item_name">;
+}> {
+  await assertCapability(sb, userId, input.tenantId, "profitability.manage", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
 
   let orderQuery = sb
     .from("restaurant_orders")
@@ -87,9 +101,12 @@ export async function computeProfitability(
 
   // Actual cost is attributed back to the exact order line that consumed it.
   const actualByItem = new Map<string, number>();
-  for (const m of ((movements ?? []) as any[])) {
+  for (const m of (movements ?? []) as any[]) {
     if (!m.order_item_id) continue;
-    actualByItem.set(m.order_item_id, (actualByItem.get(m.order_item_id) ?? 0) + Number(m.total_cost ?? 0));
+    actualByItem.set(
+      m.order_item_id,
+      (actualByItem.get(m.order_item_id) ?? 0) + Number(m.total_cost ?? 0),
+    );
   }
 
   const agg = new Map<string, ProfitabilityRow>();
@@ -205,7 +222,11 @@ export async function listProfitability(
   userId: string,
   input: z.infer<typeof listProfitabilitySchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   let q = sb
     .from("restaurant_profitability_snapshots")
     .select(
@@ -215,6 +236,11 @@ export async function listProfitability(
     .order("computed_at", { ascending: false })
     .limit(input.limit);
   if (input.locationId) q = q.eq("location_id", input.locationId);
+  if (input.propertyId) q = q.eq("property_id", input.propertyId);
+  if (!input.locationId && !input.propertyId) {
+    const ids = await accessibleLocationIds(sb, scope);
+    if (ids !== null) q = q.in("location_id", ids.length ? ids : [NO_MATCH_ID]);
+  }
   const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data ?? [];
