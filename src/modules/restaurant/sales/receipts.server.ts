@@ -9,8 +9,38 @@
  */
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
+import { operatorMessageForState, type FiscalStatusView } from "../fiscal/contracts";
 
 type Sb = any;
+
+/**
+ * Fiscalization is best-effort and must never fail a receipt: a payment
+ * already succeeded by the time a receipt is issued, and fiscal status is a
+ * separate truth layered on top (spec section 14). Any error here — no
+ * fiscal configuration, provider unreachable, adapter throwing — degrades to
+ * "pending", never blocks the receipt or rethrows to the cashier.
+ */
+async function attachFiscalStatus(
+  sb: Sb,
+  userId: string,
+  input: { tenantId: string; orderId: string; restaurantReceiptId: string },
+): Promise<FiscalStatusView> {
+  try {
+    const { requestFiscalization } = await import("../fiscal/fiscal.server");
+    return await requestFiscalization(sb, userId, input);
+  } catch (err) {
+    console.error("[restaurant-fiscal] fiscalization request failed — receipt still issued", err);
+    return {
+      state: "pending",
+      operatorMessage: operatorMessageForState("pending"),
+      fiscalReceiptNumber: null,
+      verificationCode: null,
+      zNumber: null,
+      fiscalizedAt: null,
+      environment: null,
+    };
+  }
+}
 
 export async function issueReceipt(
   sb: Sb,
@@ -27,18 +57,28 @@ export async function issueReceipt(
     .maybeSingle();
 
   if (existing) {
-    if (!input.reprint) return existing;
+    const fiscal = await attachFiscalStatus(sb, userId, {
+      tenantId: input.tenantId,
+      orderId: input.orderId,
+      restaurantReceiptId: existing.id,
+    });
+    if (!input.reprint) return { ...existing, fiscal };
     const { data: reprinted } = await sb
       .from("restaurant_receipts")
       .update({ reprint_count: Number(existing.reprint_count ?? 0) + 1 })
       .eq("id", existing.id)
       .select("*")
       .single();
-    return reprinted ?? existing;
+    return { ...(reprinted ?? existing), fiscal };
   }
 
   const [{ data: order }, { data: items }, { data: payments }] = await Promise.all([
-    sb.from("restaurant_orders").select("*").eq("tenant_id", input.tenantId).eq("id", input.orderId).single(),
+    sb
+      .from("restaurant_orders")
+      .select("*")
+      .eq("tenant_id", input.tenantId)
+      .eq("id", input.orderId)
+      .single(),
     sb
       .from("restaurant_order_items")
       .select(
@@ -56,13 +96,15 @@ export async function issueReceipt(
   ]);
   if (!order) throw new Error("Order not found.");
 
-  let receiptNumber: string;
   const { data: numbered, error: numberError } = await sb.rpc("restaurant_next_document_number", {
     _tenant: input.tenantId,
     _doc_type: "receipt",
     _prefix: "RCP",
   });
-  receiptNumber = numberError || !numbered ? `RCP-${String(order.order_number ?? order.id).slice(-10)}` : numbered;
+  const receiptNumber =
+    numberError || !numbered
+      ? `RCP-${String(order.order_number ?? order.id).slice(-10)}`
+      : numbered;
 
   const live = ((items ?? []) as any[]).filter((i) => i.status !== "voided");
   const snapshot = {
@@ -119,10 +161,20 @@ export async function issueReceipt(
     payload: { receipt_number: receiptNumber, total: Number(order.total ?? 0) },
     dedupeKey: `receipt:${order.id}`,
   });
-  return receipt;
+
+  const fiscal = await attachFiscalStatus(sb, userId, {
+    tenantId: input.tenantId,
+    orderId: input.orderId,
+    restaurantReceiptId: receipt.id,
+  });
+  return { ...receipt, fiscal };
 }
 
-export async function getReceipt(sb: Sb, userId: string, input: { tenantId: string; orderId: string }) {
+export async function getReceipt(
+  sb: Sb,
+  userId: string,
+  input: { tenantId: string; orderId: string },
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   const { data } = await sb
     .from("restaurant_receipts")
@@ -130,5 +182,12 @@ export async function getReceipt(sb: Sb, userId: string, input: { tenantId: stri
     .eq("tenant_id", input.tenantId)
     .eq("order_id", input.orderId)
     .maybeSingle();
-  return data ?? null;
+  if (!data) return null;
+
+  const { getFiscalStatusForOrder } = await import("../fiscal/fiscal.server");
+  const fiscal = await getFiscalStatusForOrder(sb, userId, {
+    tenantId: input.tenantId,
+    orderId: input.orderId,
+  }).catch(() => null);
+  return { ...data, fiscal };
 }

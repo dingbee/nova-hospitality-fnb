@@ -9,17 +9,34 @@
  * Browser-safe: pure data and pure functions only.
  */
 
-export const RECONCILIATION_DOMAINS = ["cash", "payment", "sales", "inventory", "procurement"] as const;
+export const RECONCILIATION_DOMAINS = [
+  "cash",
+  "payment",
+  "sales",
+  "inventory",
+  "procurement",
+  "fiscal",
+] as const;
 export type ReconciliationDomain = (typeof RECONCILIATION_DOMAINS)[number];
 
 export const EXCEPTION_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 export type ExceptionSeverity = (typeof EXCEPTION_SEVERITIES)[number];
 
 /** Lifecycle. Nothing is ever auto-corrected; a human moves it. */
-export const EXCEPTION_STATUSES = ["open", "reviewing", "resolved", "accepted", "dismissed"] as const;
+export const EXCEPTION_STATUSES = [
+  "open",
+  "reviewing",
+  "resolved",
+  "accepted",
+  "dismissed",
+] as const;
 export type ExceptionStatus = (typeof EXCEPTION_STATUSES)[number];
 
-export const CLOSED_EXCEPTION_STATUSES: readonly ExceptionStatus[] = ["resolved", "accepted", "dismissed"];
+export const CLOSED_EXCEPTION_STATUSES: readonly ExceptionStatus[] = [
+  "resolved",
+  "accepted",
+  "dismissed",
+];
 
 export const EXCEPTION_CODES = [
   // Cash / tender
@@ -52,6 +69,12 @@ export const EXCEPTION_CODES = [
   "procurement.invoice_mismatch",
   "procurement.missing_invoice",
   "procurement.outstanding_supplier_amount",
+  // Fiscal — settled sales without a resolved fiscal outcome. This names the
+  // disagreement; TRA Fiscal / VFD Integration Foundation's fiscal.server.ts
+  // is the source of truth it compares against, exactly like every other
+  // domain here compares against its own owning service.
+  "fiscal.receipt_not_fiscalized",
+  "fiscal.receipt_rejected",
 ] as const;
 export type ExceptionCode = (typeof EXCEPTION_CODES)[number];
 
@@ -70,14 +93,16 @@ export const EXCEPTION_CATALOGUE: Record<ExceptionCode, ExceptionDefinition> = {
     domain: "cash",
     title: "Cash overage",
     severity: "medium",
-    requiredAction: "Recount the drawer and identify the unrecorded sale or float error before banking.",
+    requiredAction:
+      "Recount the drawer and identify the unrecorded sale or float error before banking.",
   },
   "cash.shortage": {
     code: "cash.shortage",
     domain: "cash",
     title: "Cash shortage",
     severity: "high",
-    requiredAction: "Recount the drawer, review voids and refunds for the shift, and record the explanation.",
+    requiredAction:
+      "Recount the drawer, review voids and refunds for the shift, and record the explanation.",
   },
   "tender.declaration_missing": {
     code: "tender.declaration_missing",
@@ -91,7 +116,8 @@ export const EXCEPTION_CATALOGUE: Record<ExceptionCode, ExceptionDefinition> = {
     domain: "payment",
     title: "Settled order without a payment record",
     severity: "high",
-    requiredAction: "Capture the missing payment against the order, or reopen and settle it correctly.",
+    requiredAction:
+      "Capture the missing payment against the order, or reopen and settle it correctly.",
   },
   "payment.duplicate": {
     code: "payment.duplicate",
@@ -113,28 +139,32 @@ export const EXCEPTION_CATALOGUE: Record<ExceptionCode, ExceptionDefinition> = {
     domain: "payment",
     title: "Room charge with an unknown posting outcome",
     severity: "high",
-    requiredAction: "Verify the folio with reception before retrying — the charge may already be on the stay.",
+    requiredAction:
+      "Verify the folio with reception before retrying — the charge may already be on the stay.",
   },
   "payment.room_charge_orphaned": {
     code: "payment.room_charge_orphaned",
     domain: "payment",
     title: "Folio posting without a matching outlet payment",
     severity: "high",
-    requiredAction: "The guest was charged but the outlet bill was not settled. Settle or reverse the posting.",
+    requiredAction:
+      "The guest was charged but the outlet bill was not settled. Settle or reverse the posting.",
   },
   "payment.amount_mismatch": {
     code: "payment.amount_mismatch",
     domain: "payment",
     title: "Payments do not equal the recorded paid total",
     severity: "high",
-    requiredAction: "Compare captured payments against the order and correct the settlement record.",
+    requiredAction:
+      "Compare captured payments against the order and correct the settlement record.",
   },
   "payment.refund_without_original": {
     code: "payment.refund_without_original",
     domain: "payment",
     title: "Refund without a valid original payment",
     severity: "critical",
-    requiredAction: "Identify the original tender; if none exists, escalate as a suspected unauthorised refund.",
+    requiredAction:
+      "Identify the original tender; if none exists, escalate as a suspected unauthorised refund.",
   },
   "payment.refund_exceeds_original": {
     code: "payment.refund_exceeds_original",
@@ -148,14 +178,16 @@ export const EXCEPTION_CATALOGUE: Record<ExceptionCode, ExceptionDefinition> = {
     domain: "sales",
     title: "Closed order with no receipt issued",
     severity: "medium",
-    requiredAction: "Issue the receipt from the order, or record why no fiscal document was produced.",
+    requiredAction:
+      "Issue the receipt from the order, or record why no fiscal document was produced.",
   },
   "sales.receipt_without_payment": {
     code: "sales.receipt_without_payment",
     domain: "sales",
     title: "Receipt issued without a settled payment",
     severity: "high",
-    requiredAction: "Locate the tender for this receipt or void the receipt through the correct workflow.",
+    requiredAction:
+      "Locate the tender for this receipt or void the receipt through the correct workflow.",
   },
   "sales.paid_bill_outstanding": {
     code: "sales.paid_bill_outstanding",
@@ -176,35 +208,40 @@ export const EXCEPTION_CATALOGUE: Record<ExceptionCode, ExceptionDefinition> = {
     domain: "sales",
     title: "Order reopened after the bill was settled",
     severity: "medium",
-    requiredAction: "Confirm the reopen reason is authorised and that the revised total was re-settled.",
+    requiredAction:
+      "Confirm the reopen reason is authorised and that the revised total was re-settled.",
   },
   "inventory.stocktake_variance": {
     code: "inventory.stocktake_variance",
     domain: "inventory",
     title: "Counted stock differs from the expected ledger position",
     severity: "medium",
-    requiredAction: "Recount, then post the adjustment with a reason code — the ledger stays the source of truth.",
+    requiredAction:
+      "Recount, then post the adjustment with a reason code — the ledger stays the source of truth.",
   },
   "inventory.ledger_drift": {
     code: "inventory.ledger_drift",
     domain: "inventory",
     title: "Stored balance disagrees with the movement ledger",
     severity: "high",
-    requiredAction: "Investigate manual writes; rebuild the position from the ledger rather than editing it.",
+    requiredAction:
+      "Investigate manual writes; rebuild the position from the ledger rather than editing it.",
   },
   "inventory.negative_position": {
     code: "inventory.negative_position",
     domain: "inventory",
     title: "Negative stock position",
     severity: "high",
-    requiredAction: "Find the unrecorded receipt or over-issued consumption and post the missing movement.",
+    requiredAction:
+      "Find the unrecorded receipt or over-issued consumption and post the missing movement.",
   },
   "procurement.quantity_variance": {
     code: "procurement.quantity_variance",
     domain: "procurement",
     title: "Delivered quantity differs from the order",
     severity: "medium",
-    requiredAction: "Agree the shortfall with the supplier and either close the order or expect a credit.",
+    requiredAction:
+      "Agree the shortfall with the supplier and either close the order or expect a credit.",
   },
   "procurement.price_variance": {
     code: "procurement.price_variance",
@@ -232,7 +269,8 @@ export const EXCEPTION_CATALOGUE: Record<ExceptionCode, ExceptionDefinition> = {
     domain: "procurement",
     title: "Goods received without a supplier invoice",
     severity: "medium",
-    requiredAction: "Chase the supplier invoice so the liability is recognised in the correct period.",
+    requiredAction:
+      "Chase the supplier invoice so the liability is recognised in the correct period.",
   },
   "procurement.outstanding_supplier_amount": {
     code: "procurement.outstanding_supplier_amount",
@@ -240,6 +278,22 @@ export const EXCEPTION_CATALOGUE: Record<ExceptionCode, ExceptionDefinition> = {
     title: "Supplier invoice overdue",
     severity: "medium",
     requiredAction: "Schedule payment or record the dispute against the invoice.",
+  },
+  "fiscal.receipt_not_fiscalized": {
+    code: "fiscal.receipt_not_fiscalized",
+    domain: "fiscal",
+    title: "Settled sale with no resolved fiscal outcome",
+    severity: "high",
+    requiredAction:
+      "Retry fiscalization for this order, or confirm the outlet's fiscal configuration is active.",
+  },
+  "fiscal.receipt_rejected": {
+    code: "fiscal.receipt_rejected",
+    domain: "fiscal",
+    title: "Fiscal receipt rejected by the provider",
+    severity: "high",
+    requiredAction:
+      "Review the rejected fiscal receipt and correct or re-submit it before the fiscal day closes.",
   },
 };
 
