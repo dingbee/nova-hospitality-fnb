@@ -8,11 +8,17 @@ import {
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { assertPurchaseOrderTransition } from "./state-machine";
-import { nextDocumentNumber, recordProcurementAudit } from "../procurement/audit.server";
+import {
+  insertWithUniqueDocumentNumber,
+  recordProcurementAudit,
+} from "../procurement/audit.server";
 import { DOCUMENT_PREFIX } from "../procurement/contracts";
 import type { PurchaseOrderStatus } from "../core/contracts";
 
 type Sb = any;
+
+/** The exact Postgres constraint name from restaurant_purchase_orders' `UNIQUE (tenant_id, reference)`. */
+const PO_REFERENCE_CONSTRAINT = "restaurant_purchase_orders_tenant_id_reference_key";
 
 export async function listPurchaseOrders(
   sb: Sb,
@@ -43,36 +49,56 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
   await assertCapability(sb, userId, input.tenantId, "purchasing.approve");
 
   const subtotal = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
-  const documentNumber = await nextDocumentNumber(
+
+  // An explicit reference is client-supplied (e.g. a supplier's own PO
+  // number) and never comes from the sequence — a retry that resubmits the
+  // same value must fail fast with a clear, actionable error instead of
+  // burning a document number on an insert that was always going to fail.
+  if (input.reference) {
+    const { data: existing } = await sb
+      .from("restaurant_purchase_orders")
+      .select("id")
+      .eq("tenant_id", input.tenantId)
+      .eq("reference", input.reference)
+      .maybeSingle();
+    if (existing) {
+      throw new Error(`A purchase order with reference "${input.reference}" already exists.`);
+    }
+  }
+
+  const po = await insertWithUniqueDocumentNumber(
     sb,
     input.tenantId,
     "purchase_order",
     DOCUMENT_PREFIX.purchase_order,
+    PO_REFERENCE_CONSTRAINT,
+    (documentNumber) =>
+      sb
+        .from("restaurant_purchase_orders")
+        .insert({
+          tenant_id: input.tenantId,
+          property_id: input.propertyId ?? null,
+          location_id: input.locationId ?? null,
+          supplier_id: input.supplierId ?? null,
+          reference: input.reference ?? documentNumber,
+          document_number: documentNumber,
+          status: "draft",
+          expected_at: input.expectedAt ?? null,
+          subtotal,
+          total: subtotal,
+          currency: input.currency,
+          notes: input.notes ?? null,
+          created_by: userId,
+          buyer_id: userId,
+          metadata: { origin: "direct", direct_reason: input.directReason, authorised_by: userId },
+        })
+        .select("id, reference, document_number, total, currency")
+        .single(),
+    // A pre-checked explicit reference should never be silently replaced by
+    // a regenerated one on a rare TOCTOU collision — surface that as a real
+    // error immediately rather than retrying with a different value.
+    { retryOnCollision: !input.reference },
   );
-  const reference = input.reference ?? documentNumber;
-
-  const { data: po, error } = await sb
-    .from("restaurant_purchase_orders")
-    .insert({
-      tenant_id: input.tenantId,
-      property_id: input.propertyId ?? null,
-      location_id: input.locationId ?? null,
-      supplier_id: input.supplierId ?? null,
-      reference,
-      document_number: documentNumber,
-      status: "draft",
-      expected_at: input.expectedAt ?? null,
-      subtotal,
-      total: subtotal,
-      currency: input.currency,
-      notes: input.notes ?? null,
-      created_by: userId,
-      buyer_id: userId,
-      metadata: { origin: "direct", direct_reason: input.directReason, authorised_by: userId },
-    })
-    .select("id, reference, document_number, total, currency")
-    .single();
-  if (error) throw new Error(error.message);
 
   if (input.lines.length > 0) {
     const { error: lineError } = await sb.from("restaurant_purchase_order_items").insert(

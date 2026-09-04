@@ -6,7 +6,11 @@
 import type { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
-import { nextDocumentNumber, recordProcurementAudit } from "./audit.server";
+import {
+  insertWithUniqueDocumentNumber,
+  nextDocumentNumber,
+  recordProcurementAudit,
+} from "./audit.server";
 import { assertMayApprove } from "./approvals.server";
 import { recordPriceObservation } from "./pricing.server";
 import {
@@ -45,7 +49,12 @@ export async function listPurchaseRequests(
 export async function getPurchaseRequest(sb: Sb, userId: string, tenantId: string, id: string) {
   await assertTenantRead(sb, userId, tenantId);
   const [{ data: header, error }, { data: lines }, { data: audit }] = await Promise.all([
-    sb.from("restaurant_purchase_requests").select(REQUEST_SELECT).eq("tenant_id", tenantId).eq("id", id).single(),
+    sb
+      .from("restaurant_purchase_requests")
+      .select(REQUEST_SELECT)
+      .eq("tenant_id", tenantId)
+      .eq("id", id)
+      .single(),
     sb
       .from("restaurant_purchase_request_items")
       .select(
@@ -69,7 +78,10 @@ export async function getPurchaseRequest(sb: Sb, userId: string, tenantId: strin
 export async function savePurchaseRequest(sb: Sb, userId: string, input: SavePurchaseRequestInput) {
   await assertCapability(sb, userId, input.tenantId, "purchase.request");
 
-  const estimatedTotal = input.lines.reduce((s, l) => s + l.quantity * (l.estimatedUnitCost ?? 0), 0);
+  const estimatedTotal = input.lines.reduce(
+    (s, l) => s + l.quantity * (l.estimatedUnitCost ?? 0),
+    0,
+  );
 
   let requestId = input.id ?? null;
   let documentNumber: string;
@@ -84,7 +96,9 @@ export async function savePurchaseRequest(sb: Sb, userId: string, input: SavePur
       .single();
     if (error || !existing) throw new Error("Purchase request not found.");
     if (existing.status !== "draft") {
-      throw new Error("Only draft requests can be edited — submitted history is never overwritten.");
+      throw new Error(
+        "Only draft requests can be edited — submitted history is never overwritten.",
+      );
     }
     previousState = existing.status;
     documentNumber = existing.document_number;
@@ -294,21 +308,30 @@ export async function transitionPurchaseRequest(
 }
 
 /** Approved request → purchase order. The request is never mutated away. */
-export async function convertRequestToOrder(sb: Sb, userId: string, input: ConvertRequestToOrderInput) {
+export async function convertRequestToOrder(
+  sb: Sb,
+  userId: string,
+  input: ConvertRequestToOrderInput,
+) {
   await assertCapability(sb, userId, input.tenantId, "purchasing.manage");
 
   const { data: req, error } = await sb
     .from("restaurant_purchase_requests")
-    .select("id, status, document_number, currency, property_id, location_id, correlation_id, notes")
+    .select(
+      "id, status, document_number, currency, property_id, location_id, correlation_id, notes",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("id", input.requestId)
     .single();
   if (error || !req) throw new Error("Purchase request not found.");
-  if (req.status !== "approved") throw new Error("Only an approved request can become a purchase order.");
+  if (req.status !== "approved")
+    throw new Error("Only an approved request can become a purchase order.");
 
   const { data: lines } = await sb
     .from("restaurant_purchase_request_items")
-    .select("id, inventory_item_id, unit_id, description, quantity, approved_quantity, estimated_unit_cost")
+    .select(
+      "id, inventory_item_id, unit_id, description, quantity, approved_quantity, estimated_unit_cost",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("purchase_request_id", input.requestId);
 
@@ -321,37 +344,42 @@ export async function convertRequestToOrder(sb: Sb, userId: string, input: Conve
   }));
 
   const subtotal = orderLines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
-  const documentNumber = await nextDocumentNumber(
+
+  // Never a client-supplied reference here — always safe to retry with a
+  // freshly generated document number if it happens to collide with an
+  // existing (tenant_id, reference) row (e.g. legacy/imported data the
+  // sequence doesn't know about).
+  const po = await insertWithUniqueDocumentNumber(
     sb,
     input.tenantId,
     "purchase_order",
     DOCUMENT_PREFIX.purchase_order,
+    "restaurant_purchase_orders_tenant_id_reference_key",
+    (documentNumber) =>
+      sb
+        .from("restaurant_purchase_orders")
+        .insert({
+          tenant_id: input.tenantId,
+          property_id: req.property_id,
+          location_id: req.location_id,
+          supplier_id: input.supplierId,
+          purchase_request_id: input.requestId,
+          reference: documentNumber,
+          document_number: documentNumber,
+          status: "draft",
+          buyer_id: userId,
+          requested_delivery_date: input.requestedDeliveryDate ?? null,
+          payment_terms: input.paymentTerms ?? null,
+          subtotal,
+          total: subtotal,
+          currency: req.currency ?? "TZS",
+          notes: input.notes ?? req.notes ?? null,
+          created_by: userId,
+          correlation_id: req.correlation_id,
+        })
+        .select("id, document_number, total, currency")
+        .single(),
   );
-
-  const { data: po, error: poErr } = await sb
-    .from("restaurant_purchase_orders")
-    .insert({
-      tenant_id: input.tenantId,
-      property_id: req.property_id,
-      location_id: req.location_id,
-      supplier_id: input.supplierId,
-      purchase_request_id: input.requestId,
-      reference: documentNumber,
-      document_number: documentNumber,
-      status: "draft",
-      buyer_id: userId,
-      requested_delivery_date: input.requestedDeliveryDate ?? null,
-      payment_terms: input.paymentTerms ?? null,
-      subtotal,
-      total: subtotal,
-      currency: req.currency ?? "TZS",
-      notes: input.notes ?? req.notes ?? null,
-      created_by: userId,
-      correlation_id: req.correlation_id,
-    })
-    .select("id, document_number, total, currency")
-    .single();
-  if (poErr) throw new Error(poErr.message);
 
   if (orderLines.length > 0) {
     const { error: liErr } = await sb.from("restaurant_purchase_order_items").insert(

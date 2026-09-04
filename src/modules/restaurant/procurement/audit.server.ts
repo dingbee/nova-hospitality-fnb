@@ -57,3 +57,50 @@ export async function nextDocumentNumber(
   }
   return String(data);
 }
+
+/**
+ * Inserts a document whose `reference` column is generated from
+ * `nextDocumentNumber` and carries its own tenant-scoped uniqueness
+ * constraint (e.g. restaurant_purchase_orders' `(tenant_id, reference)`).
+ *
+ * `nextDocumentNumber`'s sequence guarantees a fresh number is never
+ * reused, but it commits independently of the row insert that follows it:
+ * if that insert fails, the number is already gone. This helper retries
+ * with a NEW number when the insert fails specifically on the named
+ * reference-uniqueness constraint — covering the case where the sequence
+ * and pre-existing references have drifted apart (e.g. legacy/imported
+ * rows inserted outside the generator). A bounded number of attempts keeps
+ * a genuinely broken sequence from looping forever.
+ *
+ * This never applies to a caller-supplied reference: a human or another
+ * system explicitly chose that value (e.g. a supplier's own PO number),
+ * so silently substituting a different one on collision would be wrong —
+ * that case must be validated by the caller before this runs and, if it
+ * still races past that check, surfaces as a real, un-retried error here.
+ */
+export async function insertWithUniqueDocumentNumber(
+  sb: Sb,
+  tenantId: string,
+  docType: ProcurementDocumentType,
+  prefix: string,
+  referenceConstraintName: string,
+  insertRow: (
+    documentNumber: string,
+  ) => Promise<{ data: any; error: { code?: unknown; message?: string } | null }>,
+  options?: { retryOnCollision?: boolean; maxAttempts?: number },
+): Promise<any> {
+  const retryOnCollision = options?.retryOnCollision ?? true;
+  const maxAttempts = options?.maxAttempts ?? 5;
+  let lastError: { code?: unknown; message?: string } | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const documentNumber = await nextDocumentNumber(sb, tenantId, docType, prefix);
+    const { data, error } = await insertRow(documentNumber);
+    if (!error) return data;
+    lastError = error;
+    const isReferenceCollision =
+      String(error.code) === "23505" &&
+      String(error.message ?? "").includes(referenceConstraintName);
+    if (!retryOnCollision || !isReferenceCollision || attempt === maxAttempts) break;
+  }
+  throw new Error(lastError?.message ?? "Failed to create document.");
+}
