@@ -566,7 +566,13 @@ export function PosWorkspace({
           each pane below manages its own independent scroll region, so the
           bill's totals and primary actions never move off-screen while
           browsing a long menu. */}
-      <div className="grid gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-2 min-[1700px]:grid-cols-[260px_minmax(0,1fr)_340px]">
+      {/* Side-pane widths widen at xl/2xl rather than staying fixed from lg —
+          at the narrow edge of lg (1024px) the persistent 256px nav sidebar
+          leaves only ~720px of content width, so a single generous fixed
+          width for Floor+Bill would squeeze Menu (the dominant pane) to
+          near nothing. minmax(…,1fr) on Menu is the actual floor: it never
+          shrinks below that regardless of viewport. */}
+      <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[200px_minmax(200px,1fr)_280px] xl:gap-4 xl:grid-cols-[240px_minmax(240px,1fr)_320px] 2xl:grid-cols-[280px_minmax(280px,1fr)_360px]">
         {/* Floor */}
         <SectionCard
           title={isBar ? "Bar floor & tabs" : "Floor"}

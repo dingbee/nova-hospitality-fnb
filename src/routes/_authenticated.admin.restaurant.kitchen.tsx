@@ -80,22 +80,22 @@ function KitchenTicketCard({
   const next = NEXT[ticket.status];
   return (
     <li
-      className={`flex flex-col gap-2 rounded-xl border p-3 ${
+      className={`flex flex-col gap-3 rounded-xl border p-5 ${
         ticket.breaching ? "border-destructive/50 bg-destructive/5" : "bg-card"
       }`}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="font-display text-base font-semibold tabular-nums">
+        <span className="font-display text-2xl font-semibold tabular-nums">
           {ticket.ticket_number}
         </span>
-        <span className="flex shrink-0 items-center gap-1">
+        <span className="flex shrink-0 items-center gap-1.5">
           {ticket.breaching && <StatusChip tone="danger">Attention</StatusChip>}
           <StatusChip tone={ticketStatusTone(ticket.status)}>{ticket.status}</StatusChip>
         </span>
       </div>
 
-      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span className="truncate font-medium text-foreground">
+      <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
+        <span className="truncate text-base font-semibold text-foreground">
           {ticket.table_code
             ? `Table ${ticket.table_code}`
             : (ticket.order_number ?? "Walk-in / bar tab")}
@@ -104,29 +104,29 @@ function KitchenTicketCard({
       </div>
 
       <p
-        className={`text-lg font-semibold leading-none tabular-nums ${
+        className={`text-3xl font-semibold leading-none tabular-nums ${
           ticket.breaching ? "text-destructive" : "text-foreground"
         }`}
       >
         {mmss(ticket.elapsed_seconds)}{" "}
-        <span className="text-xs font-normal text-muted-foreground">
+        <span className="text-sm font-normal text-muted-foreground">
           of {ticket.target_minutes}m target
         </span>
       </p>
 
-      <ul className="space-y-1 text-sm">
+      <ul className="space-y-1.5 text-base">
         {ticket.items.length === 0 && <li className="text-muted-foreground">No items</li>}
         {ticket.items.map((i: any) => (
           <li key={i.id}>
             <span className="font-semibold tabular-nums">{Number(i.quantity)}×</span>{" "}
             {i.description}
             {(i.modifiers ?? []).length > 0 && (
-              <span className="block text-xs text-muted-foreground">
+              <span className="block text-sm text-muted-foreground">
                 {i.modifiers.map((m: any) => m.name).join(", ")}
               </span>
             )}
             {i.notes && (
-              <span className="block text-xs italic text-muted-foreground">— {i.notes}</span>
+              <span className="block text-sm italic text-muted-foreground">— {i.notes}</span>
             )}
           </li>
         ))}
@@ -134,7 +134,7 @@ function KitchenTicketCard({
 
       {next && (
         <Button
-          className="mt-1 min-h-11 w-full"
+          className="mt-1 min-h-12 w-full text-base"
           variant={ticket.status === "ready" ? "outline" : "secondary"}
           disabled={advancing}
           onClick={() => onAdvance(next)}
@@ -293,7 +293,7 @@ function KitchenPage() {
             }
           />
         ) : (
-          <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:[grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
             {visibleRows.map((t: any) => (
               <KitchenTicketCard
                 key={t.id}
