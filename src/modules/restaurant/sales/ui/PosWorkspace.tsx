@@ -56,6 +56,8 @@ import { PosItemDialog } from "./PosItemDialog";
 import { PosBillDialog } from "./PosBillDialog";
 import { PosPaymentDialog } from "./PosPaymentDialog";
 import { PosRoomChargeDialog } from "./PosRoomChargeDialog";
+import { PosMobileMoneyDialog } from "./PosMobileMoneyDialog";
+import { getMobileMoneyAccountFn } from "../../payments/mobilemoney/mobilemoney.functions";
 import { PosReceiptDialog } from "./PosReceiptDialog";
 import { lineTotal, money, type CartLine } from "./pos-types";
 import {
@@ -126,6 +128,7 @@ export function PosWorkspace({
   const [pickerItem, setPickerItem] = useState<any | null>(null);
   const [payOpen, setPayOpen] = useState(false);
   const [roomChargeAmount, setRoomChargeAmount] = useState<number | null>(null);
+  const [mobileMoneyAmount, setMobileMoneyAmount] = useState<number | null>(null);
   const [billOpen, setBillOpen] = useState(false);
   const [splitMode, setSplitMode] = useState<BillSplitMode>("none");
   const [ways, setWays] = useState(2);
@@ -178,6 +181,16 @@ export function PosWorkspace({
     enabled: Boolean(tenantId && orderId),
     refetchInterval: 30_000,
   });
+  const currentLocationId = (order.data as any)?.order?.location_id as string | undefined;
+  const mobileMoneyAccountFn = useServerFn(getMobileMoneyAccountFn);
+  const mobileMoneyAccount = useQuery({
+    queryKey: ["restaurant.mobilemoney.account", tenantId, currentLocationId],
+    queryFn: () =>
+      mobileMoneyAccountFn({ data: { tenantId: tenantId!, locationId: currentLocationId! } }),
+    enabled: Boolean(tenantId && currentLocationId),
+    staleTime: 60_000,
+  });
+  const mobileMoneyActive = (mobileMoneyAccount.data as any)?.activation_state === "active";
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["restaurant.pos.board"] });
@@ -566,7 +579,13 @@ export function PosWorkspace({
           each pane below manages its own independent scroll region, so the
           bill's totals and primary actions never move off-screen while
           browsing a long menu. */}
-      <div className="grid gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-2 min-[1700px]:grid-cols-[260px_minmax(0,1fr)_340px]">
+      {/* Side-pane widths widen at xl/2xl rather than staying fixed from lg —
+          at the narrow edge of lg (1024px) the persistent 256px nav sidebar
+          leaves only ~720px of content width, so a single generous fixed
+          width for Floor+Bill would squeeze Menu (the dominant pane) to
+          near nothing. minmax(…,1fr) on Menu is the actual floor: it never
+          shrinks below that regardless of viewport. */}
+      <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[200px_minmax(200px,1fr)_280px] xl:gap-4 xl:grid-cols-[240px_minmax(240px,1fr)_320px] 2xl:grid-cols-[280px_minmax(280px,1fr)_360px]">
         {/* Floor */}
         <SectionCard
           title={isBar ? "Bar floor & tabs" : "Floor"}
@@ -1059,11 +1078,30 @@ export function PosWorkspace({
           setPayOpen(false);
           setRoomChargeAmount(value);
         }}
+        mobileMoneyActive={mobileMoneyActive}
+        onRequestMobileMoney={(value) => {
+          setPayOpen(false);
+          setMobileMoneyAmount(value);
+        }}
         onClose={() => {
           setPayOpen(false);
           setShareAmount(null);
         }}
         onPay={(input) => pay.mutate(input)}
+      />
+
+      <PosMobileMoneyDialog
+        open={mobileMoneyAmount != null && Boolean(orderId)}
+        tenantId={tenantId}
+        orderId={orderId}
+        amount={mobileMoneyAmount ?? 0}
+        currency={currency}
+        onClose={() => setMobileMoneyAmount(null)}
+        onPosted={() => {
+          setMobileMoneyAmount(null);
+          setShareAmount(null);
+          refresh();
+        }}
       />
 
       <PosRoomChargeDialog

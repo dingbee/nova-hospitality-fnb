@@ -543,6 +543,7 @@ function mapHeader(domain: string, header: string): string | null {
       OpeningQty: "openingQuantity",
       Unit: "unitCode",
       Cost: "averageCost",
+      "Pack Size": "packSize",
     },
     supplier_product: {
       Supplier: "supplierName",
@@ -637,13 +638,13 @@ describe("duplicate inventory / re-import", () => {
 
   it("importing a source that matches an already-committed item updates it rather than duplicating", async () => {
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test" } as any);
-    await stageCsv(TENANT, ws.id, "Name,SKU\nRice,ITM-1\n", "inventory_item");
+    await stageCsv(TENANT, ws.id, "Name,SKU,Pack Size\nRice,ITM-1,1\n", "inventory_item");
     await approveAllPending(TENANT, ws.id); // a brand new item is proposed, not auto-approved — a human approves it once
     await commitImportWorkspace(sb, USER, { tenantId: TENANT, workspaceId: ws.id } as any);
     expect(db.restaurant_inventory_items).toHaveLength(1);
 
     const ws2 = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test 2" } as any);
-    await stageCsv(TENANT, ws2.id, "Name,SKU\nRice,ITM-1\n", "inventory_item");
+    await stageCsv(TENANT, ws2.id, "Name,SKU,Pack Size\nRice,ITM-1,1\n", "inventory_item");
     const staged = await listStagedRecords(sb, USER, {
       tenantId: TENANT,
       workspaceId: ws2.id,
@@ -667,7 +668,7 @@ describe("commit: dependency order and cross-domain resolution", () => {
     await stageCsv(
       TENANT,
       ws.id,
-      "Name,SKU,OpeningQty,Unit,Cost\nChicken Breast,ITM-CHK,50,kg,12000\n",
+      "Name,SKU,OpeningQty,Unit,Cost,Pack Size\nChicken Breast,ITM-CHK,50,kg,12000,1\n",
       "inventory_item",
     );
     // A human approves the two brand-new entities before the supplier product row (which
@@ -732,7 +733,7 @@ describe("commit: dependency order and cross-domain resolution", () => {
     await stageCsv(
       TENANT,
       ws.id,
-      "Name,SKU,Cost\nImported Cheese,ITM-CHZ,4500\n",
+      "Name,SKU,Cost,Pack Size\nImported Cheese,ITM-CHZ,4500,1\n",
       "inventory_item",
     );
     await stageCsv(TENANT, ws.id, "Name,Price\nCheese Plate,9500\n", "menu_item");
@@ -751,7 +752,12 @@ describe("commit: dependency order and cross-domain resolution", () => {
       tenantId: TENANT,
       name: "No property",
     } as any);
-    await stageCsv(TENANT, ws.id, "Name,SKU,Cost\nHouse Salt,ITM-SLT,500\n", "inventory_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      "Name,SKU,Cost,Pack Size\nHouse Salt,ITM-SLT,500,1\n",
+      "inventory_item",
+    );
     await approveAllPending(TENANT, ws.id);
     await commitImportWorkspace(sb, USER, { tenantId: TENANT, workspaceId: ws.id } as any);
     expect(db.restaurant_inventory_items![0]!.currency).toBe("TZS");
@@ -1008,7 +1014,7 @@ describe("human review", () => {
       },
     );
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test" } as any);
-    await stageCsv(TENANT, ws.id, "Name,SKU\nTomato,\n", "inventory_item");
+    await stageCsv(TENANT, ws.id, "Name,SKU,Pack Size\nTomato,,1\n", "inventory_item");
     const staged = await listStagedRecords(sb, USER, {
       tenantId: TENANT,
       workspaceId: ws.id,
@@ -1053,7 +1059,7 @@ describe("human review", () => {
       tenantId: TENANT,
       name: "Candidates",
     } as any);
-    await stageCsv(TENANT, ws.id, "Name,SKU,Cost\nTomato,,500\n", "inventory_item");
+    await stageCsv(TENANT, ws.id, "Name,SKU,Cost,Pack Size\nTomato,,500,1\n", "inventory_item");
     const staged = await listStagedRecords(sb, USER, {
       tenantId: TENANT,
       workspaceId: ws.id,
@@ -1103,7 +1109,7 @@ describe("human review", () => {
 
   it("a committed record can no longer be re-decided", async () => {
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test" } as any);
-    await stageCsv(TENANT, ws.id, "Name,SKU\nWidget,ITM-W\n", "inventory_item");
+    await stageCsv(TENANT, ws.id, "Name,SKU,Pack Size\nWidget,ITM-W,1\n", "inventory_item");
     await approveAllPending(TENANT, ws.id);
     await commitImportWorkspace(sb, USER, { tenantId: TENANT, workspaceId: ws.id } as any);
     const staged = await listStagedRecords(sb, USER, {
@@ -1364,7 +1370,7 @@ describe("adversarial — Phase 16 scenarios exercised through the real orchestr
     await stageCsv(
       TENANT,
       ws.id,
-      "Name,SKU,Cost\nChicken Breast,DUP-1,12000\nChicken Thigh,DUP-1,9500\n",
+      "Name,SKU,Cost,Pack Size\nChicken Breast,DUP-1,12000,1\nChicken Thigh,DUP-1,9500,1\n",
       "inventory_item",
     );
     await approveAllPending(TENANT, ws.id);
@@ -1387,7 +1393,7 @@ describe("adversarial — Phase 16 scenarios exercised through the real orchestr
     await stageCsv(
       TENANT,
       ws.id,
-      "Name,Barcode\nCoca-Cola 500ml,6009123456789\nGeneric Cola 500ml,6009123456789\n",
+      "Name,Barcode,Pack Size\nCoca-Cola 500ml,6009123456789,1\nGeneric Cola 500ml,6009123456789,1\n",
       "inventory_item",
     );
     await approveAllPending(TENANT, ws.id);
@@ -1465,5 +1471,92 @@ describe("adversarial — Phase 16 scenarios exercised through the real orchestr
     const result = await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
     const domains = result.sheets[0]!.detectedDomains.map((g: any) => g.domain);
     expect(domains).toEqual(expect.arrayContaining(["menu_item", "product_station"]));
+  });
+});
+
+describe("pre-freeze cleanup — controlled small import regression (spec section 13)", () => {
+  // A minimal, deliberately small dataset — 1 supplier, 1 supplier product,
+  // 1 inventory item (with Pack Size, per the repaired contract), 1 menu
+  // item carrying its own price, 1 recipe component linking them — run
+  // through the real staged -> approved -> committed pipeline end to end.
+  // Zero unexplained failures is the acceptance bar; this is not a rerun of
+  // the historical import (deliberately not attempted here).
+  it("stages, approves and commits a small controlled dataset end to end with zero unexplained failures", async () => {
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Controlled regression test",
+    } as any);
+
+    await stageCsv(TENANT, ws.id, "Name,Code\nArusha Fresh Foods Ltd,AFF\n", "supplier");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      "Name,SKU,Unit,Cost,Pack Size\nChicken Breast,ITM-CB-01,kg,14000,1\n",
+      "inventory_item",
+    );
+    await approveAllPending(TENANT, ws.id);
+    const firstPass = await commitImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    } as any);
+    expect(firstPass.failed).toBe(0);
+    expect(db.restaurant_suppliers).toHaveLength(1);
+    expect(db.restaurant_inventory_items).toHaveLength(1);
+    // upsertInventoryItem itself is mocked in this file (see the module
+    // mock above) — its own required-packSize contract is covered by
+    // inventory.server.test.ts. What this test proves is the orchestrator's
+    // own guard: commitInventoryItemRow refuses a row with no Pack Size
+    // mapped rather than silently letting one through (already exercised
+    // by the CSV-fixture regressions above this describe block).
+
+    await stageCsv(
+      TENANT,
+      ws.id,
+      "Supplier,ItemSku,SupplierSku,UnitPrice\nArusha Fresh Foods Ltd,ITM-CB-01,AFF-CB-01,13500\n",
+      "supplier_product",
+    );
+    await stageCsv(TENANT, ws.id, "Name,Price\nClassic Chicken Burger,18000\n", "menu_item");
+    await approveAllPending(TENANT, ws.id);
+    const secondPass = await commitImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    } as any);
+    expect(secondPass.failed).toBe(0);
+    expect(db.restaurant_supplier_products).toHaveLength(1);
+    expect(db.restaurant_menu_items).toHaveLength(1);
+    expect(Number(db.restaurant_menu_items![0]!.price)).toBe(18000);
+
+    await stageCsv(
+      TENANT,
+      ws.id,
+      "Dish,IngredientSku,Quantity,Unit\nClassic Chicken Burger,ITM-CB-01,0.18,kg\n",
+      "recipe_component",
+    );
+    const staged = await listStagedRecords(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      domain: "recipe_component" as any,
+      limit: 100,
+    } as any);
+    expect(staged[0]!.match_status).toBe("exact_match");
+    const thirdPass = await commitImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    } as any);
+    expect(thirdPass.failed).toBe(0);
+    expect(recipeComponents).toHaveLength(1);
+
+    // Verified back through the same read surfaces the normal application
+    // UI uses (listStagedRecords/getImportWorkspace), not a raw table dump.
+    const { summary } = await getImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    });
+    expect(summary.total).toBe(5);
+    expect(summary.byDomain.supplier).toBe(1);
+    expect(summary.byDomain.inventory_item).toBe(1);
+    expect(summary.byDomain.supplier_product).toBe(1);
+    expect(summary.byDomain.menu_item).toBe(1);
+    expect(summary.byDomain.recipe_component).toBe(1);
   });
 });

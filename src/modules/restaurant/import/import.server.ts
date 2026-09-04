@@ -877,6 +877,19 @@ async function commitInventoryItemRow(
   propertyCurrency: string,
 ): Promise<string> {
   const m = record.mapped_data;
+  // packSize is required by upsertInventoryItem's own contract (see
+  // contracts.ts) — the column it fills, restaurant_inventory_items.
+  // pack_size, is NOT NULL. Passing `undefined` here would silently drop
+  // the key from the insert payload and let the column's DEFAULT 1 win
+  // with no validation ever firing, which is exactly the "arbitrary
+  // default" this cleanup exists to eliminate: a genuinely-missing Pack
+  // Size on the source sheet must fail this row explicitly, the same way
+  // an unresolved supplier or dish fails a row elsewhere in this file.
+  if (m.packSize == null) {
+    throw new Error(
+      `"${m.name ?? "This item"}": no Pack Size mapped for this row. Map a Pack Size column (or fix the value) and re-stage the sheet before importing.`,
+    );
+  }
   const result = await upsertInventoryItem(sb, userId, {
     tenantId,
     id: record.matched_entity_id ?? undefined,
@@ -894,6 +907,7 @@ async function commitInventoryItemRow(
     currency: propertyCurrency,
     trackBatches: false,
     allowNegative: false,
+    packSize: Number(m.packSize),
   });
   return result.id as string;
 }

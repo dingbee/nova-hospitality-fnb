@@ -31,7 +31,9 @@ export function PosReceiptDialog({
   if (!receipt) return null;
   const snapshot = receipt.snapshot ?? {};
   const currency = receipt.currency ?? "TZS";
-  const change = Number(snapshot.payments?.reduce?.((s: number, p: any) => s + Number(p.change_due ?? 0), 0) ?? 0);
+  const change = Number(
+    snapshot.payments?.reduce?.((s: number, p: any) => s + Number(p.change_due ?? 0), 0) ?? 0,
+  );
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -45,15 +47,38 @@ export function PosReceiptDialog({
         </DialogHeader>
 
         <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
-          <p className="font-semibold">Paid in full · {money(Number(receipt.total ?? 0), currency)}</p>
+          <p className="font-semibold">
+            Paid in full · {money(Number(receipt.total ?? 0), currency)}
+          </p>
           {change > 0 && <p className="text-xs">Change given {money(change, currency)}</p>}
+          {receipt.fiscal && receipt.fiscal.state !== "not_required" && (
+            <div
+              className={`mt-2 rounded-md border p-2 text-xs ${
+                receipt.fiscal.state === "fiscalized"
+                  ? "border-emerald-500/40 bg-emerald-500/10"
+                  : receipt.fiscal.state === "rejected"
+                    ? "border-destructive/40 bg-destructive/10"
+                    : "border-amber-500/40 bg-amber-500/10"
+              }`}
+            >
+              <p className="font-semibold">{receipt.fiscal.operatorMessage}</p>
+              {receipt.fiscal.fiscalReceiptNumber && (
+                <p className="mt-0.5 font-mono">
+                  Fiscal receipt {receipt.fiscal.fiscalReceiptNumber}
+                  {receipt.fiscal.verificationCode ? ` · ${receipt.fiscal.verificationCode}` : ""}
+                </p>
+              )}
+            </div>
+          )}
           {receipt.delivered_at ? (
             <Badge variant="secondary" className="mt-1">
               Delivered by {receipt.delivery_channel}
               {receipt.delivered_to ? ` · ${receipt.delivered_to}` : ""}
             </Badge>
           ) : (
-            <p className="text-xs text-muted-foreground">Record how the guest receives this receipt.</p>
+            <p className="text-xs text-muted-foreground">
+              Record how the guest receives this receipt.
+            </p>
           )}
         </div>
 
@@ -67,9 +92,13 @@ export function PosReceiptDialog({
                     {(l.modifiers ?? []).map((m: any) => m.name).join(", ")}
                   </span>
                 )}
-                {l.seat_number ? <span className="block pl-4 text-muted-foreground">seat {l.seat_number}</span> : null}
+                {l.seat_number ? (
+                  <span className="block pl-4 text-muted-foreground">seat {l.seat_number}</span>
+                ) : null}
               </span>
-              <span className="shrink-0 tabular-nums">{money(Number(l.line_total ?? 0), currency)}</span>
+              <span className="shrink-0 tabular-nums">
+                {money(Number(l.line_total ?? 0), currency)}
+              </span>
             </div>
           ))}
 
@@ -87,7 +116,11 @@ export function PosReceiptDialog({
 
           <div className="space-y-1 border-t pt-2">
             {(snapshot.payments ?? []).map((p: any) => (
-              <Row key={p.id} label={String(p.method).replace(/_/g, " ")} value={money(Number(p.amount ?? 0), currency)} />
+              <Row
+                key={p.id}
+                label={String(p.method).replace(/_/g, " ")}
+                value={money(Number(p.amount ?? 0), currency)}
+              />
             ))}
           </div>
         </div>

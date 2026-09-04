@@ -74,6 +74,10 @@ export const RESTAURANT_CAPABILITIES = [
   "requisition.issue",
   "documents.audit.read",
   "import.manage",
+  "fiscal.manage",
+  "fiscal.view",
+  "mobile_money.manage",
+  "mobile_money.view",
 ] as const;
 export type RestaurantCapability = (typeof RESTAURANT_CAPABILITIES)[number];
 
@@ -340,6 +344,14 @@ const CAPABILITY_ROLES: Record<RestaurantCapability, readonly RestaurantRole[]> 
   // recipes) at once — narrower than any single domain's own edit
   // capability, restricted to the tenant's senior operating roles.
   "import.manage": ["owner", "general_manager", "restaurant_manager"],
+  // Taxpayer identity, device serials and activation state — narrow, like tax.manage.
+  "fiscal.manage": ["owner", "general_manager", "accountant"],
+  // Status/receipts visibility for whoever needs to see fiscal health, without config rights.
+  "fiscal.view": ["owner", "general_manager", "restaurant_manager", "accountant"],
+  // Merchant number/account config and refunds — money-affecting, narrow like fiscal.manage.
+  "mobile_money.manage": ["owner", "general_manager", "accountant"],
+  // Health/reconciliation visibility, without config or refund rights.
+  "mobile_money.view": ["owner", "general_manager", "restaurant_manager", "accountant"],
 };
 
 export function rolesForCapability(capability: RestaurantCapability): readonly RestaurantRole[] {

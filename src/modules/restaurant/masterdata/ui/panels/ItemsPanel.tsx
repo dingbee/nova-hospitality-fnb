@@ -4,7 +4,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { SectionCard } from "@/components/os/SectionCard";
-import { EntitySheet, Field, FieldRow, QuantityField, SearchSelect } from "@/modules/restaurant/ui/forms";
+import {
+  EntitySheet,
+  Field,
+  FieldRow,
+  QuantityField,
+  SearchSelect,
+} from "@/modules/restaurant/ui/forms";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { upsertRestaurantInventoryItemFn } from "@/modules/restaurant/inventory/inventory.functions";
 import { PanelList, PanelToolbar } from "../shared";
@@ -19,6 +25,7 @@ const empty = {
   unitId: "" as string | null,
   purchaseUnitId: "" as string | null,
   consumptionUnitId: "" as string | null,
+  packSize: 1,
   currentQuantity: 0,
   parLevel: 0,
   reorderPoint: 0,
@@ -46,8 +53,14 @@ export function ItemsPanel({ tenantId, data }: { tenantId: string; data: MasterD
 
   const items: Item[] = data.inventoryItems ?? [];
   const filtered = items.filter((i) => i.name.toLowerCase().includes(search.toLowerCase()));
-  const categoryOptions = (data.inventoryCategories ?? []).map((c) => ({ value: c.id, label: c.name }));
-  const unitOptions = (data.units ?? []).map((u) => ({ value: u.id, label: `${u.name} (${u.code})` }));
+  const categoryOptions = (data.inventoryCategories ?? []).map((c) => ({
+    value: c.id,
+    label: c.name,
+  }));
+  const unitOptions = (data.units ?? []).map((u) => ({
+    value: u.id,
+    label: `${u.name} (${u.code})`,
+  }));
 
   function openCreate() {
     setEditing(null);
@@ -65,6 +78,7 @@ export function ItemsPanel({ tenantId, data }: { tenantId: string; data: MasterD
       unitId: i.unit_id ?? null,
       purchaseUnitId: i.purchase_unit_id ?? null,
       consumptionUnitId: i.consumption_unit_id ?? null,
+      packSize: Number(i.pack_size ?? 1),
       currentQuantity: i.current_quantity ?? 0,
       parLevel: i.par_level ?? 0,
       reorderPoint: i.reorder_point ?? 0,
@@ -76,11 +90,24 @@ export function ItemsPanel({ tenantId, data }: { tenantId: string; data: MasterD
   }
 
   return (
-    <SectionCard title="Inventory items" description="Stock keeping units used by inventory, recipes and purchasing.">
+    <SectionCard
+      title="Inventory items"
+      description="Stock keeping units used by inventory, recipes and purchasing."
+    >
       <div className="space-y-4">
-        <PanelToolbar search={search} onSearch={setSearch} onCreate={openCreate} createLabel="New item" />
+        <PanelToolbar
+          search={search}
+          onSearch={setSearch}
+          onCreate={openCreate}
+          createLabel="New item"
+        />
         <PanelList
-          items={filtered.map((i) => ({ id: i.id, title: i.name, subtitle: i.sku ?? i.item_type, active: i.status === "active" }))}
+          items={filtered.map((i) => ({
+            id: i.id,
+            title: i.name,
+            subtitle: i.sku ?? i.item_type,
+            active: i.status === "active",
+          }))}
           onEdit={openEdit}
           onToggleActive={(id, active) => {
             const i = items.find((x) => x.id === id);
@@ -101,6 +128,7 @@ export function ItemsPanel({ tenantId, data }: { tenantId: string; data: MasterD
                 allowNegative: i.allow_negative ?? false,
                 purchaseUnitId: i.purchase_unit_id ?? undefined,
                 consumptionUnitId: i.consumption_unit_id ?? undefined,
+                packSize: Number(i.pack_size ?? 1),
                 status: active ? "active" : "inactive",
               } as never,
             });
@@ -131,58 +159,123 @@ export function ItemsPanel({ tenantId, data }: { tenantId: string; data: MasterD
               allowNegative: form.allowNegative,
               purchaseUnitId: form.purchaseUnitId || undefined,
               consumptionUnitId: form.consumptionUnitId || undefined,
+              packSize: form.packSize,
             },
           })
         }
         pending={mutation.isPending}
-        disabled={!form.name}
+        disabled={!form.name || !(form.packSize > 0)}
       >
         <FieldRow>
           <Field label="Name" required>
-            <Input className="h-11" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} required />
+            <Input
+              className="h-11"
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              required
+            />
           </Field>
           <Field label="SKU">
-            <Input className="h-11" value={form.sku} onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))} />
+            <Input
+              className="h-11"
+              value={form.sku}
+              onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
+            />
           </Field>
         </FieldRow>
         <FieldRow>
           <Field label="Category">
-            <SearchSelect options={categoryOptions} value={form.categoryId} onChange={(v) => setForm((f) => ({ ...f, categoryId: v }))} placeholder="Select category" />
+            <SearchSelect
+              options={categoryOptions}
+              value={form.categoryId}
+              onChange={(v) => setForm((f) => ({ ...f, categoryId: v }))}
+              placeholder="Select category"
+            />
           </Field>
           <Field label="Stock unit">
-            <SearchSelect options={unitOptions} value={form.unitId} onChange={(v) => setForm((f) => ({ ...f, unitId: v }))} placeholder="Select unit" />
+            <SearchSelect
+              options={unitOptions}
+              value={form.unitId}
+              onChange={(v) => setForm((f) => ({ ...f, unitId: v }))}
+              placeholder="Select unit"
+            />
           </Field>
         </FieldRow>
         <FieldRow>
           <Field label="Purchase unit" hint="Unit used on purchase orders.">
-            <SearchSelect options={unitOptions} value={form.purchaseUnitId} onChange={(v) => setForm((f) => ({ ...f, purchaseUnitId: v }))} placeholder="Same as stock" />
+            <SearchSelect
+              options={unitOptions}
+              value={form.purchaseUnitId}
+              onChange={(v) => setForm((f) => ({ ...f, purchaseUnitId: v }))}
+              placeholder="Same as stock"
+            />
           </Field>
           <Field label="Consumption unit" hint="Unit used in recipes.">
-            <SearchSelect options={unitOptions} value={form.consumptionUnitId} onChange={(v) => setForm((f) => ({ ...f, consumptionUnitId: v }))} placeholder="Same as stock" />
+            <SearchSelect
+              options={unitOptions}
+              value={form.consumptionUnitId}
+              onChange={(v) => setForm((f) => ({ ...f, consumptionUnitId: v }))}
+              placeholder="Same as stock"
+            />
+          </Field>
+        </FieldRow>
+        <FieldRow>
+          <Field
+            label="Pack size"
+            required
+            hint="Stock units per purchase unit — e.g. a 30-egg PACK counted in PC is pack size 30; a loose KG item is pack size 1."
+          >
+            <QuantityField
+              value={form.packSize}
+              onChange={(v) => setForm((f) => ({ ...f, packSize: v }))}
+              step={1}
+            />
           </Field>
         </FieldRow>
         <FieldRow>
           <Field label="Opening quantity">
-            <QuantityField value={form.currentQuantity} onChange={(v) => setForm((f) => ({ ...f, currentQuantity: v }))} step={1} />
+            <QuantityField
+              value={form.currentQuantity}
+              onChange={(v) => setForm((f) => ({ ...f, currentQuantity: v }))}
+              step={1}
+            />
           </Field>
           <Field label="Average cost">
-            <QuantityField value={form.averageCost} onChange={(v) => setForm((f) => ({ ...f, averageCost: v }))} step={100} />
+            <QuantityField
+              value={form.averageCost}
+              onChange={(v) => setForm((f) => ({ ...f, averageCost: v }))}
+              step={100}
+            />
           </Field>
         </FieldRow>
         <FieldRow>
           <Field label="Par level">
-            <QuantityField value={form.parLevel} onChange={(v) => setForm((f) => ({ ...f, parLevel: v }))} step={1} />
+            <QuantityField
+              value={form.parLevel}
+              onChange={(v) => setForm((f) => ({ ...f, parLevel: v }))}
+              step={1}
+            />
           </Field>
           <Field label="Reorder point">
-            <QuantityField value={form.reorderPoint} onChange={(v) => setForm((f) => ({ ...f, reorderPoint: v }))} step={1} />
+            <QuantityField
+              value={form.reorderPoint}
+              onChange={(v) => setForm((f) => ({ ...f, reorderPoint: v }))}
+              step={1}
+            />
           </Field>
         </FieldRow>
         <FieldRow>
           <Field label="Track batches">
-            <Switch checked={form.trackBatches} onCheckedChange={(v) => setForm((f) => ({ ...f, trackBatches: v }))} />
+            <Switch
+              checked={form.trackBatches}
+              onCheckedChange={(v) => setForm((f) => ({ ...f, trackBatches: v }))}
+            />
           </Field>
           <Field label="Allow negative stock">
-            <Switch checked={form.allowNegative} onCheckedChange={(v) => setForm((f) => ({ ...f, allowNegative: v }))} />
+            <Switch
+              checked={form.allowNegative}
+              onCheckedChange={(v) => setForm((f) => ({ ...f, allowNegative: v }))}
+            />
           </Field>
         </FieldRow>
       </EntitySheet>

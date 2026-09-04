@@ -8,6 +8,7 @@
  * re-closing an order never double-deducts.
  */
 import { insertMovement } from "../inventory/movements.server";
+import { componentToStock, type UnitRow } from "../inventory/units";
 import { consumeForRecipeSale } from "../products/consumption.server";
 
 type Sb = any;
@@ -61,18 +62,37 @@ export async function consumeLineModifiers(
       if (demand <= 0) continue;
       const { data: item } = await sb
         .from("restaurant_inventory_items")
-        .select("id, average_cost, currency, location_id, property_id")
+        .select("id, name, average_cost, currency, location_id, property_id, unit_id")
         .eq("id", def.inventory_item_id)
         .single();
       const unitCost = Number(item?.average_cost ?? 0);
+
+      // average_cost is priced per the item's own stock unit — a modifier
+      // written in a different unit must be converted to stock units before
+      // it is costed or deducted (see units.ts#componentToStock).
+      let unitById = new Map<string, UnitRow>();
+      if (def.unit_id && item?.unit_id && def.unit_id !== item.unit_id) {
+        const { data: unitRows } = await sb
+          .from("restaurant_inventory_units")
+          .select("id, code, name, dimension, factor, base_unit_id")
+          .in("id", [def.unit_id, item.unit_id]);
+        unitById = new Map(((unitRows ?? []) as UnitRow[]).map((u) => [u.id, u]));
+      }
+      const converted = componentToStock(demand, def.unit_id, item ?? {}, unitById);
+      if (!converted.exact) {
+        throw new Error(
+          `"${item?.name ?? def.name}": modifier "${def.name}" is in a unit that cannot be converted to this item's stock unit (${converted.reason ?? "unknown conversion"}). Fix the modifier's unit, or the item's stock unit, before this order can close.`,
+        );
+      }
+
       await insertMovement(sb, userId, {
         tenantId: args.tenantId,
         propertyId: args.propertyId ?? item?.property_id ?? null,
         locationId: args.locationId ?? item?.location_id ?? null,
         inventoryItemId: def.inventory_item_id,
-        unitId: def.unit_id ?? null,
+        unitId: item?.unit_id ?? def.unit_id ?? null,
         movementType: "consumption",
-        quantity: -demand,
+        quantity: -converted.quantity,
         unitCost,
         currency: item?.currency ?? "TZS",
         reason: `Modifier: ${def.name}`,
@@ -82,7 +102,7 @@ export async function consumeLineModifiers(
         occurredAt: args.occurredAt,
         dedupeKey: `consume-mod:${args.orderItemId}:${def.id}`,
       });
-      cost += demand * unitCost;
+      cost += converted.quantity * unitCost;
     }
   }
   return Number(cost.toFixed(4));

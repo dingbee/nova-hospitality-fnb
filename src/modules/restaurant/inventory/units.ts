@@ -69,7 +69,10 @@ export function convertUnits(
 }
 
 /** Purchase unit → stock unit. Pack size is item configuration, not a guess. */
-export function purchaseToStock(quantity: number, packSize: number | null | undefined): ConversionResult {
+export function purchaseToStock(
+  quantity: number,
+  packSize: number | null | undefined,
+): ConversionResult {
   const pack = Number(packSize ?? 1);
   const factor = Number.isFinite(pack) && pack > 0 ? pack : 1;
   return {
@@ -95,4 +98,26 @@ export function consumptionToStock(
 export function describeConversion(result: ConversionResult): string {
   if (result.steps.length === 0) return "no conversion";
   return result.steps.map((s) => `${s.from}→${s.to} ×${s.factor}`).join(", ");
+}
+
+/**
+ * Convert a recipe/modifier component's quantity — expressed in whichever
+ * unit the line was written in — into the inventory item's own stock unit,
+ * the unit `average_cost` is priced per. A component with no unit of its
+ * own, or one that already matches the item's stock unit, is a no-op: most
+ * lines are entered directly in stock units and never need this. A real
+ * dimension mismatch (a KG item's line entered in PC, say) is a modelling
+ * error — callers get `exact: false` and decide how to surface it, the same
+ * contract convertUnits already gives receiving.server.ts.
+ */
+export function componentToStock(
+  quantity: number,
+  componentUnitId: string | null | undefined,
+  item: { unit_id?: string | null | undefined },
+  unitById: Map<string, UnitRow>,
+): ConversionResult {
+  if (!componentUnitId || !item.unit_id || componentUnitId === item.unit_id) {
+    return { quantity, steps: [], exact: true };
+  }
+  return convertUnits(quantity, unitById.get(componentUnitId), unitById.get(item.unit_id));
 }

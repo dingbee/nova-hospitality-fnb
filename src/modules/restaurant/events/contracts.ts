@@ -150,6 +150,17 @@ export const RESTAURANT_EVENT_TYPES = [
   "restaurant.tenant.branding.updated",
   /* --- Menu Intelligence reasoning evaluations (INT-01). --- */
   "restaurant.intelligence.menu.evaluated",
+  /* --- TRA Fiscal / VFD integration foundation. --- */
+  "restaurant.fiscal.configuration.updated",
+  "restaurant.fiscal.receipt.fiscalized",
+  "restaurant.fiscal.receipt.rejected",
+  "restaurant.fiscal.submission.failed",
+  /* --- Mobile Money / Lipa Namba integration foundation. --- */
+  "restaurant.payment.mobile_money.configuration.updated",
+  "restaurant.payment.mobile_money.requested",
+  "restaurant.payment.mobile_money.request.failed",
+  "restaurant.payment.mobile_money.confirmed",
+  "restaurant.payment.mobile_money.reversed",
 ] as const;
 export type RestaurantEventType = (typeof RESTAURANT_EVENT_TYPES)[number];
 
@@ -294,6 +305,15 @@ export const RESTAURANT_EVENT_SEVERITY: Record<
   "restaurant.import.committed": "low",
   "restaurant.tenant.branding.updated": "info",
   "restaurant.intelligence.menu.evaluated": "info",
+  "restaurant.fiscal.configuration.updated": "medium",
+  "restaurant.fiscal.receipt.fiscalized": "info",
+  "restaurant.fiscal.receipt.rejected": "high",
+  "restaurant.fiscal.submission.failed": "high",
+  "restaurant.payment.mobile_money.configuration.updated": "medium",
+  "restaurant.payment.mobile_money.requested": "info",
+  "restaurant.payment.mobile_money.request.failed": "medium",
+  "restaurant.payment.mobile_money.confirmed": "info",
+  "restaurant.payment.mobile_money.reversed": "high",
 };
 
 export const restaurantEventSchema = z.object({
