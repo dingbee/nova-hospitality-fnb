@@ -473,6 +473,30 @@ describe("direct server-function bypass", () => {
     expect(ipn).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY/);
   });
 
+  /**
+   * api/mobile-money-webhook.ts is deliberately outside src/ (a Vercel
+   * Function, not a TanStack Start route — see its own header comment for
+   * why, same reasoning as api/pesapal-ipn.ts) so the SRC walk above never
+   * sees it. Held to the same rule: it must not record a payment itself
+   * from the webhook's own claims, and must go through the one shared,
+   * tested, idempotent, re-verifying handler rather than writing anything.
+   */
+  it("the mobile money webhook endpoint never records a payment itself and leaks no service-role key", () => {
+    const wh = read(join(ROOT, "api/mobile-money-webhook.ts"));
+    expect(wh).toMatch(/handleMobileMoneyWebhookEvent/);
+    expect(wh).not.toMatch(/recordGuestPayment|takePosPayment|confirmMobileMoneyCollection/);
+    expect(wh).not.toMatch(/restaurant_payments/);
+    expect(wh).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY/);
+  });
+
+  it("the mobile money webhook handler re-verifies with the provider and is idempotent by provider event id, never trusting the payload's own status/amount", () => {
+    const s = read(join(ROOT, "src/modules/restaurant/payments/mobilemoney/mobilemoney.server.ts"));
+    const fn = s.slice(s.indexOf("export async function handleMobileMoneyWebhookEvent"));
+    expect(fn).toMatch(/verifyTransaction/);
+    expect(fn).toMatch(/restaurant_mobile_money_webhook_events/);
+    expect(fn).toMatch(/signatureValid/);
+  });
+
   it("no server function accepts a role, permission or admin flag from the client", () => {
     const offenders: string[] = [];
     for (const f of fnFiles) {

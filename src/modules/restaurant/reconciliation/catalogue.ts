@@ -69,6 +69,10 @@ export const EXCEPTION_CODES = [
   "procurement.invoice_mismatch",
   "procurement.missing_invoice",
   "procurement.outstanding_supplier_amount",
+  // Mobile Money — collection attempts that never resolved cleanly.
+  "payment.mobile_money.stuck_pending",
+  "payment.mobile_money.wrong_amount",
+  "payment.mobile_money.unreversed_failure",
   // Fiscal — settled sales without a resolved fiscal outcome. This names the
   // disagreement; TRA Fiscal / VFD Integration Foundation's fiscal.server.ts
   // is the source of truth it compares against, exactly like every other
@@ -278,6 +282,29 @@ export const EXCEPTION_CATALOGUE: Record<ExceptionCode, ExceptionDefinition> = {
     title: "Supplier invoice overdue",
     severity: "medium",
     requiredAction: "Schedule payment or record the dispute against the invoice.",
+  },
+  "payment.mobile_money.stuck_pending": {
+    code: "payment.mobile_money.stuck_pending",
+    domain: "payment",
+    title: "Mobile money request never resolved",
+    severity: "medium",
+    requiredAction:
+      "Check the collection status with the operator or the provider, then confirm or cancel it.",
+  },
+  "payment.mobile_money.wrong_amount": {
+    code: "payment.mobile_money.wrong_amount",
+    domain: "payment",
+    title: "Mobile money confirmed a different amount than requested",
+    severity: "high",
+    requiredAction:
+      "Investigate with the provider before recording any payment against this order.",
+  },
+  "payment.mobile_money.unreversed_failure": {
+    code: "payment.mobile_money.unreversed_failure",
+    domain: "payment",
+    title: "Failed mobile money request left the bill unsettled",
+    severity: "medium",
+    requiredAction: "Retry the request or take payment by another method so the bill can close.",
   },
   "fiscal.receipt_not_fiscalized": {
     code: "fiscal.receipt_not_fiscalized",

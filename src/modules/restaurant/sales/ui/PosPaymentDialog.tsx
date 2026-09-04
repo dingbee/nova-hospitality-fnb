@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- server rows are untyped at this boundary. */
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -60,6 +59,8 @@ export function PosPaymentDialog({
   onPay,
   canRoomCharge = false,
   onRoomCharge,
+  mobileMoneyActive = false,
+  onRequestMobileMoney,
 }: {
   open: boolean;
   currency: string;
@@ -69,11 +70,20 @@ export function PosPaymentDialog({
   /** Pre-filled share when settling a split, e.g. one seat's portion. */
   suggestedAmount?: number | null;
   onClose: () => void;
-  onPay: (input: { method: PosPaymentMethod; amount: number; tendered?: number; reference?: string }) => void;
+  onPay: (input: {
+    method: PosPaymentMethod;
+    amount: number;
+    tendered?: number;
+    reference?: string;
+  }) => void;
   /** Whether this operator may post to a guest folio. */
   canRoomCharge?: boolean;
   /** Hands the amount to the governed room-charge flow. */
   onRoomCharge?: (amount: number) => void;
+  /** Whether Mobile Money is activated for this outlet — "Enter Lipa Namba -> Activate -> ON". */
+  mobileMoneyActive?: boolean;
+  /** Hands the amount to the Mobile Money request/confirm flow instead of recording it instantly. */
+  onRequestMobileMoney?: (amount: number) => void;
 }) {
   const balance = Number(Math.max(0, total - paid).toFixed(2));
   const [method, setMethod] = useState<PosPaymentMethod>("cash");
@@ -92,7 +102,8 @@ export function PosPaymentDialog({
 
   const value = amount === "" ? balance : Number(amount);
   const tenderedValue = tendered === "" ? undefined : Number(tendered);
-  const change = tenderedValue != null ? Math.max(0, Number((tenderedValue - value).toFixed(2))) : 0;
+  const change =
+    tenderedValue != null ? Math.max(0, Number((tenderedValue - value).toFixed(2))) : 0;
   const tenders = useMemo(() => quickTenders(value || balance), [value, balance]);
   const shortTender = method === "cash" && tenderedValue != null && tenderedValue + 0.001 < value;
   const valid = value > 0 && value <= balance + 0.001 && !shortTender;
@@ -127,7 +138,9 @@ export function PosPaymentDialog({
               </p>
             )}
             {value > balance + 0.001 && (
-              <p className="text-xs text-destructive">More than the balance due. Reduce the amount.</p>
+              <p className="text-xs text-destructive">
+                More than the balance due. Reduce the amount.
+              </p>
             )}
           </div>
 
@@ -157,6 +170,18 @@ export function PosPaymentDialog({
               onClick={() => onRoomCharge(Number(value.toFixed(2)))}
             >
               {METHOD_LABELS.room_charge} — {money(value, currency)}
+            </Button>
+          )}
+
+          {method === "mobile_money" && mobileMoneyActive && onRequestMobileMoney && (
+            <Button
+              type="button"
+              variant="secondary"
+              className="min-h-12 w-full"
+              disabled={!(value > 0 && value <= balance + 0.001)}
+              onClick={() => onRequestMobileMoney(Number(value.toFixed(2)))}
+            >
+              Request Mobile Money — {money(value, currency)}
             </Button>
           )}
 
@@ -222,7 +247,9 @@ export function PosPaymentDialog({
                     <span className="font-semibold tabular-nums">{money(change, currency)}</span>
                   </div>
                   {shortTender && (
-                    <p className="text-xs text-destructive">Cash tendered is less than the amount being charged.</p>
+                    <p className="text-xs text-destructive">
+                      Cash tendered is less than the amount being charged.
+                    </p>
                   )}
                 </>
               ) : (
@@ -244,7 +271,8 @@ export function PosPaymentDialog({
           {confirming && (
             <div className="rounded-lg border border-primary/50 bg-primary/5 p-3 text-sm">
               Confirm {METHOD_LABELS[method]} {money(value, currency)}
-              {change > 0 ? ` · change ${money(change, currency)}` : ""}. This posts to the bill immediately.
+              {change > 0 ? ` · change ${money(change, currency)}` : ""}. This posts to the bill
+              immediately.
             </div>
           )}
         </div>
@@ -269,7 +297,11 @@ export function PosPaymentDialog({
               });
             }}
           >
-            {pending ? "Processing…" : confirming ? `Confirm ${money(value, currency)}` : `Charge ${money(value, currency)}`}
+            {pending
+              ? "Processing…"
+              : confirming
+                ? `Confirm ${money(value, currency)}`
+                : `Charge ${money(value, currency)}`}
           </Button>
         </DialogFooter>
       </DialogContent>
