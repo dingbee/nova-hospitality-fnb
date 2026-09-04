@@ -24,8 +24,12 @@ import { money } from "@/modules/restaurant/sales/ui/pos-types";
 import {
   getFiscalConfigurationFn,
   getFiscalHealthFn,
+  getFiscalRegistrationStatusFn,
   listFiscalReceiptsFn,
   prepareZReportDraftFn,
+  registerFiscalVfdFn,
+  submitZReportForBusinessDateFn,
+  testFiscalConnectionFn,
   upsertFiscalConfigurationFn,
 } from "../fiscal.functions";
 import type { FiscalActivationState, FiscalEnvironment, FiscalState } from "../contracts";
@@ -59,6 +63,10 @@ export function FiscalCentre() {
   const getHealth = useServerFn(getFiscalHealthFn);
   const listReceipts = useServerFn(listFiscalReceiptsFn);
   const prepareZ = useServerFn(prepareZReportDraftFn);
+  const getRegistrationStatus = useServerFn(getFiscalRegistrationStatusFn);
+  const registerVfd = useServerFn(registerFiscalVfdFn);
+  const testConnection = useServerFn(testFiscalConnectionFn);
+  const submitZReport = useServerFn(submitZReportForBusinessDateFn);
 
   const configQuery = useQuery({
     queryKey: ["restaurant.fiscal.config", tenantId, activeLocationId],
@@ -74,6 +82,11 @@ export function FiscalCentre() {
   const receiptsQuery = useQuery({
     queryKey: ["restaurant.fiscal.receipts", tenantId, activeLocationId],
     queryFn: () => listReceipts({ data: { tenantId, locationId: activeLocationId, limit: 25 } }),
+    enabled: Boolean(tenantId && activeLocationId),
+  });
+  const registrationQuery = useQuery({
+    queryKey: ["restaurant.fiscal.registration", tenantId, activeLocationId],
+    queryFn: () => getRegistrationStatus({ data: { tenantId, locationId: activeLocationId } }),
     enabled: Boolean(tenantId && activeLocationId),
   });
 
@@ -124,8 +137,35 @@ export function FiscalCentre() {
       qc.invalidateQueries({ queryKey: ["restaurant.fiscal.health", tenantId, activeLocationId] }),
   });
 
+  const submitZ = useAdminMutation({
+    mutationFn: () =>
+      submitZReport({ data: { tenantId, locationId: activeLocationId, businessDate: today() } }),
+    successMessage: "Z-report submitted to TRA.",
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["restaurant.fiscal.health", tenantId, activeLocationId] }),
+  });
+
+  const register = useAdminMutation({
+    mutationFn: () => registerVfd({ data: { tenantId, locationId: activeLocationId } }),
+    successMessage: "TRA registration completed.",
+    onSuccess: () =>
+      qc.invalidateQueries({
+        queryKey: ["restaurant.fiscal.registration", tenantId, activeLocationId],
+      }),
+  });
+
+  const connectionTest = useAdminMutation({
+    mutationFn: () => testConnection({ data: { tenantId, locationId: activeLocationId } }),
+    successMessage: "TRA connection test complete.",
+    onSuccess: () =>
+      qc.invalidateQueries({
+        queryKey: ["restaurant.fiscal.registration", tenantId, activeLocationId],
+      }),
+  });
+
   const health = healthQuery.data;
   const receipts: any[] = receiptsQuery.data ?? [];
+  const registration = registrationQuery.data;
 
   const locationOptions = useMemo(
     () => locations.map((l) => ({ id: l.id, name: l.name as string })),
@@ -147,7 +187,8 @@ export function FiscalCentre() {
         ) : (
           <div className="flex flex-wrap items-center gap-6">
             <StatusChip tone={health?.connected ? "success" : "warning"}>
-              <ShieldCheck className="size-3" /> {health?.connected ? "Connected" : "Unreachable"}
+              <ShieldCheck className="size-3" />{" "}
+              {health?.connected ? "Certificate configured" : "Configuration required"}
             </StatusChip>
             <Stat label="Fiscalized today" value={String(health?.fiscalizedToday ?? 0)} />
             <Stat label="Pending" value={String(health?.pendingToday ?? 0)} />
@@ -255,6 +296,62 @@ export function FiscalCentre() {
       </SectionCard>
 
       <SectionCard
+        title="TRA registration"
+        description="Registration is one-time per VFD and comes from TRA — REGID/EFDSERIAL/receipt code can never be typed in manually."
+        actions={
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!activeLocationId || connectionTest.isPending}
+              onClick={() => connectionTest.mutate()}
+            >
+              Test TRA connection
+            </Button>
+            <Button
+              size="sm"
+              disabled={!activeLocationId || register.isPending}
+              onClick={() => register.mutate()}
+            >
+              {registration?.registered ? "Refresh TRA registration" : "Register with TRA"}
+            </Button>
+          </div>
+        }
+      >
+        {registrationQuery.isLoading ? (
+          <LoadingState label="Loading registration status…" />
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Stat
+              label="Registration"
+              value={registration?.registered ? "Registered" : "Not registered"}
+            />
+            <Stat label="REGID" value={registration?.regId ?? "—"} />
+            <Stat label="EFD serial" value={registration?.efdSerial ?? "—"} />
+            <Stat label="Receipt code" value={registration?.receiptCode ?? "—"} />
+            <Stat label="Tax office" value={registration?.taxOffice ?? "—"} />
+            <Stat
+              label="Token"
+              value={
+                registration?.tokenStatus === "valid"
+                  ? "Valid"
+                  : registration?.tokenStatus === "expired"
+                    ? "Expired — refresh required"
+                    : "Not authenticated"
+              }
+            />
+          </div>
+        )}
+        {connectionTest.data && (
+          <p
+            className={`mt-3 text-xs ${connectionTest.data.ok ? "text-[color:var(--os-success)]" : "text-[color:var(--os-warn)]"}`}
+          >
+            {connectionTest.data.detail}
+          </p>
+        )}
+      </SectionCard>
+
+      <SectionCard
         title="Recent fiscal receipts"
         actions={
           <Button variant="outline" size="sm" onClick={() => receiptsQuery.refetch()}>
@@ -306,26 +403,49 @@ export function FiscalCentre() {
       </SectionCard>
 
       <SectionCard
-        title="Z-report (foundation)"
-        description="Daily fiscal aggregation for this outlet — draft only. Real TRA Z-report submission is not implemented until an approved provider contract exists."
+        title="Z-report"
+        description="Daily fiscal aggregation for this outlet, from LexiBite's own fiscal sales ledger."
         actions={
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!activeLocationId || zReport.isPending}
-            onClick={() => zReport.mutate()}
-          >
-            Prepare today's draft
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!activeLocationId || zReport.isPending}
+              onClick={() => zReport.mutate()}
+            >
+              Prepare today's draft
+            </Button>
+            <Button
+              size="sm"
+              disabled={!activeLocationId || submitZ.isPending}
+              onClick={() => submitZ.mutate()}
+            >
+              Submit Z-report to TRA
+            </Button>
+          </div>
         }
       >
-        {zReport.data ? (
+        {(submitZ.data ?? zReport.data) ? (
           <div className="flex flex-wrap gap-6 text-sm">
-            <Stat label="Receipts" value={String(zReport.data.receipt_count)} />
-            <Stat label="Subtotal" value={money(Number(zReport.data.subtotal), "TZS")} />
-            <Stat label="Tax" value={money(Number(zReport.data.tax_total), "TZS")} />
-            <Stat label="Total" value={money(Number(zReport.data.total), "TZS")} />
-            <StatusChip tone="neutral">{zReport.data.state}</StatusChip>
+            <Stat label="Receipts" value={String((submitZ.data ?? zReport.data).receipt_count)} />
+            <Stat
+              label="Subtotal"
+              value={money(Number((submitZ.data ?? zReport.data).subtotal), "TZS")}
+            />
+            <Stat
+              label="Tax"
+              value={money(Number((submitZ.data ?? zReport.data).tax_total), "TZS")}
+            />
+            <Stat
+              label="Total"
+              value={money(Number((submitZ.data ?? zReport.data).total), "TZS")}
+            />
+            <StatusChip tone={submitZ.data?.state === "acknowledged" ? "success" : "neutral"}>
+              {(submitZ.data ?? zReport.data).state}
+            </StatusChip>
+            {submitZ.data?.zNumber != null && (
+              <Stat label="ZNUMBER" value={String(submitZ.data.zNumber)} />
+            )}
           </div>
         ) : (
           <p className="text-xs text-[color:var(--os-ink-3)]">No draft prepared yet today.</p>
