@@ -32,6 +32,7 @@ export const upsertBusinessProfileSchema = z.object({
   phone: z.string().max(40).optional(),
   email: z.string().email().optional(),
   address: z.string().max(400).optional(),
+  website: z.string().max(200).optional(),
 });
 export type UpsertBusinessProfileInput = z.infer<typeof upsertBusinessProfileSchema>;
 

@@ -115,6 +115,7 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
     phone: (business.phone as string) ?? "",
     email: (business.email as string) ?? "",
     address: (business.address as string) ?? "",
+    website: (business.website as string) ?? "",
   });
 
   React.useEffect(() => {
@@ -128,6 +129,7 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
       phone: (business.phone as string) ?? "",
       email: (business.email as string) ?? "",
       address: (business.address as string) ?? "",
+      website: (business.website as string) ?? "",
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.tenant?.id]);
@@ -187,6 +189,7 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
               phone: form.phone || undefined,
               email: form.email || undefined,
               address: form.address || undefined,
+              website: form.website || undefined,
             },
           });
         }}
@@ -262,13 +265,24 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
             />
           </Field>
         </FieldRow>
-        <Field label="Address">
-          <Input
-            className="h-11"
-            value={form.address}
-            onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
-          />
-        </Field>
+        <FieldRow>
+          <Field label="Address">
+            <Input
+              className="h-11"
+              value={form.address}
+              onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
+            />
+          </Field>
+          <Field label="Website">
+            <Input
+              className="h-11"
+              type="url"
+              placeholder="https://…"
+              value={form.website}
+              onChange={(e) => setForm((f) => ({ ...f, website: e.target.value }))}
+            />
+          </Field>
+        </FieldRow>
         <div className="flex justify-end border-t pt-4">
           <Button type="submit" className="h-11 min-w-32" disabled={mutation.isPending}>
             Save

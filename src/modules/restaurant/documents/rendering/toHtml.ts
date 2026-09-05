@@ -24,7 +24,8 @@ function tableHtml(table: DocumentTable, currency: string | null): string {
       const depth = table.depthKey ? Number(row[table.depthKey] ?? 0) : 0;
       const cells = table.columns
         .map((c, idx) => {
-          const align = c.align === "right" || c.format === "money" || c.format === "number" ? "r" : "";
+          const align =
+            c.align === "right" || c.format === "money" || c.format === "number" ? "r" : "";
           const indent = idx === 0 && depth > 0 ? `padding-left:${8 + depth * 14}px` : "";
           return `<td class="${align}" style="${indent}">${esc(
             displayValue(row[c.key] ?? null, c.format ?? "text", c.currency ?? currency),
@@ -99,7 +100,9 @@ export function documentToHtml(doc: RestaurantDocument): string {
     .map(
       (t) =>
         `<div class="kv ${t.emphasis ? "grand" : ""}"><span class="k">${esc(t.label)}</span><span class="v">${
-          t.unavailable ? "Not available" : esc(displayValue(t.value, "money", t.currency ?? doc.currency))
+          t.unavailable
+            ? "Not available"
+            : esc(displayValue(t.value, "money", t.currency ?? doc.currency))
         }</span></div>`,
     )
     .join("");
@@ -128,13 +131,23 @@ export function documentToHtml(doc: RestaurantDocument): string {
 <body class="${doc.type === "customer_receipt" ? "receipt" : ""}">
 <div class="doc">
   <header class="doc-head">
-    <div>
-      <h1>${esc(doc.title)}</h1>
-      <div class="muted">${esc(doc.header.business)}</div>
-      ${doc.header.property ? `<div class="muted">${esc(doc.header.property)}</div>` : ""}
-      ${doc.header.outlet ? `<div class="muted">${esc(doc.header.outlet)}</div>` : ""}
-      ${doc.header.address ? `<div class="muted">${esc(doc.header.address)}</div>` : ""}
-      ${doc.header.contact ? `<div class="muted">${esc(doc.header.contact)}</div>` : ""}
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      ${
+        doc.header.logoUrl
+          ? `<img src="${esc(doc.header.logoUrl)}" alt="" style="width:44px;height:44px;object-fit:contain;flex:none" />`
+          : ""
+      }
+      <div>
+        <h1>${esc(doc.title)}</h1>
+        <div class="muted" style="font-weight:700">${esc(doc.header.business)}</div>
+        ${doc.header.legalName ? `<div class="muted">${esc(doc.header.legalName)}</div>` : ""}
+        ${doc.header.property ? `<div class="muted">${esc(doc.header.property)}</div>` : ""}
+        ${doc.header.outlet ? `<div class="muted">${esc(doc.header.outlet)}</div>` : ""}
+        ${doc.header.address ? `<div class="muted">${esc(doc.header.address)}</div>` : ""}
+        ${doc.header.contact ? `<div class="muted">${esc(doc.header.contact)}</div>` : ""}
+        ${doc.header.website ? `<div class="muted">${esc(doc.header.website)}</div>` : ""}
+        ${doc.header.taxId ? `<div class="muted">TIN ${esc(doc.header.taxId)}</div>` : ""}
+      </div>
     </div>
     <div style="text-align:right">
       <div style="font-size:15px;font-weight:700">${esc(doc.number ?? "—")}</div>

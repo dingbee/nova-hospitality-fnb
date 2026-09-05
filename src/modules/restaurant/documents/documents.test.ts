@@ -15,7 +15,11 @@ const doc: RestaurantDocument = {
   currency: "TZS",
   issuedAt: "2026-02-01",
   generatedAt: "2026-02-02T08:00:00Z",
-  header: { business: "Riverbend Hospitality Group", property: "Riverbend Lodge", outlet: "Main Bar" },
+  header: {
+    business: "Riverbend Hospitality Group",
+    property: "Riverbend Lodge",
+    outlet: "Main Bar",
+  },
   parties: [{ label: "Supplier", value: "Kilimanjaro Foods", emphasis: true }],
   meta: [{ label: "Order date", value: "2026-02-01" }],
   tables: [
@@ -36,7 +40,14 @@ const doc: RestaurantDocument = {
   totals: [{ label: "Order total", value: 33000, currency: "TZS", emphasis: true }],
   signatures: ["Prepared by"],
   notes: null,
-  traceability: [{ label: "Purchase order", recordType: "restaurant_purchase_orders", recordId: "abc", recordNumber: "PO-2026-000142" }],
+  traceability: [
+    {
+      label: "Purchase order",
+      recordType: "restaurant_purchase_orders",
+      recordId: "abc",
+      recordNumber: "PO-2026-000142",
+    },
+  ],
   audit: [{ action: "printed", at: "2026-02-02T09:00:00Z", format: "print" }],
   snapshot: false,
 };
@@ -126,6 +137,41 @@ describe("printed html", () => {
   it("declares whether the output is frozen at issuance", () => {
     expect(html).toContain("Rendered from current operational data.");
     expect(documentToHtml({ ...doc, snapshot: true })).toContain("stored snapshot");
+  });
+
+  it("renders the logo, legal name, website and tax ID when configured, and omits them cleanly when not", () => {
+    // The base fixture's header has none of these set — nothing extra renders.
+    expect(html).not.toContain("<img");
+
+    const branded = documentToHtml({
+      ...doc,
+      header: {
+        ...doc.header,
+        legalName: "Riverbend Hospitality Group Ltd",
+        website: "https://riverbend.co.tz",
+        taxId: "TIN-123456789",
+        logoUrl: "https://cdn.example-lexibite-assets.test/restaurant-tenant-logos/t/logo.jpg",
+      },
+    });
+    expect(branded).toContain(
+      '<img src="https://cdn.example-lexibite-assets.test/restaurant-tenant-logos/t/logo.jpg"',
+    );
+    expect(branded).toContain("Riverbend Hospitality Group Ltd");
+    expect(branded).toContain("https://riverbend.co.tz");
+    expect(branded).toContain("TIN TIN-123456789");
+  });
+
+  it("never lets a logo URL, legal name or website break out of its attribute/text position", () => {
+    const risky = documentToHtml({
+      ...doc,
+      header: {
+        ...doc.header,
+        legalName: '"><script>alert(1)</script>',
+        logoUrl: '"><script>alert(2)</script>',
+      },
+    });
+    expect(risky).not.toContain("<script>alert(1)</script>");
+    expect(risky).not.toContain("<script>alert(2)</script>");
   });
 });
 describe("requisition document registration", () => {

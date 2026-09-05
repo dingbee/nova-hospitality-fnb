@@ -11,7 +11,8 @@ export type DocFormat = "print" | "pdf" | "csv" | "xlsx" | "json";
 
 export type CellValue = string | number | boolean | null;
 
-export type ColumnFormat = "text" | "integer" | "number" | "money" | "date" | "datetime" | "percent";
+export type ColumnFormat =
+  "text" | "integer" | "number" | "money" | "date" | "datetime" | "percent";
 
 export interface DocumentColumn {
   key: string;
@@ -65,11 +66,19 @@ export interface DocumentAuditEntry {
 }
 
 export interface DocumentHeader {
+  /** Trading name when configured, else the legal name, else the raw tenant record — never a hardcoded/test fallback. */
   business: string;
+  /** Only set (and only ever rendered) when it differs from `business` — the formal entity name alongside the trading name. */
+  legalName?: string | null;
   property?: string | null;
   outlet?: string | null;
   address?: string | null;
   contact?: string | null;
+  website?: string | null;
+  /** Tax identification number (TIN), when configured. */
+  taxId?: string | null;
+  /** Public URL of the business logo, when configured. Documents must render correctly without one. */
+  logoUrl?: string | null;
 }
 
 export interface RestaurantDocument {

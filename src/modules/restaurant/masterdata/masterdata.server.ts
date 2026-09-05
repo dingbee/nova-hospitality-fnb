@@ -79,6 +79,7 @@ export async function upsertBusinessProfile(
       phone: input.phone ?? null,
       email: input.email ?? null,
       address: input.address ?? null,
+      website: input.website ?? null,
       logoUrl: existingLogoUrl,
     },
   };
