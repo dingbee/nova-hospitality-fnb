@@ -689,7 +689,22 @@ export function PosWorkspace({
             column, never a second/third column beside Floor. Both share this
             column's horizontal bounds automatically since they're siblings
             in the same grid track. */}
-        <div className="grid h-full min-h-0 grid-rows-[minmax(0,30fr)_minmax(0,70fr)] gap-3 xl:gap-4">
+        {/* Bill's row carries a measured (not guessed) floor at lg+: header +
+            the pinned Total/primary-action footer + section padding need
+            ~189px with zero content — below that, no amount of internal
+            scrolling can make room for Bill's own always-visible chrome.
+            The floor never grows with content (badges/lines/notes all live
+            in the scrollable region above the footer), so it only engages
+            on genuinely short viewports, and only ever redistributes within
+            this already-fixed-height row — it cannot grow this grid, the
+            workspace, or the page. Below lg, Floor+RightWorkspace themselves
+            are already stacked rows sharing a shorter budget (see the outer
+            grid above), so a 200px floor here would consume most of that
+            budget and crush Menu instead of protecting Bill; the much
+            slimmer footer introduced with this floor (Total + one button,
+            not the old Total-plus-five-actions block) already gives Bill
+            far more headroom at every size without needing a floor there. */}
+        <div className="grid h-full min-h-0 grid-rows-[minmax(0,30fr)_minmax(0,70fr)] gap-3 lg:grid-rows-[minmax(200px,30fr)_minmax(0,70fr)] xl:gap-4">
           {/* Bill */}
           <SectionCard
             title={orderRow ? `Bill ${orderRow.order_number}` : "Bill"}
@@ -712,57 +727,60 @@ export function PosWorkspace({
               />
             ) : (
               <div className="flex h-full min-h-0 flex-col">
-                {life && (
-                  <div className="space-y-2 rounded-lg border bg-muted/30 p-2 shrink-0">
-                    <ServiceLifecycleBar life={life} compact />
-                    <p className="text-xs text-muted-foreground">{life.reason}</p>
-                    <div className="flex flex-wrap gap-1 text-[11px]">
-                      {life.staged > 0 && <Badge variant="outline">{life.staged} staged</Badge>}
-                      {life.unsent > 0 && <Badge variant="outline">{life.unsent} unsent</Badge>}
-                      {life.inProduction > 0 && (
-                        <Badge variant="secondary">{life.inProduction} in production</Badge>
-                      )}
-                      {life.ready > 0 && <Badge>{life.ready} ready</Badge>}
-                      {life.balance > 0 && (
-                        <Badge variant="outline">Balance {money(life.balance, currency)}</Badge>
-                      )}
-                      {life.delayed && <Badge variant="destructive">Delayed</Badge>}
-                      {life.billRequestedAt && !life.billPresentedAt && (
-                        <Badge variant="secondary">Bill asked for</Badge>
-                      )}
-                      {life.receiptDelivered && (
-                        <Badge variant="secondary">Receipt delivered</Badge>
+                {/* Everything here scrolls as one region: status/lifecycle info,
+                    line items and secondary actions can all grow arbitrarily
+                    (30+ badges, 30+ lines, a long "More" list) without ever
+                    touching the pinned Total/primary-action footer below —
+                    that footer is the one thing a cashier must always be
+                    able to reach, so its own height stays bounded (a total
+                    row plus a single button) instead of competing for space
+                    with whatever this bill happens to contain right now. */}
+                <div className="space-y-3 min-h-0 flex-1 overflow-y-auto pt-3">
+                  {life && (
+                    <div className="space-y-2 rounded-lg border bg-muted/30 p-2">
+                      <ServiceLifecycleBar life={life} compact />
+                      <p className="text-xs text-muted-foreground">{life.reason}</p>
+                      <div className="flex flex-wrap gap-1 text-[11px]">
+                        {life.staged > 0 && <Badge variant="outline">{life.staged} staged</Badge>}
+                        {life.unsent > 0 && <Badge variant="outline">{life.unsent} unsent</Badge>}
+                        {life.inProduction > 0 && (
+                          <Badge variant="secondary">{life.inProduction} in production</Badge>
+                        )}
+                        {life.ready > 0 && <Badge>{life.ready} ready</Badge>}
+                        {life.balance > 0 && (
+                          <Badge variant="outline">Balance {money(life.balance, currency)}</Badge>
+                        )}
+                        {life.delayed && <Badge variant="destructive">Delayed</Badge>}
+                        {life.billRequestedAt && !life.billPresentedAt && (
+                          <Badge variant="secondary">Bill asked for</Badge>
+                        )}
+                        {life.receiptDelivered && (
+                          <Badge variant="secondary">Receipt delivered</Badge>
+                        )}
+                      </div>
+                      {activeTable?.serviceRequest && (
+                        <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2">
+                          <span className="flex items-center gap-1.5 text-xs font-medium text-destructive">
+                            <Bell className="size-3.5" />
+                            Guest needs assistance
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="min-h-8"
+                            disabled={acknowledgeRequest.isPending}
+                            onClick={() =>
+                              acknowledgeRequest.mutate({
+                                requestId: activeTable.serviceRequest.id,
+                              })
+                            }
+                          >
+                            Acknowledge
+                          </Button>
+                        </div>
                       )}
                     </div>
-                    {activeTable?.serviceRequest && (
-                      <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2">
-                        <span className="flex items-center gap-1.5 text-xs font-medium text-destructive">
-                          <Bell className="size-3.5" />
-                          Guest needs assistance
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="min-h-8"
-                          disabled={acknowledgeRequest.isPending}
-                          onClick={() =>
-                            acknowledgeRequest.mutate({ requestId: activeTable.serviceRequest.id })
-                          }
-                        >
-                          Acknowledge
-                        </Button>
-                      </div>
-                    )}
-                    <Button
-                      className="min-h-11 w-full"
-                      disabled={life.nextAction === "none" || life.blocked || sendLines.isPending}
-                      onClick={runNextAction}
-                    >
-                      Next: {life.nextActionLabel}
-                    </Button>
-                  </div>
-                )}
-                <div className="space-y-3 min-h-0 flex-1 overflow-y-auto pt-3">
+                  )}
                   {live.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -889,15 +907,12 @@ export function PosWorkspace({
                       />
                     </div>
                   </details>
-                </div>
 
-                <div className="space-y-3 shrink-0 pt-3">
-                  <div className="flex items-center justify-between border-t-2 pt-3 text-base font-semibold">
-                    <span>Total</span>
-                    <span className="tabular-nums">{money(billTotal, currency)}</span>
-                  </div>
-
-                  <div className="grid gap-2">
+                  {/* Manual overrides and account-management actions: secondary
+                      to the one pinned "Next" CTA below, so they live in the
+                      scroll region — always reachable, never competing with
+                      the primary action for the footer's guaranteed space. */}
+                  <div className="grid gap-2 border-t pt-3">
                     <Button
                       className="min-h-11"
                       disabled={cart.length === 0 || sendLines.isPending}
@@ -1013,6 +1028,27 @@ export function PosWorkspace({
                         )}
                     </div>
                   </div>
+                </div>
+
+                {/* Pinned primary-action footer: bounded to a total row plus
+                    one button, so it always fits inside Bill's allotted
+                    height regardless of how much scrolls above it — this is
+                    the one thing that must never clip, fall off-screen, or
+                    need a page scroll to reach. */}
+                <div className="shrink-0 space-y-2 border-t-2 pt-3">
+                  <div className="flex items-center justify-between text-base font-semibold">
+                    <span>Total</span>
+                    <span className="tabular-nums">{money(billTotal, currency)}</span>
+                  </div>
+                  {life && (
+                    <Button
+                      className="min-h-11 w-full"
+                      disabled={life.nextAction === "none" || life.blocked || sendLines.isPending}
+                      onClick={runNextAction}
+                    >
+                      Next: {life.nextActionLabel}
+                    </Button>
+                  )}
                 </div>
               </div>
             )}
