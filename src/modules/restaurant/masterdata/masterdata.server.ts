@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase rows are untyped at this boundary. */
 import { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
+import { classifyProperty } from "@/modules/commercial/property-classification.server";
 import type {
   UpsertBusinessProfileInput,
   UpsertInventoryCategoryInput,
@@ -25,6 +26,7 @@ export async function upsertProperty(sb: Sb, userId: string, input: UpsertProper
     currency: input.currency,
     status: input.status,
   };
+  const isNewProperty = !input.id;
   const q = input.id
     ? sb
         .from("restaurant_properties")
@@ -34,7 +36,16 @@ export async function upsertProperty(sb: Sb, userId: string, input: UpsertProper
     : sb.from("restaurant_properties").insert({ ...row, settings: {} });
   const { data, error } = await q.select("id, name, slug, status").single();
   if (error) throw new Error(error.message);
-  return data;
+
+  // P01: every NEW property passes through the commercial classification
+  // engine exactly once — base/included/additional_chargeable/programme-
+  // or-override-covered/enterprise — so a chargeable additional property
+  // is never silently activated. Never runs on update, and never runs for
+  // outlets (restaurant_locations), which carry no commercial charge.
+  const commercial = isNewProperty
+    ? await classifyProperty(sb, userId, input.tenantId, data.id)
+    : null;
+  return { ...data, commercial };
 }
 
 export async function upsertBusinessProfile(

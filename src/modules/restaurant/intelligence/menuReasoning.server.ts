@@ -24,6 +24,9 @@
  */
 import { assertCapability } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
+import { assertAiCapability, recordAiUsage } from "@/modules/commercial/ai-governance.server";
+import { CommercialEntitlementError } from "@/modules/commercial/resolver.server";
+import { QuotaExceededError } from "@/modules/commercial/quota.server";
 import { callReasoningProvider, type ReasoningProviderName } from "@/lib/reasoning-provider.server";
 import { parseAiJson } from "@/lib/ai-gateway.server";
 import {
@@ -80,7 +83,8 @@ export type MenuReasoningOutcome =
         | "provider_error"
         | "invalid_response"
         | "fabricated_evidence"
-        | "insufficient_data";
+        | "insufficient_data"
+        | "commercial_blocked";
       detail: string;
       provider: ReasoningProviderName;
       promptVersion: string;
@@ -120,6 +124,28 @@ export async function runMenuIntelligenceReasoning(
   precomputedContext?: MenuIntelligenceContext,
 ): Promise<MenuReasoningOutcome> {
   await assertCapability(sb, userId, input.tenantId, "intelligence.read");
+
+  // P01 commercial gate: entitlement (is "menu_intelligence" available on
+  // this plan/programme?) AND quota (is the tenant's monthly Menu
+  // Intelligence run allowance already exhausted?) — checked BEFORE the
+  // provider is ever called, so a blocked tenant never incurs AI cost.
+  try {
+    await assertAiCapability(sb, input.tenantId, "menu_intelligence");
+  } catch (err) {
+    const detail =
+      err instanceof CommercialEntitlementError || err instanceof QuotaExceededError
+        ? err.message
+        : "Menu Intelligence is not available for this tenant right now.";
+    return {
+      ok: false,
+      reason: "commercial_blocked",
+      detail,
+      provider: input.provider,
+      promptVersion: MENU_INTELLIGENCE_PROMPT_VERSION,
+      contextHash: null,
+      evaluationRecorded: false,
+    };
+  }
 
   const context = precomputedContext ?? (await buildMenuIntelligenceContext(sb, userId, input));
   const contextHash = hashMenuIntelligenceContext(context);
@@ -186,6 +212,22 @@ export async function runMenuIntelligenceReasoning(
       evaluationRecorded,
     };
   }
+
+  // Real usage numbers are recorded once the provider has actually
+  // responded, regardless of what downstream validation later decides
+  // about the content — cost was incurred either way. Never surfaced to
+  // the restaurant user; visible only in the Commercial Admin Dashboard's
+  // Usage & Quotas / AI cost views.
+  await recordAiUsage(sb, {
+    tenantId: input.tenantId,
+    userId,
+    capabilityCode: "menu_intelligence",
+    model: call.model,
+    provider: input.provider,
+    workloadType: "menu_intelligence.reasoning",
+    inputUsage: call.inputTokens,
+    outputUsage: call.outputTokens,
+  });
 
   const parsed = parseAiJson<unknown>(call.content);
   const validated = parsed == null ? null : menuReasoningResultSchema.safeParse(parsed);

@@ -13,6 +13,15 @@ export interface CurrentPrincipal {
   roles: string[];
   permissions: Permission[];
   tenantId: string | null;
+  /**
+   * P01: platform-level Commercial Administration access — deliberately NOT
+   * derived from `permissions`/ROLE_PERMISSIONS (every OWNER role holds
+   * ALL_PERMISSIONS across every domain, including any new domain added
+   * here, which would immediately leak commercial control to every tenant
+   * owner). Backed by the separate, additive `commercial_administrators`
+   * allow-list instead — see modules/commercial/access.server.ts.
+   */
+  commercialAdmin: boolean;
 }
 
 export const getCurrentPrincipal = createServerFn({ method: "GET" })
@@ -29,11 +38,14 @@ export const getCurrentPrincipal = createServerFn({ method: "GET" })
       .eq("user_id", userId);
     if (error) throw new Error(error.message);
     const permissions = await listPermissions(supabase, userId);
+    const { isCommercialAdmin } = await import("@/modules/commercial/access.server");
+    const commercialAdmin = await isCommercialAdmin(supabase, userId);
     return {
       userId,
       email: (claims["email"] as string) ?? null,
       roles: (roleRows ?? []).map((r: { role_code: string }) => r.role_code),
       permissions,
       tenantId: (roleRows ?? [])[0]?.tenant_id ?? null,
+      commercialAdmin,
     };
   });
