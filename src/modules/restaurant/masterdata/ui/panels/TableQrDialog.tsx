@@ -61,49 +61,55 @@ export function TableQrDialog({
 
   if (!card) return null;
 
+  const copyLink = async () => {
+    await copyTextToClipboard(card.guestUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>Guest QR — {card.tableLabel}</DialogTitle>
-          <DialogDescription>
-            Guests scan this to open your ordering menu for this table.
-          </DialogDescription>
+          {/* The restaurant's own identity, front and center on-screen — the
+              printed card also carries it, but at on-screen preview size
+              that text renders too small to read, so the dialog restates it
+              here rather than forking a second, preview-only render of the
+              shared card image. */}
+          <DialogTitle>{card.businessName}</DialogTitle>
+          <DialogDescription>{card.tableLabel} · Scan to open the ordering menu</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col items-center gap-3">
-          {error ? (
-            <p className="py-8 text-sm text-destructive">{error}</p>
-          ) : dataUrl ? (
-            <img
-              src={dataUrl}
-              alt={`QR code for ${card.tableLabel} — scan to order`}
-              className="w-full max-w-[280px] rounded-lg border"
-            />
-          ) : (
-            <div className="flex h-64 w-full items-center justify-center">
+        <div className="flex flex-col items-center gap-2.5">
+          <div className="flex aspect-[3/4] w-full max-w-[220px] items-center justify-center overflow-hidden rounded-lg border bg-muted/30">
+            {error ? (
+              <p className="px-4 text-center text-sm text-destructive">{error}</p>
+            ) : dataUrl ? (
+              <img
+                src={dataUrl}
+                alt={`QR code for ${card.businessName}, ${card.tableLabel} — scan to order`}
+                className="size-full object-contain"
+              />
+            ) : (
               <Loader2 className="size-6 animate-spin text-muted-foreground" aria-hidden />
-            </div>
-          )}
+            )}
+          </div>
 
-          <div className="w-full space-y-1.5 rounded-md bg-muted px-3 py-2">
+          <div className="w-full space-y-1">
             <p className="text-xs font-medium text-muted-foreground">Guest ordering link</p>
-            <p className="truncate text-xs text-foreground" title={card.guestUrl}>
+            <button
+              type="button"
+              onClick={copyLink}
+              title={card.guestUrl}
+              aria-label={`Copy guest ordering link: ${card.guestUrl}`}
+              className="w-full select-none truncate rounded-md bg-muted px-3 py-2 text-left font-mono text-xs text-foreground transition-colors hover:bg-muted/70"
+            >
               {card.guestUrl}
-            </p>
+            </button>
           </div>
 
           <div className="flex w-full gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 flex-1"
-              onClick={async () => {
-                await copyTextToClipboard(card.guestUrl);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
-              }}
-            >
+            <Button type="button" variant="outline" className="h-11 flex-1" onClick={copyLink}>
               {copied ? (
                 <Check className="mr-1 size-4" aria-hidden />
               ) : (

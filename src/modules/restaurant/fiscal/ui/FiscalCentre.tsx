@@ -10,6 +10,7 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { RefreshCw, ShieldCheck } from "lucide-react";
+import { PRODUCT } from "@/config/product";
 import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { EmptyState } from "@/components/os/EmptyState";
@@ -404,7 +405,7 @@ export function FiscalCentre() {
 
       <SectionCard
         title="Z-report"
-        description="Daily fiscal aggregation for this outlet, from LexiBite's own fiscal sales ledger."
+        description={`Daily fiscal aggregation for this outlet, from ${PRODUCT.shortName}'s own fiscal sales ledger.`}
         actions={
           <div className="flex gap-2">
             <Button

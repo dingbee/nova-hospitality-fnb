@@ -59,8 +59,15 @@ export function useAdminMutation<TData = unknown, TError = unknown, TVariables =
   } = options;
   const loadingToastRef = useRef<string | number | null>(null);
   const startLoadingToast = () => {
-    if (!silentLoading && (loadingMessage || successMessage)) {
-      loadingToastRef.current = toast.loading(loadingMessage ?? "Working…");
+    // A floating loading toast only ever appears when a caller explicitly
+    // opts in with `loadingMessage` — most actions already show contextual
+    // pending state on the control that triggered them (mutation.isPending
+    // disabling/spinning the button), so a generic "Working…" toast on top
+    // of that is a detached, uninformative notification, not a genuine
+    // loading indicator (spec: prefer contextual loading; don't use a
+    // floating global notification for a simple local action).
+    if (!silentLoading && loadingMessage) {
+      loadingToastRef.current = toast.loading(loadingMessage);
     }
   };
   const dismissLoadingToast = () => {

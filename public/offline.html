@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0F2620" />
     <meta name="robots" content="noindex" />
-    <title>Offline — NOVA Hospitality F&B</title>
+    <title>Offline — LexiBite</title>
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <style>
@@ -60,28 +60,6 @@
         width: 40px; height: 1px; background: var(--charcoal);
         opacity: 0.3; margin: 1.75rem auto;
       }
-      .links {
-        margin-top: 2rem;
-        display: grid;
-        gap: 0.5rem;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      }
-      .links a {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0.85rem 1rem;
-        font-size: 0.72rem;
-        letter-spacing: 0.24em;
-        text-transform: uppercase;
-        color: var(--charcoal);
-        text-decoration: none;
-        border: 1px solid var(--charcoal);
-        transition: background 0.2s, color 0.2s;
-      }
-      .links a:hover, .links a:focus-visible {
-        background: var(--charcoal); color: var(--ivory); outline: none;
-      }
       .retry {
         margin-top: 1.25rem;
         background: var(--charcoal); color: var(--ivory);
@@ -111,12 +89,12 @@
   <body>
     <main>
       <div class="card">
-        <p class="eyebrow">NOVA Hospitality F&B</p>
-        <h1>You're offline by the river.</h1>
+        <p class="eyebrow">LexiBite</p>
+        <h1>You're offline.</h1>
         <p>
-          We can't reach the network just now, but pages you've already
-          visited remain available. Karibu — explore them below, or try
-          again when you're back online.
+          We can't reach the network just now. Karibu — nothing has been
+          sent yet, so your order is safe. Try again once you're back
+          online to keep ordering.
         </p>
         <div class="divider" aria-hidden="true"></div>
         <button class="retry" type="button" onclick="location.reload()">
@@ -126,17 +104,9 @@
           <span id="dot" class="dot" aria-hidden="true"></span>
           <span id="status-text">Offline</span>
         </div>
-        <nav class="links" aria-label="Cached pages">
-          <a href="/">Home</a>
-          <a href="/rooms">Rooms</a>
-          <a href="/experiences">Experiences</a>
-          <a href="/dining">Dining</a>
-          <a href="/contact">Contact</a>
-          <a href="/lodge">About</a>
-        </nav>
       </div>
     </main>
-    <footer>NOVA Hospitality F&B · Arusha, Tanzania</footer>
+    <footer>LexiBite</footer>
     <script>
       (function () {
         var dot = document.getElementById("dot");
