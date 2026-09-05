@@ -213,6 +213,61 @@ export function resolveEffectivePropertyId(
   return propertyIds[0];
 }
 
+/**
+ * P01 — the same resolution as `resolveEffectivePropertyId`, plus the
+ * commercial gate the "multi_property_command" capability exists for:
+ * `resolveEffectivePropertyId` returning `undefined` for a tenant-wide grant
+ * holder means "aggregate across every property this tenant has" — a real
+ * multi-property operation, not a side effect of scope resolution — and
+ * today it happens unconditionally for anyone holding a tenant-wide grant
+ * (Decisions Board, Staff Ask LexiBite context), regardless of whether the
+ * tenant's plan is even entitled to it. A tenant with only one property is
+ * never gated: aggregating "everything" and aggregating "the one property
+ * that exists" are the same result, so there is nothing commercial to check.
+ *
+ * Not entitled: this narrows to the tenant's own first-created property
+ * (the same deterministic "no explicit request → first property" fallback
+ * `resolveEffectivePropertyId` already applies to a property-scoped caller)
+ * rather than throwing — every existing call site treats an `undefined`
+ * result as "give me a read", not a user-initiated "show me all properties"
+ * action with its own error affordance, so failing this closed as a quiet
+ * scope-narrowing (not a hard denial) is the correct, non-breaking way to
+ * close the gap without turning ordinary reads into 403s for tenants who
+ * simply have a tenant-wide grant and more than one property.
+ */
+export async function resolveMultiPropertyScope(
+  sb: Sb,
+  tenantId: string,
+  scope: TenantScope,
+  requestedPropertyId: string | null | undefined,
+): Promise<string | undefined> {
+  const effective = resolveEffectivePropertyId(scope, requestedPropertyId);
+  if (effective !== undefined) return effective;
+
+  const { count } = await sb
+    .from("restaurant_properties")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId);
+  if ((count ?? 0) <= 1) return undefined;
+
+  const { assertEntitled, CommercialEntitlementError } =
+    await import("@/modules/commercial/resolver.server");
+  try {
+    await assertEntitled(sb, tenantId, "multi_property_command");
+    return undefined;
+  } catch (err) {
+    if (!(err instanceof CommercialEntitlementError)) throw err;
+    const { data: firstProperty } = await sb
+      .from("restaurant_properties")
+      .select("id")
+      .eq("tenant_id", tenantId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    return firstProperty?.id ?? undefined;
+  }
+}
+
 export async function assertTenantRead(
   supabase: Sb,
   userId: string,

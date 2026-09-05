@@ -14,6 +14,7 @@ import { staffNovaAskSchema } from "./staffnova.contracts";
 const assertCapabilityMock = vi.fn();
 const rolesInTenantMock = vi.fn();
 const getTenantScopeMock = vi.fn();
+const resolveMultiPropertyScopeMock = vi.fn();
 vi.mock("../core/access.server", async () => {
   const actual =
     await vi.importActual<typeof import("../core/access.server")>("../core/access.server");
@@ -23,7 +24,37 @@ vi.mock("../core/access.server", async () => {
     getTenantScope: (...args: unknown[]) => getTenantScopeMock(...args),
     // Pure logic, not a boundary — use the real implementation.
     resolveEffectivePropertyId: actual.resolveEffectivePropertyId,
+    // P01: does real DB/commercial I/O — mocked at the boundary like every
+    // other cross-module call this file already mocks.
+    resolveMultiPropertyScope: (...args: unknown[]) => resolveMultiPropertyScopeMock(...args),
   };
+});
+
+const assertEntitledMock = vi.fn();
+vi.mock("@/modules/commercial/resolver.server", async () => {
+  const actual = await vi.importActual<typeof import("@/modules/commercial/resolver.server")>(
+    "@/modules/commercial/resolver.server",
+  );
+  return {
+    assertEntitled: (...args: unknown[]) => assertEntitledMock(...args),
+    // Real class — tests construct/throw real instances to exercise the
+    // instanceof branches in askStaffNova's catch blocks.
+    CommercialEntitlementError: actual.CommercialEntitlementError,
+  };
+});
+
+const assertAiCapabilityMock = vi.fn();
+const recordAiUsageMock = vi.fn();
+vi.mock("@/modules/commercial/ai-governance.server", () => ({
+  assertAiCapability: (...args: unknown[]) => assertAiCapabilityMock(...args),
+  recordAiUsage: (...args: unknown[]) => recordAiUsageMock(...args),
+}));
+
+vi.mock("@/modules/commercial/quota.server", async () => {
+  const actual = await vi.importActual<typeof import("@/modules/commercial/quota.server")>(
+    "@/modules/commercial/quota.server",
+  );
+  return { QuotaExceededError: actual.QuotaExceededError };
 });
 
 const posBoardMock = vi.fn();
@@ -95,6 +126,13 @@ function stubEngines() {
     grants: [{ role: "owner", propertyId: null }],
   });
   recallRestaurantMemoryMock.mockResolvedValue([]);
+  // P01 defaults: entitled, unmetered, tenant-wide aggregate permitted —
+  // matches this suite's pre-P01 behavior exactly. Tests exercising the
+  // commercial gates override these explicitly.
+  resolveMultiPropertyScopeMock.mockResolvedValue(undefined);
+  assertEntitledMock.mockResolvedValue(undefined);
+  assertAiCapabilityMock.mockResolvedValue(undefined);
+  recordAiUsageMock.mockResolvedValue(undefined);
   posBoardMock.mockResolvedValue({
     stats: { openBills: 2, openValue: 100, revenueToday: 500, coversToday: 40, averageCheck: 25 },
   });
@@ -887,6 +925,10 @@ describe("askStaffNova — P1: property-scoped retrieval", () => {
       platformAdmin: false,
       grants: [{ role: "owner", propertyId: PROPERTY_A1 }],
     });
+    // A genuinely property-scoped caller never touches the multi-property
+    // commercial gate at all (see resolveMultiPropertyScope's own doc
+    // comment) — it resolves to the same property real resolution would.
+    resolveMultiPropertyScopeMock.mockResolvedValue(PROPERTY_A1);
   }
 
   it("a property-scoped caller's assertCapability check and every grounding engine call carry their resolved property — never null/unscoped", async () => {
@@ -998,5 +1040,139 @@ describe("askStaffNova — P1: property-scoped retrieval", () => {
     const call = callReasoningProviderMock.mock.calls[0][1] as { user: string };
     const sentPayload = JSON.parse(call.user);
     expect(sentPayload.context.memory).toHaveLength(1);
+  });
+});
+
+describe("askStaffNova — P01: ai_business_assistant commercial gate", () => {
+  it("entitlement denial blocks the whole assistant before either the NOVA UNDERSTAND path or the free-text AI call runs — no provider call, no data gathered beyond RBAC", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    const { CommercialEntitlementError } = await import("@/modules/commercial/resolver.server");
+    assertEntitledMock.mockRejectedValue(
+      new CommercialEntitlementError("ai_business_assistant", "unavailable"),
+    );
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "How was lunch?" }),
+    );
+
+    expect(result.degraded).toBe(true);
+    expect(result.answer).toContain("ai_business_assistant");
+    expect(understandNovaInstructionMock).not.toHaveBeenCalled();
+    expect(callReasoningProviderMock).not.toHaveBeenCalled();
+    expect(assertAiCapabilityMock).not.toHaveBeenCalled();
+  });
+
+  it("a command-shaped message is ALSO blocked by the entry-point entitlement gate — Ask LexiBite is gated as one surface, not just its paid branch", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    const { CommercialEntitlementError } = await import("@/modules/commercial/resolver.server");
+    assertEntitledMock.mockRejectedValue(
+      new CommercialEntitlementError("ai_business_assistant", "unavailable"),
+    );
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({
+        tenantId: TENANT_A,
+        message: "Prepare a stock movement for 3kg beef",
+      }),
+    );
+
+    expect(result.degraded).toBe(true);
+    expect(understandNovaInstructionMock).not.toHaveBeenCalled();
+  });
+
+  it("quota exhaustion at the provider call site blocks the AI request — the provider is never reached, and no answer is fabricated", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    const { QuotaExceededError } = await import("@/modules/commercial/quota.server");
+    assertAiCapabilityMock.mockRejectedValue(
+      new QuotaExceededError("ai_requests_monthly", {
+        quotaCode: "ai_requests_monthly",
+        unit: "ai_requests",
+        limitValue: 20,
+        usedValue: 20,
+        period: "month",
+        periodStart: new Date().toISOString(),
+        periodEnd: new Date().toISOString(),
+        state: "BLOCKED",
+        overageBehavior: "block",
+        warningThresholdPct: 80,
+        nearLimitThresholdPct: 95,
+        hasOverride: false,
+      }),
+    );
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "How was lunch?" }),
+    );
+
+    expect(result.degraded).toBe(true);
+    expect(callReasoningProviderMock).not.toHaveBeenCalled();
+    expect(recordAiUsageMock).not.toHaveBeenCalled();
+  });
+
+  it("a successful AI answer records real usage AFTER the provider responds, scoped to this tenant/user/capability", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    callReasoningProviderMock.mockResolvedValue({
+      content: "You served 40 guests today.",
+      provider: "openai",
+      model: "gpt-5.6-terra",
+      inputTokens: 120,
+      outputTokens: 40,
+      unavailable: false,
+    });
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "How many guests today?" }),
+    );
+
+    expect(result.degraded).toBe(false);
+    expect(assertAiCapabilityMock).toHaveBeenCalledWith(
+      {},
+      TENANT_A,
+      "ai_business_assistant",
+      undefined,
+    );
+    expect(recordAiUsageMock).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        tenantId: TENANT_A,
+        userId: USER_ID,
+        capabilityCode: "ai_business_assistant",
+        model: "gpt-5.6-terra",
+        provider: "openai",
+        inputUsage: 120,
+        outputUsage: 40,
+      }),
+    );
+  });
+
+  it("a provider failure after quota/entitlement passed degrades to the honest apology and never records usage for the failed call", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    callReasoningProviderMock.mockResolvedValue({
+      provider: "openai",
+      unavailable: true,
+      reason: "timeout",
+    });
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "How many guests today?" }),
+    );
+
+    expect(result.degraded).toBe(true);
+    expect(recordAiUsageMock).not.toHaveBeenCalled();
   });
 });

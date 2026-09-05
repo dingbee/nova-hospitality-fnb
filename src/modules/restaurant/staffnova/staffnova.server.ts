@@ -55,10 +55,13 @@
 import {
   assertCapability,
   getTenantScope,
-  resolveEffectivePropertyId,
+  resolveMultiPropertyScope,
   rolesInTenant,
 } from "../core/access.server";
 import { classifyInstruction } from "../understand/classify";
+import { assertAiCapability, recordAiUsage } from "@/modules/commercial/ai-governance.server";
+import { assertEntitled, CommercialEntitlementError } from "@/modules/commercial/resolver.server";
+import { QuotaExceededError } from "@/modules/commercial/quota.server";
 import {
   correlateFindingsByEntity,
   detectMaterialChanges,
@@ -363,12 +366,37 @@ export async function askStaffNova(
   // session that could ever satisfy this; there is no code path from the
   // guest surface into this function.
   const scope = await getTenantScope(sb, userId, input.tenantId);
-  const propertyId = resolveEffectivePropertyId(scope, null);
+  // P01: aggregating across every property this tenant has (propertyId
+  // undefined) is a real multi-property operation — this resolves the same
+  // way resolveEffectivePropertyId always did, but additionally requires
+  // "multi_property_command" entitlement before actually aggregating; a
+  // tenant not entitled (and with more than one property) is transparently
+  // narrowed to their own first property instead of erroring, since this is
+  // an implicit read-path default, not a user-facing "view all" action.
+  const propertyId = await resolveMultiPropertyScope(sb, input.tenantId, scope, null);
   await assertCapability(sb, userId, input.tenantId, "intelligence.read", {
     propertyId: propertyId ?? null,
   });
 
   const generatedAt = new Date().toISOString();
+
+  // P01 commercial gate: Ask LexiBite (the whole staff-assistant surface,
+  // not just the paid free-text branch below) requires "ai_business_assistant"
+  // entitlement. Checked once, up front, before either the deterministic
+  // NOVA UNDERSTAND path or the AI provider path runs — a tenant without
+  // this entitlement gets a plain, honest decline instead of the assistant
+  // partially working. Quota is NOT reserved here (see the provider call
+  // site below): quota tracks genuine AI-provider usage only, and the
+  // NOVA UNDERSTAND branch below never calls a provider.
+  try {
+    await assertEntitled(sb, input.tenantId, "ai_business_assistant", { propertyId });
+  } catch (err) {
+    const detail =
+      err instanceof CommercialEntitlementError
+        ? err.message
+        : "Ask LexiBite is not available for this tenant right now.";
+    return { answer: detail, degraded: true, generatedAt };
+  }
 
   // I11: a command-shaped message never reaches the free-text AI call
   // below — it's understood structurally instead, deterministically, with
@@ -426,6 +454,23 @@ export async function askStaffNova(
   const roles = await rolesInTenant(sb, userId, input.tenantId);
   const context = await buildStaffNovaContext(sb, userId, input.tenantId, roles, propertyId);
 
+  // P01 commercial gate, second half: this is the one place in this
+  // function that actually incurs AI provider cost, so it's the one place
+  // quota is reserved — BEFORE the provider is called, so a tenant whose
+  // monthly Ask LexiBite allowance is already exhausted never reaches the
+  // model. Entitlement was already confirmed above; this call also
+  // re-resolves it (cheap) and additionally increments the linked quota
+  // (if an admin configured one) by one request.
+  try {
+    await assertAiCapability(sb, input.tenantId, "ai_business_assistant", propertyId);
+  } catch (err) {
+    const detail =
+      err instanceof CommercialEntitlementError || err instanceof QuotaExceededError
+        ? err.message
+        : "Ask LexiBite is not available for this tenant right now.";
+    return { answer: detail, degraded: true, generatedAt };
+  }
+
   try {
     // Corrective pass: this used to call ai-gateway.server.ts directly,
     // which defaults to the OpenAI Chat Completions endpoint — but the
@@ -446,6 +491,22 @@ export async function askStaffNova(
     if (result.unavailable) throw new Error(result.reason);
     const answer = result.content.trim();
     if (!answer) throw new Error("Empty response from AI gateway");
+
+    // Real usage numbers are recorded once the provider has actually
+    // responded — never surfaced to the restaurant user, visible only in
+    // the Commercial Admin Dashboard's Usage & Quotas / AI cost views.
+    await recordAiUsage(sb, {
+      tenantId: input.tenantId,
+      propertyId,
+      userId,
+      capabilityCode: "ai_business_assistant",
+      model: result.model,
+      provider: "openai",
+      workloadType: "ai_business_assistant.answer",
+      inputUsage: result.inputTokens,
+      outputUsage: result.outputTokens,
+    });
+
     return { answer, degraded: false, generatedAt };
   } catch {
     // Never fabricate on an AI failure — degrade to an honest, static

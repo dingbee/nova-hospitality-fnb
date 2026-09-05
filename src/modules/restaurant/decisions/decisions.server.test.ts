@@ -106,26 +106,44 @@ function stubEngines(atRisk: any[]) {
 }
 
 /** A minimal, filter-precise fake — every .eq() actually narrows the result, and update() only touches matching rows. */
-function makeFakeSb(members: Array<{ tenant_id: string; user_id: string; role: string }>) {
+function makeFakeSb(
+  members: Array<{ tenant_id: string; user_id: string; role: string }>,
+  extra?: {
+    properties?: Array<{ id: string; tenant_id: string; created_at: string }>;
+    commercial?: Record<string, any[]>;
+  },
+) {
   const decisions = new Map<string, any>();
   const plans: any[] = [];
+  const properties = extra?.properties ?? [];
+  const commercial = extra?.commercial ?? {};
   let seq = 0;
 
   function from(table: string) {
     const filters: Record<string, unknown> = {};
+    const inFilters: Record<string, unknown[]> = {};
     let mode: "select" | "update" | "insert" = "select";
     let patch: any;
     let insertPayload: any;
+    let wantCount = false;
 
     const api: any = {
-      select: () => api,
+      select: (_cols?: string, opts?: { count?: string }) => {
+        if (opts?.count) wantCount = true;
+        return api;
+      },
       eq: (col: string, val: unknown) => {
         filters[col] = val;
         return api;
       },
       order: () => api,
       limit: () => api,
-      in: () => api,
+      in: (col: string, vals: unknown[]) => {
+        inFilters[col] = vals;
+        return api;
+      },
+      lte: () => api,
+      or: () => api,
       update: (p: any) => {
         mode = "update";
         patch = p;
@@ -147,6 +165,23 @@ function makeFakeSb(members: Array<{ tenant_id: string; user_id: string; role: s
           (m) => m.tenant_id === filters.tenant_id && m.user_id === filters.user_id,
         );
         return { data: rows, error: null };
+      }
+      if (table === "restaurant_properties") {
+        const rows = properties.filter((p) =>
+          Object.entries(filters).every(([k, v]) => (p as any)[k] === v),
+        );
+        if (wantCount) return { data: rows, count: rows.length, error: null };
+        return { data: single ? (rows[0] ?? null) : rows, error: null };
+      }
+      if (table in commercial) {
+        const rows = commercial[table]!.filter((r) => {
+          const eqOk = Object.entries(filters).every(([k, v]) => r[k] === v);
+          const inOk = Object.entries(inFilters).every(([k, vals]) =>
+            (vals as unknown[]).includes(r[k]),
+          );
+          return eqOk && inOk;
+        });
+        return { data: single ? (rows[0] ?? null) : rows, error: null };
       }
       if (table === "intelligence_plans") {
         if (mode === "insert") {
@@ -786,5 +821,89 @@ describe("P1 property scope — Decisions Board access matrix", () => {
         windowDays: 30,
       } as any),
     ).rejects.toThrow(/do not belong to this restaurant tenant/);
+  });
+});
+
+describe("getRestaurantDecisionBoard — P01: multi_property_command commercial gate", () => {
+  const PROPERTY_1 = "prop-1111-1111-1111-111111111111";
+  const PROPERTY_2 = "prop-2222-2222-2222-222222222222";
+  const OWNER = "22222222-2222-2222-2222-222222222222";
+  const TENANT_WIDE_OWNER = { tenant_id: TENANT_A, user_id: OWNER, role: "owner" };
+
+  function commercialFixture(entitled: boolean) {
+    return {
+      commercial_plans: [{ id: "plan-core", code: "core" }],
+      commercial_capabilities: [
+        { id: "cap-mpc", code: "multi_property_command", status: "active" },
+      ],
+      commercial_plan_entitlements: entitled
+        ? [
+            {
+              plan_id: "plan-core",
+              capability_id: "cap-mpc",
+              state: "limited",
+              config: {},
+              effective_from: new Date(Date.now() - 86_400_000).toISOString(),
+              effective_until: null,
+            },
+          ]
+        : [],
+    };
+  }
+
+  it("a tenant-wide owner aggregating across a tenant with only ONE property is never gated", async () => {
+    stubEngines([]);
+    const fake = makeFakeSb([TENANT_WIDE_OWNER], {
+      properties: [{ id: PROPERTY_1, tenant_id: TENANT_A, created_at: "2024-01-01" }],
+      commercial: commercialFixture(false),
+    });
+
+    // No throw, and it ran unscoped (aggregate over the tenant's one property).
+    await expect(
+      getRestaurantDecisionBoard(fake.sb, OWNER, { tenantId: TENANT_A, windowDays: 30 } as any),
+    ).resolves.toBeTruthy();
+    expect(getMenuIntelligenceMock).toHaveBeenCalledWith(
+      fake.sb,
+      OWNER,
+      expect.objectContaining({ propertyId: undefined }),
+    );
+  });
+
+  it("SECURITY: a tenant-wide owner on a plan NOT entitled to multi_property_command, with TWO properties, is silently narrowed to the first property — never aggregated across both", async () => {
+    stubEngines([]);
+    const fake = makeFakeSb([TENANT_WIDE_OWNER], {
+      properties: [
+        { id: PROPERTY_1, tenant_id: TENANT_A, created_at: "2024-01-01" },
+        { id: PROPERTY_2, tenant_id: TENANT_A, created_at: "2024-02-01" },
+      ],
+      commercial: commercialFixture(false),
+    });
+
+    await getRestaurantDecisionBoard(fake.sb, OWNER, { tenantId: TENANT_A, windowDays: 30 } as any);
+
+    expect(getMenuIntelligenceMock).toHaveBeenCalledWith(
+      fake.sb,
+      OWNER,
+      expect.objectContaining({ propertyId: PROPERTY_1 }),
+    );
+  });
+
+  it("an entitled tenant-wide owner with TWO properties is permitted full cross-property aggregation", async () => {
+    stubEngines([]);
+    const fake = makeFakeSb([TENANT_WIDE_OWNER], {
+      properties: [
+        { id: PROPERTY_1, tenant_id: TENANT_A, created_at: "2024-01-01" },
+        { id: PROPERTY_2, tenant_id: TENANT_A, created_at: "2024-02-01" },
+      ],
+      commercial: commercialFixture(true),
+    });
+
+    await getRestaurantDecisionBoard(fake.sb, OWNER, { tenantId: TENANT_A, windowDays: 30 } as any);
+
+    expect(getMenuIntelligenceMock).toHaveBeenCalledWith(
+      fake.sb,
+      OWNER,
+      expect.objectContaining({ propertyId: undefined }),
+    );
   });
 });
