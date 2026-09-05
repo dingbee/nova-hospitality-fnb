@@ -7,12 +7,14 @@
  * `consumeForRecipeSale` — this never moves stock.
  */
 import { assertTenantRead } from "../core/access.server";
+import { componentToStock, type UnitRow } from "../inventory/units";
 import {
   compositionCost,
   flattenComposition,
   limitingComponent,
   mergeComponents,
   servingsAvailable,
+  type CompositionComponent,
   type CompositionNodeInput,
 } from "./composition";
 import { activeRecipeForMenuItem } from "./recipes.server";
@@ -36,7 +38,9 @@ async function loadGraph(sb: Sb, tenantId: string, rootRecipeId: string) {
         .maybeSingle(),
       sb
         .from("restaurant_recipe_lines")
-        .select("id, component_kind, inventory_item_id, sub_recipe_id, quantity, unit_id, yield_percent, is_optional, sort_order")
+        .select(
+          "id, component_kind, inventory_item_id, sub_recipe_id, quantity, unit_id, yield_percent, is_optional, sort_order",
+        )
         .eq("tenant_id", tenantId)
         .eq("recipe_id", id)
         .order("sort_order"),
@@ -57,7 +61,7 @@ async function loadGraph(sb: Sb, tenantId: string, rootRecipeId: string) {
         isOptional: l.is_optional,
       })),
     });
-    for (const l of ((lines ?? []) as any[])) if (l.sub_recipe_id) queue.push(l.sub_recipe_id);
+    for (const l of (lines ?? []) as any[]) if (l.sub_recipe_id) queue.push(l.sub_recipe_id);
   }
   return graph;
 }
@@ -69,7 +73,15 @@ export async function getMenuItemComposition(
 ) {
   await assertTenantRead(sb, userId, input.tenantId);
   const pinned = await activeRecipeForMenuItem(sb, input.tenantId, input.menuItemId);
-  if (!pinned) return { composed: false, recipeId: null, recipeVersion: null, components: [], servings: null, cost: 0 };
+  if (!pinned)
+    return {
+      composed: false,
+      recipeId: null,
+      recipeVersion: null,
+      components: [],
+      servings: null,
+      cost: 0,
+    };
 
   const graph = await loadGraph(sb, input.tenantId, pinned.recipeId);
   let components;
@@ -91,21 +103,58 @@ export async function getMenuItemComposition(
   const { data: items } = ids.length
     ? await sb
         .from("restaurant_inventory_items")
-        .select("id, name, sku, current_quantity, average_cost, currency, is_beverage")
+        .select("id, name, sku, current_quantity, average_cost, currency, is_beverage, unit_id")
         .in("id", ids)
     : { data: [] as any[] };
   const meta = new Map(((items ?? []) as any[]).map((r) => [r.id, r]));
+
+  // average_cost (and current_quantity) are priced/held per the item's own
+  // stock unit — a component whose recipe line was entered in a different
+  // unit (a bottle stocked in `l`, poured in `ml`, say) must be converted
+  // before it is priced or checked against on-hand stock, or a millilitre
+  // silently costs — and depletes stock — as much as a litre. Same
+  // componentToStock() contract recipe-cost.server.ts and costing.server.ts
+  // already use; this was the one costing path that skipped it.
+  const unitIds = [
+    ...new Set([
+      ...components.map((c) => c.unitId).filter(Boolean),
+      ...((items ?? []) as any[]).map((i) => i.unit_id).filter(Boolean),
+    ]),
+  ] as string[];
+  const { data: unitRows } = unitIds.length
+    ? await sb
+        .from("restaurant_inventory_units")
+        .select("id, code, name, dimension, factor, base_unit_id")
+        .in("id", unitIds)
+    : { data: [] as any[] };
+  const unitById = new Map(((unitRows ?? []) as UnitRow[]).map((u) => [u.id, u]));
+
+  const unresolved = new Set<string>();
+  const converted: CompositionComponent[] = components.map((c) => {
+    const item = meta.get(c.inventoryItemId);
+    if (!item) return c;
+    const result = componentToStock(c.quantityPerServing, c.unitId, item, unitById);
+    if (!result.exact) {
+      unresolved.add(c.key);
+      // A genuine dimension mismatch is a modelling error, not a number to
+      // guess at — exclude it from cost/servings math (treated as 0 demand)
+      // rather than silently pricing or depleting stock at the wrong scale.
+      return { ...c, quantityPerServing: 0 };
+    }
+    return { ...c, quantityPerServing: result.quantity };
+  });
+
   const onHand = (id: string) => Number(meta.get(id)?.current_quantity ?? 0);
   const unitCost = (id: string) => Number(meta.get(id)?.average_cost ?? 0);
 
-  const servings = servingsAvailable(components, onHand);
-  const limiting = limitingComponent(components, onHand);
+  const servings = servingsAvailable(converted, onHand);
+  const limiting = limitingComponent(converted, onHand);
 
   return {
     composed: components.length > 0,
     recipeId: pinned.recipeId,
     recipeVersion: pinned.version,
-    cost: compositionCost(components, unitCost),
+    cost: compositionCost(converted, unitCost),
     servings: Number.isFinite(servings) ? servings : null,
     limitingItemId: limiting?.inventoryItemId ?? null,
     components: components.map((c) => ({
@@ -113,11 +162,14 @@ export async function getMenuItemComposition(
       name: meta.get(c.inventoryItemId)?.name ?? "Unknown item",
       sku: meta.get(c.inventoryItemId)?.sku ?? null,
       isBeverage: Boolean(meta.get(c.inventoryItemId)?.is_beverage),
+      // The original, recipe-line-unit quantity — for display, never for
+      // cost/servings math (that uses the stock-unit-converted value above).
       quantityPerServing: Number(c.quantityPerServing.toFixed(4)),
       optional: c.optional,
       onHand: onHand(c.inventoryItemId),
       unitCost: unitCost(c.inventoryItemId),
       limiting: limiting?.inventoryItemId === c.inventoryItemId,
+      unresolved: unresolved.has(c.key),
     })),
   };
 }

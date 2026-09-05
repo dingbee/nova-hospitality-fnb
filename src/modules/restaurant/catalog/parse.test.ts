@@ -1,5 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { normaliseRow, resolvePackSize, type CatalogSourceRow } from "./parse";
+import { normaliseRow, resolvePackSize, unitScale, type CatalogSourceRow } from "./parse";
+
+describe("unitScale", () => {
+  it("gives the canonical dimension + base-unit factor for well-known units — the single source of truth the Units admin panel now reuses to prefill new units correctly", () => {
+    expect(unitScale("kg")).toEqual({ dimension: "mass", factor: 1000 });
+    expect(unitScale("g")).toEqual({ dimension: "mass", factor: 1 });
+    expect(unitScale("l")).toEqual({ dimension: "volume", factor: 1000 });
+    expect(unitScale("ml")).toEqual({ dimension: "volume", factor: 1 });
+    expect(unitScale("pc")).toEqual({ dimension: "count", factor: 1 });
+  });
+
+  it("is case-insensitive", () => {
+    expect(unitScale("KG")).toEqual({ dimension: "mass", factor: 1000 });
+  });
+
+  it("returns null for a code it does not recognise — never guesses a dimension/factor for an arbitrary custom unit", () => {
+    expect(unitScale("carton")).toBeNull();
+    expect(unitScale("bottle")).toBeNull();
+  });
+});
 
 const row = (over: Partial<CatalogSourceRow>): CatalogSourceRow => ({
   sourceRow: 2,

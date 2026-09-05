@@ -292,6 +292,13 @@ describe("fetchSellableCatalog — multiple published menus", () => {
     const it2 = catalog.items.find((i: any) => i.id === "item-unpriced") as any;
     expect(it2).toBeDefined();
     expect(it2.priceConfigured).toBe(false);
+    // Regression: the catalogue used to fall back to the menu item's own
+    // (unauthoritative) `price` field — 10000 per the `item()` fixture
+    // default — whenever no restaurant_prices row resolved, so the till
+    // showed a real number for an item Pricing Centre had never actually
+    // priced and insertLines would then refuse. The catalogue must never
+    // show a price the order path wouldn't also charge.
+    expect(it2.price).toBeNull();
   });
 
   it("8. an explicit menuId still scopes to exactly that one menu (a future per-terminal selector keeps working)", async () => {
