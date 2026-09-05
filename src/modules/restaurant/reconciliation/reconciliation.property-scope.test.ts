@@ -11,19 +11,27 @@
  * authorization boundary, not the reconciliation math (already covered
  * elsewhere).
  *
- * DISCLOSED GAP: listDailyCloses, listExceptions, exceptionTrends and
- * listReconciliationAudit remain tenant-only (unscoped) — their Zod
- * schemas carry no locationId field at all, so scoping them would require
- * a contract change plus UI wiring beyond this pass's budget. The last
- * test below proves that gap still exists, so it stays honestly visible
- * rather than silently assumed fixed.
+ * FINAL CLOSURE: listDailyCloses, listExceptions, exceptionTrends and
+ * listReconciliationAudit previously had no locationId in their Zod
+ * schemas and were tenant-only. All four now accept an optional
+ * locationId (rejected server-side via assertTenantRead if the caller
+ * doesn't hold it) and, when omitted, restrict a property-scoped caller to
+ * their own accessible locations via accessibleLocationIds — a
+ * tenant-wide caller's behaviour is unchanged. The tests below prove that
+ * closure directly; see reconciliation.server.ts's own comments for why
+ * restaurant_reconciliation_audit (no location_id of its own) resolves
+ * scope by joining to whichever of daily_closes/reconciliation_runs/
+ * reconciliation_exceptions its subject_id actually points at.
  */
 import { describe, expect, it } from "vitest";
 import {
   closeDay,
   declareTenders,
+  exceptionTrends,
   getDailyClose,
   listDailyCloses,
+  listExceptions,
+  listReconciliationAudit,
   openDailyClose,
   reopenDay,
   resolveException,
@@ -62,6 +70,8 @@ function makeFixture() {
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
     const isFilters: Array<(r: any) => boolean> = [];
+    const inFilters: Array<(r: any) => boolean> = [];
+    const orFilters: Array<(r: any) => boolean> = [];
     let op: "select" | "insert" | "update" = "select";
     let payload: any;
     const api: any = {
@@ -72,6 +82,29 @@ function makeFixture() {
       },
       is(col: string, val: unknown) {
         isFilters.push((r: any) => (r[col] ?? null) === val);
+        return api;
+      },
+      in(col: string, vals: unknown[]) {
+        const set = new Set(vals);
+        inFilters.push((r: any) => set.has(r[col]));
+        return api;
+      },
+      /**
+       * Only ever called by this codebase as
+       * `.or("location_id.is.null,location_id.in.(id1,id2)")` — a tiny,
+       * literal parser for exactly that shape, not a general PostgREST
+       * filter-string interpreter.
+       */
+      or(expr: string) {
+        const clauses = expr.split(",location_id.in.(");
+        const isNullClause = clauses[0] === "location_id.is.null";
+        const idList =
+          clauses[1] !== undefined ? clauses[1].replace(/\)$/, "").split(",").filter(Boolean) : [];
+        const idSet = new Set(idList);
+        orFilters.push(
+          (r: any) =>
+            (isNullClause && (r.location_id ?? null) === null) || idSet.has(r.location_id),
+        );
         return api;
       },
       gte: () => api,
@@ -112,16 +145,17 @@ function makeFixture() {
         rowsFor().push(stored);
         return { data: stored, error: null };
       }
+      const matches = (r: any) =>
+        filters.every((f) => f(r)) &&
+        isFilters.every((f) => f(r)) &&
+        inFilters.every((f) => f(r)) &&
+        orFilters.every((f) => f(r));
       if (op === "update") {
-        const rows = rowsFor().filter(
-          (r) => filters.every((f) => f(r)) && isFilters.every((f) => f(r)),
-        );
+        const rows = rowsFor().filter(matches);
         for (const r of rows) Object.assign(r, payload);
         return { data: rows[0] ?? null, error: null };
       }
-      const rows = rowsFor().filter(
-        (r) => filters.every((f) => f(r)) && isFilters.every((f) => f(r)),
-      );
+      const rows = rowsFor().filter(matches);
       if (mode === "list") return { data: rows, error: null };
       return {
         data: rows[0] ?? null,
@@ -141,6 +175,8 @@ function makeFixture() {
     },
     closes,
     exceptions,
+    runs,
+    audit,
   };
 }
 
@@ -303,7 +339,7 @@ describe("P1 property scope — Reconciliation access matrix", () => {
     ).resolves.toBeDefined();
   });
 
-  it("DISCLOSED GAP: listDailyCloses has no locationId in its schema and remains tenant-only — A1-accountant sees closes from every location, including A2's", async () => {
+  it("CLOSED: listDailyCloses scopes to the caller's own location when none is named — A1-accountant no longer sees A2's close", async () => {
     const fixture = makeFixture();
     fixture.closes.push(
       {
@@ -320,16 +356,208 @@ describe("P1 property scope — Reconciliation access matrix", () => {
         business_date: "2026-02-01",
         status: "draft",
       },
+      {
+        id: "close-tenant-wide",
+        tenant_id: TENANT_A,
+        location_id: null,
+        business_date: "2026-02-01",
+        status: "draft",
+      },
     );
     const rows = await listDailyCloses(fixture.supabase, USER_A1_ACCT, {
       tenantId: TENANT_A,
       limit: 50,
     } as any);
     const ids = rows.map((r: any) => r.id);
-    // This assertion documents the KNOWN, DISCLOSED gap — it is not a
-    // desired behaviour. If this ever starts failing because someone adds
-    // locationId scoping to listDailyCloses, delete this test along with
-    // the gap note in the final P1 report rather than "fixing" it back.
-    expect(ids).toContain("close-a2-only");
+    expect(ids).toContain("close-a1-only");
+    expect(ids).not.toContain("close-a2-only");
+    // A close with no location of its own is tenant-wide by the same
+    // convention restaurant_can_read_scoped uses elsewhere — still visible
+    // to a property-scoped member, just never another property's own.
+    expect(ids).toContain("close-tenant-wide");
+
+    const ownerRows = await listDailyCloses(fixture.supabase, USER_A_OWNER, {
+      tenantId: TENANT_A,
+      limit: 50,
+    } as any);
+    expect(ownerRows.map((r: any) => r.id)).toEqual(
+      expect.arrayContaining(["close-a1-only", "close-a2-only", "close-tenant-wide"]),
+    );
+  });
+
+  it("CLOSED: listDailyCloses rejects an explicit locationId the caller does not hold", async () => {
+    const fixture = makeFixture();
+    await expect(
+      listDailyCloses(fixture.supabase, USER_A1_ACCT, {
+        tenantId: TENANT_A,
+        locationId: LOC_A2,
+        limit: 50,
+      } as any),
+    ).rejects.toThrow(/do not have access to this location/);
+  });
+
+  it("CLOSED: listExceptions scopes to the caller's own location — A1-accountant no longer sees A2's exception", async () => {
+    const fixture = makeFixture();
+    fixture.exceptions.push(
+      {
+        id: "exc-a1",
+        tenant_id: TENANT_A,
+        location_id: LOC_A1,
+        status: "open",
+        severity: "medium",
+        business_date: "2026-02-01",
+      },
+      {
+        id: "exc-a2",
+        tenant_id: TENANT_A,
+        location_id: LOC_A2,
+        status: "open",
+        severity: "medium",
+        business_date: "2026-02-01",
+      },
+    );
+    const { rows } = await listExceptions(fixture.supabase, USER_A1_ACCT, {
+      tenantId: TENANT_A,
+      onlyOpen: false,
+      limit: 50,
+    } as any);
+    const ids = rows.map((r: any) => r.id);
+    expect(ids).toContain("exc-a1");
+    expect(ids).not.toContain("exc-a2");
+  });
+
+  it("CLOSED: exceptionTrends scopes to the caller's own location — A1-accountant's totals exclude A2's exception", async () => {
+    const fixture = makeFixture();
+    const today = new Date().toISOString().slice(0, 10);
+    fixture.exceptions.push(
+      {
+        id: "trend-a1",
+        tenant_id: TENANT_A,
+        location_id: LOC_A1,
+        status: "open",
+        code: "X",
+        domain: "cash",
+        impact_value: 10,
+        business_date: today,
+      },
+      {
+        id: "trend-a2",
+        tenant_id: TENANT_A,
+        location_id: LOC_A2,
+        status: "open",
+        code: "X",
+        domain: "cash",
+        impact_value: 1000,
+        business_date: today,
+      },
+    );
+    const a1 = await exceptionTrends(fixture.supabase, USER_A1_ACCT, {
+      tenantId: TENANT_A,
+      days: 30,
+    } as any);
+    expect(a1.total).toBe(1);
+    expect(a1.impactValue).toBe(10);
+
+    const owner = await exceptionTrends(fixture.supabase, USER_A_OWNER, {
+      tenantId: TENANT_A,
+      days: 30,
+    } as any);
+    expect(owner.total).toBe(2);
+  });
+
+  it("CLOSED: listReconciliationAudit resolves scope through the polymorphic subject (daily_close/run/exception) — A1-accountant no longer sees A2's audit entries", async () => {
+    const fixture = makeFixture();
+    fixture.closes.push({
+      id: "audit-close-a2",
+      tenant_id: TENANT_A,
+      location_id: LOC_A2,
+      business_date: "2026-02-01",
+      status: "draft",
+    });
+    fixture.exceptions.push({
+      id: "audit-exc-a1",
+      tenant_id: TENANT_A,
+      location_id: LOC_A1,
+      status: "open",
+      severity: "medium",
+    });
+    fixture.audit.push(
+      {
+        id: "audit-1",
+        tenant_id: TENANT_A,
+        subject_type: "daily_close",
+        subject_id: "audit-close-a2",
+        action: "close.opened",
+      },
+      {
+        id: "audit-2",
+        tenant_id: TENANT_A,
+        subject_type: "reconciliation_exception",
+        subject_id: "audit-exc-a1",
+        action: "exception.status_changed",
+      },
+    );
+    const rows = await listReconciliationAudit(fixture.supabase, USER_A1_ACCT, {
+      tenantId: TENANT_A,
+      limit: 50,
+    } as any);
+    const ids = rows.map((r: any) => r.id);
+    expect(ids).toContain("audit-2");
+    expect(ids).not.toContain("audit-1");
+
+    const ownerRows = await listReconciliationAudit(fixture.supabase, USER_A_OWNER, {
+      tenantId: TENANT_A,
+      limit: 50,
+    } as any);
+    expect(ownerRows.map((r: any) => r.id)).toEqual(expect.arrayContaining(["audit-1", "audit-2"]));
+  });
+
+  it("cross-tenant: Tenant B's owner cannot list Tenant A's reconciliation data via any of the four scoped read functions", async () => {
+    const fixture = makeFixture();
+    await expect(
+      listDailyCloses(fixture.supabase, USER_B1_OWNER, { tenantId: TENANT_A, limit: 50 } as any),
+    ).rejects.toThrow(/do not belong to this restaurant tenant/);
+    await expect(
+      listExceptions(fixture.supabase, USER_B1_OWNER, {
+        tenantId: TENANT_A,
+        onlyOpen: false,
+        limit: 50,
+      } as any),
+    ).rejects.toThrow(/do not belong to this restaurant tenant/);
+    await expect(
+      exceptionTrends(fixture.supabase, USER_B1_OWNER, { tenantId: TENANT_A, days: 30 } as any),
+    ).rejects.toThrow(/do not belong to this restaurant tenant/);
+    await expect(
+      listReconciliationAudit(fixture.supabase, USER_B1_OWNER, {
+        tenantId: TENANT_A,
+        limit: 50,
+      } as any),
+    ).rejects.toThrow(/do not belong to this restaurant tenant/);
+  });
+
+  it("direct resource-ID manipulation: a property-scoped caller cannot read another property's exception by guessing its id via subjectId", async () => {
+    const fixture = makeFixture();
+    fixture.exceptions.push({
+      id: "exc-a2-guess",
+      tenant_id: TENANT_A,
+      location_id: LOC_A2,
+      status: "open",
+      severity: "medium",
+    });
+    fixture.audit.push({
+      id: "audit-guess",
+      tenant_id: TENANT_A,
+      subject_type: "reconciliation_exception",
+      subject_id: "exc-a2-guess",
+      action: "exception.status_changed",
+    });
+    const rows = await listReconciliationAudit(fixture.supabase, USER_A1_ACCT, {
+      tenantId: TENANT_A,
+      subjectId: "exc-a2-guess",
+      limit: 50,
+    } as any);
+    // subjectId narrows the query but never bypasses location scoping —
+    // the entry belongs to A2, which A1-accountant does not hold.
+    expect(rows.map((r: any) => r.id)).not.toContain("audit-guess");
   });
 });

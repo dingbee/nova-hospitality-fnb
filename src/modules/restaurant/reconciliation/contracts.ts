@@ -13,7 +13,14 @@ const businessDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-D
 export const CLOSE_STATUSES = ["draft", "declared", "reconciled", "closed", "reopened"] as const;
 export type CloseStatus = (typeof CLOSE_STATUSES)[number];
 
-export const RECONCILIATION_SCOPES = ["full", "cash", "payment", "sales", "inventory", "procurement"] as const;
+export const RECONCILIATION_SCOPES = [
+  "full",
+  "cash",
+  "payment",
+  "sales",
+  "inventory",
+  "procurement",
+] as const;
 export type ReconciliationScope = (typeof RECONCILIATION_SCOPES)[number];
 
 export const openDailyCloseSchema = z.object({
@@ -32,6 +39,7 @@ export const getDailyCloseSchema = z.object({
 
 export const listDailyClosesSchema = z.object({
   tenantId: uuid,
+  locationId: uuid.optional(),
   limit: z.number().int().min(1).max(200).default(30),
 });
 
@@ -76,6 +84,7 @@ export const reopenDaySchema = z.object({
 
 export const listExceptionsSchema = z.object({
   tenantId: uuid,
+  locationId: uuid.optional(),
   businessDate: businessDate.optional(),
   from: businessDate.optional(),
   to: businessDate.optional(),
@@ -96,11 +105,13 @@ export const resolveExceptionSchema = z.object({
 
 export const exceptionTrendSchema = z.object({
   tenantId: uuid,
+  locationId: uuid.optional(),
   days: z.number().int().min(7).max(180).default(30),
 });
 
 export const listReconciliationAuditSchema = z.object({
   tenantId: uuid,
+  locationId: uuid.optional(),
   subjectId: uuid.optional(),
   limit: z.number().int().min(1).max(300).default(100),
 });

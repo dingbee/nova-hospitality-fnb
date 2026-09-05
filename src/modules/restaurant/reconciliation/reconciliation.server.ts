@@ -12,7 +12,13 @@
  * being worked on.
  */
 import type { z } from "zod";
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import {
+  accessibleLocationIds,
+  assertCapability,
+  assertTenantRead,
+  getTenantScope,
+  NO_MATCH_ID,
+} from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import {
   computeCloseTotals,
@@ -301,13 +307,32 @@ export async function listDailyCloses(
   userId: string,
   input: z.infer<typeof listDailyClosesSchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
-  const { data, error } = await sb
+  // Resolved once, up front: a caller who names a specific location is
+  // rejected right here if it isn't covered by their own grants — never a
+  // silently-empty result, and never trusted at face value.
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, { locationId: input.locationId ?? null });
+  let query = sb
     .from("restaurant_daily_closes")
     .select("*")
     .eq("tenant_id", input.tenantId)
     .order("business_date", { ascending: false })
     .limit(input.limit);
+  if (input.locationId) {
+    query = query.eq("location_id", input.locationId);
+  } else {
+    // No explicit location named: a tenant-wide caller (or platform admin)
+    // sees every location, exactly as before. A property-scoped caller is
+    // restricted to their own accessible locations — a tenant-wide close
+    // (location_id IS NULL) still surfaces to them, matching the RLS
+    // policy's own convention for a resource with no location of its own.
+    const ids = await accessibleLocationIds(sb, scope);
+    if (ids !== null) {
+      const inList = ids.length > 0 ? ids.join(",") : NO_MATCH_ID;
+      query = query.or(`location_id.is.null,location_id.in.(${inList})`);
+    }
+  }
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return data ?? [];
 }
@@ -787,13 +812,23 @@ export async function listExceptions(
   userId: string,
   input: z.infer<typeof listExceptionsSchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, { locationId: input.locationId ?? null });
   let q = sb
     .from("restaurant_reconciliation_exceptions")
     .select("*")
     .eq("tenant_id", input.tenantId)
     .order("detected_at", { ascending: false })
     .limit(input.limit);
+  if (input.locationId) {
+    q = q.eq("location_id", input.locationId);
+  } else {
+    const ids = await accessibleLocationIds(sb, scope);
+    if (ids !== null) {
+      const inList = ids.length > 0 ? ids.join(",") : NO_MATCH_ID;
+      q = q.or(`location_id.is.null,location_id.in.(${inList})`);
+    }
+  }
   if (input.businessDate) q = q.eq("business_date", input.businessDate);
   if (input.from) q = q.gte("business_date", input.from);
   if (input.to) q = q.lte("business_date", input.to);
@@ -1040,13 +1075,24 @@ export async function exceptionTrends(
   userId: string,
   input: z.infer<typeof exceptionTrendSchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, { locationId: input.locationId ?? null });
   const from = new Date(Date.now() - input.days * 86_400_000).toISOString().slice(0, 10);
-  const { data, error } = await sb
+  let query = sb
     .from("restaurant_reconciliation_exceptions")
     .select("code, domain, severity, status, impact_value, business_date")
     .eq("tenant_id", input.tenantId)
     .gte("business_date", from);
+  if (input.locationId) {
+    query = query.eq("location_id", input.locationId);
+  } else {
+    const ids = await accessibleLocationIds(sb, scope);
+    if (ids !== null) {
+      const inList = ids.length > 0 ? ids.join(",") : NO_MATCH_ID;
+      query = query.or(`location_id.is.null,location_id.in.(${inList})`);
+    }
+  }
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
 
   const rows = (data ?? []) as any[];
@@ -1094,12 +1140,52 @@ export async function exceptionTrends(
   };
 }
 
+/**
+ * restaurant_reconciliation_audit has no location_id/property_id of its
+ * own — subject_id is a polymorphic reference into whichever of these
+ * three tables subject_type names. Resolving "which audit entries belong
+ * to these locations" means resolving it on each side of that polymorphism
+ * and unioning the ids; the DB-layer derivation function
+ * (restaurant_reconciliation_audit_property, migration 0033) does the same
+ * CASE per row for RLS, this just narrows the app's own query to match.
+ */
+async function reconciliationSubjectIdsForLocations(
+  sb: Sb,
+  tenantId: string,
+  locationIds: string[],
+): Promise<string[]> {
+  if (locationIds.length === 0) return [];
+  const [{ data: closes }, { data: runs }, { data: exceptions }] = await Promise.all([
+    sb
+      .from("restaurant_daily_closes")
+      .select("id")
+      .eq("tenant_id", tenantId)
+      .in("location_id", locationIds),
+    sb
+      .from("restaurant_reconciliation_runs")
+      .select("id")
+      .eq("tenant_id", tenantId)
+      .in("location_id", locationIds),
+    sb
+      .from("restaurant_reconciliation_exceptions")
+      .select("id")
+      .eq("tenant_id", tenantId)
+      .in("location_id", locationIds),
+  ]);
+  return [
+    ...((closes ?? []) as any[]).map((r) => r.id as string),
+    ...((runs ?? []) as any[]).map((r) => r.id as string),
+    ...((exceptions ?? []) as any[]).map((r) => r.id as string),
+  ];
+}
+
 export async function listReconciliationAudit(
   sb: Sb,
   userId: string,
   input: z.infer<typeof listReconciliationAuditSchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, { locationId: input.locationId ?? null });
   let q = sb
     .from("restaurant_reconciliation_audit")
     .select("*")
@@ -1107,6 +1193,26 @@ export async function listReconciliationAudit(
     .order("created_at", { ascending: false })
     .limit(input.limit);
   if (input.subjectId) q = q.eq("subject_id", input.subjectId);
+  if (input.locationId) {
+    const ids = await reconciliationSubjectIdsForLocations(sb, input.tenantId, [input.locationId]);
+    q = q.in("subject_id", ids.length > 0 ? ids : [NO_MATCH_ID]);
+  } else {
+    // A tenant-wide caller (accessibleIds === null) sees the full trail,
+    // exactly as before — RLS (0033) is the actual enforcement boundary
+    // for a legacy entry whose subject_type can't be resolved to any
+    // property at all; this branch only narrows what a property-scoped
+    // caller's own query asks for, so they aren't handed entries this
+    // filter can already tell belong to another property.
+    const accessibleIds = await accessibleLocationIds(sb, scope);
+    if (accessibleIds !== null) {
+      const subjectIds = await reconciliationSubjectIdsForLocations(
+        sb,
+        input.tenantId,
+        accessibleIds,
+      );
+      q = q.in("subject_id", subjectIds.length > 0 ? subjectIds : [NO_MATCH_ID]);
+    }
+  }
   const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data ?? [];
