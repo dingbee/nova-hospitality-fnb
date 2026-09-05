@@ -122,6 +122,10 @@ export function PosWorkspace({
 
   const [orderId, setOrderId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
+  // Below lg, Bill and Menu can't both get enough height to stay usable (see
+  // the tab switcher below) — this picks which one is currently shown there.
+  // Irrelevant at lg+, where both render side by side regardless of this value.
+  const [mobileRightTab, setMobileRightTab] = useState<"bill" | "menu">("menu");
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [catalogSearch, setCatalogSearch] = useState("");
   const [pickerItem, setPickerItem] = useState<any | null>(null);
@@ -685,26 +689,49 @@ export function PosWorkspace({
           </div>
         </SectionCard>
 
-        {/* Right workspace: Bill sits directly above Menu — two ROWS in one
-            column, never a second/third column beside Floor. Both share this
-            column's horizontal bounds automatically since they're siblings
-            in the same grid track. */}
-        {/* Bill's row carries a measured (not guessed) floor at lg+: header +
-            the pinned Total/primary-action footer + section padding need
-            ~189px with zero content — below that, no amount of internal
-            scrolling can make room for Bill's own always-visible chrome.
-            The floor never grows with content (badges/lines/notes all live
-            in the scrollable region above the footer), so it only engages
-            on genuinely short viewports, and only ever redistributes within
-            this already-fixed-height row — it cannot grow this grid, the
-            workspace, or the page. Below lg, Floor+RightWorkspace themselves
-            are already stacked rows sharing a shorter budget (see the outer
-            grid above), so a 200px floor here would consume most of that
-            budget and crush Menu instead of protecting Bill; the much
-            slimmer footer introduced with this floor (Total + one button,
-            not the old Total-plus-five-actions block) already gives Bill
-            far more headroom at every size without needing a floor there. */}
-        <div className="grid h-full min-h-0 grid-rows-[minmax(0,30fr)_minmax(0,70fr)] gap-3 lg:grid-rows-[minmax(200px,30fr)_minmax(0,70fr)] xl:gap-4">
+        {/* Right workspace: Bill and Menu share this column, never a second/
+            third column beside Floor. At lg+, Bill and Menu are two ROWS
+            sharing this column, and Bill's
+            row carries a measured (not guessed) floor: header + the pinned
+            Total/primary-action footer + section padding need ~189px with
+            zero content — below that, no amount of internal scrolling can
+            make room for Bill's own always-visible chrome. The floor never
+            grows with content (badges/lines/notes all live in the scrollable
+            region above the footer), so it only engages on genuinely short
+            viewports, and only ever redistributes within this already-
+            fixed-height row — it cannot grow this grid, the workspace, or
+            the page.
+            Below lg, Floor+RightWorkspace already share a much shorter
+            stacked budget (see the outer grid above) — too short for BOTH
+            Bill's and Menu's own minimum chrome to coexist at any fixed
+            split, floored or not (measured: Bill's ~189px minimum alone can
+            exceed the entire combined budget on common phone-sized
+            viewports). Splitting height between them is the wrong tool
+            here, so below lg this becomes a single-pane switcher instead: a
+            tab strip picks ONE of Bill/Menu to occupy the full column
+            height at a time — never a fixed pixel guess, never eating into
+            the other's space, and the inactive pane simply isn't rendered
+            rather than being squeezed. */}
+        <div className="flex h-full min-h-0 flex-col gap-3 lg:grid lg:grid-rows-[minmax(200px,30fr)_minmax(0,70fr)] xl:gap-4">
+          <div className="flex shrink-0 gap-2 lg:hidden">
+            <Button
+              type="button"
+              variant={mobileRightTab === "bill" ? "default" : "outline"}
+              className="min-h-10 flex-1"
+              onClick={() => setMobileRightTab("bill")}
+            >
+              Bill{live.length + cart.length > 0 ? ` (${live.length + cart.length})` : ""}
+            </Button>
+            <Button
+              type="button"
+              variant={mobileRightTab === "menu" ? "default" : "outline"}
+              className="min-h-10 flex-1"
+              onClick={() => setMobileRightTab("menu")}
+            >
+              {isBar ? "Drinks" : "Menu"}
+            </Button>
+          </div>
+
           {/* Bill */}
           <SectionCard
             title={orderRow ? `Bill ${orderRow.order_number}` : "Bill"}
@@ -718,7 +745,10 @@ export function PosWorkspace({
                 </Badge>
               ) : undefined
             }
-            className="flex h-full min-h-0 flex-col overflow-hidden"
+            className={cn(
+              mobileRightTab === "bill" ? "flex" : "hidden",
+              "h-full min-h-0 flex-1 flex-col overflow-hidden lg:flex",
+            )}
           >
             {!orderId ? (
               <EmptyState
@@ -1062,7 +1092,10 @@ export function PosWorkspace({
                 ? "Tap a drink, pick the serve (single, double, bottle, glass) and add it to the tab."
                 : "Tap an item to configure and stage it on the bill."
             }
-            className="flex h-full min-h-0 flex-col overflow-hidden"
+            className={cn(
+              mobileRightTab === "menu" ? "flex" : "hidden",
+              "h-full min-h-0 flex-1 flex-col overflow-hidden lg:flex",
+            )}
           >
             <div className="shrink-0">
               <div className="relative mb-2">
