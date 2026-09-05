@@ -77,7 +77,19 @@ export type GuestTableContext = {
   propertyId: string | null;
   locationId: string | null;
   currency: string;
+  /**
+   * How long after a service request is resolved before the guest may
+   * request staff again — settings.serviceRequests.cooldownSeconds, the
+   * same jsonb-config convention as settings.business.tradingName/logoUrl
+   * above. Never hardcoded into a component: DEFAULT_SERVICE_REQUEST_
+   * COOLDOWN_SECONDS below is only the fallback for tenants that haven't
+   * configured one yet.
+   */
+  serviceRequestCooldownSeconds: number;
 };
+
+/** Sensible default, not a hardcoded product rule — see BusinessPanel.tsx's "Guest service" field, which writes settings.serviceRequests.cooldownSeconds and overrides this. */
+export const DEFAULT_SERVICE_REQUEST_COOLDOWN_SECONDS = 5 * 60;
 
 /**
  * Resolves a table id to the tenant/property/location it belongs to. This
@@ -106,11 +118,18 @@ export async function resolveGuestTableContext(
   if (!tenant || tenant.status !== "active") {
     throw new Error("This table is not available for ordering.");
   }
-  const business = (
-    tenant.settings as { business?: { tradingName?: string; logoUrl?: string | null } } | null
-  )?.business;
+  const settings = tenant.settings as {
+    business?: { tradingName?: string; logoUrl?: string | null };
+    serviceRequests?: { cooldownSeconds?: number };
+  } | null;
+  const business = settings?.business;
   const tradingName = (business?.tradingName ?? "").trim();
   const businessLogoUrl = business?.logoUrl?.trim() || null;
+  const configuredCooldown = settings?.serviceRequests?.cooldownSeconds;
+  const serviceRequestCooldownSeconds =
+    typeof configuredCooldown === "number" && configuredCooldown >= 0
+      ? configuredCooldown
+      : DEFAULT_SERVICE_REQUEST_COOLDOWN_SECONDS;
   const currency = await (async () => {
     const { data } = await sb
       .from("restaurant_currencies")
@@ -132,6 +151,7 @@ export async function resolveGuestTableContext(
     propertyId: table.property_id ?? null,
     locationId: table.location_id ?? null,
     currency,
+    serviceRequestCooldownSeconds,
   };
 }
 

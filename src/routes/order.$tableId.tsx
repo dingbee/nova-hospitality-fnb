@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import { PRODUCT } from "@/config/product";
 import { useGuestTheme, type GuestThemePreference } from "@/hooks/use-guest-theme";
+import { useGuestAttentionSignal } from "@/hooks/use-attention-signal";
+import { formatCountdown } from "@/lib/notifications/attention";
 import { GuestServiceWorker } from "@/modules/restaurant/selforder/GuestServiceWorker";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1293,11 +1295,16 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
  * The first live guest-to-staff alert. Polls the same safe pattern every
  * other guest panel on this screen uses (see OrderProgressPanel /
  * GuestPaymentPanel) rather than a new realtime layer — see
- * selfstaff.server.ts for the spam-controlled write and read this wraps.
+ * selfstaff.server.ts for the spam-controlled, cooldown-aware read/write
+ * this wraps. The server is authoritative for every state transition
+ * (including how long is left in cooldown); this component only ever
+ * displays what the last poll said, ticking the countdown cosmetically
+ * between polls from the server-provided cooldownEndsAt.
  */
 function RequestStaffPanel({ tableId, orderId }: { tableId: string; orderId: string }) {
   const requestFn = useServerFn(requestStaffFn);
   const statusFn = useServerFn(guestStaffRequestStatusFn);
+  const playGuestAttention = useGuestAttentionSignal();
 
   const status = useQuery({
     queryKey: ["selforder.staffRequest", tableId, orderId],
@@ -1318,13 +1325,47 @@ function RequestStaffPanel({ tableId, orderId }: { tableId: string; orderId: str
     networkMode: "always",
   });
 
+  // Subtle attention ping on a genuine status TRANSITION only (never on
+  // every poll while a status holds steady) — mirrors the staff-side
+  // dedup discipline in use-attention-signal.ts, just scoped to a single
+  // value instead of a set of keys.
+  const lastNotifiedStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!status.data?.ok) return;
+    const current = status.data.status;
+    if (lastNotifiedStatusRef.current === null) {
+      // First observation on mount/refresh — don't ping for state that was
+      // already true before this screen was opened.
+      lastNotifiedStatusRef.current = current;
+      return;
+    }
+    if (
+      current !== lastNotifiedStatusRef.current &&
+      (current === "acknowledged" || current === "cooldown")
+    ) {
+      playGuestAttention();
+    }
+    lastNotifiedStatusRef.current = current;
+  }, [status.data, playGuestAttention]);
+
+  // Ticks the visible cooldown countdown once a second purely for display;
+  // when it reaches zero it asks the server for the real state immediately
+  // rather than assuming — a slightly-out-of-sync client clock must never
+  // be the thing that decides "available again".
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!status.data?.ok || status.data.status !== "cooldown") return;
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [status.data]);
+
   if (status.isPending || !status.data) return null;
   const s = status.data;
 
   if (s.ok && s.status === "acknowledged") {
     return (
       <div className="mt-2 w-full max-w-sm rounded-2xl border border-primary/30 bg-primary/5 p-4 text-left">
-        <p className="text-sm font-semibold text-primary">Staff acknowledged</p>
+        <p className="text-sm font-semibold text-primary">Staff On The Way</p>
         <p className="mt-1 text-xs text-muted-foreground">Someone will be with you shortly.</p>
       </div>
     );
@@ -1333,9 +1374,28 @@ function RequestStaffPanel({ tableId, orderId }: { tableId: string; orderId: str
   if (s.ok && s.status === "requested") {
     return (
       <div className="mt-2 w-full max-w-sm rounded-2xl border border-primary/30 bg-primary/5 p-4 text-left">
-        <p className="text-sm font-semibold text-primary">Staff requested</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          A member of our team has been notified.
+        <p className="text-sm font-semibold text-primary">Staff Requested</p>
+        <p className="mt-1 text-xs text-muted-foreground">We've notified the team.</p>
+      </div>
+    );
+  }
+
+  if (s.ok && s.status === "cooldown") {
+    const remainingMs = Date.parse(s.cooldownEndsAt) - now;
+    const remainingSeconds = Math.max(0, Math.round(remainingMs / 1000));
+    if (remainingSeconds <= 0) {
+      // Countdown reached zero — re-check the server rather than trusting
+      // the client clock; the button stays visible (disabled) until that
+      // read confirms availability, so it never flashes "available" early.
+      void status.refetch();
+    }
+    return (
+      <div className="w-full max-w-sm">
+        <Button variant="outline" className="min-h-11 w-full rounded-full" disabled>
+          Request Staff
+        </Button>
+        <p className="mt-2 text-center text-xs text-muted-foreground">
+          Available again in {formatCountdown(remainingSeconds)}
         </p>
       </div>
     );
@@ -1359,7 +1419,7 @@ function RequestStaffPanel({ tableId, orderId }: { tableId: string; orderId: str
         disabled={request.isPending}
         onClick={() => request.mutate()}
       >
-        {request.isPending ? "Requesting…" : "Need assistance? Request staff"}
+        {request.isPending ? "Requesting…" : "Request Staff"}
       </Button>
       {request.isError && (
         <p className="mt-2 text-xs text-destructive">Couldn't reach staff. Please try again.</p>

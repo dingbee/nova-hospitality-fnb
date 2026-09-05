@@ -8,6 +8,7 @@ import type {
   UpsertInventoryUnitInput,
   UpsertPropertyInput,
   UpsertProductCategoryInput,
+  UpsertServiceRequestSettingsInput,
   listAllMasterDataSchema,
   listInventoryCategoriesSchema,
 } from "./contracts";
@@ -81,6 +82,45 @@ export async function upsertBusinessProfile(
       address: input.address ?? null,
       website: input.website ?? null,
       logoUrl: existingLogoUrl,
+    },
+  };
+  const { data, error } = await sb
+    .from("restaurant_tenants")
+    .update({ settings })
+    .eq("id", input.tenantId)
+    .select("id, name, slug, settings")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+/**
+ * settings.serviceRequests.cooldownSeconds — the one admin-facing control
+ * over how long a guest waits after a resolved "Request staff" alert
+ * before they can request again (selfstaff.server.ts reads this; a
+ * tenant that has never saved one gets DEFAULT_SERVICE_REQUEST_COOLDOWN_
+ * SECONDS instead of a broken/missing value). Spreads the existing settings
+ * object exactly like upsertBusinessProfile above, so saving this can never
+ * clobber settings.business or any other namespace.
+ */
+export async function upsertServiceRequestSettings(
+  sb: Sb,
+  userId: string,
+  input: UpsertServiceRequestSettingsInput,
+) {
+  await assertCapability(sb, userId, input.tenantId, "tenant.manage");
+  const { data: tenant, error: readErr } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", input.tenantId)
+    .single();
+  if (readErr) throw new Error(readErr.message);
+  const settings = {
+    ...(tenant?.settings ?? {}),
+    serviceRequests: {
+      ...((tenant?.settings as { serviceRequests?: Record<string, unknown> } | null)
+        ?.serviceRequests ?? {}),
+      cooldownSeconds: Math.round(input.cooldownMinutes * 60),
     },
   };
   const { data, error } = await sb

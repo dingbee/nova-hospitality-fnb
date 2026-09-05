@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- server function rows are untyped at this boundary. */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -16,10 +16,13 @@ import {
   Send,
   Trash2,
   Users,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { SectionCard } from "@/components/os/SectionCard";
 import { EmptyState } from "@/components/os/EmptyState";
@@ -49,7 +52,11 @@ import {
   releaseRestaurantTableFn,
   requestRestaurantBillFn,
 } from "../bill.functions";
-import { acknowledgeServiceRequestFn } from "@/modules/restaurant/service-requests/service-requests.functions";
+import {
+  acknowledgeServiceRequestFn,
+  resolveServiceRequestFn,
+} from "@/modules/restaurant/service-requests/service-requests.functions";
+import { useNewlyActiveKeys, useStaffAttentionSignal } from "@/hooks/use-attention-signal";
 import type { BillSplitMode } from "../bill.contracts";
 import { PosItemDialog } from "./PosItemDialog";
 import { PosBillDialog } from "./PosBillDialog";
@@ -159,13 +166,57 @@ export function PosWorkspace({
   const releaseTableFn = useServerFn(releaseRestaurantTableFn);
   const refundFn = useServerFn(refundRestaurantPaymentFn);
   const acknowledgeServiceRequestFnCall = useServerFn(acknowledgeServiceRequestFn);
+  const resolveServiceRequestFnCall = useServerFn(resolveServiceRequestFn);
 
   const board = useQuery({
     queryKey: ["restaurant.pos.board", tenantId],
     queryFn: () => boardFn({ data: { tenantId: tenantId! } }),
     enabled: Boolean(tenantId),
-    refetchInterval: 20_000,
+    refetchInterval: 8_000,
   });
+
+  // Staff attention signal (visual badge is already authoritative via
+  // board.data below; this only adds sound/vibration for genuinely NEW
+  // actionable items since this screen was opened — never for whatever was
+  // already outstanding on load, and never twice for the same item across
+  // repeated polls). Reuses this same board poll rather than a second one.
+  const { muted, setMuted, unlocked, notify } = useStaffAttentionSignal();
+  const attentionKeys = useMemo(() => {
+    const tables = ((board.data as any)?.tables ?? []) as any[];
+    const keys: string[] = [];
+    for (const t of tables) {
+      if (t.serviceRequest?.status === "requested")
+        keys.push(`service-request:${t.serviceRequest.id}`);
+      if (t.order) {
+        const life = deriveLifecycle({
+          order: t.order,
+          items: t.order.items ?? [],
+          tickets: t.order.tickets ?? [],
+        });
+        if (life.billRequestedAt && !life.billPresentedAt)
+          keys.push(`bill-requested:${t.order.id}`);
+        if (life.unsent > 0) keys.push(`unsent-items:${t.order.id}`);
+      }
+    }
+    return keys;
+  }, [board.data]);
+  const newlyActiveAttention = useNewlyActiveKeys(attentionKeys);
+
+  useEffect(() => {
+    if (newlyActiveAttention.length === 0) return;
+    notify();
+    const hasServiceRequest = newlyActiveAttention.some((k) => k.startsWith("service-request:"));
+    const hasBill = newlyActiveAttention.some((k) => k.startsWith("bill-requested:"));
+    const hasUnsent = newlyActiveAttention.some((k) => k.startsWith("unsent-items:"));
+    const parts = [
+      hasServiceRequest && "Guest needs assistance",
+      hasBill && "Bill requested",
+      hasUnsent && "New items to send",
+    ].filter(Boolean);
+    if (parts.length > 0) toast(parts.join(" · "));
+    // newlyActiveAttention is a fresh array each render; compare by content.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newlyActiveAttention.join("|")]);
   const catalog = useQuery({
     queryKey: ["restaurant.pos.catalog", tenantId],
     queryFn: () => catalogFn({ data: { tenantId: tenantId! } }),
@@ -348,6 +399,13 @@ export function PosWorkspace({
     mutationFn: (vars: { requestId: string }) =>
       acknowledgeServiceRequestFnCall({ data: { tenantId: tenantId!, requestId: vars.requestId } }),
     successMessage: "Guest request acknowledged",
+    onSuccess: refresh,
+  });
+
+  const resolveRequest = useAdminMutation({
+    mutationFn: (vars: { requestId: string }) =>
+      resolveServiceRequestFnCall({ data: { tenantId: tenantId!, requestId: vars.requestId } }),
+    successMessage: "Guest request resolved",
     onSuccess: refresh,
   });
 
@@ -586,6 +644,21 @@ export function PosWorkspace({
               </span>
             </div>
           ))}
+          <button
+            type="button"
+            onClick={() => setMuted(!muted)}
+            className="ml-auto flex items-center gap-1.5 rounded-full border px-2 py-1 text-[0.62rem] font-medium uppercase tracking-wide text-[color:var(--os-ink-3)] transition-colors hover:border-primary"
+            title={
+              muted
+                ? "Alert sound muted — tap to unmute"
+                : unlocked
+                  ? "Alert sound on — tap to mute"
+                  : "Alert sound will start after you tap anywhere"
+            }
+          >
+            {muted ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+            {muted ? "Muted" : "Alerts"}
+          </button>
         </div>
 
         {orderId && <GuestContextBanner tenantId={tenantId} orderId={orderId} />}
@@ -647,9 +720,22 @@ export function PosWorkspace({
                   >
                     {t.serviceRequest && (
                       <span
-                        className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border border-destructive/50 bg-destructive/10 text-destructive"
-                        title="Guest needs staff"
-                        aria-label="Guest needs staff"
+                        className={cn(
+                          "absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border",
+                          t.serviceRequest.status === "acknowledged"
+                            ? "border-amber-500/50 bg-amber-500/10 text-amber-600"
+                            : "border-destructive/50 bg-destructive/10 text-destructive",
+                        )}
+                        title={
+                          t.serviceRequest.status === "acknowledged"
+                            ? "Staff acknowledged — not yet resolved"
+                            : "Guest needs staff"
+                        }
+                        aria-label={
+                          t.serviceRequest.status === "acknowledged"
+                            ? "Staff acknowledged — not yet resolved"
+                            : "Guest needs staff"
+                        }
                       >
                         <Bell className="size-3.5" />
                       </span>
@@ -789,24 +875,56 @@ export function PosWorkspace({
                         )}
                       </div>
                       {activeTable?.serviceRequest && (
-                        <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2">
-                          <span className="flex items-center gap-1.5 text-xs font-medium text-destructive">
-                            <Bell className="size-3.5" />
-                            Guest needs assistance
-                          </span>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="min-h-8"
-                            disabled={acknowledgeRequest.isPending}
-                            onClick={() =>
-                              acknowledgeRequest.mutate({
-                                requestId: activeTable.serviceRequest.id,
-                              })
-                            }
+                        <div
+                          className={cn(
+                            "flex items-center justify-between gap-2 rounded-lg border p-2",
+                            activeTable.serviceRequest.status === "acknowledged"
+                              ? "border-amber-500/40 bg-amber-500/5"
+                              : "border-destructive/40 bg-destructive/5",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "flex items-center gap-1.5 text-xs font-medium",
+                              activeTable.serviceRequest.status === "acknowledged"
+                                ? "text-amber-700 dark:text-amber-400"
+                                : "text-destructive",
+                            )}
                           >
-                            Acknowledge
-                          </Button>
+                            <Bell className="size-3.5" />
+                            {activeTable.serviceRequest.status === "acknowledged"
+                              ? "Acknowledged — awaiting resolution"
+                              : "Guest needs assistance"}
+                          </span>
+                          {activeTable.serviceRequest.status === "acknowledged" ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="min-h-8"
+                              disabled={resolveRequest.isPending}
+                              onClick={() =>
+                                resolveRequest.mutate({
+                                  requestId: activeTable.serviceRequest.id,
+                                })
+                              }
+                            >
+                              Resolve
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="min-h-8"
+                              disabled={acknowledgeRequest.isPending}
+                              onClick={() =>
+                                acknowledgeRequest.mutate({
+                                  requestId: activeTable.serviceRequest.id,
+                                })
+                              }
+                            >
+                              Acknowledge
+                            </Button>
+                          )}
                         </div>
                       )}
                     </div>

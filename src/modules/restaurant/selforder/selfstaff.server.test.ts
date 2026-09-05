@@ -69,7 +69,11 @@ const TABLE = "table-1";
 const OTHER_TABLE = "table-2";
 const ORDER = "order-1";
 
-function seedFor(opts: { orderOverrides?: Partial<Record<string, unknown>>; requests?: any[] }) {
+function seedFor(opts: {
+  orderOverrides?: Partial<Record<string, unknown>>;
+  requests?: any[];
+  tenantSettings?: Record<string, unknown>;
+}) {
   return fakeDb({
     tables: [
       {
@@ -92,8 +96,8 @@ function seedFor(opts: { orderOverrides?: Partial<Record<string, unknown>>; requ
       },
     ],
     tenants: [
-      { id: TENANT, name: "Demo", status: "active" },
-      { id: OTHER_TENANT, name: "Other tenant", status: "active" },
+      { id: TENANT, name: "Demo", status: "active", settings: opts.tenantSettings ?? {} },
+      { id: OTHER_TENANT, name: "Other tenant", status: "active", settings: {} },
     ],
     orders: [
       {
@@ -109,6 +113,7 @@ function seedFor(opts: { orderOverrides?: Partial<Record<string, unknown>>; requ
       tenant_id: TENANT,
       order_id: ORDER,
       request_type: "assistance",
+      resolved_at: null,
       ...r,
     })),
   });
@@ -118,10 +123,11 @@ describe("requestStaff", () => {
   it("a valid guest/table/order can request staff", async () => {
     const sb = seedFor({});
     const result = await requestStaff(sb, { tableId: TABLE, orderId: ORDER });
-    expect(result.ok).toBe(true);
-    expect((result as any).status).toBe("requested");
-    expect((result as any).requestedAt).toBeTruthy();
-    expect((result as any).acknowledgedAt).toBeNull();
+    expect(result).toEqual({
+      ok: true,
+      status: "requested",
+      requestedAt: expect.any(String),
+    });
   });
 
   it("the wrong table cannot request staff for this order", async () => {
@@ -145,8 +151,8 @@ describe("requestStaff", () => {
         },
       ],
       tenants: [
-        { id: TENANT, name: "Demo", status: "active" },
-        { id: OTHER_TENANT, name: "Other tenant", status: "active" },
+        { id: TENANT, name: "Demo", status: "active", settings: {} },
+        { id: OTHER_TENANT, name: "Other tenant", status: "active", settings: {} },
       ],
       orders: [
         {
@@ -215,7 +221,7 @@ describe("requestStaff", () => {
     });
   });
 
-  it("after an acknowledged request, tapping again starts a genuinely new request", async () => {
+  it("§B — an acknowledged request blocks a new one: tapping again while staff is already on it must NOT create a second request", async () => {
     const sb = seedFor({
       requests: [
         {
@@ -226,13 +232,94 @@ describe("requestStaff", () => {
       ],
     });
     const result = await requestStaff(sb, { tableId: TABLE, orderId: ORDER });
-    expect(result).toMatchObject({ ok: true, status: "requested", acknowledgedAt: null });
+    expect(result).toEqual({
+      ok: true,
+      status: "acknowledged",
+      requestedAt: "2026-01-01T10:00:00.000Z",
+      acknowledgedAt: "2026-01-01T10:05:00.000Z",
+    });
+    const { data } = await (sb.from("restaurant_service_requests") as any)
+      .select()
+      .eq("order_id", ORDER);
+    expect(data).toHaveLength(1); // no second row was inserted
   });
 
-  it("no request yet reads as status 'none', not an error", async () => {
+  it("no request yet reads as status 'available', not an error", async () => {
     const sb = seedFor({});
     const status = await guestStaffRequestStatus(sb, { tableId: TABLE, orderId: ORDER });
-    expect(status).toEqual({ ok: true, status: "none" });
+    expect(status).toEqual({ ok: true, status: "available" });
+  });
+
+  it("§C — a resolved request within the cooldown window blocks a new request and reports remaining time", async () => {
+    const resolvedAt = new Date(Date.now() - 60_000).toISOString(); // resolved 60s ago
+    const sb = seedFor({
+      requests: [
+        {
+          status: "resolved",
+          requested_at: new Date(Date.now() - 120_000).toISOString(),
+          acknowledged_at: new Date(Date.now() - 90_000).toISOString(),
+          resolved_at: resolvedAt,
+        },
+      ],
+      // Default cooldown (300s) applies since no tenant setting is configured.
+    });
+    const status = await guestStaffRequestStatus(sb, { tableId: TABLE, orderId: ORDER });
+    expect(status.ok).toBe(true);
+    expect((status as any).status).toBe("cooldown");
+    expect((status as any).resolvedAt).toBe(resolvedAt);
+    // ~300s window minus the 60s already elapsed, allowing a little slack for test timing.
+    expect((status as any).cooldownRemainingSeconds).toBeGreaterThan(235);
+    expect((status as any).cooldownRemainingSeconds).toBeLessThanOrEqual(240);
+
+    const requestResult = await requestStaff(sb, { tableId: TABLE, orderId: ORDER });
+    expect(requestResult.ok).toBe(true);
+    expect((requestResult as any).status).toBe("cooldown");
+    const { data } = await (sb.from("restaurant_service_requests") as any)
+      .select()
+      .eq("order_id", ORDER);
+    expect(data).toHaveLength(1); // still no new row — cooldown blocked the insert
+  });
+
+  it("§C — a resolved request past the cooldown window is available again, and a new request can be created", async () => {
+    const resolvedAt = new Date(Date.now() - 10 * 60_000).toISOString(); // resolved 10 minutes ago
+    const sb = seedFor({
+      requests: [
+        {
+          status: "resolved",
+          requested_at: new Date(Date.now() - 12 * 60_000).toISOString(),
+          acknowledged_at: new Date(Date.now() - 11 * 60_000).toISOString(),
+          resolved_at: resolvedAt,
+        },
+      ],
+      // Default cooldown is 5 minutes — 10 minutes have elapsed.
+    });
+    const status = await guestStaffRequestStatus(sb, { tableId: TABLE, orderId: ORDER });
+    expect(status).toEqual({ ok: true, status: "available" });
+
+    const result = await requestStaff(sb, { tableId: TABLE, orderId: ORDER });
+    expect(result).toEqual({ ok: true, status: "requested", requestedAt: expect.any(String) });
+    const { data } = await (sb.from("restaurant_service_requests") as any)
+      .select()
+      .eq("order_id", ORDER);
+    expect(data.filter((r: any) => r.status === "requested")).toHaveLength(1);
+  });
+
+  it("the configured tenant cooldown (settings.serviceRequests.cooldownSeconds) overrides the default", async () => {
+    const resolvedAt = new Date(Date.now() - 30_000).toISOString(); // resolved 30s ago
+    const sb = seedFor({
+      requests: [
+        {
+          status: "resolved",
+          requested_at: new Date(Date.now() - 90_000).toISOString(),
+          acknowledged_at: new Date(Date.now() - 60_000).toISOString(),
+          resolved_at: resolvedAt,
+        },
+      ],
+      tenantSettings: { serviceRequests: { cooldownSeconds: 10 } }, // much shorter than the 300s default
+    });
+    // 30s have already elapsed against a 10s configured cooldown — available again.
+    const status = await guestStaffRequestStatus(sb, { tableId: TABLE, orderId: ORDER });
+    expect(status).toEqual({ ok: true, status: "available" });
   });
 
   it("a concurrent insert conflict (the database's own uniqueness guard) falls back to the row that won the race, instead of failing the guest's tap", async () => {
@@ -263,7 +350,12 @@ describe("requestStaff", () => {
                 data:
                   selectCalls === 1
                     ? null
-                    : { status: "requested", requested_at: REQ, acknowledged_at: null },
+                    : {
+                        status: "requested",
+                        requested_at: REQ,
+                        acknowledged_at: null,
+                        resolved_at: null,
+                      },
               };
             },
             insert() {
@@ -288,7 +380,6 @@ describe("requestStaff", () => {
       ok: true,
       status: "requested",
       requestedAt: REQ,
-      acknowledgedAt: null,
     });
   });
 });

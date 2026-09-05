@@ -5,14 +5,23 @@
  * guest function in this module; nothing about tenant/property/location/
  * request status/timestamps/staff identity is ever accepted from the
  * client. Writes go to restaurant_service_requests (see migration
- * 0006_guest_service_requests.sql) — a small, generic table rather than a
- * second bill_requested_at-style pair of order columns, so a later phase
- * can add another guest alert type without a new table.
+ * 0006_guest_service_requests.sql, extended by
+ * 0042_service_request_lifecycle_and_cooldown.sql) — a small, generic table
+ * rather than a second bill_requested_at-style pair of order columns, so a
+ * later phase can add another guest alert type without a new table.
  *
- * Spam control is two-layered: this module only ever inserts when no
- * "requested" row already exists for the order (checked below), and the
- * database itself enforces the same rule with a unique partial index, so a
- * genuine double-tap race still can't create two active alerts.
+ * Full lifecycle: AVAILABLE -> REQUESTED -> ACKNOWLEDGED -> RESOLVED ->
+ * COOLDOWN -> AVAILABLE. "Cooldown" is never a stored status — it is
+ * derived, here, from resolved_at plus the tenant's configured (or
+ * default) cooldown window, so the server is the one place that ever
+ * decides whether a guest may request again. canRequestStaff() is that one
+ * decision point; every function below goes through it rather than
+ * re-deriving availability itself.
+ *
+ * Spam control is two-layered: this module only ever inserts when
+ * canRequestStaff() says AVAILABLE, and the database itself enforces "at
+ * most one non-resolved request per order" with a unique partial index, so
+ * a genuine double-tap race still can't create two active alerts.
  */
 import { resolveGuestTableContext } from "./selforder.server";
 
@@ -39,7 +48,12 @@ async function loadGuestOrderForStaffRequest(
   return order;
 }
 
-type RequestRow = { status: string; requested_at: string; acknowledged_at: string | null };
+type RequestRow = {
+  status: string;
+  requested_at: string;
+  acknowledged_at: string | null;
+  resolved_at: string | null;
+};
 
 async function latestStaffRequest(
   sb: Sb,
@@ -48,7 +62,7 @@ async function latestStaffRequest(
 ): Promise<RequestRow | null> {
   const { data } = await sb
     .from("restaurant_service_requests")
-    .select("status, requested_at, acknowledged_at")
+    .select("status, requested_at, acknowledged_at, resolved_at")
     .eq("tenant_id", tenantId)
     .eq("order_id", orderId)
     .eq("request_type", REQUEST_TYPE)
@@ -59,20 +73,59 @@ async function latestStaffRequest(
 }
 
 export type StaffRequestState =
-  | { status: "none" }
-  | { status: "requested"; requestedAt: string; acknowledgedAt: null }
-  | { status: "acknowledged"; requestedAt: string; acknowledgedAt: string };
+  | { status: "available" }
+  | { status: "requested"; requestedAt: string }
+  | { status: "acknowledged"; requestedAt: string; acknowledgedAt: string }
+  | {
+      status: "cooldown";
+      resolvedAt: string;
+      cooldownEndsAt: string;
+      cooldownRemainingSeconds: number;
+    };
 
-function toState(row: RequestRow | null): StaffRequestState {
-  if (!row) return { status: "none" };
+/**
+ * The one place "can this guest request staff right now" is decided.
+ * `now` is a parameter (not read internally) purely so tests can pin it —
+ * every real caller passes `new Date()`.
+ */
+function evaluateState(
+  row: RequestRow | null,
+  cooldownSeconds: number,
+  now: Date,
+): { canRequest: boolean; state: StaffRequestState } {
+  if (!row) return { canRequest: true, state: { status: "available" } };
+
+  if (row.status === "requested") {
+    return { canRequest: false, state: { status: "requested", requestedAt: row.requested_at } };
+  }
+
   if (row.status === "acknowledged") {
     return {
-      status: "acknowledged",
-      requestedAt: row.requested_at,
-      acknowledgedAt: row.acknowledged_at as string,
+      canRequest: false,
+      state: {
+        status: "acknowledged",
+        requestedAt: row.requested_at,
+        acknowledgedAt: row.acknowledged_at as string,
+      },
     };
   }
-  return { status: "requested", requestedAt: row.requested_at, acknowledgedAt: null };
+
+  // status === "resolved" — the only state a fresh request can ever follow.
+  const resolvedAt = row.resolved_at as string;
+  const cooldownEndsAt = new Date(new Date(resolvedAt).getTime() + cooldownSeconds * 1000);
+  if (now.getTime() >= cooldownEndsAt.getTime()) {
+    return { canRequest: true, state: { status: "available" } };
+  }
+  const cooldownRemainingSeconds = Math.ceil((cooldownEndsAt.getTime() - now.getTime()) / 1000);
+  return {
+    canRequest: false,
+    state: {
+      status: "cooldown",
+      resolvedAt,
+      cooldownEndsAt: cooldownEndsAt.toISOString(),
+      cooldownRemainingSeconds,
+    },
+  };
 }
 
 export type RequestStaffResult =
@@ -80,11 +133,11 @@ export type RequestStaffResult =
   | { ok: false; reason: "not_requestable"; orderStatus: string };
 
 /**
- * Idempotent by construction, mirroring requestGuestBill: an active
- * ("requested") alert for this order is returned as-is rather than
- * duplicated — the guest tapping "Request staff" again before anyone has
- * acknowledged never creates a second alert. Once acknowledged, a further
- * tap starts a genuinely new request (the guest may need help again).
+ * Idempotent by construction: if a request is already active (requested or
+ * acknowledged) or the guest is still within cooldown, this returns the
+ * current state as-is rather than inserting anything — a double tap,
+ * refresh-then-tap, or a second browser tab all resolve to the same read,
+ * never a second row. Only a genuine AVAILABLE state ever gets a new insert.
  */
 export async function requestStaff(
   sb: Sb,
@@ -99,14 +152,16 @@ export async function requestStaff(
   );
 
   const existing = await latestStaffRequest(sb, table.tenantId, order.id);
-  if (existing && existing.status === "requested") {
-    return { ok: true, ...toState(existing) };
+  const now = new Date();
+  const { canRequest, state } = evaluateState(existing, table.serviceRequestCooldownSeconds, now);
+  if (!canRequest) {
+    return { ok: true, ...state };
   }
   if (!STAFF_REQUEST_ORDER_STATUSES.has(order.status)) {
     return { ok: false, reason: "not_requestable", orderStatus: order.status };
   }
 
-  const now = new Date().toISOString();
+  const nowIso = now.toISOString();
   const { data: inserted, error } = await sb
     .from("restaurant_service_requests")
     .insert({
@@ -117,9 +172,9 @@ export async function requestStaff(
       order_id: order.id,
       request_type: REQUEST_TYPE,
       status: "requested",
-      requested_at: now,
+      requested_at: nowIso,
     })
-    .select("status, requested_at, acknowledged_at")
+    .select("status, requested_at, acknowledged_at, resolved_at")
     .single();
 
   if (error) {
@@ -128,18 +183,26 @@ export async function requestStaff(
     // what exists rather than surfacing this as a failure to the guest.
     if (String(error.code) === "23505") {
       const raced = await latestStaffRequest(sb, table.tenantId, order.id);
-      if (raced) return { ok: true, ...toState(raced) };
+      const reevaluated = evaluateState(raced, table.serviceRequestCooldownSeconds, new Date());
+      return { ok: true, ...reevaluated.state };
     }
     throw new Error(error.message);
   }
 
-  return { ok: true, ...toState(inserted as RequestRow) };
+  return {
+    ok: true,
+    ...evaluateState(inserted as RequestRow, table.serviceRequestCooldownSeconds, new Date()).state,
+  };
 }
 
 /**
  * Read-only — polled by the guest screen to observe "Requested" become
- * "Staff acknowledged" without re-triggering a request (unlike
- * requestStaff, this never inserts).
+ * "Acknowledged" become (after resolution) "Cooldown" become "Available"
+ * again, without ever inserting (unlike requestStaff). The server
+ * re-evaluates the cooldown window fresh on every call, so a page refresh,
+ * a second tab, or a poll a long time later all land on the exact same
+ * answer as the server would give right now — never a value cached only in
+ * the client.
  */
 export async function guestStaffRequestStatus(
   sb: Sb,
@@ -153,5 +216,6 @@ export async function guestStaffRequestStatus(
     input.orderId,
   );
   const existing = await latestStaffRequest(sb, table.tenantId, order.id);
-  return { ok: true, ...toState(existing) };
+  const { state } = evaluateState(existing, table.serviceRequestCooldownSeconds, new Date());
+  return { ok: true, ...state };
 }
