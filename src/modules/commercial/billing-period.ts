@@ -71,3 +71,26 @@ export function prorateForRemainderOfPeriod(
   const fraction = remainingMs / totalMs;
   return Math.round(amount * fraction * 100) / 100;
 }
+
+/**
+ * P03 §22 — invoice ageing. Purely computed from `dueDate`, exactly the
+ * same "computed at read-time, never a stored/scheduled transition"
+ * discipline P02 already applies to the `overdue` flag (this codebase has
+ * no job scheduler). A null `dueDate` (never issued) or a due date not yet
+ * passed is "current" with zero days overdue.
+ */
+export type AgeingBucket = "current" | "1-30" | "31-60" | "61-90" | "90+";
+
+export function ageingFor(
+  dueDate: string | Date | null,
+  today: Date = new Date(),
+): { bucket: AgeingBucket; daysOverdue: number } {
+  if (!dueDate) return { bucket: "current", daysOverdue: 0 };
+  const due = typeof dueDate === "string" ? new Date(`${dueDate}T00:00:00Z`) : dueDate;
+  const daysOverdue = Math.floor((today.getTime() - due.getTime()) / 86400000);
+  if (daysOverdue <= 0) return { bucket: "current", daysOverdue: 0 };
+  if (daysOverdue <= 30) return { bucket: "1-30", daysOverdue };
+  if (daysOverdue <= 60) return { bucket: "31-60", daysOverdue };
+  if (daysOverdue <= 90) return { bucket: "61-90", daysOverdue };
+  return { bucket: "90+", daysOverdue };
+}

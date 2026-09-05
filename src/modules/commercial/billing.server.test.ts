@@ -1,8 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- fake Supabase client is untyped at this boundary. */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeSupabase, type FakeTables } from "./test-helpers/fakeSupabase";
 import { createAgreement, approveAgreement } from "./agreements.server";
-import { generateInvoice, issueInvoice, recordPropertyCharge, voidInvoice } from "./billing.server";
+import {
+  generateInvoice,
+  issueInvoice,
+  listInvoices,
+  recordPropertyCharge,
+  voidInvoice,
+} from "./billing.server";
 
 const ADMIN = "admin-1";
 const TENANT = "tenant-1";
@@ -273,5 +279,46 @@ describe("issueInvoice / voidInvoice", () => {
     await expect(voidInvoice(sb, ADMIN, { invoiceId: invoice.id, reason: "test" })).rejects.toThrow(
       /paid/i,
     );
+  });
+});
+
+describe("listInvoices — §22 ageing", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-15T00:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("attaches ageingBucket/daysOverdue computed from due_date, using the one shared ageingFor implementation", async () => {
+    const tables = baseTables();
+    tables.commercial_invoices.push(
+      {
+        id: "inv-current",
+        tenant_id: TENANT,
+        status: "issued",
+        due_date: "2026-07-01",
+        balance: 100,
+        created_at: "2026-06-01T00:00:00Z",
+      },
+      {
+        id: "inv-overdue",
+        tenant_id: TENANT,
+        status: "issued",
+        due_date: "2026-05-01",
+        balance: 100,
+        created_at: "2026-05-01T00:00:00Z",
+      },
+    );
+    const sb = db(tables);
+    const rows = await listInvoices(sb, {});
+    const current = rows.find((r: any) => r.id === "inv-current");
+    const overdue = rows.find((r: any) => r.id === "inv-overdue");
+    expect(current.ageingBucket).toBe("current");
+    expect(current.daysOverdue).toBe(0);
+    expect(overdue.ageingBucket).toBe("31-60");
+    expect(overdue.daysOverdue).toBe(45);
+    expect(overdue.overdue).toBe(true);
   });
 });

@@ -11,7 +11,7 @@
  */
 import { assertCommercialAdmin } from "./access.server";
 import { writeCommercialAudit } from "./audit.server";
-import { currentBillingPeriod, prorateForRemainderOfPeriod } from "./billing-period";
+import { ageingFor, currentBillingPeriod, prorateForRemainderOfPeriod } from "./billing-period";
 import type { GenerateInvoiceInput, IssueInvoiceInput, VoidInvoiceInput } from "./contracts";
 import { sendCommercialNotification } from "./notifications.server";
 
@@ -489,17 +489,25 @@ export async function listInvoices(sb: Sb, filter: { tenantId?: string; status?:
   if (filter.status) q = q.eq("status", filter.status);
   const { data, error } = await q;
   if (error) throw new Error(error.message);
-  const today = new Date().toISOString().slice(0, 10);
-  return ((data ?? []) as any[]).map((inv) => ({
-    ...inv,
-    // Computed, not stored — see the module header note on why there is
-    // no scheduler to transition this automatically.
-    overdue:
-      inv.status === "issued" &&
-      inv.due_date != null &&
-      inv.due_date < today &&
-      Number(inv.balance) > 0,
-  }));
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+  return ((data ?? []) as any[]).map((inv) => {
+    // §22 — one ageing implementation (ageingFor), reused wherever an
+    // invoice's age is shown; never a second computation here.
+    const { bucket, daysOverdue } = ageingFor(inv.due_date, today);
+    return {
+      ...inv,
+      // Computed, not stored — see the module header note on why there is
+      // no scheduler to transition this automatically.
+      overdue:
+        inv.status === "issued" &&
+        inv.due_date != null &&
+        inv.due_date < todayStr &&
+        Number(inv.balance) > 0,
+      ageingBucket: bucket,
+      daysOverdue,
+    };
+  });
 }
 
 export async function getInvoiceWithLines(sb: Sb, invoiceId: string) {

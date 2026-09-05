@@ -3,16 +3,19 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   activateSubscriptionSchema,
+  addCommercialNoteSchema,
   approveAgreementSchema,
   cancelAgreementSchema,
   cancelSubscriptionSchema,
   checkQuotaSchema,
   createAgreementSchema,
   generateInvoiceSchema,
+  getCustomerProfileSchema,
   grantCommercialAdminSchema,
   issueInvoiceSchema,
   listAgreementsSchema,
   listAuditLogSchema,
+  listCustomersSchema,
   listInvoicesSchema,
   listOverridesSchema,
   listPaymentsSchema,
@@ -460,6 +463,48 @@ export const renderCommercialDocumentHtmlFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./documents.server");
     return { html: await mod.renderCommercialDocumentHtml(context.supabase, data.kind, data.id) };
+  });
+
+/* ================================================================= P03 === */
+
+export const listCommercialCustomersFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => listCustomersSchema.parse(d ?? {}))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./customers.server");
+    return mod.listCustomers(context.supabase, context.userId, data);
+  });
+
+export const getCommercialCustomerProfileFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => getCustomerProfileSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./customers.server");
+    return mod.getCustomerCommercialProfile(context.supabase, context.userId, data.tenantId);
+  });
+
+export const addCommercialNoteFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => addCommercialNoteSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./customers.server");
+    return mod.addCommercialNote(context.supabase, context.userId, data);
+  });
+
+export const listCommercialCollectionsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => empty.parse(d))
+  .handler(async ({ context }) => {
+    const mod = await import("./collections.server");
+    return mod.listCollections(context.supabase, context.userId);
+  });
+
+export const listCommercialUpcomingRenewalsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => empty.parse(d))
+  .handler(async ({ context }) => {
+    const mod = await import("./renewals.server");
+    return mod.listUpcomingRenewals(context.supabase, context.userId);
   });
 
 /* -------------------------------------------------------------- notifications */

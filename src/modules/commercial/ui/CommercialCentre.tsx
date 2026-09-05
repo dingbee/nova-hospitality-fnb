@@ -79,6 +79,12 @@ import {
   whoAmICommercialFn,
 } from "../commercial.functions";
 import { BillingOverviewPanel, CustomerWorkspacePanel } from "./CommercialLifecycle";
+import {
+  CollectionsPanel,
+  CommercialOverviewPanel,
+  CustomersPortfolioPanel,
+  RenewalsPanel,
+} from "./CommercialOperations";
 
 const TZS = (n: number | null | undefined) =>
   n == null ? "—" : new Intl.NumberFormat("en-TZ", { maximumFractionDigits: 0 }).format(n) + " TZS";
@@ -247,9 +253,13 @@ export function CommercialCentre() {
         />
       </div>
 
-      <Tabs defaultValue="overview" className="w-full">
+      <Tabs defaultValue="ops-overview" className="w-full">
         <TabsList className="flex h-auto flex-wrap justify-start gap-1">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="ops-overview">Commercial Overview</TabsTrigger>
+          <TabsTrigger value="ops-customers">Customers</TabsTrigger>
+          <TabsTrigger value="ops-renewals">Renewals</TabsTrigger>
+          <TabsTrigger value="ops-collections">Collections</TabsTrigger>
+          <TabsTrigger value="overview">Governance</TabsTrigger>
           <TabsTrigger value="plans">Plans</TabsTrigger>
           <TabsTrigger value="capabilities">Capabilities</TabsTrigger>
           <TabsTrigger value="entitlements">Entitlements</TabsTrigger>
@@ -264,6 +274,21 @@ export function CommercialCentre() {
           <TabsTrigger value="audit">Audit Log</TabsTrigger>
         </TabsList>
 
+        <TabsContent value="ops-overview">
+          <CommercialOverviewPanel
+            subscriptions={data.subscriptions.data ?? []}
+            propertyClassifications={data.propertyClassifications.data ?? []}
+          />
+        </TabsContent>
+        <TabsContent value="ops-customers">
+          <CustomersPortfolioPanel />
+        </TabsContent>
+        <TabsContent value="ops-renewals">
+          <RenewalsPanel plans={plans} />
+        </TabsContent>
+        <TabsContent value="ops-collections">
+          <CollectionsPanel />
+        </TabsContent>
         <TabsContent value="overview">
           <OverviewTab data={data} />
         </TabsContent>

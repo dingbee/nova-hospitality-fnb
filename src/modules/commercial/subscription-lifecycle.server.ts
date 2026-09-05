@@ -256,11 +256,20 @@ export async function reactivateSubscription(
 }
 
 /**
- * §24 — creates a NEW agreement (never mutates the current one) snapshotting
- * TODAY's catalogue pricing, approves it, marks the prior agreement
- * superseded, and rolls the subscription onto it. A renewal only ever
- * happens through this explicit action — global pricing changing on its
- * own never alters a live subscription's charge.
+ * §14/§24 — creates a NEW agreement (never mutates the current one)
+ * snapshotting TODAY's catalogue pricing, approves it, marks the prior
+ * agreement superseded, and rolls the subscription onto it. A renewal only
+ * ever happens through this explicit action — global pricing changing on
+ * its own never alters a live subscription's charge.
+ *
+ * §14's RENEW/UPGRADE/DOWNGRADE/CONTRACT CHANGE all flow through this one
+ * function: a plain renewal omits `newPlanId`/`newProgrammeId`/
+ * `newDiscountPct` and reuses the current agreement's terms; an upgrade or
+ * downgrade passes a different `newPlanId`; a contract change passes a
+ * different `newDiscountPct`. There is exactly one renewal code path,
+ * never a separate "plan change" engine — a mid-cycle EXPAND is the
+ * existing property-classification charge (billing.server.ts's
+ * `recordPropertyCharge`), and CANCEL is `cancelSubscription` above.
  */
 export async function renewSubscription(sb: Sb, userId: string, input: RenewSubscriptionInput) {
   await assertCommercialAdmin(sb, userId);
@@ -272,13 +281,26 @@ export async function renewSubscription(sb: Sb, userId: string, input: RenewSubs
   const current = await getAgreement(sb, subscription.agreement_id);
   if (!current) throw new Error("Current agreement not found.");
 
+  const discountPct =
+    input.newDiscountPct !== undefined
+      ? input.newDiscountPct
+      : input.keepDiscount
+        ? (current.discount_pct ?? undefined)
+        : undefined;
+
   const renewed = await createAgreement(sb, userId, {
     tenantId: input.tenantId,
-    planId: current.plan_id,
-    programmeId: current.programme_id ?? undefined,
+    planId: input.newPlanId ?? current.plan_id,
+    programmeId:
+      input.newProgrammeId !== undefined
+        ? input.newProgrammeId
+        : (current.programme_id ?? undefined),
     billingInterval: current.billing_interval,
-    discountPct: input.keepDiscount ? (current.discount_pct ?? undefined) : undefined,
-    discountReason: input.keepDiscount ? (current.discount_reason ?? undefined) : undefined,
+    discountPct,
+    discountReason:
+      discountPct != null
+        ? (input.discountReason ?? current.discount_reason ?? undefined)
+        : undefined,
     requiresPaymentBeforeActivation: current.requires_payment_before_activation,
     renewedFromAgreementId: current.id,
   });

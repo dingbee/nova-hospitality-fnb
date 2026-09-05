@@ -530,8 +530,34 @@ export const renewSubscriptionSchema = z.object({
   tenantId: uuid,
   keepDiscount: z.boolean().default(false),
   reason: z.string().max(2000).optional(),
+  // P03 §14 — an upgrade/downgrade is a renewal onto a different plan or
+  // programme; a contract change is a renewal with different discount
+  // terms. Omitting all three is a plain like-for-like renewal.
+  newPlanId: uuid.optional(),
+  newProgrammeId: uuid.nullable().optional(),
+  newDiscountPct: z.number().min(0).max(100).optional(),
+  discountReason: z.string().max(500).optional(),
 });
 export type RenewSubscriptionInput = z.infer<typeof renewSubscriptionSchema>;
+
+/* ============================================================================
+ * P03 — Commercial Operations Centre (browser-safe contracts).
+ * ========================================================================= */
+
+export const listCustomersSchema = z.object({
+  search: z.string().max(200).optional(),
+  status: z.enum(COMMERCIAL_CUSTOMER_STATUSES).optional(),
+});
+export type ListCustomersInput = z.infer<typeof listCustomersSchema>;
+
+export const getCustomerProfileSchema = z.object({ tenantId: uuid });
+export type GetCustomerProfileInput = z.infer<typeof getCustomerProfileSchema>;
+
+export const addCommercialNoteSchema = z.object({
+  tenantId: uuid,
+  note: z.string().min(3).max(2000),
+});
+export type AddCommercialNoteInput = z.infer<typeof addCommercialNoteSchema>;
 
 /* ------------------------------------------------------------------ billing */
 

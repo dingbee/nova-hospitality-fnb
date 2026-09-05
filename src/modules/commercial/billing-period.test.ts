@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentBillingPeriod, prorateForRemainderOfPeriod } from "./billing-period";
+import { ageingFor, currentBillingPeriod, prorateForRemainderOfPeriod } from "./billing-period";
 
 describe("currentBillingPeriod", () => {
   it("returns the first period when now is at or before the anchor", () => {
@@ -75,5 +75,41 @@ describe("prorateForRemainderOfPeriod", () => {
   it("returns the full amount for a zero-length period (defensive, never divides by zero)", () => {
     const degenerate = { start: period.start, end: period.start };
     expect(prorateForRemainderOfPeriod(50000, degenerate, period.start)).toBe(50000);
+  });
+});
+
+describe("ageingFor", () => {
+  const today = new Date("2026-06-15T00:00:00Z");
+
+  it("treats a null due date (never issued) as current", () => {
+    expect(ageingFor(null, today)).toEqual({ bucket: "current", daysOverdue: 0 });
+  });
+
+  it("treats a due date not yet reached as current", () => {
+    expect(ageingFor("2026-06-16", today)).toEqual({ bucket: "current", daysOverdue: 0 });
+  });
+
+  it("treats the due date itself as current, not yet overdue", () => {
+    expect(ageingFor("2026-06-15", today)).toEqual({ bucket: "current", daysOverdue: 0 });
+  });
+
+  it("buckets 1-30 days overdue", () => {
+    expect(ageingFor("2026-06-01", today)).toEqual({ bucket: "1-30", daysOverdue: 14 });
+    expect(ageingFor("2026-05-16", today)).toEqual({ bucket: "1-30", daysOverdue: 30 });
+  });
+
+  it("buckets 31-60 days overdue", () => {
+    expect(ageingFor("2026-05-15", today)).toEqual({ bucket: "31-60", daysOverdue: 31 });
+    expect(ageingFor("2026-04-16", today)).toEqual({ bucket: "31-60", daysOverdue: 60 });
+  });
+
+  it("buckets 61-90 days overdue", () => {
+    expect(ageingFor("2026-04-15", today)).toEqual({ bucket: "61-90", daysOverdue: 61 });
+    expect(ageingFor("2026-03-17", today)).toEqual({ bucket: "61-90", daysOverdue: 90 });
+  });
+
+  it("buckets 90+ days overdue", () => {
+    expect(ageingFor("2026-03-16", today)).toEqual({ bucket: "90+", daysOverdue: 91 });
+    expect(ageingFor("2020-01-01", today).bucket).toBe("90+");
   });
 });

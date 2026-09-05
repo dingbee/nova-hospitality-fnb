@@ -25,18 +25,37 @@ export function createFakeSupabase(
   tables: FakeTables,
   rpcHandlers: Record<string, (args: any) => any> = {},
 ) {
-  function matches(row: any, filters: { eq: [string, any][]; in: [string, any[]][] }): boolean {
+  function matches(
+    row: any,
+    filters: {
+      eq: [string, any][];
+      in: [string, any[]][];
+      notIn: [string, any[]][];
+      notNull: string[];
+      ilike: [string, RegExp][];
+    },
+  ): boolean {
     for (const [col, val] of filters.eq) if (row[col] !== val) return false;
     for (const [col, vals] of filters.in) if (!vals.includes(row[col])) return false;
+    for (const [col, vals] of filters.notIn) if (vals.includes(row[col])) return false;
+    for (const col of filters.notNull) if (row[col] == null) return false;
+    for (const [col, re] of filters.ilike) if (!re.test(String(row[col] ?? ""))) return false;
     return true;
   }
 
   function builder(table: string) {
-    const filters: { eq: [string, any][]; in: [string, any[]][] } = { eq: [], in: [] };
+    const filters: {
+      eq: [string, any][];
+      in: [string, any[]][];
+      notIn: [string, any[]][];
+      notNull: string[];
+      ilike: [string, RegExp][];
+    } = { eq: [], in: [], notIn: [], notNull: [], ilike: [] };
     let mode: "select" | "insert" | "update" | "upsert" | "delete" = "select";
     let payload: any = null;
     let upsertConflictCol: string | null = null;
     let limitN: number | null = null;
+    let orderBy: { col: string; ascending: boolean } | null = null;
 
     const api: any = {
       select() {
@@ -70,6 +89,21 @@ export function createFakeSupabase(
         filters.in.push([col, vals]);
         return api;
       },
+      /** Mirrors the two real shapes this codebase's server modules use: `.not(col, "in", "(a,b)")` and `.not(col, "is", null)`. */
+      not(col: string, op: string, value: any) {
+        if (op === "in" && typeof value === "string") {
+          const vals = value.replace(/^\(|\)$/g, "").split(",");
+          filters.notIn.push([col, vals]);
+        } else if (op === "is" && value === null) {
+          filters.notNull.push(col);
+        }
+        return api;
+      },
+      ilike(col: string, pattern: string) {
+        const re = new RegExp(pattern.replace(/%/g, ".*"), "i");
+        filters.ilike.push([col, re]);
+        return api;
+      },
       lte() {
         return api;
       },
@@ -82,7 +116,8 @@ export function createFakeSupabase(
       or() {
         return api;
       },
-      order() {
+      order(col: string, opts?: { ascending?: boolean }) {
+        orderBy = { col, ascending: opts?.ascending !== false };
         return api;
       },
       limit(n: number) {
@@ -93,6 +128,17 @@ export function createFakeSupabase(
         tables[table] = tables[table] ?? [];
         if (mode === "select") {
           let rows = tables[table].filter((r) => matches(r, filters));
+          if (orderBy) {
+            const { col, ascending } = orderBy;
+            rows = [...rows].sort((a, b) => {
+              const av = a[col];
+              const bv = b[col];
+              if (av === bv) return 0;
+              if (av == null) return ascending ? -1 : 1;
+              if (bv == null) return ascending ? 1 : -1;
+              return (av > bv ? 1 : -1) * (ascending ? 1 : -1);
+            });
+          }
           if (limitN != null) rows = rows.slice(0, limitN);
           return { data: rows, error: null, count: rows.length } as any;
         }
