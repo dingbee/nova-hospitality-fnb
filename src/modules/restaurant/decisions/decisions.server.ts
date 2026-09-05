@@ -10,7 +10,12 @@
  *
  * The engine never writes to restaurant operational tables. It proposes.
  */
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import {
+  assertCapability,
+  assertTenantRead,
+  getTenantScope,
+  resolveEffectivePropertyId,
+} from "../core/access.server";
 import { getInventoryIntelligence } from "../intelligence/inventory.server";
 import { getKitchenIntelligence } from "../intelligence/kitchen.server";
 import { getMenuIntelligence } from "../intelligence/menu.server";
@@ -54,12 +59,19 @@ function findingFingerprint(
   return JSON.stringify({ severity: f.severity, facts: sortedFacts });
 }
 
-async function evaluate(sb: Sb, userId: string, tenantId: string, windowDays: number) {
+async function evaluate(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  windowDays: number,
+  propertyId?: string,
+  locationId?: string,
+) {
   const [menu, inventory, kitchen, purchasing] = await Promise.all([
-    getMenuIntelligence(sb, userId, { tenantId, windowDays }),
-    getInventoryIntelligence(sb, userId, { tenantId, windowDays }),
-    getKitchenIntelligence(sb, userId, { tenantId, windowDays }),
-    getPurchasingIntelligence(sb, userId, { tenantId, windowDays }),
+    getMenuIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
+    getInventoryIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
+    getKitchenIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
+    getPurchasingIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
   ]);
   const findings = gatherFindings({ menu, inventory, kitchen, purchasing });
   return { findings, candidates: buildRestaurantDecisions(findings, tenantId) };
@@ -79,15 +91,29 @@ function stepRow(s: any) {
   };
 }
 
-/** Persisted restaurant decisions for this tenant, newest first. */
-async function loadStored(sb: Sb, tenantId: string): Promise<RestaurantStoredDecision[]> {
-  const { data } = await sb
+/**
+ * Persisted restaurant decisions for this tenant, newest first. When
+ * `propertyId` is given (always true for a property-scoped caller, via
+ * resolveEffectivePropertyId), rows are filtered to it — `.eq()` never
+ * matches a NULL `property_id`, so pre-P1 legacy decisions with no
+ * attribution are correctly excluded from a property-scoped view rather
+ * than guessed at (spec: never fabricate attribution for unscoped legacy
+ * data). A tenant-wide caller with no explicit filter keeps full visibility.
+ */
+async function loadStored(
+  sb: Sb,
+  tenantId: string,
+  propertyId?: string,
+): Promise<RestaurantStoredDecision[]> {
+  let query = sb
     .from("intelligence_decisions")
     .select("*")
     .eq("module", "restaurant")
     .eq("tenant_id", tenantId)
     .order("created_at", { ascending: false })
     .limit(25);
+  if (propertyId) query = query.eq("property_id", propertyId);
+  const { data } = await query;
   const rows = (data ?? []) as any[];
   if (rows.length === 0) return [];
 
@@ -188,8 +214,20 @@ export async function getRestaurantDecisionBoard(
   input: RestaurantDecisionBoardInput,
 ): Promise<RestaurantDecisionBoard> {
   const { tenantId, windowDays } = input;
-  await assertTenantRead(sb, userId, tenantId);
-  const { findings, candidates } = await evaluate(sb, userId, tenantId, windowDays);
+  const scope = await getTenantScope(sb, userId, tenantId);
+  const propertyId = resolveEffectivePropertyId(scope, input.propertyId ?? null);
+  await assertTenantRead(sb, userId, tenantId, {
+    propertyId: propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
+  const { findings, candidates } = await evaluate(
+    sb,
+    userId,
+    tenantId,
+    windowDays,
+    propertyId,
+    input.locationId,
+  );
 
   return {
     generated_at: new Date().toISOString(),
@@ -198,7 +236,7 @@ export async function getRestaurantDecisionBoard(
     headline: restaurantDecisionHeadline(candidates),
     findings,
     candidates,
-    stored: input.includeStored === false ? [] : await loadStored(sb, tenantId),
+    stored: input.includeStored === false ? [] : await loadStored(sb, tenantId, propertyId),
   };
 }
 
@@ -231,8 +269,20 @@ export async function runRestaurantDecisionPass(
   input: RunRestaurantDecisionPassInput,
 ): Promise<RestaurantDecisionPassResult> {
   const { tenantId, windowDays } = input;
-  await assertCapability(sb, userId, tenantId, "intelligence.read");
-  const { findings, candidates } = await evaluate(sb, userId, tenantId, windowDays);
+  const scope = await getTenantScope(sb, userId, tenantId);
+  const propertyId = resolveEffectivePropertyId(scope, input.propertyId ?? null);
+  await assertCapability(sb, userId, tenantId, "intelligence.read", {
+    propertyId: propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
+  const { findings, candidates } = await evaluate(
+    sb,
+    userId,
+    tenantId,
+    windowDays,
+    propertyId,
+    input.locationId,
+  );
 
   const result: RestaurantDecisionPassResult = {
     findings: findings.length,
@@ -266,6 +316,8 @@ export async function runRestaurantDecisionPass(
           const { error: updateError } = await sb
             .from("intelligence_decisions")
             .update({
+              property_id: propertyId ?? null,
+              location_id: input.locationId ?? null,
               title: d.title,
               trigger: d.trigger,
               risk_level: d.riskLevel,
@@ -303,6 +355,8 @@ export async function runRestaurantDecisionPass(
       .from("intelligence_decisions")
       .insert({
         tenant_id: tenantId,
+        property_id: propertyId ?? null,
+        location_id: input.locationId ?? null,
         module: "restaurant",
         domain: d.domain,
         decision_key: d.key,
@@ -362,12 +416,17 @@ export async function runRestaurantDecisionPass(
   // among this pass's candidates means the condition it was raised for is
   // no longer current (e.g. a shortage was replenished). Mark it `expired`,
   // never delete it, and never touch anything a human has already reviewed.
-  const { data: openRows } = await sb
+  // Scoped to the SAME property this pass evaluated: a property-scoped pass
+  // must never expire another property's still-open decisions just because
+  // it didn't see them in this run's candidates.
+  let openQuery = sb
     .from("intelligence_decisions")
     .select("id, decision_key")
     .eq("module", "restaurant")
     .eq("tenant_id", tenantId)
     .eq("status", "proposed");
+  if (propertyId) openQuery = openQuery.eq("property_id", propertyId);
+  const { data: openRows } = await openQuery;
   for (const row of (openRows ?? []) as Array<{ id: string; decision_key: string }>) {
     if (currentDecisionKeys.has(row.decision_key)) continue;
     const { error: expireError } = await sb

@@ -47,7 +47,22 @@ export async function issueReceipt(
   userId: string,
   input: { tenantId: string; orderId: string; reprint?: boolean },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "sales.manage");
+  // Fiscalization (requestFiscalization, called below via attachFiscalStatus)
+  // deliberately never checks capability itself — it trusts that whoever can
+  // reach it already passed an authorized, scope-checked sales flow. This is
+  // that check: it must be scoped to the order's own property/location, not
+  // just the tenant, since a receipt/fiscal request for one property's order
+  // must not be reachable by staff scoped to a different property.
+  const { data: orderScope } = await sb
+    .from("restaurant_orders")
+    .select("property_id, location_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .maybeSingle();
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", {
+    propertyId: orderScope?.property_id ?? null,
+    locationId: orderScope?.location_id ?? null,
+  });
 
   const { data: existing } = await sb
     .from("restaurant_receipts")
@@ -175,7 +190,16 @@ export async function getReceipt(
   userId: string,
   input: { tenantId: string; orderId: string },
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  const { data: orderScope } = await sb
+    .from("restaurant_orders")
+    .select("property_id, location_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .maybeSingle();
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: orderScope?.property_id ?? null,
+    locationId: orderScope?.location_id ?? null,
+  });
   const { data } = await sb
     .from("restaurant_receipts")
     .select("*")

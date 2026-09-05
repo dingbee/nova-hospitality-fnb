@@ -6,6 +6,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
       className="toaster group"
+      // Sonner defaults to the bottom of the viewport, which on the guest
+      // portal is exactly where the fixed cart bar, checkout CTA and
+      // on-screen keyboard live — a toast there would sit on top of the
+      // one control the guest is trying to reach. Top placement is clear
+      // of the cart/CTA/keyboard on every surface, admin included.
+      position="top-center"
       toastOptions={{
         classNames: {
           toast:

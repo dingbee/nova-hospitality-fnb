@@ -52,7 +52,12 @@
  * the model as DATA, under the same "never an instruction" discipline as
  * every other field, made explicit again in the system prompt below.
  */
-import { assertCapability, rolesInTenant } from "../core/access.server";
+import {
+  assertCapability,
+  getTenantScope,
+  resolveEffectivePropertyId,
+  rolesInTenant,
+} from "../core/access.server";
 import { classifyInstruction } from "../understand/classify";
 import {
   correlateFindingsByEntity,
@@ -122,16 +127,27 @@ async function buildStaffNovaContext(
   userId: string,
   tenantId: string,
   roles: import("../core/contracts").RestaurantRole[],
+  propertyId: string | undefined,
 ) {
+  // A property-scoped caller (propertyId set) has no trustworthy shared
+  // memory to draw on — intelligence_memory carries no property attribution
+  // at all (see the P1 audit), and the spec is explicit: never expose
+  // unattributed data to a property-scoped view rather than guess at it. A
+  // tenant-wide caller (propertyId undefined) keeps full existing access.
+  const memoryAllowed = propertyId === undefined;
   const [sales, menu, inventory, kitchen, purchasing, board, memory] = await Promise.all([
     tryLoad("sales", async () => {
       const mod = await import("../sales/pos.server");
-      const result = await mod.posBoard(sb, userId, { tenantId });
+      const result = await mod.posBoard(sb, userId, { tenantId, propertyId });
       return result.stats;
     }),
     tryLoad("menu", async () => {
       const mod = await import("../intelligence/menu.server");
-      const m = await mod.getMenuIntelligence(sb, userId, { tenantId, windowDays: WINDOW_DAYS });
+      const m = await mod.getMenuIntelligence(sb, userId, {
+        tenantId,
+        windowDays: WINDOW_DAYS,
+        propertyId,
+      });
       return {
         currency: m.currency,
         windowDays: m.windowDays,
@@ -163,6 +179,7 @@ async function buildStaffNovaContext(
       const i = await mod.getInventoryIntelligence(sb, userId, {
         tenantId,
         windowDays: WINDOW_DAYS,
+        propertyId,
       });
       return {
         currency: i.currency,
@@ -179,7 +196,11 @@ async function buildStaffNovaContext(
     }),
     tryLoad("kitchen", async () => {
       const mod = await import("../intelligence/kitchen.server");
-      const k = await mod.getKitchenIntelligence(sb, userId, { tenantId, windowDays: WINDOW_DAYS });
+      const k = await mod.getKitchenIntelligence(sb, userId, {
+        tenantId,
+        windowDays: WINDOW_DAYS,
+        propertyId,
+      });
       return {
         averagePrepMinutes: k.averagePrepMinutes,
         previousAveragePrepMinutes: k.previousAveragePrepMinutes,
@@ -199,6 +220,7 @@ async function buildStaffNovaContext(
       const p = await mod.getPurchasingIntelligence(sb, userId, {
         tenantId,
         windowDays: WINDOW_DAYS,
+        propertyId,
       });
       return {
         currency: p.currency,
@@ -224,6 +246,7 @@ async function buildStaffNovaContext(
         tenantId,
         windowDays: WINDOW_DAYS,
         includeStored: true,
+        propertyId,
       });
       return {
         findings: take(b.findings, 8).map((f) => ({
@@ -247,6 +270,7 @@ async function buildStaffNovaContext(
       };
     }),
     tryLoad("memory", async () => {
+      if (!memoryAllowed) return [];
       const mod = await import("../memory/memory.server");
       const rows = await mod.recallRestaurantMemory(sb, userId, { tenantId, limit: 10 });
       return rows.map((m) => ({
@@ -338,7 +362,11 @@ export async function askStaffNova(
   // JWT userId — never off anything the client asserts. A guest has no
   // session that could ever satisfy this; there is no code path from the
   // guest surface into this function.
-  await assertCapability(sb, userId, input.tenantId, "intelligence.read");
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  const propertyId = resolveEffectivePropertyId(scope, null);
+  await assertCapability(sb, userId, input.tenantId, "intelligence.read", {
+    propertyId: propertyId ?? null,
+  });
 
   const generatedAt = new Date().toISOString();
 
@@ -396,7 +424,7 @@ export async function askStaffNova(
   // above — never a client-supplied role — decides which context sections
   // this answer may draw from (attention.ts's contextSectionsForRole).
   const roles = await rolesInTenant(sb, userId, input.tenantId);
-  const context = await buildStaffNovaContext(sb, userId, input.tenantId, roles);
+  const context = await buildStaffNovaContext(sb, userId, input.tenantId, roles, propertyId);
 
   try {
     // Corrective pass: this used to call ai-gateway.server.ts directly,

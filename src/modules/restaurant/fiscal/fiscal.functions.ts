@@ -65,3 +65,35 @@ export const prepareZReportDraftFn = createServerFn({ method: "POST" })
     const mod = await import("./fiscal.server");
     return mod.prepareZReportDraft(context.supabase, context.userId, data);
   });
+
+export const registerFiscalVfdFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => getFiscalConfigurationSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./fiscal.server");
+    return mod.registerFiscalVfd(context.supabase, context.userId, data);
+  });
+
+export const testFiscalConnectionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => getFiscalConfigurationSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./fiscal.server");
+    return mod.testFiscalConnection(context.supabase, context.userId, data);
+  });
+
+export const getFiscalRegistrationStatusFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => getFiscalConfigurationSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./fiscal.server");
+    return mod.getFiscalRegistrationStatus(context.supabase, context.userId, data);
+  });
+
+export const submitZReportForBusinessDateFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => prepareZReportDraftSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./fiscal.server");
+    return mod.submitZReportForBusinessDate(context.supabase, context.userId, data);
+  });

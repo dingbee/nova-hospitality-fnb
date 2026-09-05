@@ -23,6 +23,14 @@ export const PRODUCT = {
    * engineering observability only.
    */
   aiName: "LexiBite",
+  /**
+   * The customer-facing product identity: guest portal, guest PWA, QR
+   * artifacts, receipts, invoices, confirmation documents, transactional
+   * emails — anywhere a diner/guest sees the product name. The staff-facing
+   * operational terminal (POS/KDS/back office) keeps `name`/`shortName`
+   * above; only surfaces the GUEST sees must say this, never NOVA.
+   */
+  guestFacingName: "LexiBite",
 } as const;
 
 export function productTitle(page: string): string {

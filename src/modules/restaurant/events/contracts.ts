@@ -155,6 +155,7 @@ export const RESTAURANT_EVENT_TYPES = [
   "restaurant.fiscal.receipt.fiscalized",
   "restaurant.fiscal.receipt.rejected",
   "restaurant.fiscal.submission.failed",
+  "restaurant.fiscal.vfd.registered",
   /* --- Mobile Money / Lipa Namba integration foundation. --- */
   "restaurant.payment.mobile_money.configuration.updated",
   "restaurant.payment.mobile_money.requested",
@@ -309,6 +310,7 @@ export const RESTAURANT_EVENT_SEVERITY: Record<
   "restaurant.fiscal.receipt.fiscalized": "info",
   "restaurant.fiscal.receipt.rejected": "high",
   "restaurant.fiscal.submission.failed": "high",
+  "restaurant.fiscal.vfd.registered": "medium",
   "restaurant.payment.mobile_money.configuration.updated": "medium",
   "restaurant.payment.mobile_money.requested": "info",
   "restaurant.payment.mobile_money.request.failed": "medium",

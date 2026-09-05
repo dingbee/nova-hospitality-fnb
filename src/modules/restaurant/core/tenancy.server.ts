@@ -3,7 +3,7 @@
  * Workspace resolution: which tenant, properties and outlets the caller may use.
  */
 import type { RestaurantWorkspace } from "./contracts";
-import { isPlatformAdmin, rolesInTenant } from "./access.server";
+import { getTenantScope, isPlatformAdmin, rolesInTenant } from "./access.server";
 
 type Sb = any;
 
@@ -36,24 +36,42 @@ export async function getWorkspace(
     };
   }
 
-  const [{ data: properties }, { data: locations }, { data: subscription }, roles] = await Promise.all([
-    supabase
-      .from("restaurant_properties")
-      .select("id, tenant_id, slug, name, timezone, currency, status")
-      .eq("tenant_id", active.id)
-      .order("name"),
-    supabase
-      .from("restaurant_locations")
-      .select("id, tenant_id, property_id, slug, name, location_type, status")
-      .eq("tenant_id", active.id)
-      .order("name"),
-    supabase
-      .from("restaurant_subscriptions")
-      .select("plan, status, seats, features, trial_ends_at, current_period_end")
-      .eq("tenant_id", active.id)
-      .maybeSingle(),
-    rolesInTenant(supabase, userId, active.id),
-  ]);
+  const [{ data: properties }, { data: locations }, { data: subscription }, roles, scope] =
+    await Promise.all([
+      supabase
+        .from("restaurant_properties")
+        .select("id, tenant_id, slug, name, timezone, currency, status")
+        .eq("tenant_id", active.id)
+        .order("name"),
+      supabase
+        .from("restaurant_locations")
+        .select("id, tenant_id, property_id, slug, name, location_type, status")
+        .eq("tenant_id", active.id)
+        .order("name"),
+      supabase
+        .from("restaurant_subscriptions")
+        .select("plan, status, seats, features, trial_ends_at, current_period_end")
+        .eq("tenant_id", active.id)
+        .maybeSingle(),
+      rolesInTenant(supabase, userId, active.id),
+      getTenantScope(supabase, userId, active.id),
+    ]);
+
+  // Every property/location selector in the app is built from this list —
+  // a property-scoped member (not tenant-wide, not platform admin) must
+  // never be offered a property/location they hold no grant for, even in a
+  // dropdown (spec: "hiding a property from a dropdown is not sufficient"
+  // cuts the other way too — an *unfiltered* dropdown is a live leak).
+  const tenantWide = scope.platformAdmin || scope.grants.some((g) => g.propertyId === null);
+  const allProperties = (properties ?? []) as any[];
+  const allLocations = (locations ?? []) as any[];
+  const scopedProperties = tenantWide
+    ? allProperties
+    : allProperties.filter((p) => scope.grants.some((g) => g.propertyId === p.id));
+  const accessiblePropertyIds = new Set(scopedProperties.map((p) => p.id));
+  const scopedLocations = tenantWide
+    ? allLocations
+    : allLocations.filter((l) => accessiblePropertyIds.has(l.property_id));
 
   return {
     tenant: {
@@ -64,8 +82,8 @@ export async function getWorkspace(
       settings: active.settings ?? {},
     },
     tenants: tenants.map((t) => ({ id: t.id, slug: t.slug, name: t.name })),
-    properties: (properties ?? []) as any,
-    locations: (locations ?? []) as any,
+    properties: scopedProperties as any,
+    locations: scopedLocations as any,
     subscription: (subscription ?? null) as any,
     roles,
     platformAdmin,

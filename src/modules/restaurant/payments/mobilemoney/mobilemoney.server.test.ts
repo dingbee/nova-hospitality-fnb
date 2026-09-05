@@ -359,7 +359,17 @@ describe("confirmMobileMoneyCollection", () => {
       collectionId: collection.collectionId,
       actorUserId: USER,
     });
-    expect(accessModule.assertCapability).toHaveBeenCalledWith(db, USER, TENANT, "sales.manage");
+    // Now called with a 5th scope argument (property/location) too — this
+    // test only cares that the manual-confirm path is gated by
+    // assertCapability("sales.manage") for a real staff principal, not the
+    // exact scope shape (covered by the property-scope tests below).
+    expect(accessModule.assertCapability).toHaveBeenCalledWith(
+      db,
+      USER,
+      TENANT,
+      "sales.manage",
+      expect.any(Object),
+    );
   });
 });
 

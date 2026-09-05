@@ -57,7 +57,7 @@ export const refreshMobileMoneyCollectionStatusFn = createServerFn({ method: "PO
   .inputValidator((d: unknown) => getMobileMoneyCollectionSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./mobilemoney.server");
-    return mod.refreshMobileMoneyCollectionStatus(context.supabase, data);
+    return mod.refreshMobileMoneyCollectionStatus(context.supabase, context.userId, data);
   });
 
 export const confirmMobileMoneyCollectionManuallyFn = createServerFn({ method: "POST" })

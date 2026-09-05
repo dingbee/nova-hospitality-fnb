@@ -31,7 +31,10 @@ export function registerRestaurantIntelligence(): void {
   // shell navigation uses. This is the one true check for "does this caller
   // belong to the tenant this restaurant intelligence_decisions row names."
   registerTenantScopeChecker("restaurant", (supabase, userId, scope) =>
-    assertTenantRead(supabase, userId, scope.tenantId),
+    assertTenantRead(supabase, userId, scope.tenantId, {
+      propertyId: scope.propertyId ?? null,
+      locationId: scope.locationId ?? null,
+    }),
   );
 }
 

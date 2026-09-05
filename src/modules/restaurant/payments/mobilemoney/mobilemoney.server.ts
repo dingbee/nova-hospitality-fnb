@@ -16,7 +16,13 @@
  * Pesapal). A successful create/accept response means a payment was
  * requested, never that money was received.
  */
-import { assertCapability, assertTenantRead } from "../../core/access.server";
+import {
+  accessibleLocationIds,
+  assertCapability,
+  assertTenantRead,
+  getTenantScope,
+  NO_MATCH_ID,
+} from "../../core/access.server";
 import { emitRestaurantEvent } from "../../events/emit.server";
 import type { MobileMoneyAdapter } from "./adapter";
 import { createLipaNambaAdapter } from "./providers/lipaNambaAdapter.server";
@@ -81,7 +87,7 @@ export async function getMobileMoneyAccount(
   userId: string,
   input: { tenantId: string; locationId: string },
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, { locationId: input.locationId });
   const { data } = await sb
     .from("restaurant_mobile_money_accounts")
     .select("*")
@@ -97,14 +103,27 @@ export async function upsertMobileMoneyAccount(
   raw: UpsertMobileMoneyAccountInput,
 ) {
   const input = upsertMobileMoneyAccountSchema.parse(raw);
-  await assertCapability(sb, userId, input.tenantId, "mobile_money.manage");
+  await assertCapability(sb, userId, input.tenantId, "mobile_money.manage", {
+    locationId: input.locationId,
+  });
+
+  // Authoritative property comes from the location row, never the client's
+  // separate propertyId field — mirrors resolveOrderScope's "the table's own
+  // property is authoritative" rule from the P0 guest-pricing/scope sprint.
+  const { data: location } = await sb
+    .from("restaurant_locations")
+    .select("id, property_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.locationId)
+    .maybeSingle();
+  if (!location) throw new Error("Location not found for this tenant.");
 
   const { data: account, error } = await sb
     .from("restaurant_mobile_money_accounts")
     .upsert(
       {
         tenant_id: input.tenantId,
-        property_id: input.propertyId ?? null,
+        property_id: location.property_id,
         location_id: input.locationId,
         mode: input.mode,
         network: input.network,
@@ -122,7 +141,7 @@ export async function upsertMobileMoneyAccount(
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.payment.mobile_money.configuration.updated",
     tenantId: input.tenantId,
-    propertyId: input.propertyId ?? undefined,
+    propertyId: location.property_id ?? undefined,
     locationId: input.locationId,
     entityType: "restaurant_mobile_money_account",
     entityId: account.id,
@@ -149,8 +168,6 @@ export async function requestMobileMoneyCollection(
   },
   adapterOverride?: MobileMoneyAdapter | null,
 ): Promise<MobileMoneyStatusView> {
-  await assertCapability(sb, userId, input.tenantId, "sales.manage");
-
   const { data: order } = await sb
     .from("restaurant_orders")
     .select("id, tenant_id, property_id, location_id, currency")
@@ -158,6 +175,11 @@ export async function requestMobileMoneyCollection(
     .eq("id", input.orderId)
     .single();
   if (!order) throw new Error("Order not found.");
+
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", {
+    propertyId: order.property_id,
+    locationId: order.location_id,
+  });
 
   const { data: existing } = await sb
     .from("restaurant_mobile_money_collections")
@@ -305,7 +327,10 @@ export async function confirmMobileMoneyCollection(
     return toStatusView(collection);
 
   if (input.actorUserId) {
-    await assertCapability(sb, input.actorUserId, input.tenantId, "sales.manage");
+    await assertCapability(sb, input.actorUserId, input.tenantId, "sales.manage", {
+      propertyId: collection.property_id,
+      locationId: collection.location_id,
+    });
   }
 
   const amount = input.confirmedAmount ?? Number(collection.amount);
@@ -432,7 +457,6 @@ export async function cancelMobileMoneyCollection(
   userId: string,
   input: { tenantId: string; collectionId: string; reason?: string },
 ): Promise<MobileMoneyStatusView> {
-  await assertCapability(sb, userId, input.tenantId, "sales.manage");
   const { data: collection } = await sb
     .from("restaurant_mobile_money_collections")
     .select("*")
@@ -440,6 +464,10 @@ export async function cancelMobileMoneyCollection(
     .eq("id", input.collectionId)
     .single();
   if (!collection) throw new Error("Collection not found.");
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", {
+    propertyId: collection.property_id,
+    locationId: collection.location_id,
+  });
   if (collection.state === "paid")
     throw new Error("This payment has already been received — it cannot be cancelled.");
 
@@ -456,6 +484,7 @@ export async function cancelMobileMoneyCollection(
  */
 export async function refreshMobileMoneyCollectionStatus(
   sb: Sb,
+  userId: string,
   input: { tenantId: string; collectionId: string },
   adapterOverride?: MobileMoneyAdapter | null,
 ): Promise<MobileMoneyStatusView> {
@@ -466,6 +495,15 @@ export async function refreshMobileMoneyCollectionStatus(
     .eq("id", input.collectionId)
     .single();
   if (!collection) throw new Error("Collection not found.");
+  // This function had no authorization check at all until this P1 pass —
+  // any authenticated caller who could guess a tenantId+collectionId could
+  // trigger a live provider poll and a payment-confirmation side effect for
+  // a tenant/property they don't belong to. Gate it like every other
+  // mobile-money read/write.
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: collection.property_id,
+    locationId: collection.location_id,
+  });
   if (
     [
       "paid",
@@ -516,7 +554,6 @@ export async function reverseMobileMoneyCollection(
   userId: string,
   input: { tenantId: string; collectionId: string; amount?: number; reason: string },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "mobile_money.manage");
   const { data: collection } = await sb
     .from("restaurant_mobile_money_collections")
     .select("*")
@@ -524,6 +561,10 @@ export async function reverseMobileMoneyCollection(
     .eq("id", input.collectionId)
     .single();
   if (!collection) throw new Error("Collection not found.");
+  await assertCapability(sb, userId, input.tenantId, "mobile_money.manage", {
+    propertyId: collection.property_id,
+    locationId: collection.location_id,
+  });
   if (collection.state !== "paid") throw new Error("Only a paid collection can be reversed.");
 
   const amount = input.amount ?? Number(collection.amount);
@@ -551,6 +592,7 @@ export async function reverseMobileMoneyCollection(
     .from("restaurant_mobile_money_refunds")
     .insert({
       tenant_id: input.tenantId,
+      property_id: collection.property_id ?? null,
       collection_id: collection.id,
       restaurant_payment_id: collection.restaurant_payment_id,
       amount,
@@ -731,14 +773,18 @@ export async function getMobileMoneyStatus(
   userId: string,
   input: { tenantId: string; collectionId: string },
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
   const { data } = await sb
     .from("restaurant_mobile_money_collections")
     .select("*")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.collectionId)
     .maybeSingle();
-  return data ? toStatusView(data) : null;
+  if (!data) return null;
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: data.property_id,
+    locationId: data.location_id,
+  });
+  return toStatusView(data);
 }
 
 export async function listMobileMoneyCollectionsForOrder(
@@ -746,7 +792,16 @@ export async function listMobileMoneyCollectionsForOrder(
   userId: string,
   input: { tenantId: string; orderId: string },
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  const { data: order } = await sb
+    .from("restaurant_orders")
+    .select("id, property_id, location_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .maybeSingle();
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: order?.property_id ?? null,
+    locationId: order?.location_id ?? null,
+  });
   const { data } = await sb
     .from("restaurant_mobile_money_collections")
     .select("*")
@@ -761,7 +816,10 @@ export async function listMobileMoneyReconciliation(
   userId: string,
   input: { tenantId: string; locationId?: string; limit?: number },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "mobile_money.view");
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertCapability(sb, userId, input.tenantId, "mobile_money.view", {
+    locationId: input.locationId ?? null,
+  });
   let query = sb
     .from("restaurant_mobile_money_collections")
     .select(
@@ -770,7 +828,12 @@ export async function listMobileMoneyReconciliation(
     .eq("tenant_id", input.tenantId)
     .order("requested_at", { ascending: false })
     .limit(input.limit ?? 50);
-  if (input.locationId) query = query.eq("location_id", input.locationId);
+  if (input.locationId) {
+    query = query.eq("location_id", input.locationId);
+  } else {
+    const ids = await accessibleLocationIds(sb, scope);
+    if (ids !== null) query = query.in("location_id", ids.length ? ids : [NO_MATCH_ID]);
+  }
   const { data } = await query;
   return ((data ?? []) as any[]).map((r) => ({
     ...r,
@@ -788,7 +851,11 @@ export async function getMobileMoneyHealth(
   pendingToday: number;
   failedToday: number;
 }> {
-  await assertCapability(sb, userId, input.tenantId, "mobile_money.view");
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertCapability(sb, userId, input.tenantId, "mobile_money.view", {
+    locationId: input.locationId ?? null,
+  });
+  const restrictedIds = input.locationId ? null : await accessibleLocationIds(sb, scope);
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
@@ -798,6 +865,8 @@ export async function getMobileMoneyHealth(
     .eq("tenant_id", input.tenantId)
     .gte("requested_at", startOfDay.toISOString());
   if (input.locationId) query = query.eq("location_id", input.locationId);
+  else if (restrictedIds !== null)
+    query = query.in("location_id", restrictedIds.length ? restrictedIds : [NO_MATCH_ID]);
   const { data } = await query;
   const rows = (data ?? []) as any[];
 
@@ -810,6 +879,11 @@ export async function getMobileMoneyHealth(
     .select("mode, environment, activation_state")
     .eq("tenant_id", input.tenantId);
   if (input.locationId) accountQuery = accountQuery.eq("location_id", input.locationId);
+  else if (restrictedIds !== null)
+    accountQuery = accountQuery.in(
+      "location_id",
+      restrictedIds.length ? restrictedIds : [NO_MATCH_ID],
+    );
   const { data: accounts } = await accountQuery;
   const active = ((accounts ?? []) as any[]).find((a) => a.activation_state === "active");
 

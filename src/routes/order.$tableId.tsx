@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { PRODUCT } from "@/config/product";
 import { useGuestTheme, type GuestThemePreference } from "@/hooks/use-guest-theme";
+import { GuestServiceWorker } from "@/modules/restaurant/selforder/GuestServiceWorker";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -85,8 +86,26 @@ import type { SalesLineModifier } from "@/modules/restaurant/sales/sales.server"
 import { searchMenuItems } from "@/modules/restaurant/selforder/selforder-search";
 
 export const Route = createFileRoute("/order/$tableId")({
-  head: () => ({ meta: [{ title: "Order" }, { name: "robots", content: "noindex,nofollow" }] }),
-  component: GuestOrderPage,
+  head: () => ({
+    meta: [
+      { title: `Order — ${PRODUCT.guestFacingName}` },
+      { name: "robots", content: "noindex,nofollow" },
+      { name: "theme-color", content: "#346739" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "default" },
+      { name: "apple-mobile-web-app-title", content: PRODUCT.guestFacingName },
+    ],
+    links: [
+      { rel: "manifest", href: "/lexibite-guest.webmanifest" },
+      { rel: "apple-touch-icon", href: "/lexibite-guest-192.png" },
+    ],
+  }),
+  component: () => (
+    <>
+      <GuestServiceWorker />
+      <GuestOrderPage />
+    </>
+  ),
 });
 
 function money(n: number, currency: string) {
@@ -447,7 +466,7 @@ function GuestOrderPage() {
 
   if (menu.isPending) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-dvh items-center justify-center bg-background">
         <LoadingState label="Loading the menu…" />
       </div>
     );
@@ -455,7 +474,7 @@ function GuestOrderPage() {
 
   if (menu.isError) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="flex min-h-dvh items-center justify-center bg-background px-4">
         <ErrorState
           title="This table isn't available"
           description="Please ask a member of staff for help ordering."
@@ -467,7 +486,7 @@ function GuestOrderPage() {
 
   if (confirmed) {
     return (
-      <div className="flex min-h-screen flex-col items-center gap-3 bg-background px-6 pt-20 pb-16 text-center pt-safe">
+      <div className="flex min-h-dvh flex-col items-center gap-3 bg-background px-6 pt-20 pb-16 text-center pt-safe">
         <span className="flex size-16 items-center justify-center rounded-full bg-primary/10">
           <CheckCircle2 className="size-9 text-primary" aria-hidden />
         </span>
@@ -504,7 +523,7 @@ function GuestOrderPage() {
   // automatically) yet — still validating it server-side.
   if (storedOrderId && recoveryOutcome === undefined) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-dvh items-center justify-center bg-background">
         <LoadingState label="Checking your order…" />
       </div>
     );
@@ -539,7 +558,7 @@ function GuestOrderPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-28 text-foreground">
+    <div className="min-h-dvh bg-background pb-28 text-foreground">
       <div className="sticky top-0 z-20 bg-background/95 pt-safe backdrop-blur">
         <header className="border-b bg-card/95 px-4 pb-3">
           <div className="flex items-center gap-2.5 pt-3">
@@ -832,7 +851,7 @@ function GuestWelcome({
   onContinue: () => void;
 }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center pt-safe">
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-background px-6 text-center pt-safe">
       {businessLogoUrl ? (
         <img
           src={businessLogoUrl}
@@ -866,7 +885,7 @@ function RecoveryPrompt({
   onStartNew: () => void;
 }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center pt-safe">
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-background px-6 text-center pt-safe">
       <span className="flex size-14 items-center justify-center rounded-full bg-primary/10">
         <UtensilsCrossed className="size-7 text-primary" aria-hidden />
       </span>
@@ -1898,8 +1917,7 @@ function AskNovaDrawer({
             return (
               <div key={t.id} className="mr-auto max-w-[90%] space-y-2">
                 <div className="rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
-                  {PRODUCT.aiName} isn't available right now — here's the menu by category
-                  instead.
+                  {PRODUCT.aiName} isn't available right now — here's the menu by category instead.
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {t.categories.map((c) => (

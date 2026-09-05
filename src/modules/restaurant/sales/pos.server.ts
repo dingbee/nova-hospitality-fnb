@@ -14,7 +14,13 @@
  *  - Evidence: voids, transfers and reopens are recorded with an actor and a
  *    reason; nothing money-affecting happens silently.
  */
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import {
+  accessibleLocationIds,
+  assertCapability,
+  assertTenantRead,
+  getTenantScope,
+  NO_MATCH_ID,
+} from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { reverseMovementsForOrderItem } from "../inventory/reversal.server";
 import { REASON_CODES } from "../inventory/policy";
@@ -52,31 +58,65 @@ export async function posBoard(
   userId: string,
   input: { tenantId: string; propertyId?: string; locationId?: string },
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
 
-  let tableQuery = sb
-    .from("restaurant_tables")
-    .select("id, code, name, zone, seats, status, active, location_id")
-    .eq("tenant_id", input.tenantId)
-    .eq("active", true)
-    .order("code");
-  if (input.locationId) tableQuery = tableQuery.eq("location_id", input.locationId);
+  // No explicit locationId: restrict to what this caller may actually see.
+  // An explicit propertyId (already validated above) resolves to that
+  // property's own locations; no propertyId falls back to every location
+  // the caller's grants cover (null for a tenant-wide caller — no
+  // restriction, matching prior behaviour for the common case).
+  let restrictedLocationIds: string[] | null = null;
+  if (!input.locationId) {
+    if (input.propertyId) {
+      const { data: locs } = await sb
+        .from("restaurant_locations")
+        .select("id")
+        .eq("tenant_id", input.tenantId)
+        .eq("property_id", input.propertyId);
+      restrictedLocationIds = ((locs ?? []) as any[]).map((l) => l.id);
+    } else {
+      restrictedLocationIds = await accessibleLocationIds(sb, scope);
+    }
+  }
+  const applyLocationScope = (q: any) => {
+    if (input.locationId) return q.eq("location_id", input.locationId);
+    if (restrictedLocationIds !== null)
+      return q.in(
+        "location_id",
+        restrictedLocationIds.length ? restrictedLocationIds : [NO_MATCH_ID],
+      );
+    return q;
+  };
 
-  let orderQuery = sb
-    .from("restaurant_orders")
-    .select(
-      // bill_requested_at/bill_presented_at were missing here even though
-      // tableTone()/TABLE_TONE_LABEL.billing already fully support a
-      // "Billing" floor tile — the floor grid could never actually show it
-      // because this row never carried the fact. Same two columns
-      // bill.server.ts's requestBill/presentBill already write.
-      "id, order_number, order_type, status, payment_state, guest_count, guest_name, table_id, location_id, property_id, opened_at, closed_at, subtotal, total, paid_total, currency, terminal_id, bill_requested_at, bill_presented_at",
-    )
-    .eq("tenant_id", input.tenantId)
-    .in("status", OPEN_STATES)
-    .order("opened_at", { ascending: false })
-    .limit(200);
-  if (input.locationId) orderQuery = orderQuery.eq("location_id", input.locationId);
+  const tableQuery = applyLocationScope(
+    sb
+      .from("restaurant_tables")
+      .select("id, code, name, zone, seats, status, active, location_id")
+      .eq("tenant_id", input.tenantId)
+      .eq("active", true)
+      .order("code"),
+  );
+
+  const orderQuery = applyLocationScope(
+    sb
+      .from("restaurant_orders")
+      .select(
+        // bill_requested_at/bill_presented_at were missing here even though
+        // tableTone()/TABLE_TONE_LABEL.billing already fully support a
+        // "Billing" floor tile — the floor grid could never actually show it
+        // because this row never carried the fact. Same two columns
+        // bill.server.ts's requestBill/presentBill already write.
+        "id, order_number, order_type, status, payment_state, guest_count, guest_name, table_id, location_id, property_id, opened_at, closed_at, subtotal, total, paid_total, currency, terminal_id, bill_requested_at, bill_presented_at",
+      )
+      .eq("tenant_id", input.tenantId)
+      .in("status", OPEN_STATES)
+      .order("opened_at", { ascending: false })
+      .limit(200),
+  );
 
   const since = new Date();
   since.setHours(0, 0, 0, 0);
@@ -84,12 +124,14 @@ export async function posBoard(
   const [{ data: tables }, { data: orders }, { data: today }, serviceRequests] = await Promise.all([
     tableQuery,
     orderQuery,
-    sb
-      .from("restaurant_orders")
-      .select("total, cost_total, guest_count, status")
-      .eq("tenant_id", input.tenantId)
-      .gte("opened_at", since.toISOString())
-      .limit(1000),
+    applyLocationScope(
+      sb
+        .from("restaurant_orders")
+        .select("total, cost_total, guest_count, status")
+        .eq("tenant_id", input.tenantId)
+        .gte("opened_at", since.toISOString())
+        .limit(1000),
+    ),
     // Guest "Request staff" alerts, reusing this same already-polled board
     // read rather than a second polling loop — see
     // service-requests.server.ts / selfstaff.server.ts.

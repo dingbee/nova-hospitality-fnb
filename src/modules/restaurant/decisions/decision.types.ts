@@ -119,6 +119,8 @@ export const restaurantDecisionBoardSchema = z.object({
   tenantId: z.string().uuid(),
   windowDays: z.number().int().min(7).max(120).default(30),
   includeStored: z.boolean().default(true),
+  propertyId: z.string().uuid().optional(),
+  locationId: z.string().uuid().optional(),
 });
 export type RestaurantDecisionBoardInput = z.infer<typeof restaurantDecisionBoardSchema>;
 
@@ -126,6 +128,8 @@ export const runRestaurantDecisionPassSchema = z.object({
   tenantId: z.string().uuid(),
   windowDays: z.number().int().min(7).max(120).default(30),
   persist: z.boolean().default(true),
+  propertyId: z.string().uuid().optional(),
+  locationId: z.string().uuid().optional(),
 });
 export type RunRestaurantDecisionPassInput = z.infer<typeof runRestaurantDecisionPassSchema>;
 

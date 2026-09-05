@@ -9,7 +9,13 @@
  * gap between them (variance) is visible rather than silently absorbed.
  */
 import { z } from "zod";
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import {
+  accessibleLocationIds,
+  assertCapability,
+  assertTenantRead,
+  canAccessLocation,
+  getTenantScope,
+} from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { insertMovement } from "./movements.server";
 import { assertLocationInTenant, locationNameMap } from "./locations.server";
@@ -21,6 +27,39 @@ import type {
 } from "./contracts";
 
 type Sb = any;
+
+/**
+ * A transfer touches two locations that may sit in different properties —
+ * property_id on the row itself can't represent that, so scope is never
+ * checked against it. Reads are visible if the caller can reach EITHER
+ * side (useful operational visibility for whoever is sending or
+ * receiving); every write requires the caller's capability at BOTH the
+ * source AND destination location — "source access = destination access"
+ * is never assumed. A tenant-wide grant trivially satisfies both.
+ */
+async function assertTransferWriteAccess(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  capability: Parameters<typeof assertCapability>[3],
+  sourceLocationId: string,
+  destinationLocationId: string,
+) {
+  await assertCapability(sb, userId, tenantId, capability, { locationId: sourceLocationId });
+  await assertCapability(sb, userId, tenantId, capability, { locationId: destinationLocationId });
+}
+
+async function canReadTransfer(
+  sb: Sb,
+  scope: Awaited<ReturnType<typeof getTenantScope>>,
+  sourceLocationId: string,
+  destinationLocationId: string,
+): Promise<boolean> {
+  return (
+    (await canAccessLocation(sb, scope, sourceLocationId)) ||
+    (await canAccessLocation(sb, scope, destinationLocationId))
+  );
+}
 
 async function nextTransferNumber(sb: Sb, tenantId: string): Promise<string> {
   const { data, error } = await sb.rpc("restaurant_next_document_number", {
@@ -53,7 +92,8 @@ export async function listTransfers(
   userId: string,
   input: z.infer<typeof listTransfersSchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, { locationId: input.locationId ?? null });
   let q = sb
     .from("restaurant_stock_transfers")
     .select("*")
@@ -69,6 +109,18 @@ export async function listTransfers(
       (t) =>
         t.source_location_id === input.locationId || t.destination_location_id === input.locationId,
     );
+  } else {
+    // No explicit location asked for: a property-scoped caller only sees
+    // transfers touching a location they can reach on either side. Never
+    // fetch everything and filter the response — resolve the caller's
+    // accessible locations once, then filter the already-tenant-scoped rows.
+    const ids = await accessibleLocationIds(sb, scope);
+    if (ids !== null) {
+      const accessible = new Set(ids);
+      rows = rows.filter(
+        (t) => accessible.has(t.source_location_id) || accessible.has(t.destination_location_id),
+      );
+    }
   }
   const ids = rows.map((r) => r.id);
   const [{ data: lines }, locations] = await Promise.all([
@@ -88,6 +140,17 @@ export async function listTransfers(
 export async function getTransfer(sb: Sb, userId: string, tenantId: string, transferId: string) {
   await assertTenantRead(sb, userId, tenantId);
   const { transfer, lines } = await loadTransfer(sb, tenantId, transferId);
+  const scope = await getTenantScope(sb, userId, tenantId);
+  if (
+    !(await canReadTransfer(
+      sb,
+      scope,
+      transfer.source_location_id,
+      transfer.destination_location_id,
+    ))
+  ) {
+    throw new Error("Forbidden — you do not have access to this transfer.");
+  }
   const locations = await locationNameMap(sb, tenantId);
   return {
     ...transfer,
@@ -98,13 +161,20 @@ export async function getTransfer(sb: Sb, userId: string, tenantId: string, tran
 }
 
 export async function createTransfer(sb: Sb, userId: string, input: CreateTransferInput) {
-  await assertCapability(sb, userId, input.tenantId, "transfer.manage");
   if (input.sourceLocationId === input.destinationLocationId) {
     throw new Error("Source and destination must be different locations.");
   }
   await assertLocationInTenant(
     sb,
     input.tenantId,
+    input.sourceLocationId,
+    input.destinationLocationId,
+  );
+  await assertTransferWriteAccess(
+    sb,
+    userId,
+    input.tenantId,
+    "transfer.manage",
     input.sourceLocationId,
     input.destinationLocationId,
   );
@@ -193,8 +263,15 @@ export async function approveTransfer(
   userId: string,
   input: { tenantId: string; transferId: string; approve: boolean; reason?: string },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "transfer.approve");
   const { transfer } = await loadTransfer(sb, input.tenantId, input.transferId);
+  await assertTransferWriteAccess(
+    sb,
+    userId,
+    input.tenantId,
+    "transfer.approve",
+    transfer.source_location_id,
+    transfer.destination_location_id,
+  );
   if (!["draft", "requested"].includes(transfer.status)) {
     throw new Error(`Transfer cannot be approved from status "${transfer.status}".`);
   }
@@ -229,8 +306,15 @@ export async function approveTransfer(
 
 /** Dispatch: stock leaves the source location. Nothing arrives yet. */
 export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTransferInput) {
-  await assertCapability(sb, userId, input.tenantId, "transfer.manage");
   const { transfer, lines } = await loadTransfer(sb, input.tenantId, input.transferId);
+  await assertTransferWriteAccess(
+    sb,
+    userId,
+    input.tenantId,
+    "transfer.manage",
+    transfer.source_location_id,
+    transfer.destination_location_id,
+  );
   if (!["approved", "requested"].includes(transfer.status)) {
     throw new Error(`Transfer cannot be dispatched from status "${transfer.status}".`);
   }
@@ -314,8 +398,15 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
 
 /** Receipt: only what actually arrived enters the destination location. */
 export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTransferInput) {
-  await assertCapability(sb, userId, input.tenantId, "transfer.manage");
   const { transfer, lines } = await loadTransfer(sb, input.tenantId, input.transferId);
+  await assertTransferWriteAccess(
+    sb,
+    userId,
+    input.tenantId,
+    "transfer.manage",
+    transfer.source_location_id,
+    transfer.destination_location_id,
+  );
   if (!["dispatched", "partially_received"].includes(transfer.status)) {
     throw new Error(`Transfer cannot be received from status "${transfer.status}".`);
   }
@@ -461,8 +552,15 @@ export async function cancelTransfer(
   userId: string,
   input: { tenantId: string; transferId: string; reason?: string },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "transfer.manage");
   const { transfer } = await loadTransfer(sb, input.tenantId, input.transferId);
+  await assertTransferWriteAccess(
+    sb,
+    userId,
+    input.tenantId,
+    "transfer.manage",
+    transfer.source_location_id,
+    transfer.destination_location_id,
+  );
   if (["dispatched", "partially_received", "received", "completed"].includes(transfer.status)) {
     throw new Error("A dispatched transfer cannot be cancelled — reverse the movements instead.");
   }

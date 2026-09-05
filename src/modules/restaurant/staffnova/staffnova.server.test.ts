@@ -13,10 +13,18 @@ import { staffNovaAskSchema } from "./staffnova.contracts";
 
 const assertCapabilityMock = vi.fn();
 const rolesInTenantMock = vi.fn();
-vi.mock("../core/access.server", () => ({
-  assertCapability: (...args: unknown[]) => assertCapabilityMock(...args),
-  rolesInTenant: (...args: unknown[]) => rolesInTenantMock(...args),
-}));
+const getTenantScopeMock = vi.fn();
+vi.mock("../core/access.server", async () => {
+  const actual =
+    await vi.importActual<typeof import("../core/access.server")>("../core/access.server");
+  return {
+    assertCapability: (...args: unknown[]) => assertCapabilityMock(...args),
+    rolesInTenant: (...args: unknown[]) => rolesInTenantMock(...args),
+    getTenantScope: (...args: unknown[]) => getTenantScopeMock(...args),
+    // Pure logic, not a boundary — use the real implementation.
+    resolveEffectivePropertyId: actual.resolveEffectivePropertyId,
+  };
+});
 
 const posBoardMock = vi.fn();
 vi.mock("../sales/pos.server", () => ({
@@ -78,6 +86,14 @@ function stubEngines() {
   // role-aware trimming existed) keeps seeing the full context, exactly as
   // it did before — role-specific tests override this explicitly.
   rolesInTenantMock.mockResolvedValue(["owner"]);
+  // Tenant-wide by default (propertyId: null grant) — resolveEffectivePropertyId
+  // then resolves to `undefined`, matching every pre-P1 test's expectation
+  // that engines are queried unscoped unless a test opts into property scope.
+  getTenantScopeMock.mockResolvedValue({
+    tenantId: TENANT_A,
+    platformAdmin: false,
+    grants: [{ role: "owner", propertyId: null }],
+  });
   recallRestaurantMemoryMock.mockResolvedValue([]);
   posBoardMock.mockResolvedValue({
     stats: { openBills: 2, openValue: 100, revenueToday: 500, coversToday: 40, averageCheck: 25 },
@@ -172,7 +188,9 @@ describe("askStaffNova — authorization (A, C, E)", () => {
       staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "How many guests today?" }),
     );
 
-    expect(assertCapabilityMock).toHaveBeenCalledWith({}, USER_ID, TENANT_A, "intelligence.read");
+    expect(assertCapabilityMock).toHaveBeenCalledWith({}, USER_ID, TENANT_A, "intelligence.read", {
+      propertyId: null,
+    });
     expect(callReasoningProviderMock).toHaveBeenCalledWith(
       "openai",
       expect.objectContaining({ system: expect.any(String), user: expect.any(String) }),
@@ -844,5 +862,141 @@ describe("askStaffNova — I15: memory recall reaches the model as bounded, alre
     // A bartender's role still doesn't see e.g. "purchasing" — confirming
     // trimming still applies to gated sections alongside the ungated memory.
     expect(sentPayload.context.purchasing).toBeUndefined();
+  });
+});
+
+/**
+ * P1 property scope — Staff Ask LexiBite retrieval scoping (spec: "data
+ * retrieval itself must be scoped, not a prompt instruction — AI prompt
+ * instructions are not a security boundary"; "memory/context must not
+ * cross properties").
+ *
+ * staffNovaAskSchema has no client-suppliable propertyId at all — scope is
+ * derived exclusively from getTenantScope's real membership resolution via
+ * resolveEffectivePropertyId (the one piece of access.server NOT mocked in
+ * this file). These tests swap stubEngines' default tenant-wide grant for a
+ * property-scoped one and prove the resolved property reaches every
+ * downstream call — never the prompt, never a client field.
+ */
+describe("askStaffNova — P1: property-scoped retrieval", () => {
+  const PROPERTY_A1 = "a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1";
+
+  function scopeToPropertyA1() {
+    getTenantScopeMock.mockResolvedValue({
+      tenantId: TENANT_A,
+      platformAdmin: false,
+      grants: [{ role: "owner", propertyId: PROPERTY_A1 }],
+    });
+  }
+
+  it("a property-scoped caller's assertCapability check and every grounding engine call carry their resolved property — never null/unscoped", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    scopeToPropertyA1();
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
+
+    await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "How is today going?" }),
+    );
+
+    expect(assertCapabilityMock).toHaveBeenCalledWith({}, USER_ID, TENANT_A, "intelligence.read", {
+      propertyId: PROPERTY_A1,
+    });
+    expect(posBoardMock).toHaveBeenCalledWith({}, USER_ID, {
+      tenantId: TENANT_A,
+      propertyId: PROPERTY_A1,
+    });
+    expect(getMenuIntelligenceMock).toHaveBeenCalledWith(
+      {},
+      USER_ID,
+      expect.objectContaining({ tenantId: TENANT_A, propertyId: PROPERTY_A1 }),
+    );
+    expect(getInventoryIntelligenceMock).toHaveBeenCalledWith(
+      {},
+      USER_ID,
+      expect.objectContaining({ propertyId: PROPERTY_A1 }),
+    );
+    expect(getKitchenIntelligenceMock).toHaveBeenCalledWith(
+      {},
+      USER_ID,
+      expect.objectContaining({ propertyId: PROPERTY_A1 }),
+    );
+    expect(getPurchasingIntelligenceMock).toHaveBeenCalledWith(
+      {},
+      USER_ID,
+      expect.objectContaining({ propertyId: PROPERTY_A1 }),
+    );
+    expect(getRestaurantDecisionBoardMock).toHaveBeenCalledWith(
+      {},
+      USER_ID,
+      expect.objectContaining({ tenantId: TENANT_A, propertyId: PROPERTY_A1 }),
+    );
+  });
+
+  it("SECURITY: a property-scoped caller's memory recall is never even attempted — closes the leak at the source, not by filtering results after the fact", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    scopeToPropertyA1();
+    // Even if the memory store WOULD return cross-property data, it must
+    // never be asked in the first place for a property-scoped caller.
+    recallRestaurantMemoryMock.mockResolvedValue([
+      {
+        scope: "tenant",
+        memoryType: "operational_note",
+        memoryValue: "Leaked note",
+        source: "user_stated",
+      },
+    ]);
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
+
+    await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "What do you remember about us?" }),
+    );
+
+    expect(recallRestaurantMemoryMock).not.toHaveBeenCalled();
+    const call = callReasoningProviderMock.mock.calls[0][1] as { user: string };
+    const sentPayload = JSON.parse(call.user);
+    expect(sentPayload.context.memory).toEqual([]);
+  });
+
+  it("a tenant-wide caller (the default fixture) is unaffected — full unscoped context and memory still reach the model", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines(); // default grants: [{ role: "owner", propertyId: null }]
+    recallRestaurantMemoryMock.mockResolvedValue([
+      {
+        scope: "tenant",
+        memoryType: "operational_note",
+        memoryValue: "Shared note",
+        source: "user_stated",
+      },
+    ]);
+    callReasoningProviderMock.mockResolvedValue({
+      content: "answer",
+      provider: "openai",
+      unavailable: false,
+    });
+
+    await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "What do you remember about us?" }),
+    );
+
+    expect(recallRestaurantMemoryMock).toHaveBeenCalled();
+    const call = callReasoningProviderMock.mock.calls[0][1] as { user: string };
+    const sentPayload = JSON.parse(call.user);
+    expect(sentPayload.context.memory).toHaveLength(1);
   });
 });

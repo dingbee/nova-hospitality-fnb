@@ -12,7 +12,13 @@
  * being worked on.
  */
 import type { z } from "zod";
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import {
+  accessibleLocationIds,
+  assertCapability,
+  assertTenantRead,
+  getTenantScope,
+  NO_MATCH_ID,
+} from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import {
   computeCloseTotals,
@@ -30,7 +36,12 @@ import {
   type LedgerPositionFact,
   type TenderLine,
 } from "./calc";
-import { CLOSED_EXCEPTION_STATUSES, SEVERITY_RANK, type ExceptionDraft, type ExceptionSeverity } from "./catalogue";
+import {
+  CLOSED_EXCEPTION_STATUSES,
+  SEVERITY_RANK,
+  type ExceptionDraft,
+  type ExceptionSeverity,
+} from "./catalogue";
 import type {
   closeDaySchema,
   declareTendersSchema,
@@ -105,8 +116,14 @@ async function findClose(sb: Sb, tenantId: string, businessDate: string, locatio
   return data ?? null;
 }
 
-export async function openDailyClose(sb: Sb, userId: string, input: z.infer<typeof openDailyCloseSchema>) {
-  await assertCapability(sb, userId, input.tenantId, "reconciliation.run");
+export async function openDailyClose(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof openDailyCloseSchema>,
+) {
+  await assertCapability(sb, userId, input.tenantId, "reconciliation.run", {
+    locationId: input.locationId ?? null,
+  });
   const existing = await findClose(sb, input.tenantId, input.businessDate, input.locationId);
   if (existing) return existing;
 
@@ -172,7 +189,9 @@ async function loadDayFacts(sb: Sb, tenantId: string, businessDate: string, loca
   const [{ data: payments }, { data: receipts }, { data: voided }] = await Promise.all([
     sb
       .from("restaurant_payments")
-      .select("id, order_id, method, state, amount, currency, reference, refund_of, client_request_id, captured_at")
+      .select(
+        "id, order_id, method, state, amount, currency, reference, refund_of, client_request_id, captured_at",
+      )
       .eq("tenant_id", tenantId)
       .in("order_id", orderIds),
     sb
@@ -213,7 +232,7 @@ export async function getDailyClose(
   userId: string,
   input: z.infer<typeof getDailyCloseSchema>,
 ): Promise<DailyCloseView> {
-  await assertTenantRead(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, { locationId: input.locationId ?? null });
   const close = await findClose(sb, input.tenantId, input.businessDate, input.locationId);
   const facts = await loadDayFacts(sb, input.tenantId, input.businessDate, input.locationId);
   const totals = computeCloseTotals(facts.orders, facts.payments, facts.receipts, {
@@ -242,13 +261,18 @@ export async function getDailyClose(
 
   const tenders = reconcileTenders(
     totals.byMethod,
-    ((declarations ?? []) as any[]).map((d) => ({ method: d.method, declared_amount: d.declared_amount })),
+    ((declarations ?? []) as any[]).map((d) => ({
+      method: d.method,
+      declared_amount: d.declared_amount,
+    })),
     Number(close?.opening_float ?? 0),
   );
 
   const rows = (exceptions ?? []) as any[];
   const open = rows.filter((e) => !CLOSED_EXCEPTION_STATUSES.includes(e.status));
-  const blocking = open.filter((e) => SEVERITY_RANK[e.severity as ExceptionSeverity] >= SEVERITY_RANK.high);
+  const blocking = open.filter(
+    (e) => SEVERITY_RANK[e.severity as ExceptionSeverity] >= SEVERITY_RANK.high,
+  );
 
   const blockingReasons: string[] = [];
   if (!close) blockingReasons.push("The day has not been opened for closing.");
@@ -278,22 +302,48 @@ export async function getDailyClose(
   };
 }
 
-export async function listDailyCloses(sb: Sb, userId: string, input: z.infer<typeof listDailyClosesSchema>) {
-  await assertTenantRead(sb, userId, input.tenantId);
-  const { data, error } = await sb
+export async function listDailyCloses(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listDailyClosesSchema>,
+) {
+  // Resolved once, up front: a caller who names a specific location is
+  // rejected right here if it isn't covered by their own grants — never a
+  // silently-empty result, and never trusted at face value.
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, { locationId: input.locationId ?? null });
+  let query = sb
     .from("restaurant_daily_closes")
     .select("*")
     .eq("tenant_id", input.tenantId)
     .order("business_date", { ascending: false })
     .limit(input.limit);
+  if (input.locationId) {
+    query = query.eq("location_id", input.locationId);
+  } else {
+    // No explicit location named: a tenant-wide caller (or platform admin)
+    // sees every location, exactly as before. A property-scoped caller is
+    // restricted to their own accessible locations — a tenant-wide close
+    // (location_id IS NULL) still surfaces to them, matching the RLS
+    // policy's own convention for a resource with no location of its own.
+    const ids = await accessibleLocationIds(sb, scope);
+    if (ids !== null) {
+      const inList = ids.length > 0 ? ids.join(",") : NO_MATCH_ID;
+      query = query.or(`location_id.is.null,location_id.in.(${inList})`);
+    }
+  }
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return data ?? [];
 }
 
 /* ------------------------------------------------------- tender declaring */
 
-export async function declareTenders(sb: Sb, userId: string, input: z.infer<typeof declareTendersSchema>) {
-  await assertCapability(sb, userId, input.tenantId, "reconciliation.declare");
+export async function declareTenders(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof declareTendersSchema>,
+) {
   const { data: close, error: closeErr } = await sb
     .from("restaurant_daily_closes")
     .select("*")
@@ -301,9 +351,18 @@ export async function declareTenders(sb: Sb, userId: string, input: z.infer<type
     .eq("id", input.closeId)
     .single();
   if (closeErr || !close) throw new Error("Daily close not found.");
-  if (close.status === "closed") throw new Error("This day is closed. Reopen it before changing declarations.");
+  await assertCapability(sb, userId, input.tenantId, "reconciliation.declare", {
+    locationId: close.location_id ?? null,
+  });
+  if (close.status === "closed")
+    throw new Error("This day is closed. Reopen it before changing declarations.");
 
-  const facts = await loadDayFacts(sb, input.tenantId, close.business_date, close.location_id ?? undefined);
+  const facts = await loadDayFacts(
+    sb,
+    input.tenantId,
+    close.business_date,
+    close.location_id ?? undefined,
+  );
   const totals = computeCloseTotals(facts.orders, facts.payments, facts.receipts, {
     voidedItems: facts.voidedItems,
   });
@@ -359,7 +418,13 @@ export async function declareTenders(sb: Sb, userId: string, input: z.infer<type
     action: "tender.declared",
     previousState: close.status,
     newState: "declared",
-    metadata: { declarations: payload.map((p) => ({ method: p.method, declared: p.declared_amount, variance: p.variance })) },
+    metadata: {
+      declarations: payload.map((p) => ({
+        method: p.method,
+        declared: p.declared_amount,
+        variance: p.variance,
+      })),
+    },
   });
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.day.tender.declared",
@@ -368,7 +433,11 @@ export async function declareTenders(sb: Sb, userId: string, input: z.infer<type
     entityType: "restaurant_daily_closes",
     entityId: close.id,
     source: "restaurant-os",
-    payload: { business_date: close.business_date, variance: declaredVariance, methods: payload.length },
+    payload: {
+      business_date: close.business_date,
+      variance: declaredVariance,
+      methods: payload.length,
+    },
     dedupeKey: `day.tender.declared:${close.id}:${new Date().toISOString().slice(0, 16)}`,
   });
 
@@ -408,7 +477,9 @@ async function inventoryFacts(sb: Sb, tenantId: string, businessDate: string, lo
   if (stocktakeIds.length > 0) {
     const { data } = await sb
       .from("restaurant_stocktake_lines")
-      .select("id, inventory_item_id, expected_quantity, counted_quantity, variance_quantity, unit_cost")
+      .select(
+        "id, inventory_item_id, expected_quantity, counted_quantity, variance_quantity, unit_cost",
+      )
       .in("stocktake_id", stocktakeIds);
     lines = (data ?? []) as any[];
   }
@@ -449,7 +520,9 @@ async function procurementFacts(sb: Sb, tenantId: string, businessDate: string) 
       .eq("tenant_id", tenantId),
     sb
       .from("restaurant_procurement_variances")
-      .select("id, variance_type, severity, status, expected_value, actual_value, variance_value, purchase_order_id")
+      .select(
+        "id, variance_type, severity, status, expected_value, actual_value, variance_value, purchase_order_id",
+      )
       .eq("tenant_id", tenantId)
       .in("status", ["open", "escalated"]),
   ]);
@@ -467,7 +540,14 @@ async function procurementFacts(sb: Sb, tenantId: string, businessDate: string) 
 async function persistExceptions(
   sb: Sb,
   userId: string,
-  ctx: { tenantId: string; locationId?: string; businessDate: string; closeId: string | null; runId: string; currency: string },
+  ctx: {
+    tenantId: string;
+    locationId?: string;
+    businessDate: string;
+    closeId: string | null;
+    runId: string;
+    currency: string;
+  },
   drafts: ExceptionDraft[],
 ): Promise<{ opened: number; existing: number }> {
   if (drafts.length === 0) return { opened: 0, existing: 0 };
@@ -476,7 +556,10 @@ async function persistExceptions(
     .from("restaurant_reconciliation_exceptions")
     .select("id, dedupe_key, status")
     .eq("tenant_id", ctx.tenantId)
-    .in("dedupe_key", drafts.map((d) => d.dedupeKey));
+    .in(
+      "dedupe_key",
+      drafts.map((d) => d.dedupeKey),
+    );
   const knownByKey = new Map(((known ?? []) as any[]).map((k) => [k.dedupe_key, k]));
 
   let opened = 0;
@@ -554,8 +637,14 @@ async function persistExceptions(
   return { opened, existing };
 }
 
-export async function runReconciliation(sb: Sb, userId: string, input: z.infer<typeof runReconciliationSchema>) {
-  await assertCapability(sb, userId, input.tenantId, "reconciliation.run");
+export async function runReconciliation(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof runReconciliationSchema>,
+) {
+  await assertCapability(sb, userId, input.tenantId, "reconciliation.run", {
+    locationId: input.locationId ?? null,
+  });
   const close = await findClose(sb, input.tenantId, input.businessDate, input.locationId);
   const currency = close?.currency ?? "TZS";
   const scope = input.scope;
@@ -605,14 +694,23 @@ export async function runReconciliation(sb: Sb, userId: string, input: z.infer<t
         .select("id, source_order_id, booking_id, amount, status, idempotency_key, failure_code")
         .in("source_order_id", orderIds);
       drafts.push(
-        ...detectRoomChargeExceptions(input.businessDate, facts.payments, (postings ?? []) as any[]),
+        ...detectRoomChargeExceptions(
+          input.businessDate,
+          facts.payments,
+          (postings ?? []) as any[],
+        ),
       );
     }
   }
 
   if (wants("sales")) {
     drafts.push(
-      ...detectSalesChainExceptions(input.businessDate, facts.orders, facts.payments, facts.receipts),
+      ...detectSalesChainExceptions(
+        input.businessDate,
+        facts.orders,
+        facts.payments,
+        facts.receipts,
+      ),
     );
   }
 
@@ -624,7 +722,12 @@ export async function runReconciliation(sb: Sb, userId: string, input: z.infer<t
   if (wants("procurement")) {
     const proc = await procurementFacts(sb, input.tenantId, input.businessDate);
     drafts.push(
-      ...detectProcurementExceptions(input.businessDate, proc.receipts, proc.invoices, proc.variances),
+      ...detectProcurementExceptions(
+        input.businessDate,
+        proc.receipts,
+        proc.invoices,
+        proc.variances,
+      ),
     );
   }
 
@@ -704,14 +807,28 @@ export async function runReconciliation(sb: Sb, userId: string, input: z.infer<t
 
 /* ------------------------------------------------------------ exceptions */
 
-export async function listExceptions(sb: Sb, userId: string, input: z.infer<typeof listExceptionsSchema>) {
-  await assertTenantRead(sb, userId, input.tenantId);
+export async function listExceptions(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listExceptionsSchema>,
+) {
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, { locationId: input.locationId ?? null });
   let q = sb
     .from("restaurant_reconciliation_exceptions")
     .select("*")
     .eq("tenant_id", input.tenantId)
     .order("detected_at", { ascending: false })
     .limit(input.limit);
+  if (input.locationId) {
+    q = q.eq("location_id", input.locationId);
+  } else {
+    const ids = await accessibleLocationIds(sb, scope);
+    if (ids !== null) {
+      const inList = ids.length > 0 ? ids.join(",") : NO_MATCH_ID;
+      q = q.or(`location_id.is.null,location_id.in.(${inList})`);
+    }
+  }
   if (input.businessDate) q = q.eq("business_date", input.businessDate);
   if (input.from) q = q.gte("business_date", input.from);
   if (input.to) q = q.lte("business_date", input.to);
@@ -741,8 +858,11 @@ export async function listExceptions(sb: Sb, userId: string, input: z.infer<type
  * Resolution always records *why*. An exception is never deleted: the history
  * of what disagreed and how it was settled is the point of the control.
  */
-export async function resolveException(sb: Sb, userId: string, input: z.infer<typeof resolveExceptionSchema>) {
-  await assertCapability(sb, userId, input.tenantId, "reconciliation.resolve");
+export async function resolveException(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof resolveExceptionSchema>,
+) {
   const { data: row, error: readErr } = await sb
     .from("restaurant_reconciliation_exceptions")
     .select("*")
@@ -750,6 +870,9 @@ export async function resolveException(sb: Sb, userId: string, input: z.infer<ty
     .eq("id", input.exceptionId)
     .single();
   if (readErr || !row) throw new Error("Exception not found.");
+  await assertCapability(sb, userId, input.tenantId, "reconciliation.resolve", {
+    locationId: row.location_id ?? null,
+  });
 
   const terminal = CLOSED_EXCEPTION_STATUSES.includes(input.status as any);
   const { error } = await sb
@@ -773,7 +896,10 @@ export async function resolveException(sb: Sb, userId: string, input: z.infer<ty
       .not("status", "in", "(resolved,accepted,dismissed)");
     await sb
       .from("restaurant_daily_closes")
-      .update({ exceptions_open: ((openRows ?? []) as any[]).length, updated_at: new Date().toISOString() })
+      .update({
+        exceptions_open: ((openRows ?? []) as any[]).length,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", row.close_id);
   }
 
@@ -813,7 +939,6 @@ export async function resolveException(sb: Sb, userId: string, input: z.infer<ty
 /* ------------------------------------------------------- close and reopen */
 
 export async function closeDay(sb: Sb, userId: string, input: z.infer<typeof closeDaySchema>) {
-  await assertCapability(sb, userId, input.tenantId, "reconciliation.close");
   const { data: close, error: readErr } = await sb
     .from("restaurant_daily_closes")
     .select("*")
@@ -821,6 +946,9 @@ export async function closeDay(sb: Sb, userId: string, input: z.infer<typeof clo
     .eq("id", input.closeId)
     .single();
   if (readErr || !close) throw new Error("Daily close not found.");
+  await assertCapability(sb, userId, input.tenantId, "reconciliation.close", {
+    locationId: close.location_id ?? null,
+  });
   if (close.status === "closed") throw new Error("This business date is already closed.");
 
   const view = await getDailyClose(sb, userId, {
@@ -831,7 +959,9 @@ export async function closeDay(sb: Sb, userId: string, input: z.infer<typeof clo
   // A blocked close can still proceed, but only deliberately and on the record.
   const blocked = view.blockingReasons.filter((r) => !r.includes("already closed"));
   if (blocked.length > 0 && !input.overrideReason) {
-    throw new Error(`Cannot close the day: ${blocked.join(" ")} Provide an override reason to proceed anyway.`);
+    throw new Error(
+      `Cannot close the day: ${blocked.join(" ")} Provide an override reason to proceed anyway.`,
+    );
   }
 
   const { error } = await sb
@@ -887,7 +1017,6 @@ export async function closeDay(sb: Sb, userId: string, input: z.infer<typeof clo
 }
 
 export async function reopenDay(sb: Sb, userId: string, input: z.infer<typeof reopenDaySchema>) {
-  await assertCapability(sb, userId, input.tenantId, "reconciliation.reopen");
   const { data: close, error: readErr } = await sb
     .from("restaurant_daily_closes")
     .select("*")
@@ -895,6 +1024,9 @@ export async function reopenDay(sb: Sb, userId: string, input: z.infer<typeof re
     .eq("id", input.closeId)
     .single();
   if (readErr || !close) throw new Error("Daily close not found.");
+  await assertCapability(sb, userId, input.tenantId, "reconciliation.reopen", {
+    locationId: close.location_id ?? null,
+  });
   if (close.status !== "closed") throw new Error("Only a closed business date can be reopened.");
 
   const { error } = await sb
@@ -938,21 +1070,45 @@ export async function reopenDay(sb: Sb, userId: string, input: z.infer<typeof re
  * Repeat offenders. A pattern of the same exception is an operational problem,
  * not a series of accidents — the Intelligence Core consumes this shape.
  */
-export async function exceptionTrends(sb: Sb, userId: string, input: z.infer<typeof exceptionTrendSchema>) {
-  await assertTenantRead(sb, userId, input.tenantId);
+export async function exceptionTrends(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof exceptionTrendSchema>,
+) {
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, { locationId: input.locationId ?? null });
   const from = new Date(Date.now() - input.days * 86_400_000).toISOString().slice(0, 10);
-  const { data, error } = await sb
+  let query = sb
     .from("restaurant_reconciliation_exceptions")
     .select("code, domain, severity, status, impact_value, business_date")
     .eq("tenant_id", input.tenantId)
     .gte("business_date", from);
+  if (input.locationId) {
+    query = query.eq("location_id", input.locationId);
+  } else {
+    const ids = await accessibleLocationIds(sb, scope);
+    if (ids !== null) {
+      const inList = ids.length > 0 ? ids.join(",") : NO_MATCH_ID;
+      query = query.or(`location_id.is.null,location_id.in.(${inList})`);
+    }
+  }
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
 
   const rows = (data ?? []) as any[];
-  const byCode = new Map<string, { code: string; domain: string; count: number; open: number; impact: number; days: Set<string> }>();
+  const byCode = new Map<
+    string,
+    { code: string; domain: string; count: number; open: number; impact: number; days: Set<string> }
+  >();
   for (const r of rows) {
-    const e =
-      byCode.get(r.code) ?? { code: r.code, domain: r.domain, count: 0, open: 0, impact: 0, days: new Set<string>() };
+    const e = byCode.get(r.code) ?? {
+      code: r.code,
+      domain: r.domain,
+      count: 0,
+      open: 0,
+      impact: 0,
+      days: new Set<string>(),
+    };
     e.count += 1;
     if (!CLOSED_EXCEPTION_STATUSES.includes(r.status)) e.open += 1;
     e.impact += Math.abs(Number(r.impact_value ?? 0));
@@ -977,9 +1133,50 @@ export async function exceptionTrends(sb: Sb, userId: string, input: z.infer<typ
     windowDays: input.days,
     total: rows.length,
     open: rows.filter((r) => !CLOSED_EXCEPTION_STATUSES.includes(r.status)).length,
-    impactValue: Number(rows.reduce((s, r) => s + Math.abs(Number(r.impact_value ?? 0)), 0).toFixed(2)),
+    impactValue: Number(
+      rows.reduce((s, r) => s + Math.abs(Number(r.impact_value ?? 0)), 0).toFixed(2),
+    ),
     byCode: recurring,
   };
+}
+
+/**
+ * restaurant_reconciliation_audit has no location_id/property_id of its
+ * own — subject_id is a polymorphic reference into whichever of these
+ * three tables subject_type names. Resolving "which audit entries belong
+ * to these locations" means resolving it on each side of that polymorphism
+ * and unioning the ids; the DB-layer derivation function
+ * (restaurant_reconciliation_audit_property, migration 0033) does the same
+ * CASE per row for RLS, this just narrows the app's own query to match.
+ */
+async function reconciliationSubjectIdsForLocations(
+  sb: Sb,
+  tenantId: string,
+  locationIds: string[],
+): Promise<string[]> {
+  if (locationIds.length === 0) return [];
+  const [{ data: closes }, { data: runs }, { data: exceptions }] = await Promise.all([
+    sb
+      .from("restaurant_daily_closes")
+      .select("id")
+      .eq("tenant_id", tenantId)
+      .in("location_id", locationIds),
+    sb
+      .from("restaurant_reconciliation_runs")
+      .select("id")
+      .eq("tenant_id", tenantId)
+      .in("location_id", locationIds),
+    sb
+      .from("restaurant_reconciliation_exceptions")
+      .select("id")
+      .eq("tenant_id", tenantId)
+      .in("location_id", locationIds),
+  ]);
+  return [
+    ...((closes ?? []) as any[]).map((r) => r.id as string),
+    ...((runs ?? []) as any[]).map((r) => r.id as string),
+    ...((exceptions ?? []) as any[]).map((r) => r.id as string),
+  ];
 }
 
 export async function listReconciliationAudit(
@@ -987,7 +1184,8 @@ export async function listReconciliationAudit(
   userId: string,
   input: z.infer<typeof listReconciliationAuditSchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, { locationId: input.locationId ?? null });
   let q = sb
     .from("restaurant_reconciliation_audit")
     .select("*")
@@ -995,6 +1193,26 @@ export async function listReconciliationAudit(
     .order("created_at", { ascending: false })
     .limit(input.limit);
   if (input.subjectId) q = q.eq("subject_id", input.subjectId);
+  if (input.locationId) {
+    const ids = await reconciliationSubjectIdsForLocations(sb, input.tenantId, [input.locationId]);
+    q = q.in("subject_id", ids.length > 0 ? ids : [NO_MATCH_ID]);
+  } else {
+    // A tenant-wide caller (accessibleIds === null) sees the full trail,
+    // exactly as before — RLS (0033) is the actual enforcement boundary
+    // for a legacy entry whose subject_type can't be resolved to any
+    // property at all; this branch only narrows what a property-scoped
+    // caller's own query asks for, so they aren't handed entries this
+    // filter can already tell belong to another property.
+    const accessibleIds = await accessibleLocationIds(sb, scope);
+    if (accessibleIds !== null) {
+      const subjectIds = await reconciliationSubjectIdsForLocations(
+        sb,
+        input.tenantId,
+        accessibleIds,
+      );
+      q = q.in("subject_id", subjectIds.length > 0 ? subjectIds : [NO_MATCH_ID]);
+    }
+  }
   const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data ?? [];

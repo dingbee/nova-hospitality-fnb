@@ -154,6 +154,65 @@ export async function canAccessResource(
   return true;
 }
 
+/**
+ * Location ids the caller may read/write, or `null` meaning "no restriction"
+ * (platform admin, or holds at least one tenant-wide grant). A property-
+ * scoped caller gets the concrete list of locations under their granted
+ * properties — the caller applies `.in("location_id", ids)` itself. An
+ * empty array (property-scoped but no matching locations) still means
+ * zero rows, never "no restriction" — callers must not special-case it
+ * away.
+ *
+ * For list/aggregate reads where the caller didn't name a specific
+ * property/location (e.g. "show me mobile money health" with no
+ * locationId): resolve once via getTenantScope, then use this instead of
+ * fetching every tenant row and filtering client-side.
+ */
+export async function accessibleLocationIds(
+  supabase: Sb,
+  scope: TenantScope,
+): Promise<string[] | null> {
+  if (scope.platformAdmin) return null;
+  if (scope.grants.some((g) => g.propertyId === null)) return null;
+  const propertyIds = [
+    ...new Set(scope.grants.map((g) => g.propertyId).filter((p): p is string => p !== null)),
+  ];
+  if (propertyIds.length === 0) return [];
+  const { data } = await supabase
+    .from("restaurant_locations")
+    .select("id")
+    .in("property_id", propertyIds);
+  return (data ?? []).map((r: any) => r.id as string);
+}
+
+/** Never a valid row id — used to force a `.in(...)` filter to zero rows without special-casing an empty array per call site. */
+export const NO_MATCH_ID = "00000000-0000-0000-0000-000000000000";
+
+/**
+ * Resolves the property an aggregate/report-style read should actually run
+ * against, for callers that accept an optional single propertyId (Decisions
+ * Board, Staff Ask LexiBite context, and similar). A tenant-wide caller's
+ * explicit request (or lack of one, meaning "everything") is honored as-is.
+ * A property-scoped caller who names a property still has it validated
+ * downstream (pass the result into assertTenantRead/assertCapability's
+ * scope param); one who names nothing gets deterministically defaulted to
+ * their first granted property — never silently aggregated across every
+ * property they hold a grant on, and never left unscoped.
+ */
+export function resolveEffectivePropertyId(
+  scope: TenantScope,
+  requestedPropertyId: string | null | undefined,
+): string | undefined {
+  if (scope.platformAdmin || scope.grants.some((g) => g.propertyId === null)) {
+    return requestedPropertyId ?? undefined;
+  }
+  if (requestedPropertyId) return requestedPropertyId;
+  const propertyIds = [
+    ...new Set(scope.grants.map((g) => g.propertyId).filter((p): p is string => p !== null)),
+  ].sort();
+  return propertyIds[0];
+}
+
 export async function assertTenantRead(
   supabase: Sb,
   userId: string,
