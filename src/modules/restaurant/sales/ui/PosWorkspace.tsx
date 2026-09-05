@@ -547,7 +547,7 @@ export function PosWorkspace({
   }
 
   return (
-    <div className={cn("flex flex-col gap-3 lg:h-full lg:min-h-0", className)}>
+    <div className={cn("flex h-full min-h-0 flex-col gap-3", className)}>
       <div className="shrink-0 space-y-3">
         {/* Compact operational strip: the four figures a cashier glances at,
             in one row, not four large cards — the selling workspace below
@@ -587,23 +587,26 @@ export function PosWorkspace({
         {orderId && <GuestContextBanner tenantId={tenantId} orderId={orderId} />}
       </div>
 
-      {/* Tablet-first: 8"/10" portrait (<1024px) stays single column, in normal
-          document flow, so each pane keeps full-width touch targets and the
-          page scrolls as before — and because Bill now precedes Menu in the
-          markup below, that stacked order is Floor -> Bill -> Menu, not
-          Floor -> Menu -> Bill. At lg+ this becomes a fixed workspace: the
-          grid fills the remaining viewport height and each pane manages its
-          own independent scroll region, so the bill's totals and primary
-          actions never move off-screen while browsing a long menu. */}
-      {/* Structural, not cosmetic: Floor is one column; Bill and Menu are NOT
-          a second/third column beside it — they are two ROWS inside a single
-          right-hand workspace column, so Bill always sits directly above
-          Menu and both share the same horizontal bounds. Proportions are fr
-          units (not fixed px), holding from 1024px through ultrawide:
-          Floor ~28% / right workspace ~72% of the row; within the right
-          workspace, Bill ~30% / Menu ~70% of its height, so Menu — the
-          highest-frequency interaction — owns most of the working area. */}
-      <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(200px,28fr)_minmax(420px,72fr)] xl:gap-4">
+      {/* Viewport-derived at every width, never content-driven: this grid
+          always receives a definite height from the flex-col workspace
+          above (h-full/min-h-0/flex-1, unconditional), and every row/column
+          track below is an explicit minmax(0, Nfr) — never bare "auto" and
+          never a hard pixel floor — so it always resolves to a fraction of
+          that definite height regardless of how much Floor/Bill/Menu
+          content exists. More tables, bill lines or menu items can only
+          change what scrolls *inside* a pane; they can never grow the pane,
+          this grid, the workspace, or the page.
+          Below lg: Floor and the right workspace stack as two proportional
+          ROWS (40fr/60fr) sharing that same fixed height, each still
+          scrolling internally — not two fixed pixel boxes and not normal
+          document flow. At lg+: Floor becomes the left COLUMN and the right
+          workspace the right COLUMN (28fr/72fr), each spanning the grid's
+          full single row. Structural, not cosmetic: Bill and Menu are never
+          a second/third column beside Floor — they are two ROWS inside the
+          right-hand workspace, Bill always directly above Menu, sharing the
+          same horizontal bounds; Menu — the highest-frequency interaction —
+          gets the larger share (~70%) of that column's height. */}
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,40fr)_minmax(0,60fr)] gap-3 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(200px,28fr)_minmax(420px,72fr)] xl:gap-4">
         {/* Floor */}
         <SectionCard
           title={isBar ? "Bar floor & tabs" : "Floor"}
@@ -612,9 +615,9 @@ export function PosWorkspace({
               ? "Counter, bar seats and tables — colour follows the tab."
               : "Colour follows the bill, not just the table row."
           }
-          className="lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden"
+          className="flex h-full min-h-0 flex-col overflow-hidden"
         >
-          <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="grid grid-cols-2 gap-2">
               {((board.data as any)?.tables ?? []).map((t: any) => {
                 const tableLife = t.order
@@ -660,7 +663,7 @@ export function PosWorkspace({
               })}
             </div>
           </div>
-          <div className="lg:shrink-0">
+          <div className="shrink-0">
             <div className="mt-3 flex flex-wrap gap-1">
               {FLOOR_LEGEND.map((tone) => (
                 <span
@@ -686,7 +689,7 @@ export function PosWorkspace({
             column, never a second/third column beside Floor. Both share this
             column's horizontal bounds automatically since they're siblings
             in the same grid track. */}
-        <div className="grid gap-3 lg:min-h-0 lg:grid-rows-[minmax(220px,30fr)_minmax(320px,70fr)] xl:gap-4">
+        <div className="grid h-full min-h-0 grid-rows-[minmax(0,30fr)_minmax(0,70fr)] gap-3 xl:gap-4">
           {/* Bill */}
           <SectionCard
             title={orderRow ? `Bill ${orderRow.order_number}` : "Bill"}
@@ -700,7 +703,7 @@ export function PosWorkspace({
                 </Badge>
               ) : undefined
             }
-            className="lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden"
+            className="flex h-full min-h-0 flex-col overflow-hidden"
           >
             {!orderId ? (
               <EmptyState
@@ -708,9 +711,9 @@ export function PosWorkspace({
                 description="Tap a table or start a walk-in tab."
               />
             ) : (
-              <div className="space-y-3 lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:space-y-0">
+              <div className="flex h-full min-h-0 flex-col">
                 {life && (
-                  <div className="space-y-2 rounded-lg border bg-muted/30 p-2 lg:shrink-0">
+                  <div className="space-y-2 rounded-lg border bg-muted/30 p-2 shrink-0">
                     <ServiceLifecycleBar life={life} compact />
                     <p className="text-xs text-muted-foreground">{life.reason}</p>
                     <div className="flex flex-wrap gap-1 text-[11px]">
@@ -759,7 +762,7 @@ export function PosWorkspace({
                     </Button>
                   </div>
                 )}
-                <div className="space-y-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pt-3">
+                <div className="space-y-3 min-h-0 flex-1 overflow-y-auto pt-3">
                   {live.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -888,7 +891,7 @@ export function PosWorkspace({
                   </details>
                 </div>
 
-                <div className="space-y-3 lg:shrink-0 lg:pt-3">
+                <div className="space-y-3 shrink-0 pt-3">
                   <div className="flex items-center justify-between border-t-2 pt-3 text-base font-semibold">
                     <span>Total</span>
                     <span className="tabular-nums">{money(billTotal, currency)}</span>
@@ -1023,9 +1026,9 @@ export function PosWorkspace({
                 ? "Tap a drink, pick the serve (single, double, bottle, glass) and add it to the tab."
                 : "Tap an item to configure and stage it on the bill."
             }
-            className="lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden"
+            className="flex h-full min-h-0 flex-col overflow-hidden"
           >
-            <div className="lg:shrink-0">
+            <div className="shrink-0">
               <div className="relative mb-2">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
@@ -1055,7 +1058,7 @@ export function PosWorkspace({
                 ))}
               </div>
             </div>
-            <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+            <div className="min-h-0 flex-1 overflow-y-auto">
               {filtered.length === 0 ? (
                 <EmptyState
                   title={catalogSearch ? "No matches" : isBar ? "No drinks" : "No items"}

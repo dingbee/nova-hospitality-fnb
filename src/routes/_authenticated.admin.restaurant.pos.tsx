@@ -19,14 +19,14 @@ export const Route = createFileRoute("/_authenticated/admin/restaurant/pos")({
 
 function PosPage() {
   return (
-    <div className="space-y-4 lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:gap-4 lg:space-y-0">
-      <div className="lg:shrink-0">
+    <div className="flex h-full min-h-0 flex-col gap-4">
+      <div className="shrink-0">
         <PageHeader
           title="Point of sale"
           description="Table → order → kitchen → payment → receipt. Every sale posts revenue, cost and stock through the same engine."
         />
       </div>
-      <PosWorkspace className="lg:min-h-0 lg:flex-1" />
+      <PosWorkspace className="min-h-0 flex-1" />
     </div>
   );
 }
