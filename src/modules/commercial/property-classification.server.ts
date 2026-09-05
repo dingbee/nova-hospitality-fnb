@@ -191,6 +191,16 @@ export async function classifyProperty(
     reason: notes,
   });
 
+  // P02 §12 — a chargeable property is invoiced (as a draft — never
+  // silently activated) the moment it's classified, so the customer can
+  // see immediately why the charge exists. Never fabricates a price: only
+  // runs when priceApplied is set, exactly the same guard classification
+  // already applied above.
+  if (chargeable && priceApplied != null) {
+    const { recordPropertyCharge } = await import("./billing.server");
+    await recordPropertyCharge(sb, userId, tenantId, row.id);
+  }
+
   return {
     classification,
     chargeable,

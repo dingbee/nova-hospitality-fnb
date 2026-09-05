@@ -371,3 +371,213 @@ export interface EntitlementResult {
   config: Record<string, JsonValue>;
   quota: QuotaStatus | null;
 }
+
+/* =========================================================================
+ * P02 — Commercialization Operating System (browser-safe contracts).
+ *
+ * The commercial LIFECYCLE/TRANSACTION layer on top of P01's policy layer
+ * above: billing accounts, agreements, subscription lifecycle actions,
+ * invoices/lines, payments. See migration
+ * 0040_p02_commercialization_lifecycle.sql for the schema these mirror.
+ * ========================================================================= */
+
+export const SUBSCRIPTION_STATUSES = [
+  "draft",
+  "pending_activation",
+  "active",
+  "trial",
+  "past_due",
+  "suspended",
+  "cancelled",
+  "expired",
+  "renewing",
+] as const;
+export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
+
+export const AGREEMENT_STATUSES = [
+  "draft",
+  "submitted",
+  "approved",
+  "active",
+  "superseded",
+  "cancelled",
+] as const;
+export type AgreementStatus = (typeof AGREEMENT_STATUSES)[number];
+
+export const INVOICE_STATUSES = [
+  "draft",
+  "issued",
+  "partially_paid",
+  "paid",
+  "void",
+  "cancelled",
+] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+export const INVOICE_LINE_KINDS = [
+  "base_subscription",
+  "additional_property",
+  "implementation",
+  "add_on",
+  "discount",
+  "tax",
+  "other",
+] as const;
+export type InvoiceLineKind = (typeof INVOICE_LINE_KINDS)[number];
+
+export const PAYMENT_METHODS = [
+  "manual_bank_transfer",
+  "manual_mobile_money",
+  "manual_cash",
+  "manual_cheque",
+  "card",
+  "gateway",
+  "other",
+] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+export const PAYMENT_STATUSES = ["pending", "succeeded", "failed", "refunded", "voided"] as const;
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+export const COMMERCIAL_CUSTOMER_STATUSES = [
+  "prospect",
+  "active",
+  "past_due",
+  "suspended",
+  "cancelled",
+] as const;
+export type CommercialCustomerStatus = (typeof COMMERCIAL_CUSTOMER_STATUSES)[number];
+
+export const PRORATION_POLICIES = ["full_period", "prorated", "next_period"] as const;
+export type ProrationPolicy = (typeof PRORATION_POLICIES)[number];
+
+export const RENEWAL_STATUSES = ["not_due", "due", "renewed", "declined"] as const;
+export type RenewalStatus = (typeof RENEWAL_STATUSES)[number];
+
+/* --------------------------------------------------------- billing account */
+
+export const upsertBillingAccountSchema = z.object({
+  tenantId: uuid,
+  currency: z.string().min(3).max(8).default("TZS"),
+  billingContactName: z.string().max(200).optional(),
+  billingContactEmail: z.string().email().optional(),
+  billingContactPhone: z.string().max(40).optional(),
+  billingAddress: z.string().max(400).optional(),
+  taxId: z.string().max(80).optional(),
+  paymentMethodReference: z.string().max(200).optional(),
+  notes: z.string().max(2000).optional(),
+});
+export type UpsertBillingAccountInput = z.infer<typeof upsertBillingAccountSchema>;
+
+/* ------------------------------------------------------------- agreements */
+
+export const createAgreementSchema = z.object({
+  tenantId: uuid,
+  planId: uuid,
+  programmeId: uuid.optional(),
+  billingInterval: z.enum(BILLING_INTERVALS).default("monthly"),
+  discountPct: z.number().min(0).max(100).optional(),
+  discountReason: z.string().max(500).optional(),
+  requiresPaymentBeforeActivation: z.boolean().default(true),
+  effectiveFrom: z.string().datetime().optional(),
+  agreedTerms: z.string().max(10000).optional(),
+  renewedFromAgreementId: uuid.optional(),
+});
+export type CreateAgreementInput = z.infer<typeof createAgreementSchema>;
+
+export const approveAgreementSchema = z.object({
+  agreementId: uuid,
+  reason: z.string().min(3).max(2000).optional(),
+});
+export type ApproveAgreementInput = z.infer<typeof approveAgreementSchema>;
+
+export const cancelAgreementSchema = z.object({
+  agreementId: uuid,
+  reason: z.string().min(5).max(2000),
+});
+export type CancelAgreementInput = z.infer<typeof cancelAgreementSchema>;
+
+export const listAgreementsSchema = z.object({ tenantId: uuid.optional() });
+export type ListAgreementsInput = z.infer<typeof listAgreementsSchema>;
+
+/* --------------------------------------------------- subscription lifecycle */
+
+export const activateSubscriptionSchema = z.object({
+  agreementId: uuid,
+  reason: z.string().max(2000).optional(),
+});
+export type ActivateSubscriptionInput = z.infer<typeof activateSubscriptionSchema>;
+
+export const cancelSubscriptionSchema = z.object({
+  tenantId: uuid,
+  reason: z.string().min(5).max(2000),
+});
+export type CancelSubscriptionInput = z.infer<typeof cancelSubscriptionSchema>;
+
+export const suspendSubscriptionSchema = z.object({
+  tenantId: uuid,
+  reason: z.string().min(5).max(2000),
+});
+export type SuspendSubscriptionInput = z.infer<typeof suspendSubscriptionSchema>;
+
+export const reactivateSubscriptionSchema = z.object({
+  tenantId: uuid,
+  reason: z.string().min(5).max(2000),
+});
+export type ReactivateSubscriptionInput = z.infer<typeof reactivateSubscriptionSchema>;
+
+export const renewSubscriptionSchema = z.object({
+  tenantId: uuid,
+  keepDiscount: z.boolean().default(false),
+  reason: z.string().max(2000).optional(),
+});
+export type RenewSubscriptionInput = z.infer<typeof renewSubscriptionSchema>;
+
+/* ------------------------------------------------------------------ billing */
+
+export const generateInvoiceSchema = z.object({
+  tenantId: uuid,
+  billingPeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  billingPeriodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  includeImplementationFee: z.boolean().default(false),
+});
+export type GenerateInvoiceInput = z.infer<typeof generateInvoiceSchema>;
+
+export const issueInvoiceSchema = z.object({
+  invoiceId: uuid,
+  dueDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+export type IssueInvoiceInput = z.infer<typeof issueInvoiceSchema>;
+
+export const voidInvoiceSchema = z.object({
+  invoiceId: uuid,
+  reason: z.string().min(5).max(2000),
+});
+export type VoidInvoiceInput = z.infer<typeof voidInvoiceSchema>;
+
+export const listInvoicesSchema = z.object({
+  tenantId: uuid.optional(),
+  status: z.enum(INVOICE_STATUSES).optional(),
+});
+export type ListInvoicesInput = z.infer<typeof listInvoicesSchema>;
+
+export const recordPaymentSchema = z.object({
+  invoiceId: uuid,
+  method: z.enum(PAYMENT_METHODS),
+  amount: z.number().positive(),
+  currency: z.string().min(3).max(8).default("TZS"),
+  providerReference: z.string().max(200).optional(),
+  notes: z.string().max(1000).optional(),
+  receivedAt: z.string().datetime().optional(),
+  idempotencyKey: z.string().min(6).max(200),
+});
+export type RecordPaymentInput = z.infer<typeof recordPaymentSchema>;
+
+export const listPaymentsSchema = z.object({
+  tenantId: uuid.optional(),
+  invoiceId: uuid.optional(),
+});
+export type ListPaymentsInput = z.infer<typeof listPaymentsSchema>;

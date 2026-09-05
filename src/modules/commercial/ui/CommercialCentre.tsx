@@ -63,6 +63,7 @@ import {
   listCommercialPropertyPoliciesFn,
   listCommercialQuotaDefinitionsFn,
   listCommercialSubscriptionsFn,
+  listCommercialTenantsFn,
   revokeCommercialAdminFn,
   revokeCommercialOverrideFn,
   upsertCommercialCapabilityFn,
@@ -77,6 +78,7 @@ import {
   upsertCommercialSubscriptionFn,
   whoAmICommercialFn,
 } from "../commercial.functions";
+import { BillingOverviewPanel, CustomerWorkspacePanel } from "./CommercialLifecycle";
 
 const TZS = (n: number | null | undefined) =>
   n == null ? "—" : new Intl.NumberFormat("en-TZ", { maximumFractionDigits: 0 }).format(n) + " TZS";
@@ -97,6 +99,7 @@ function useCommercialData() {
     auditLog: useServerFn(listCommercialAuditLogFn),
     administrators: useServerFn(listCommercialAdministratorsFn),
     whoAmI: useServerFn(whoAmICommercialFn),
+    tenants: useServerFn(listCommercialTenantsFn),
   };
   const plans = useQuery({
     queryKey: ["commercial.plans"],
@@ -154,6 +157,10 @@ function useCommercialData() {
     queryKey: ["commercial.whoAmI"],
     queryFn: () => fns.whoAmI({ data: {} }),
   });
+  const tenants = useQuery({
+    queryKey: ["commercial.tenants"],
+    queryFn: () => fns.tenants({ data: {} }),
+  });
 
   return {
     plans,
@@ -170,6 +177,7 @@ function useCommercialData() {
     auditLog,
     administrators,
     whoAmI,
+    tenants,
   };
 }
 
@@ -251,6 +259,8 @@ export function CommercialCentre() {
           <TabsTrigger value="founding10">Founding 10</TabsTrigger>
           <TabsTrigger value="overrides">Overrides</TabsTrigger>
           <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
+          <TabsTrigger value="billing">Billing</TabsTrigger>
+          <TabsTrigger value="customers">Customer Workspace</TabsTrigger>
           <TabsTrigger value="audit">Audit Log</TabsTrigger>
         </TabsList>
 
@@ -325,6 +335,16 @@ export function CommercialCentre() {
               onSaved={() => invalidate("commercial.administrators")}
             />
           </div>
+        </TabsContent>
+        <TabsContent value="billing">
+          <BillingOverviewPanel subscriptions={data.subscriptions.data ?? []} />
+        </TabsContent>
+        <TabsContent value="customers">
+          <CustomerWorkspacePanel
+            tenants={data.tenants.data ?? []}
+            plans={plans}
+            programmes={programmes}
+          />
         </TabsContent>
         <TabsContent value="audit">
           <AuditTab auditLog={data.auditLog.data ?? []} />

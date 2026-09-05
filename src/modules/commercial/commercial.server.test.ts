@@ -90,7 +90,13 @@ function makeFixture() {
     },
   ];
   const programmeEntitlements = [
-    { id: "pge-1", programme_id: FOUNDING_10, capability_id: CAP_MENU_INT, state: "enterprise", config: {} },
+    {
+      id: "pge-1",
+      programme_id: FOUNDING_10,
+      capability_id: CAP_MENU_INT,
+      state: "enterprise",
+      config: {},
+    },
   ];
   const propertyPolicies = [
     {
@@ -482,7 +488,9 @@ describe("resolveEntitlement", () => {
     await expect(assertEntitled(supabase, TENANT_A, "orphan_capability")).rejects.toBeInstanceOf(
       CommercialEntitlementError,
     );
-    await expect(assertEntitled(supabase, TENANT_A, "pos")).resolves.toMatchObject({ state: "included" });
+    await expect(assertEntitled(supabase, TENANT_A, "pos")).resolves.toMatchObject({
+      state: "included",
+    });
   });
 });
 
@@ -566,7 +574,9 @@ describe("quota engine", () => {
       effective_from: iso(-1),
       effective_until: null,
     });
-    const status = await incrementUsage(fx.supabase, TENANT_A, "ai_requests_monthly", { amount: 50 });
+    const status = await incrementUsage(fx.supabase, TENANT_A, "ai_requests_monthly", {
+      amount: 50,
+    });
     expect(status?.state).toBe("OVERRIDE");
   });
 });

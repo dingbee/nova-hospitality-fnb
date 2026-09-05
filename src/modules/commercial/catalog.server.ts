@@ -131,11 +131,27 @@ export async function listOverrides(sb: Sb, filter: { tenantId?: string; scopeTy
   return data ?? [];
 }
 
+/**
+ * §31, §52 — every restaurant tenant, for the commercial customer picker
+ * and search. Requires commercial admin (see migration 0041 — a
+ * commercial admin's read access to `restaurant_tenants` is scoped
+ * narrowly to this identity table, not the shared tenant-membership check
+ * every operational table uses).
+ */
+export async function listTenants(sb: Sb) {
+  const { data, error } = await sb
+    .from("restaurant_tenants")
+    .select("id, name, slug")
+    .order("name");
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
 export async function listSubscriptions(sb: Sb) {
   const { data, error } = await sb
     .from("restaurant_subscriptions")
     .select(
-      "id, tenant_id, plan, status, seats, plan_id, programme_id, billing_interval, trial_ends_at, current_period_end, restaurant_tenants(name, slug), commercial_plans(code, name), commercial_programmes(code, name)",
+      "id, tenant_id, plan, status, seats, plan_id, programme_id, billing_interval, trial_ends_at, current_period_end, agreement_id, renewal_date, renewal_status, activated_at, restaurant_tenants(name, slug), commercial_plans(code, name), commercial_programmes(code, name), commercial_agreements!restaurant_subscriptions_agreement_id_fkey(monthly_price, annual_price, currency)",
     )
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);

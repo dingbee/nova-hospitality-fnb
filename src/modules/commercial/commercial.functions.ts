@@ -2,14 +2,29 @@ import { z } from "zod";
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
+  activateSubscriptionSchema,
+  approveAgreementSchema,
+  cancelAgreementSchema,
+  cancelSubscriptionSchema,
   checkQuotaSchema,
+  createAgreementSchema,
+  generateInvoiceSchema,
   grantCommercialAdminSchema,
+  issueInvoiceSchema,
+  listAgreementsSchema,
   listAuditLogSchema,
+  listInvoicesSchema,
   listOverridesSchema,
+  listPaymentsSchema,
   listPropertyClassificationsSchema,
+  reactivateSubscriptionSchema,
+  recordPaymentSchema,
+  renewSubscriptionSchema,
   resolveEntitlementSchema,
   revokeCommercialAdminSchema,
   revokeOverrideSchema,
+  suspendSubscriptionSchema,
+  upsertBillingAccountSchema,
   upsertCapabilitySchema,
   upsertOverrideSchema,
   upsertPlanEntitlementSchema,
@@ -20,6 +35,7 @@ import {
   upsertPropertyPolicySchema,
   upsertQuotaDefinitionSchema,
   upsertSubscriptionSchema,
+  voidInvoiceSchema,
 } from "./contracts";
 
 const empty = z.object({}).optional();
@@ -96,6 +112,14 @@ export const listCommercialOverridesFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./catalog.server");
     return mod.listOverrides(context.supabase, data);
+  });
+
+export const listCommercialTenantsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => empty.parse(d))
+  .handler(async ({ context }) => {
+    const mod = await import("./catalog.server");
+    return mod.listTenants(context.supabase);
   });
 
 export const listCommercialSubscriptionsFn = createServerFn({ method: "POST" })
@@ -260,4 +284,192 @@ export const revokeCommercialAdminFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./catalog.server");
     return mod.revokeCommercialAdmin(context.supabase, context.userId, data);
+  });
+
+/* ================================================================= P02 === */
+
+/* --------------------------------------------------------- billing account */
+
+export const listCommercialBillingAccountsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => empty.parse(d))
+  .handler(async ({ context }) => {
+    const mod = await import("./billing-account.server");
+    return mod.listBillingAccounts(context.supabase);
+  });
+
+export const getCommercialBillingAccountFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ tenantId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./billing-account.server");
+    return mod.getBillingAccount(context.supabase, data.tenantId);
+  });
+
+export const upsertCommercialBillingAccountFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => upsertBillingAccountSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./billing-account.server");
+    return mod.upsertBillingAccount(context.supabase, context.userId, data);
+  });
+
+/* ------------------------------------------------------------- agreements */
+
+export const listCommercialAgreementsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => listAgreementsSchema.parse(d ?? {}))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./agreements.server");
+    return mod.listAgreements(context.supabase, data);
+  });
+
+export const createCommercialAgreementFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => createAgreementSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./agreements.server");
+    return mod.createAgreement(context.supabase, context.userId, data);
+  });
+
+export const approveCommercialAgreementFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => approveAgreementSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./agreements.server");
+    return mod.approveAgreement(context.supabase, context.userId, data);
+  });
+
+export const cancelCommercialAgreementFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => cancelAgreementSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./agreements.server");
+    return mod.cancelAgreement(context.supabase, context.userId, data);
+  });
+
+/* --------------------------------------------------- subscription lifecycle */
+
+export const activateCommercialSubscriptionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => activateSubscriptionSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./subscription-lifecycle.server");
+    return mod.activateSubscription(context.supabase, context.userId, data);
+  });
+
+export const cancelCommercialSubscriptionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => cancelSubscriptionSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./subscription-lifecycle.server");
+    return mod.cancelSubscription(context.supabase, context.userId, data);
+  });
+
+export const suspendCommercialSubscriptionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => suspendSubscriptionSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./subscription-lifecycle.server");
+    return mod.suspendSubscription(context.supabase, context.userId, data);
+  });
+
+export const reactivateCommercialSubscriptionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => reactivateSubscriptionSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./subscription-lifecycle.server");
+    return mod.reactivateSubscription(context.supabase, context.userId, data);
+  });
+
+export const renewCommercialSubscriptionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => renewSubscriptionSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./subscription-lifecycle.server");
+    return mod.renewSubscription(context.supabase, context.userId, data);
+  });
+
+/* ------------------------------------------------------------------ billing */
+
+export const listCommercialInvoicesFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => listInvoicesSchema.parse(d ?? {}))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./billing.server");
+    return mod.listInvoices(context.supabase, data);
+  });
+
+export const getCommercialInvoiceFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ invoiceId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./billing.server");
+    return mod.getInvoiceWithLines(context.supabase, data.invoiceId);
+  });
+
+export const generateCommercialInvoiceFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => generateInvoiceSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./billing.server");
+    return mod.generateInvoice(context.supabase, context.userId, data);
+  });
+
+export const issueCommercialInvoiceFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => issueInvoiceSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./billing.server");
+    return mod.issueInvoice(context.supabase, context.userId, data);
+  });
+
+export const voidCommercialInvoiceFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => voidInvoiceSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./billing.server");
+    return mod.voidInvoice(context.supabase, context.userId, data);
+  });
+
+/* ------------------------------------------------------------------ payments */
+
+export const listCommercialPaymentsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => listPaymentsSchema.parse(d ?? {}))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./payments.server");
+    return mod.listPayments(context.supabase, data);
+  });
+
+export const recordCommercialPaymentFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => recordPaymentSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./payments.server");
+    return mod.recordPayment(context.supabase, context.userId, data);
+  });
+
+/* ----------------------------------------------------------------- documents */
+
+export const renderCommercialDocumentHtmlFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ kind: z.enum(["invoice", "agreement"]), id: z.string().uuid() }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const mod = await import("./documents.server");
+    return { html: await mod.renderCommercialDocumentHtml(context.supabase, data.kind, data.id) };
+  });
+
+/* -------------------------------------------------------------- notifications */
+
+export const listCommercialNotificationsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ tenantId: z.string().uuid().optional() }).parse(d ?? {}),
+  )
+  .handler(async ({ data, context }) => {
+    const mod = await import("./notifications.server");
+    return mod.listCommercialNotifications(context.supabase, data);
   });
