@@ -153,10 +153,14 @@ describe("price resolution precedence", () => {
         locationId: null,
       },
     ];
-    const candidates = [price({ id: "std" }), price({ id: "corp-price", priceListId: "corp", amount: 8_000 })];
+    const candidates = [
+      price({ id: "std" }),
+      price({ id: "corp-price", priceListId: "corp", amount: 8_000 }),
+    ];
     expect(resolveBasePrice(candidates, ctx({ channel: "dine_in" }), lists)?.id).toBe("std");
     expect(
-      resolveBasePrice(candidates, ctx({ channel: "corporate", priceListIds: ["corp"] }), lists)?.id,
+      resolveBasePrice(candidates, ctx({ channel: "corporate", priceListIds: ["corp"] }), lists)
+        ?.id,
     ).toBe("corp-price");
   });
 
@@ -170,7 +174,10 @@ describe("price resolution precedence", () => {
 
   it("refuses to guess between two equally valid, different prices", () => {
     expect(() =>
-      resolveBasePrice([price({ id: "a", amount: 10_000 }), price({ id: "b", amount: 11_000 })], ctx()),
+      resolveBasePrice(
+        [price({ id: "a", amount: 10_000 }), price({ id: "b", amount: 11_000 })],
+        ctx(),
+      ),
     ).toThrow(CommercialRuleError);
   });
 
@@ -185,7 +192,13 @@ describe("price resolution precedence", () => {
 
 describe("tax treatment", () => {
   it("adds exclusive tax on top", () => {
-    const q = quote({ ctx: ctx(), prices: [price()], promotions: [], taxes: [tax(18)], serviceCharges: [] });
+    const q = quote({
+      ctx: ctx(),
+      prices: [price()],
+      promotions: [],
+      taxes: [tax(18)],
+      serviceCharges: [],
+    });
     expect(q.taxTotal).toBe(1_800);
     expect(q.lineTotal).toBe(11_800);
   });

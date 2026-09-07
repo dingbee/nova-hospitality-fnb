@@ -6,6 +6,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   applyDiscountSchema,
+  bulkUpsertPricesSchema,
   commercialEvidenceSchema,
   decidePriceSchema,
   listCommercialRulesSchema,
@@ -15,6 +16,7 @@ import {
   listPriceListsSchema,
   listRoundingRulesSchema,
   pricingAuditSchema,
+  pricingCatalogueSchema,
   pricingReadinessSchema,
   resolvePriceSchema,
   setPromotionStatusSchema,
@@ -108,6 +110,14 @@ export const upsertRestaurantPriceFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./pricing.server");
     return mod.upsertPrice(context.supabase, context.userId, data);
+  });
+
+export const bulkUpsertRestaurantPricesFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => bulkUpsertPricesSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./pricing.server");
+    return mod.bulkUpsertPrices(context.supabase, context.userId, data);
   });
 
 export const decideRestaurantPriceFn = createServerFn({ method: "POST" })
@@ -236,4 +246,12 @@ export const restaurantPricingReadinessFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./readiness.server");
     return mod.pricingReadiness(context.supabase, context.userId, data);
+  });
+
+export const getRestaurantPricingCatalogueFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => pricingCatalogueSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./catalogue.server");
+    return mod.pricingCatalogue(context.supabase, context.userId, data);
   });

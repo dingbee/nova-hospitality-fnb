@@ -176,7 +176,7 @@ export async function loadRuleSet(
 }
 
 /** Which of a rule set's price candidates could possibly apply to this item — before scope/dates/channel are checked. */
-function candidatesFor(rules: CommercialRuleSet, ctx: PricingContext): PriceCandidate[] {
+export function candidatesFor(rules: CommercialRuleSet, ctx: PricingContext): PriceCandidate[] {
   return rules.prices.filter((p) =>
     ctx.menuItemId
       ? p.menuItemId === ctx.menuItemId || (ctx.productId ? p.productId === ctx.productId : false)

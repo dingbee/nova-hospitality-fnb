@@ -107,7 +107,9 @@ export async function pricingReadiness(
         .eq("tenant_id", input.tenantId)
         .in("id", locationIds)
     : { data: [] };
-  const locations = new Map(((locationRows ?? []) as any[]).map((l) => [l.id as string, l.name as string]));
+  const locations = new Map(
+    ((locationRows ?? []) as any[]).map((l) => [l.id as string, l.name as string]),
+  );
 
   const rules = await loadRuleSet(sb, input.tenantId, { menuItemIds: items.map((i) => i.id) });
   const at = new Date();
@@ -134,7 +136,9 @@ export async function pricingReadiness(
       menuName: (menu?.name as string) ?? "—",
       menuStatus: (menu?.status as string) ?? "—",
       locationId: (menu?.location_id as string) ?? null,
-      locationName: menu?.location_id ? (locations.get(menu.location_id) ?? "Outlet") : "All outlets",
+      locationName: menu?.location_id
+        ? (locations.get(menu.location_id) ?? "Outlet")
+        : "All outlets",
       propertyId: (menu?.property_id as string) ?? null,
       channel,
       menuCardPrice: item.price == null ? null : Number(item.price),
@@ -196,7 +200,10 @@ export async function pricingReadiness(
   };
 }
 
-function emptyReport(channel: string, rulesInForce: ReadinessReport["rulesInForce"]): ReadinessReport {
+function emptyReport(
+  channel: string,
+  rulesInForce: ReadinessReport["rulesInForce"],
+): ReadinessReport {
   return {
     generatedAt: new Date().toISOString(),
     channel,
