@@ -14,12 +14,20 @@ import {
   assertCapability,
   assertTenantRead,
   getTenantScope,
-  resolveEffectivePropertyId,
+  resolveMultiPropertyScope,
 } from "../core/access.server";
 import { getInventoryIntelligence } from "../intelligence/inventory.server";
 import { getKitchenIntelligence } from "../intelligence/kitchen.server";
 import { getMenuIntelligence } from "../intelligence/menu.server";
 import { getPurchasingIntelligence } from "../intelligence/purchasing.server";
+import { getDemandIntelligence } from "../intelligence/demand.server";
+import { getRevenueIntelligence } from "../intelligence/revenue.server";
+import { getMultiLocationIntelligence } from "../intelligence/multiLocation.server";
+import type {
+  DemandIntelligence,
+  MultiLocationIntelligence,
+  RevenueIntelligence,
+} from "../intelligence/p05.types";
 import { gatherFindings } from "./findings";
 import { buildRestaurantDecisions, restaurantDecisionHeadline } from "./restaurantDecisionEngine";
 import type {
@@ -59,6 +67,22 @@ function findingFingerprint(
   return JSON.stringify({ severity: f.severity, facts: sortedFacts });
 }
 
+/**
+ * P06 — fetches one P05 Pro-tier engine and swallows exactly the "not
+ * entitled" outcome (CommercialEntitlementError, or any other rejection —
+ * the decision board must never break because an optional, Pro-only
+ * enhancement couldn't run for this tenant/window). A Core tenant simply
+ * gets the same board P04 always produced; a Pro tenant additionally gets
+ * demand_shift/revenue_underperformance findings layered on top.
+ */
+async function tryP05<T>(fn: () => Promise<T>): Promise<T | null> {
+  try {
+    return await fn();
+  } catch {
+    return null;
+  }
+}
+
 async function evaluate(
   sb: Sb,
   userId: string,
@@ -67,13 +91,30 @@ async function evaluate(
   propertyId?: string,
   locationId?: string,
 ) {
-  const [menu, inventory, kitchen, purchasing] = await Promise.all([
+  const [menu, inventory, kitchen, purchasing, demand, revenue, multiLocation] = await Promise.all([
     getMenuIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
     getInventoryIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
     getKitchenIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
     getPurchasingIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
+    tryP05<DemandIntelligence>(() =>
+      getDemandIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
+    ),
+    tryP05<RevenueIntelligence>(() =>
+      getRevenueIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
+    ),
+    tryP05<MultiLocationIntelligence>(() =>
+      getMultiLocationIntelligence(sb, userId, { tenantId, windowDays, propertyId }),
+    ),
   ]);
-  const findings = gatherFindings({ menu, inventory, kitchen, purchasing });
+  const findings = gatherFindings({
+    menu,
+    inventory,
+    kitchen,
+    purchasing,
+    demand,
+    revenue,
+    multiLocation,
+  });
   return { findings, candidates: buildRestaurantDecisions(findings, tenantId) };
 }
 
@@ -215,7 +256,12 @@ export async function getRestaurantDecisionBoard(
 ): Promise<RestaurantDecisionBoard> {
   const { tenantId, windowDays } = input;
   const scope = await getTenantScope(sb, userId, tenantId);
-  const propertyId = resolveEffectivePropertyId(scope, input.propertyId ?? null);
+  // P01: aggregating this board across every property (no propertyId named
+  // and the caller holds a tenant-wide grant) requires "multi_property_command"
+  // entitlement — see resolveMultiPropertyScope's own doc comment. A tenant
+  // with only one property, or a caller who named a specific property, is
+  // never gated.
+  const propertyId = await resolveMultiPropertyScope(sb, tenantId, scope, input.propertyId ?? null);
   await assertTenantRead(sb, userId, tenantId, {
     propertyId: propertyId ?? null,
     locationId: input.locationId ?? null,
@@ -270,7 +316,7 @@ export async function runRestaurantDecisionPass(
 ): Promise<RestaurantDecisionPassResult> {
   const { tenantId, windowDays } = input;
   const scope = await getTenantScope(sb, userId, tenantId);
-  const propertyId = resolveEffectivePropertyId(scope, input.propertyId ?? null);
+  const propertyId = await resolveMultiPropertyScope(sb, tenantId, scope, input.propertyId ?? null);
   await assertCapability(sb, userId, tenantId, "intelligence.read", {
     propertyId: propertyId ?? null,
     locationId: input.locationId ?? null,

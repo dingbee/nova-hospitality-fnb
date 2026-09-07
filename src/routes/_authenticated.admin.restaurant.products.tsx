@@ -12,11 +12,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import {
   completeRestaurantProductionFn,
+  computeRestaurantRecipeCostV2Fn,
   getRestaurantProductEvidenceFn,
   getRestaurantProductFn,
   getRestaurantRecipeFn,
@@ -37,7 +44,6 @@ import { ModifierSheet } from "@/modules/restaurant/products/ui/ModifierSheet";
 import { AttachModifierGroupsPanel } from "@/modules/restaurant/products/ui/AttachModifierGroupsPanel";
 import { RecipeSheet } from "@/modules/restaurant/products/ui/RecipeSheet";
 
-
 export const Route = createFileRoute("/_authenticated/admin/restaurant/products")({
   validateSearch: (search: Record<string, unknown>) => ({
     tab: typeof search.tab === "string" ? search.tab : undefined,
@@ -47,7 +53,8 @@ export const Route = createFileRoute("/_authenticated/admin/restaurant/products"
       { title: "Products & Recipes — Restaurant & Bar OS" },
       {
         name: "description",
-        content: "Versioned recipes, sellable products and production runs linking purchase to actual plate cost.",
+        content:
+          "Versioned recipes, sellable products and production runs linking purchase to actual plate cost.",
       },
       { name: "robots", content: "noindex,nofollow" },
     ],
@@ -84,6 +91,7 @@ function ProductRecipeCentre() {
   const productionsFn = useServerFn(listRestaurantProductionsFn);
   const evidenceFn = useServerFn(getRestaurantProductEvidenceFn);
   const recipeFn = useServerFn(getRestaurantRecipeFn);
+  const recomputeCostFn = useServerFn(computeRestaurantRecipeCostV2Fn);
   const versionFn = useServerFn(versionRestaurantRecipeFn);
   const statusFn = useServerFn(setRestaurantRecipeStatusFn);
   const startFn = useServerFn(startRestaurantProductionFn);
@@ -126,7 +134,10 @@ function ProductRecipeCentre() {
   const [editingRecipeLines, setEditingRecipeLines] = useState<any[] | undefined>(undefined);
   const [modifierGroupSheetOpen, setModifierGroupSheetOpen] = useState(false);
   const [editingModifierGroup, setEditingModifierGroup] = useState<any | null>(null);
-  const [modifierSheetOpen, setModifierSheetOpen] = useState<{ groupId: string; modifier?: any | null } | null>(null);
+  const [modifierSheetOpen, setModifierSheetOpen] = useState<{
+    groupId: string;
+    modifier?: any | null;
+  } | null>(null);
   const [openProductId, setOpenProductId] = useState<string | null>(null);
   const [editingVariant, setEditingVariant] = useState<any | null>(null);
   const [variantSheetOpen, setVariantSheetOpen] = useState(false);
@@ -158,7 +169,8 @@ function ProductRecipeCentre() {
   };
 
   const versionMutation = useAdminMutation({
-    mutationFn: (recipeId: string) => versionFn({ data: { tenantId: tenantId!, recipeId, activate: false } }),
+    mutationFn: (recipeId: string) =>
+      versionFn({ data: { tenantId: tenantId!, recipeId, activate: false } }),
     successMessage: "New draft version created.",
     onSuccess: (res: any) => {
       invalidate();
@@ -171,9 +183,28 @@ function ProductRecipeCentre() {
     successMessage: "Recipe status updated.",
     onSuccess: invalidate,
   });
+  /**
+   * Refreshes the persisted computed_cost/cost-history snapshot from the
+   * current authoritative inventory + unit data, without touching the
+   * recipe's lines, status or version — the correct repair path for a
+   * snapshot that went stale or was corrupted upstream (e.g. a unit's
+   * conversion factor was wrong when it was last saved). Unlike "Edit
+   * recipe" this works on an active recipe too: computeRecipeCost has no
+   * draft-only restriction, it only recomputes and persists the same
+   * number resolveRecipeCost already produces live on every recipe-detail
+   * fetch.
+   */
+  const recomputeCostMutation = useAdminMutation({
+    mutationFn: (recipeId: string) =>
+      recomputeCostFn({ data: { tenantId: tenantId!, recipeId, persist: true } }),
+    successMessage: "Recipe cost recomputed from current inventory and unit data.",
+    onSuccess: invalidate,
+  });
   const startMutation = useAdminMutation({
     mutationFn: () =>
-      startFn({ data: { tenantId: tenantId!, recipeId: startRecipeId!, batches: Number(batches) || 1 } }),
+      startFn({
+        data: { tenantId: tenantId!, recipeId: startRecipeId!, batches: Number(batches) || 1 },
+      }),
     successMessage: "Production run started.",
     onSuccess: () => {
       setStartRecipeId(null);
@@ -213,8 +244,18 @@ function ProductRecipeCentre() {
       />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Products" value={ev?.counts?.products ?? productRows.length} icon={Package} tone="green" />
-        <StatCard label="Active recipes" value={ev?.counts?.active_recipes ?? 0} icon={ChefHat} tone="info" />
+        <StatCard
+          label="Products"
+          value={ev?.counts?.products ?? productRows.length}
+          icon={Package}
+          tone="green"
+        />
+        <StatCard
+          label="Active recipes"
+          value={ev?.counts?.active_recipes ?? 0}
+          icon={ChefHat}
+          tone="info"
+        />
         <StatCard
           label="Completed runs"
           value={ev?.counts?.completed_productions ?? 0}
@@ -229,7 +270,9 @@ function ProductRecipeCentre() {
         />
       </div>
 
-      <Tabs defaultValue={PRODUCT_TABS.includes(searchTab ?? "") ? (searchTab as string) : "recipes"}>
+      <Tabs
+        defaultValue={PRODUCT_TABS.includes(searchTab ?? "") ? (searchTab as string) : "recipes"}
+      >
         <TabsList>
           <TabsTrigger value="recipes">Recipes</TabsTrigger>
           <TabsTrigger value="products">Products</TabsTrigger>
@@ -244,14 +287,25 @@ function ProductRecipeCentre() {
             description="Latest version of each lineage. Sub-recipes and menu recipes share one model."
             actions={
               canManageRecipes ? (
-                <Button size="sm" className="h-10" onClick={() => { setEditingRecipeLines(undefined); setOpenRecipeId(null); setRecipeSheetOpen(true); }}>
+                <Button
+                  size="sm"
+                  className="h-10"
+                  onClick={() => {
+                    setEditingRecipeLines(undefined);
+                    setOpenRecipeId(null);
+                    setRecipeSheetOpen(true);
+                  }}
+                >
                   <Plus className="mr-1 h-4 w-4" /> New recipe
                 </Button>
               ) : undefined
             }
           >
             {recipeRows.length === 0 ? (
-              <EmptyState title="No recipes yet" description="Recipes define what a product actually costs to make." />
+              <EmptyState
+                title="No recipes yet"
+                description="Recipes define what a product actually costs to make."
+              />
             ) : (
               <ul className="divide-y text-sm">
                 {recipeRows.map((r) => (
@@ -290,14 +344,24 @@ function ProductRecipeCentre() {
             description="Products are what the POS sells; recipes are what they consume."
             actions={
               canManageProducts ? (
-                <Button size="sm" className="h-10" onClick={() => { setEditingProduct(null); setProductSheetOpen(true); }}>
+                <Button
+                  size="sm"
+                  className="h-10"
+                  onClick={() => {
+                    setEditingProduct(null);
+                    setProductSheetOpen(true);
+                  }}
+                >
                   <Plus className="mr-1 h-4 w-4" /> New product
                 </Button>
               ) : undefined
             }
           >
             {productRows.length === 0 ? (
-              <EmptyState title="No products" description="Create products to sell recipes, retail lines or bundles." />
+              <EmptyState
+                title="No products"
+                description="Create products to sell recipes, retail lines or bundles."
+              />
             ) : (
               <ul className="divide-y text-sm">
                 {productRows.map((p) => (
@@ -315,7 +379,9 @@ function ProductRecipeCentre() {
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span>{money(p.price, p.currency ?? "TZS")}</span>
                       {p.recipe_id ? null : <StatusChip tone="warning">no recipe</StatusChip>}
-                      <StatusChip tone={p.active ? "success" : "neutral"}>{p.active ? "active" : "off"}</StatusChip>
+                      <StatusChip tone={p.active ? "success" : "neutral"}>
+                        {p.active ? "active" : "off"}
+                      </StatusChip>
                     </div>
                   </li>
                 ))}
@@ -330,14 +396,24 @@ function ProductRecipeCentre() {
             description="Reusable option groups (toppings, spice level) attached to products."
             actions={
               canManageProducts ? (
-                <Button size="sm" className="h-10" onClick={() => { setEditingModifierGroup(null); setModifierGroupSheetOpen(true); }}>
+                <Button
+                  size="sm"
+                  className="h-10"
+                  onClick={() => {
+                    setEditingModifierGroup(null);
+                    setModifierGroupSheetOpen(true);
+                  }}
+                >
                   <Plus className="mr-1 h-4 w-4" /> New group
                 </Button>
               ) : undefined
             }
           >
             {(modifierGroups.data ?? []).length === 0 ? (
-              <EmptyState title="No modifier groups" description="Create groups like 'Toppings' or 'Spice level' to attach to products." />
+              <EmptyState
+                title="No modifier groups"
+                description="Create groups like 'Toppings' or 'Spice level' to attach to products."
+              />
             ) : (
               <ul className="space-y-3">
                 {(modifierGroups.data as any[]).map((g: any) => (
@@ -347,7 +423,10 @@ function ProductRecipeCentre() {
                         type="button"
                         className="text-left hover:underline"
                         disabled={!canManageProducts}
-                        onClick={() => { setEditingModifierGroup(g); setModifierGroupSheetOpen(true); }}
+                        onClick={() => {
+                          setEditingModifierGroup(g);
+                          setModifierGroupSheetOpen(true);
+                        }}
                       >
                         <span className="font-medium">{g.name}</span>{" "}
                         <span className="text-xs text-muted-foreground">
@@ -386,7 +465,9 @@ function ProductRecipeCentre() {
                         ))}
                       </ul>
                     ) : (
-                      <p className="mt-2 text-xs text-muted-foreground">No modifiers in this group yet.</p>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        No modifiers in this group yet.
+                      </p>
                     )}
                   </li>
                 ))}
@@ -396,9 +477,15 @@ function ProductRecipeCentre() {
         </TabsContent>
 
         <TabsContent value="production" className="mt-4">
-          <SectionCard title="Production runs" description="Each completed run consumes inputs and produces stock through the ledger.">
+          <SectionCard
+            title="Production runs"
+            description="Each completed run consumes inputs and produces stock through the ledger."
+          >
             {productionRows.length === 0 ? (
-              <EmptyState title="No production runs" description="Start a run from an active recipe to batch-produce stock." />
+              <EmptyState
+                title="No production runs"
+                description="Start a run from an active recipe to batch-produce stock."
+              />
             ) : (
               <ul className="divide-y text-sm">
                 {productionRows.map((p) => (
@@ -440,16 +527,23 @@ function ProductRecipeCentre() {
         </TabsContent>
 
         <TabsContent value="evidence" className="mt-4 space-y-4">
-          <SectionCard title="Theoretical vs actual cost" description="Pinned recipe cost at sale against what the ledger actually consumed.">
+          <SectionCard
+            title="Theoretical vs actual cost"
+            description="Pinned recipe cost at sale against what the ledger actually consumed."
+          >
             {(ev?.theoretical_vs_actual ?? []).length === 0 ? (
-              <EmptyState title="No sales evidence yet" description="Close recipe-backed orders to build cost evidence." />
+              <EmptyState
+                title="No sales evidence yet"
+                description="Close recipe-backed orders to build cost evidence."
+              />
             ) : (
               <ul className="divide-y text-sm">
                 {(ev?.theoretical_vs_actual ?? []).map((row: any) => (
                   <li key={row.recipe_id} className="flex items-center justify-between py-2">
                     <span>{row.code ?? row.recipe_id.slice(0, 8)}</span>
                     <span className="text-xs text-muted-foreground">
-                      {row.units_sold} sold · theoretical {money(row.theoretical_cost)} · actual {money(row.actual_cost)}{" "}
+                      {row.units_sold} sold · theoretical {money(row.theoretical_cost)} · actual{" "}
+                      {money(row.actual_cost)}{" "}
                       <span className={row.variance > 0 ? "text-destructive" : undefined}>
                         ({row.variance > 0 ? "+" : ""}
                         {row.variance})
@@ -461,9 +555,15 @@ function ProductRecipeCentre() {
             )}
           </SectionCard>
 
-          <SectionCard title="Recipe cost drift" description="How ingredient cost has moved since the first snapshot.">
+          <SectionCard
+            title="Recipe cost drift"
+            description="How ingredient cost has moved since the first snapshot."
+          >
             {(ev?.cost_drift ?? []).length === 0 ? (
-              <EmptyState title="No drift recorded" description="Cost history builds as ingredient prices change." />
+              <EmptyState
+                title="No drift recorded"
+                description="Cost history builds as ingredient prices change."
+              />
             ) : (
               <ul className="divide-y text-sm">
                 {(ev?.cost_drift ?? []).map((row: any) => (
@@ -471,7 +571,9 @@ function ProductRecipeCentre() {
                     <span>{row.name ?? row.code}</span>
                     <span className="text-xs text-muted-foreground">
                       {money(row.earliest_cost)} → {money(row.latest_cost)}
-                      {row.drift_percent != null ? ` (${row.drift_percent > 0 ? "+" : ""}${row.drift_percent}%)` : ""}
+                      {row.drift_percent != null
+                        ? ` (${row.drift_percent > 0 ? "+" : ""}${row.drift_percent}%)`
+                        : ""}
                     </span>
                   </li>
                 ))}
@@ -479,9 +581,15 @@ function ProductRecipeCentre() {
             )}
           </SectionCard>
 
-          <SectionCard title="Product margin" description="Menu price against the current computed recipe cost.">
+          <SectionCard
+            title="Product margin"
+            description="Menu price against the current computed recipe cost."
+          >
             {(ev?.product_margin ?? []).length === 0 ? (
-              <EmptyState title="No priced recipe products" description="Link products to recipes to see margin." />
+              <EmptyState
+                title="No priced recipe products"
+                description="Link products to recipes to see margin."
+              />
             ) : (
               <ul className="divide-y text-sm">
                 {(ev?.product_margin ?? []).map((row: any) => (
@@ -510,9 +618,12 @@ function ProductRecipeCentre() {
           ) : detail ? (
             <div className="space-y-4 text-sm">
               <div className="flex flex-wrap items-center gap-2">
-                <StatusChip tone={RECIPE_TONE[detail.recipe.status] ?? "neutral"}>{detail.recipe.status}</StatusChip>
+                <StatusChip tone={RECIPE_TONE[detail.recipe.status] ?? "neutral"}>
+                  {detail.recipe.status}
+                </StatusChip>
                 <span className="text-muted-foreground">
-                  {detail.recipe.code} · v{detail.recipe.version} · yields {Number(detail.recipe.yield_quantity)}
+                  {detail.recipe.code} · v{detail.recipe.version} · yields{" "}
+                  {Number(detail.recipe.yield_quantity)}
                 </span>
               </div>
 
@@ -524,13 +635,18 @@ function ProductRecipeCentre() {
                   <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
                     {(detail.cost?.lines ?? []).map((l: any, i: number) => (
                       <li key={i} className="flex justify-between">
-                        <span>{l.label ?? l.name ?? l.component_kind}</span>
-                        <span>{money(l.cost ?? l.total_cost, detail.recipe.currency ?? "TZS")}</span>
+                        <span>{l.name ?? l.label ?? l.component_kind}</span>
+                        <span>{money(l.lineCost, detail.recipe.currency ?? "TZS")}</span>
                       </li>
                     ))}
                     <li className="flex justify-between border-t pt-1 font-medium text-foreground">
                       <span>Total</span>
-                      <span>{money(detail.cost?.totalCost ?? detail.recipe.computed_cost, detail.recipe.currency ?? "TZS")}</span>
+                      <span>
+                        {money(
+                          detail.cost?.totalCost ?? detail.recipe.computed_cost,
+                          detail.recipe.currency ?? "TZS",
+                        )}
+                      </span>
                     </li>
                   </ul>
                 )}
@@ -541,7 +657,9 @@ function ProductRecipeCentre() {
                 <ul className="mt-1 space-y-1 text-xs text-muted-foreground">
                   {(detail.versions ?? []).map((v: any) => (
                     <li key={v.id} className="flex justify-between">
-                      <span>v{v.version} · {v.status}</span>
+                      <span>
+                        v{v.version} · {v.status}
+                      </span>
                       <span>{money(v.computed_cost, detail.recipe.currency ?? "TZS")}</span>
                     </li>
                   ))}
@@ -549,6 +667,16 @@ function ProductRecipeCentre() {
               </div>
 
               <div className="flex flex-wrap gap-2">
+                {canManageRecipes ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => recomputeCostMutation.mutate(detail.recipe.id)}
+                    disabled={recomputeCostMutation.isPending}
+                  >
+                    Recompute cost
+                  </Button>
+                ) : null}
                 {canManageRecipes ? (
                   <Button
                     size="sm"
@@ -576,7 +704,9 @@ function ProductRecipeCentre() {
                 {detail.recipe.status === "draft" ? (
                   <Button
                     size="sm"
-                    onClick={() => statusMutation.mutate({ recipeId: detail.recipe.id, status: "active" })}
+                    onClick={() =>
+                      statusMutation.mutate({ recipeId: detail.recipe.id, status: "active" })
+                    }
                     disabled={statusMutation.isPending}
                   >
                     Publish version
@@ -595,7 +725,9 @@ function ProductRecipeCentre() {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => statusMutation.mutate({ recipeId: detail.recipe.id, status: "archived" })}
+                    onClick={() =>
+                      statusMutation.mutate({ recipeId: detail.recipe.id, status: "archived" })
+                    }
                     disabled={statusMutation.isPending}
                   >
                     Archive
@@ -615,7 +747,12 @@ function ProductRecipeCentre() {
           </DialogHeader>
           <div className="space-y-2">
             <Label htmlFor="batches">Batches</Label>
-            <Input id="batches" value={batches} onChange={(e) => setBatches(e.target.value)} inputMode="decimal" />
+            <Input
+              id="batches"
+              value={batches}
+              onChange={(e) => setBatches(e.target.value)}
+              inputMode="decimal"
+            />
             <p className="text-xs text-muted-foreground">
               Inputs are exploded from the recipe now; stock moves when the run is completed.
             </p>
@@ -691,14 +828,19 @@ function ProductRecipeCentre() {
                       size="sm"
                       variant="outline"
                       className="h-9"
-                      onClick={() => { setEditingVariant(null); setVariantSheetOpen(true); }}
+                      onClick={() => {
+                        setEditingVariant(null);
+                        setVariantSheetOpen(true);
+                      }}
                     >
                       <Plus className="mr-1 h-3.5 w-3.5" /> Variant
                     </Button>
                   ) : null}
                 </div>
                 {((productDetail.data as any).variants ?? []).length === 0 ? (
-                  <p className="mt-2 text-xs text-muted-foreground">No variants — this product sells as-is.</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    No variants — this product sells as-is.
+                  </p>
                 ) : (
                   <ul className="mt-2 divide-y text-xs">
                     {(productDetail.data as any).variants.map((v: any) => (
@@ -707,7 +849,10 @@ function ProductRecipeCentre() {
                           type="button"
                           className="text-left hover:underline disabled:no-underline"
                           disabled={!canManageProducts}
-                          onClick={() => { setEditingVariant(v); setVariantSheetOpen(true); }}
+                          onClick={() => {
+                            setEditingVariant(v);
+                            setVariantSheetOpen(true);
+                          }}
                         >
                           {v.name}
                         </button>
@@ -725,7 +870,9 @@ function ProductRecipeCentre() {
               <AttachModifierGroupsPanel
                 tenantId={tenantId!}
                 productId={(productDetail.data as any).product.id}
-                attachedGroupIds={((productDetail.data as any).modifierGroups ?? []).map((g: any) => g.group_id)}
+                attachedGroupIds={((productDetail.data as any).modifierGroups ?? []).map(
+                  (g: any) => g.group_id,
+                )}
               />
             </div>
           ) : null}
@@ -747,7 +894,10 @@ function ProductRecipeCentre() {
           open={variantSheetOpen}
           onOpenChange={(o) => {
             setVariantSheetOpen(o);
-            if (!o) void qc.invalidateQueries({ queryKey: ["restaurant.product", tenantId, openProductId] });
+            if (!o)
+              void qc.invalidateQueries({
+                queryKey: ["restaurant.product", tenantId, openProductId],
+              });
           }}
           tenantId={tenantId ?? ""}
           productId={openProductId}
@@ -779,7 +929,6 @@ function ProductRecipeCentre() {
           modifier={modifierSheetOpen.modifier}
         />
       ) : null}
-
     </div>
   );
 }

@@ -208,7 +208,9 @@ export function PriceListsTab({ tenantId }: { tenantId: string }) {
                   <p className="truncate text-xs text-muted-foreground">
                     {l.currency} · priority {l.priority} ·{" "}
                     {new Date(l.effective_from).toLocaleDateString()}
-                    {l.effective_to ? ` → ${new Date(l.effective_to).toLocaleDateString()}` : " → open"}
+                    {l.effective_to
+                      ? ` → ${new Date(l.effective_to).toLocaleDateString()}`
+                      : " → open"}
                   </p>
                 </div>
               </li>

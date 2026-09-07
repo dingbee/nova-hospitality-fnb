@@ -37,8 +37,8 @@ export function NovaShell({ children }: { children: ReactNode }) {
   );
 
   const groups = useMemo(
-    () => visibleGroups(principal?.permissions ?? []),
-    [principal?.permissions],
+    () => visibleGroups(principal?.permissions ?? [], principal?.commercialAdmin ?? false),
+    [principal?.permissions, principal?.commercialAdmin],
   );
   const current = activeItem(pathname);
   const currentGroup = groupOf(current);

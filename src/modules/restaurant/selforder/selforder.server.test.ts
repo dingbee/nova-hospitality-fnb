@@ -441,6 +441,7 @@ const TABLE_1: GuestTableContext = {
   propertyId: "prop-1",
   locationId: "loc-1",
   currency: "USD",
+  serviceRequestCooldownSeconds: 300,
 };
 
 const TABLE_2: GuestTableContext = { ...TABLE_1, tableId: "table-2", tableCode: "T2" };

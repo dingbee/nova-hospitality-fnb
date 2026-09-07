@@ -23,18 +23,82 @@ const { runMenuIntelligenceReasoning } = await import("./menuReasoning.server");
 
 const TENANT = "11111111-1111-1111-1111-111111111111";
 const OWNER = "user-owner";
+const PLAN_CORE = "plan-core";
+const CAP_MENU_INT = "cap-menu-intelligence";
 
-function makeFakeSupabase() {
+/**
+ * P01: runMenuIntelligenceReasoning now gates on commercial entitlement/
+ * quota before ever calling the provider. These commercial-catalogue rows
+ * are the minimum an entitled, unmetered CORE tenant needs — no quota
+ * definition is seeded, so usage is unmetered/always-allowed here; the
+ * quota-blocking path is covered separately below.
+ */
+function commercialCatalogueRows(quotaDefinitions: any[] = []) {
+  return {
+    commercial_plans: [{ id: PLAN_CORE, code: "core" }],
+    commercial_capabilities: [{ id: CAP_MENU_INT, code: "menu_intelligence", status: "active" }],
+    commercial_plan_entitlements: [
+      {
+        id: "pe-1",
+        plan_id: PLAN_CORE,
+        capability_id: CAP_MENU_INT,
+        state: "limited",
+        config: {},
+        effective_from: "2020-01-01T00:00:00.000Z",
+        effective_until: null,
+      },
+    ],
+    commercial_quota_definitions: quotaDefinitions,
+  };
+}
+
+function makeFakeSupabase(
+  overrides: { commercial?: Record<string, any[]>; usageCounters?: any[] } = {},
+) {
+  const commercial = { ...commercialCatalogueRows(), ...overrides.commercial };
+  const usageCounters: any[] = overrides.usageCounters ?? [];
+
+  function parseOrExpr(expr: string) {
+    const clauses = expr.split(",");
+    return (r: any) =>
+      clauses.some((c) => {
+        const [field, op, ...rest] = c.split(".");
+        const raw = rest.join(".");
+        const rowVal = r[field!] ?? null;
+        if (op === "is") return raw === "null" ? rowVal === null : String(rowVal) === raw;
+        if (op === "eq") return rowVal !== null && String(rowVal) === raw;
+        if (op === "gt") return rowVal !== null && String(rowVal) > raw;
+        if (op === "gte") return rowVal !== null && String(rowVal) >= raw;
+        if (op === "lt") return rowVal !== null && String(rowVal) < raw;
+        if (op === "lte") return rowVal !== null && String(rowVal) <= raw;
+        return false;
+      });
+  }
+
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
+    let op: "select" | "insert" | "update" = "select";
+    let payload: any;
     const api: any = {
       select: () => api,
       eq(col: string, val: unknown) {
         filters.push((r) => r[col] === val);
         return api;
       },
+      is(col: string, val: unknown) {
+        filters.push((r) => (r[col] ?? null) === val);
+        return api;
+      },
       gte(col: string, val: string) {
         filters.push((r) => r[col] >= val);
+        return api;
+      },
+      lte(col: string, val: string) {
+        filters.push((r) => r[col] <= val);
+        return api;
+      },
+      or(expr: string) {
+        filters.push(parseOrExpr(expr));
         return api;
       },
       not(col: string, _kind: string, val: unknown) {
@@ -48,14 +112,35 @@ function makeFakeSupabase() {
       },
       order: () => api,
       limit: () => api,
-      insert: () => api,
+      insert(row: any) {
+        op = "insert";
+        payload = row;
+        return api;
+      },
+      update(patch: any) {
+        op = "update";
+        payload = patch;
+        return api;
+      },
       maybeSingle: async () => {
         const rows = source(table).filter((r: any) => filters.every((f) => f(r)));
         return { data: rows[0] ?? null, error: null };
       },
-      single: async () => ({ data: null, error: { message: "not implemented in fake" } }),
-      then: (resolve: (v: { data: any[]; error: any }) => unknown) => {
+      single: async () => {
         const rows = source(table).filter((r: any) => filters.every((f) => f(r)));
+        return { data: rows[0] ?? null, error: rows[0] ? null : { message: "not found" } };
+      },
+      then: (resolve: (v: { data: any; error: any }) => unknown) => {
+        if (op === "insert") {
+          const stored = { id: `${table}-${Date.now()}`, ...payload };
+          source(table).push(stored);
+          return resolve({ data: stored, error: null });
+        }
+        const rows = source(table).filter((r: any) => filters.every((f) => f(r)));
+        if (op === "update") {
+          for (const r of rows) Object.assign(r, payload);
+          return resolve({ data: rows[0] ?? null, error: null });
+        }
         return resolve({ data: rows, error: null });
       },
     };
@@ -63,6 +148,8 @@ function makeFakeSupabase() {
   }
 
   function source(table: string): any[] {
+    if (table === "commercial_usage_counters") return usageCounters;
+    if (table in commercial) return commercial[table]!;
     switch (table) {
       case "restaurant_tenants":
         return [
@@ -272,5 +359,77 @@ describe("runMenuIntelligenceReasoning", () => {
       "gemini",
       expect.objectContaining({ user: "What is selling?" }),
     );
+  });
+
+  describe("P01 commercial gate", () => {
+    it("blocks the provider call entirely when menu_intelligence is not entitled on the tenant's plan", async () => {
+      const sb = makeFakeSupabase({ commercial: { commercial_plan_entitlements: [] } });
+      const outcome = await runMenuIntelligenceReasoning(sb, OWNER, baseInput());
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) expect(outcome.reason).toBe("commercial_blocked");
+      expect(callReasoningProviderMock).not.toHaveBeenCalled();
+    });
+
+    it("blocks the provider call when the tenant's Menu Intelligence quota is already exhausted", async () => {
+      const now = new Date();
+      const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const periodEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+      const sb = makeFakeSupabase({
+        commercial: {
+          commercial_quota_definitions: [
+            {
+              id: "q-1",
+              code: "menu_intelligence_runs_monthly",
+              capability_id: CAP_MENU_INT,
+              plan_id: PLAN_CORE,
+              programme_id: null,
+              unit: "intelligence_runs",
+              limit_value: 1,
+              period: "month",
+              scope: "tenant",
+              warning_threshold_pct: 80,
+              near_limit_threshold_pct: 95,
+              overage_behavior: "block",
+              active: true,
+              effective_from: "2020-01-01T00:00:00.000Z",
+              effective_until: null,
+            },
+          ],
+        },
+        usageCounters: [
+          {
+            id: "uc-1",
+            tenant_id: TENANT,
+            property_id: null,
+            quota_definition_id: "q-1",
+            period_start: periodStart.toISOString(),
+            period_end: periodEnd.toISOString(),
+            used_value: 1,
+            state: "BLOCKED",
+          },
+        ],
+      });
+      const outcome = await runMenuIntelligenceReasoning(sb, OWNER, baseInput());
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) {
+        expect(outcome.reason).toBe("commercial_blocked");
+        expect(outcome.detail).toMatch(/quota exceeded/i);
+      }
+      expect(callReasoningProviderMock).not.toHaveBeenCalled();
+    });
+
+    it("still succeeds and records real usage once the commercial gate is passed (unmetered by default)", async () => {
+      callReasoningProviderMock.mockResolvedValueOnce({
+        unavailable: false,
+        content: JSON.stringify(VALID_RESULT),
+        latencyMs: 500,
+        model: "gpt-4o-mini",
+        provider: "openai",
+        inputTokens: 1200,
+        outputTokens: 300,
+      });
+      const outcome = await runMenuIntelligenceReasoning(makeFakeSupabase(), OWNER, baseInput());
+      expect(outcome.ok).toBe(true);
+    });
   });
 });

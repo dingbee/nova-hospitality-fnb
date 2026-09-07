@@ -35,6 +35,22 @@ const getPurchasingIntelligenceMock = vi.fn();
 vi.mock("../intelligence/purchasing.server", () => ({
   getPurchasingIntelligence: (...args: unknown[]) => getPurchasingIntelligenceMock(...args),
 }));
+// P06 — the three P05 Pro-tier engines. Default to a rejection (mirrors
+// CommercialEntitlementError for a Core tenant) so every pre-existing test
+// in this file keeps exercising the exact pre-P06 board unless a test
+// explicitly opts into P05 data via mockResolvedValue.
+const getDemandIntelligenceMock = vi.fn();
+vi.mock("../intelligence/demand.server", () => ({
+  getDemandIntelligence: (...args: unknown[]) => getDemandIntelligenceMock(...args),
+}));
+const getRevenueIntelligenceMock = vi.fn();
+vi.mock("../intelligence/revenue.server", () => ({
+  getRevenueIntelligence: (...args: unknown[]) => getRevenueIntelligenceMock(...args),
+}));
+const getMultiLocationIntelligenceMock = vi.fn();
+vi.mock("../intelligence/multiLocation.server", () => ({
+  getMultiLocationIntelligence: (...args: unknown[]) => getMultiLocationIntelligenceMock(...args),
+}));
 
 const { runRestaurantDecisionPass, getRestaurantDecisionBoard } =
   await import("./decisions.server");
@@ -103,29 +119,54 @@ function stubEngines(atRisk: any[]) {
   getInventoryIntelligenceMock.mockResolvedValue(inventoryWith(atRisk));
   getKitchenIntelligenceMock.mockResolvedValue(EMPTY_KITCHEN);
   getPurchasingIntelligenceMock.mockResolvedValue(EMPTY_PURCHASING);
+  // P06 — a Core tenant by default: every P05 engine rejects exactly like
+  // assertEntitled's CommercialEntitlementError would, and the board must
+  // still produce the same findings/decisions every other test expects.
+  const notEntitled = () => Promise.reject(new Error("not entitled"));
+  getDemandIntelligenceMock.mockImplementation(notEntitled);
+  getRevenueIntelligenceMock.mockImplementation(notEntitled);
+  getMultiLocationIntelligenceMock.mockImplementation(notEntitled);
 }
 
 /** A minimal, filter-precise fake — every .eq() actually narrows the result, and update() only touches matching rows. */
-function makeFakeSb(members: Array<{ tenant_id: string; user_id: string; role: string }>) {
+function makeFakeSb(
+  members: Array<{ tenant_id: string; user_id: string; role: string }>,
+  extra?: {
+    properties?: Array<{ id: string; tenant_id: string; created_at: string }>;
+    commercial?: Record<string, any[]>;
+  },
+) {
   const decisions = new Map<string, any>();
   const plans: any[] = [];
+  const properties = extra?.properties ?? [];
+  const commercial = extra?.commercial ?? {};
   let seq = 0;
 
   function from(table: string) {
     const filters: Record<string, unknown> = {};
+    const inFilters: Record<string, unknown[]> = {};
     let mode: "select" | "update" | "insert" = "select";
     let patch: any;
     let insertPayload: any;
+    let wantCount = false;
 
     const api: any = {
-      select: () => api,
+      select: (_cols?: string, opts?: { count?: string }) => {
+        if (opts?.count) wantCount = true;
+        return api;
+      },
       eq: (col: string, val: unknown) => {
         filters[col] = val;
         return api;
       },
       order: () => api,
       limit: () => api,
-      in: () => api,
+      in: (col: string, vals: unknown[]) => {
+        inFilters[col] = vals;
+        return api;
+      },
+      lte: () => api,
+      or: () => api,
       update: (p: any) => {
         mode = "update";
         patch = p;
@@ -147,6 +188,23 @@ function makeFakeSb(members: Array<{ tenant_id: string; user_id: string; role: s
           (m) => m.tenant_id === filters.tenant_id && m.user_id === filters.user_id,
         );
         return { data: rows, error: null };
+      }
+      if (table === "restaurant_properties") {
+        const rows = properties.filter((p) =>
+          Object.entries(filters).every(([k, v]) => (p as any)[k] === v),
+        );
+        if (wantCount) return { data: rows, count: rows.length, error: null };
+        return { data: single ? (rows[0] ?? null) : rows, error: null };
+      }
+      if (table in commercial) {
+        const rows = commercial[table]!.filter((r) => {
+          const eqOk = Object.entries(filters).every(([k, v]) => r[k] === v);
+          const inOk = Object.entries(inFilters).every(([k, vals]) =>
+            (vals as unknown[]).includes(r[k]),
+          );
+          return eqOk && inOk;
+        });
+        return { data: single ? (rows[0] ?? null) : rows, error: null };
       }
       if (table === "intelligence_plans") {
         if (mode === "insert") {
@@ -786,5 +844,271 @@ describe("P1 property scope — Decisions Board access matrix", () => {
         windowDays: 30,
       } as any),
     ).rejects.toThrow(/do not belong to this restaurant tenant/);
+  });
+});
+
+describe("getRestaurantDecisionBoard — P01: multi_property_command commercial gate", () => {
+  const PROPERTY_1 = "prop-1111-1111-1111-111111111111";
+  const PROPERTY_2 = "prop-2222-2222-2222-222222222222";
+  const OWNER = "22222222-2222-2222-2222-222222222222";
+  const TENANT_WIDE_OWNER = { tenant_id: TENANT_A, user_id: OWNER, role: "owner" };
+
+  function commercialFixture(entitled: boolean) {
+    return {
+      commercial_plans: [{ id: "plan-core", code: "core" }],
+      commercial_capabilities: [
+        { id: "cap-mpc", code: "multi_property_command", status: "active" },
+      ],
+      commercial_plan_entitlements: entitled
+        ? [
+            {
+              plan_id: "plan-core",
+              capability_id: "cap-mpc",
+              state: "limited",
+              config: {},
+              effective_from: new Date(Date.now() - 86_400_000).toISOString(),
+              effective_until: null,
+            },
+          ]
+        : [],
+    };
+  }
+
+  it("a tenant-wide owner aggregating across a tenant with only ONE property is never gated", async () => {
+    stubEngines([]);
+    const fake = makeFakeSb([TENANT_WIDE_OWNER], {
+      properties: [{ id: PROPERTY_1, tenant_id: TENANT_A, created_at: "2024-01-01" }],
+      commercial: commercialFixture(false),
+    });
+
+    // No throw, and it ran unscoped (aggregate over the tenant's one property).
+    await expect(
+      getRestaurantDecisionBoard(fake.sb, OWNER, { tenantId: TENANT_A, windowDays: 30 } as any),
+    ).resolves.toBeTruthy();
+    expect(getMenuIntelligenceMock).toHaveBeenCalledWith(
+      fake.sb,
+      OWNER,
+      expect.objectContaining({ propertyId: undefined }),
+    );
+  });
+
+  it("SECURITY: a tenant-wide owner on a plan NOT entitled to multi_property_command, with TWO properties, is silently narrowed to the first property — never aggregated across both", async () => {
+    stubEngines([]);
+    const fake = makeFakeSb([TENANT_WIDE_OWNER], {
+      properties: [
+        { id: PROPERTY_1, tenant_id: TENANT_A, created_at: "2024-01-01" },
+        { id: PROPERTY_2, tenant_id: TENANT_A, created_at: "2024-02-01" },
+      ],
+      commercial: commercialFixture(false),
+    });
+
+    await getRestaurantDecisionBoard(fake.sb, OWNER, { tenantId: TENANT_A, windowDays: 30 } as any);
+
+    expect(getMenuIntelligenceMock).toHaveBeenCalledWith(
+      fake.sb,
+      OWNER,
+      expect.objectContaining({ propertyId: PROPERTY_1 }),
+    );
+  });
+
+  it("an entitled tenant-wide owner with TWO properties is permitted full cross-property aggregation", async () => {
+    stubEngines([]);
+    const fake = makeFakeSb([TENANT_WIDE_OWNER], {
+      properties: [
+        { id: PROPERTY_1, tenant_id: TENANT_A, created_at: "2024-01-01" },
+        { id: PROPERTY_2, tenant_id: TENANT_A, created_at: "2024-02-01" },
+      ],
+      commercial: commercialFixture(true),
+    });
+
+    await getRestaurantDecisionBoard(fake.sb, OWNER, { tenantId: TENANT_A, windowDays: 30 } as any);
+
+    expect(getMenuIntelligenceMock).toHaveBeenCalledWith(
+      fake.sb,
+      OWNER,
+      expect.objectContaining({ propertyId: undefined }),
+    );
+  });
+});
+
+describe("P06 — decision board layers P05 Pro intelligence without breaking the Core board", () => {
+  it("a Core tenant (every P05 engine not entitled) still gets exactly the pre-P06 board", async () => {
+    stubEngines([SHORTAGE_ROW]);
+    const fake = makeFakeSb([OWNER_MEMBER]);
+
+    const board = await getRestaurantDecisionBoard(fake.sb, MANAGER, {
+      tenantId: TENANT_A,
+      windowDays: 30,
+    } as any);
+
+    expect(board.findings.some((f) => f.kind === "inventory_shortage")).toBe(true);
+    expect(board.findings.some((f) => f.kind === "demand_shift")).toBe(false);
+    expect(board.findings.some((f) => f.kind === "revenue_underperformance")).toBe(false);
+  });
+
+  it("a Pro tenant (P05 engines entitled) gets demand_shift/revenue_underperformance layered on top of the same base findings", async () => {
+    stubEngines([SHORTAGE_ROW]);
+    getDemandIntelligenceMock.mockResolvedValue({
+      generatedAt: new Date().toISOString(),
+      windowDays: 30,
+      currency: "USD",
+      sufficiency: "SUFFICIENT_DATA",
+      sufficiencyReasons: [],
+      totalOrders: 40,
+      totalCovers: 80,
+      previousTotalOrders: 30,
+      orderTrendPercent: 33,
+      byDayOfWeek: [],
+      byServicePeriod: [],
+      topItems: [],
+      emergingItems: [
+        {
+          menuItemId: ITEM_ID,
+          name: "Grilled Prawns",
+          quantitySold: 20,
+          previousQuantitySold: 8,
+          trendPercent: 150,
+          trend: "emerging",
+        },
+      ],
+      decliningItems: [],
+      insights: [],
+    });
+    getRevenueIntelligenceMock.mockResolvedValue({
+      generatedAt: new Date().toISOString(),
+      windowDays: 30,
+      currency: "USD",
+      sufficiency: "SUFFICIENT_DATA",
+      sufficiencyReasons: [],
+      totalRevenue: 500000,
+      previousRevenue: 480000,
+      revenueTrendPercent: 4,
+      totalOrders: 40,
+      averageOrderValue: 12500,
+      series: [],
+      byServicePeriod: [],
+      topContributors: [],
+      underperformers: [],
+      byOutlet: [],
+      marginDataAvailable: false,
+      anomalies: [
+        {
+          key: "revenue.outlet_underperformance.loc-weak",
+          severity: "medium",
+          title: "Weak Outlet is materially underperforming the group average",
+          detail: "USD 5,000 versus a group average of USD 47,600.",
+        },
+      ],
+      insights: [],
+    });
+    getMultiLocationIntelligenceMock.mockResolvedValue({
+      generatedAt: new Date().toISOString(),
+      windowDays: 30,
+      currency: "USD",
+      locations: [],
+      bestPerforming: null,
+      worstPerforming: null,
+      insights: [],
+    });
+    const fake = makeFakeSb([OWNER_MEMBER]);
+
+    const board = await getRestaurantDecisionBoard(fake.sb, MANAGER, {
+      tenantId: TENANT_A,
+      windowDays: 30,
+    } as any);
+
+    expect(board.findings.some((f) => f.kind === "inventory_shortage")).toBe(true);
+    expect(board.findings.some((f) => f.kind === "demand_shift")).toBe(true);
+    expect(board.findings.some((f) => f.kind === "revenue_underperformance")).toBe(true);
+    const demandDecision = board.candidates.find((c) => c.finding.kind === "demand_shift");
+    expect(demandDecision?.decision.recommendedOptionKey).toBeTruthy();
+  });
+
+  it("a genuine engine failure (not just non-entitlement) is still swallowed — the board never throws because of an optional P05 enhancement", async () => {
+    stubEngines([]);
+    getDemandIntelligenceMock.mockRejectedValue(new Error("unexpected engine failure"));
+    getRevenueIntelligenceMock.mockRejectedValue(new Error("unexpected engine failure"));
+    getMultiLocationIntelligenceMock.mockRejectedValue(new Error("unexpected engine failure"));
+    const fake = makeFakeSb([OWNER_MEMBER]);
+
+    await expect(
+      getRestaurantDecisionBoard(fake.sb, MANAGER, { tenantId: TENANT_A, windowDays: 30 } as any),
+    ).resolves.toBeTruthy();
+  });
+
+  it("runRestaurantDecisionPass also persists a demand_shift decision when P05 data is present", async () => {
+    stubEngines([]);
+    getDemandIntelligenceMock.mockResolvedValue({
+      generatedAt: new Date().toISOString(),
+      windowDays: 30,
+      currency: "USD",
+      sufficiency: "SUFFICIENT_DATA",
+      sufficiencyReasons: [],
+      totalOrders: 40,
+      totalCovers: 80,
+      previousTotalOrders: 30,
+      orderTrendPercent: 33,
+      byDayOfWeek: [],
+      byServicePeriod: [],
+      topItems: [],
+      emergingItems: [
+        {
+          menuItemId: ITEM_ID,
+          name: "Grilled Prawns",
+          quantitySold: 20,
+          previousQuantitySold: 8,
+          trendPercent: 150,
+          trend: "emerging",
+        },
+      ],
+      decliningItems: [],
+      insights: [],
+    });
+    getRevenueIntelligenceMock.mockResolvedValue({
+      generatedAt: new Date().toISOString(),
+      windowDays: 30,
+      currency: "USD",
+      sufficiency: "SUFFICIENT_DATA",
+      sufficiencyReasons: [],
+      totalRevenue: 500000,
+      previousRevenue: 480000,
+      revenueTrendPercent: 4,
+      totalOrders: 40,
+      averageOrderValue: 12500,
+      series: [],
+      byServicePeriod: [],
+      topContributors: [],
+      underperformers: [],
+      byOutlet: [],
+      marginDataAvailable: false,
+      anomalies: [],
+      insights: [],
+    });
+    getMultiLocationIntelligenceMock.mockResolvedValue({
+      generatedAt: new Date().toISOString(),
+      windowDays: 30,
+      currency: "USD",
+      locations: [],
+      bestPerforming: null,
+      worstPerforming: null,
+      insights: [],
+    });
+    const fake = makeFakeSb([OWNER_MEMBER]);
+
+    const result = await runRestaurantDecisionPass(fake.sb, MANAGER, {
+      tenantId: TENANT_A,
+      windowDays: 30,
+      persist: true,
+    });
+
+    expect(result.decisionsRecorded).toBe(1);
+    const decision = Array.from(fake.decisions.values())[0];
+    expect(decision.context.finding.kind).toBe("demand_shift");
+    // Level 0/informational: the recommended option is the existing
+    // restaurant.no_change sentinel, never a fabricated executable action.
+    const recommendedOption = decision.options.find(
+      (o: any) => o.option.key === decision.recommended_option_key,
+    );
+    expect(recommendedOption?.option.actionType).toBe("restaurant.no_change");
   });
 });

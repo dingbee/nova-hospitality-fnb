@@ -16,6 +16,7 @@
  * from whatever the model said about it.
  */
 import { PRODUCT } from "@/config/product";
+import { assertAiCapability, recordAiUsage } from "@/modules/commercial/ai-governance.server";
 import { guestMenu } from "./selforder.server";
 import {
   buildNovaCatalogContext,
@@ -32,7 +33,10 @@ type Sb = any;
 
 type AiTurn = { role: "user" | "assistant"; content: string };
 type AiCallOptions = { system: string; user: string; history?: AiTurn[]; jsonMode?: boolean };
-type AiCaller = (opts: AiCallOptions) => Promise<{ content: string }>;
+/** model/inputTokens/outputTokens are optional so existing test fakes (which only ever set `content`) remain valid — recordAiUsage below tolerates their absence. */
+type AiCaller = (
+  opts: AiCallOptions,
+) => Promise<{ content: string; model?: string; inputTokens?: number; outputTokens?: number }>;
 
 /**
  * The real transport, loaded lazily so a test can inject a fake one instead
@@ -47,11 +51,18 @@ type AiCaller = (opts: AiCallOptions) => Promise<{ content: string }>;
  * second, silently-incompatible path — the AiCaller interface (and every
  * caller of it) is unchanged.
  */
-async function defaultAiCaller(opts: AiCallOptions): Promise<{ content: string }> {
+async function defaultAiCaller(
+  opts: AiCallOptions,
+): Promise<{ content: string; model?: string; inputTokens?: number; outputTokens?: number }> {
   const { callReasoningProvider } = await import("@/lib/reasoning-provider.server");
   const result = await callReasoningProvider("openai", opts);
   if (result.unavailable) throw new Error(result.reason);
-  return { content: result.content };
+  return {
+    content: result.content,
+    model: result.model,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+  };
 }
 
 const NOVA_SYSTEM_PROMPT = `You are ${PRODUCT.aiName}, a friendly restaurant ordering assistant helping a guest at their table decide what to order and, when they ask, preparing a proposed order for them to review.
@@ -165,22 +176,53 @@ export async function askNova(
   let validated: ReturnType<typeof validateNovaResponse> = null;
   let rawOperations: unknown = [];
   try {
+    // P01 commercial gate: entitlement (is "ai_concierge" available on this
+    // tenant's plan?) AND quota (if an admin configured one for this
+    // capability) — checked BEFORE the provider is ever called, so a
+    // commercially blocked tenant's guests never reach the model, and no
+    // AI cost is incurred on a request that will be refused. A denial here
+    // throws, which this function already treats identically to "AI not
+    // configured" — the guest gets the same graceful fallback either way,
+    // never a technical error and never a hint that this is a billing
+    // matter.
+    await assertAiCapability(sb, menu.table.tenantId, "ai_concierge", menu.table.propertyId);
+
     const context = buildNovaCatalogContext({ items: novaItems, categories });
-    const { content } = await aiCaller({
+    const result = await aiCaller({
       system:
         NOVA_SYSTEM_PROMPT + JSON.stringify(basket) + "\n\nMENU JSON:\n" + JSON.stringify(context),
       user: input.message,
       history: (input.history ?? []).slice(-6),
       jsonMode: true,
     });
+
+    // Real usage numbers are recorded once the provider has actually
+    // responded, regardless of what downstream validation later decides
+    // about the content — cost was incurred either way. Never surfaced to
+    // the guest; visible only in the Commercial Admin Dashboard's Usage &
+    // Quotas / AI cost views. Token/model fields are omitted (not zeroed)
+    // when a test double doesn't supply them.
+    await recordAiUsage(sb, {
+      tenantId: menu.table.tenantId,
+      propertyId: menu.table.propertyId,
+      userId: null,
+      capabilityCode: "ai_concierge",
+      model: result.model ?? "unknown",
+      provider: "openai",
+      workloadType: "ai_concierge.reply",
+      inputUsage: result.inputTokens,
+      outputUsage: result.outputTokens,
+    });
+
     const { parseAiJson } = await import("@/lib/ai-gateway.server");
-    const parsed = parseAiJson<{ operations?: unknown }>(content);
+    const parsed = parseAiJson<{ operations?: unknown }>(result.content);
     validated = validateNovaResponse(parsed, new Set(itemById.keys()));
     rawOperations = parsed && typeof parsed === "object" ? (parsed as any).operations : [];
   } catch {
-    // AI not configured, network failure, rate limit, malformed response —
-    // all degrade the same way: a graceful fallback, never a technical
-    // error, and never a reply presented as if NOVA answered.
+    // AI not configured, network failure, rate limit, malformed response,
+    // commercial denial — all degrade the same way: a graceful fallback,
+    // never a technical error, and never a reply presented as if NOVA
+    // answered.
     validated = null;
   }
 

@@ -8,6 +8,7 @@ import {
   upsertInventoryUnitSchema,
   upsertProductCategorySchema,
   upsertPropertySchema,
+  upsertServiceRequestSettingsSchema,
 } from "./contracts";
 
 export const listRestaurantMasterDataFn = createServerFn({ method: "POST" })
@@ -32,6 +33,14 @@ export const upsertRestaurantBusinessProfileFn = createServerFn({ method: "POST"
   .handler(async ({ data, context }) => {
     const mod = await import("./masterdata.server");
     return mod.upsertBusinessProfile(context.supabase, context.userId, data);
+  });
+
+export const upsertServiceRequestSettingsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => upsertServiceRequestSettingsSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./masterdata.server");
+    return mod.upsertServiceRequestSettings(context.supabase, context.userId, data);
   });
 
 export const upsertRestaurantInventoryUnitFn = createServerFn({ method: "POST" })

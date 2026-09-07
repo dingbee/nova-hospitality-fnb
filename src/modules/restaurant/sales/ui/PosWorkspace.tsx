@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- server function rows are untyped at this boundary. */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -16,10 +16,13 @@ import {
   Send,
   Trash2,
   Users,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { SectionCard } from "@/components/os/SectionCard";
 import { EmptyState } from "@/components/os/EmptyState";
@@ -49,7 +52,11 @@ import {
   releaseRestaurantTableFn,
   requestRestaurantBillFn,
 } from "../bill.functions";
-import { acknowledgeServiceRequestFn } from "@/modules/restaurant/service-requests/service-requests.functions";
+import {
+  acknowledgeServiceRequestFn,
+  resolveServiceRequestFn,
+} from "@/modules/restaurant/service-requests/service-requests.functions";
+import { useNewlyActiveKeys, useStaffAttentionSignal } from "@/hooks/use-attention-signal";
 import type { BillSplitMode } from "../bill.contracts";
 import { PosItemDialog } from "./PosItemDialog";
 import { PosBillDialog } from "./PosBillDialog";
@@ -122,6 +129,10 @@ export function PosWorkspace({
 
   const [orderId, setOrderId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
+  // Below lg, Bill and Menu can't both get enough height to stay usable (see
+  // the tab switcher below) — this picks which one is currently shown there.
+  // Irrelevant at lg+, where both render side by side regardless of this value.
+  const [mobileRightTab, setMobileRightTab] = useState<"bill" | "menu">("menu");
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [catalogSearch, setCatalogSearch] = useState("");
   const [pickerItem, setPickerItem] = useState<any | null>(null);
@@ -155,13 +166,57 @@ export function PosWorkspace({
   const releaseTableFn = useServerFn(releaseRestaurantTableFn);
   const refundFn = useServerFn(refundRestaurantPaymentFn);
   const acknowledgeServiceRequestFnCall = useServerFn(acknowledgeServiceRequestFn);
+  const resolveServiceRequestFnCall = useServerFn(resolveServiceRequestFn);
 
   const board = useQuery({
     queryKey: ["restaurant.pos.board", tenantId],
     queryFn: () => boardFn({ data: { tenantId: tenantId! } }),
     enabled: Boolean(tenantId),
-    refetchInterval: 20_000,
+    refetchInterval: 8_000,
   });
+
+  // Staff attention signal (visual badge is already authoritative via
+  // board.data below; this only adds sound/vibration for genuinely NEW
+  // actionable items since this screen was opened — never for whatever was
+  // already outstanding on load, and never twice for the same item across
+  // repeated polls). Reuses this same board poll rather than a second one.
+  const { muted, setMuted, unlocked, notify } = useStaffAttentionSignal();
+  const attentionKeys = useMemo(() => {
+    const tables = ((board.data as any)?.tables ?? []) as any[];
+    const keys: string[] = [];
+    for (const t of tables) {
+      if (t.serviceRequest?.status === "requested")
+        keys.push(`service-request:${t.serviceRequest.id}`);
+      if (t.order) {
+        const life = deriveLifecycle({
+          order: t.order,
+          items: t.order.items ?? [],
+          tickets: t.order.tickets ?? [],
+        });
+        if (life.billRequestedAt && !life.billPresentedAt)
+          keys.push(`bill-requested:${t.order.id}`);
+        if (life.unsent > 0) keys.push(`unsent-items:${t.order.id}`);
+      }
+    }
+    return keys;
+  }, [board.data]);
+  const newlyActiveAttention = useNewlyActiveKeys(attentionKeys);
+
+  useEffect(() => {
+    if (newlyActiveAttention.length === 0) return;
+    notify();
+    const hasServiceRequest = newlyActiveAttention.some((k) => k.startsWith("service-request:"));
+    const hasBill = newlyActiveAttention.some((k) => k.startsWith("bill-requested:"));
+    const hasUnsent = newlyActiveAttention.some((k) => k.startsWith("unsent-items:"));
+    const parts = [
+      hasServiceRequest && "Guest needs assistance",
+      hasBill && "Bill requested",
+      hasUnsent && "New items to send",
+    ].filter(Boolean);
+    if (parts.length > 0) toast(parts.join(" · "));
+    // newlyActiveAttention is a fresh array each render; compare by content.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newlyActiveAttention.join("|")]);
   const catalog = useQuery({
     queryKey: ["restaurant.pos.catalog", tenantId],
     queryFn: () => catalogFn({ data: { tenantId: tenantId! } }),
@@ -344,6 +399,13 @@ export function PosWorkspace({
     mutationFn: (vars: { requestId: string }) =>
       acknowledgeServiceRequestFnCall({ data: { tenantId: tenantId!, requestId: vars.requestId } }),
     successMessage: "Guest request acknowledged",
+    onSuccess: refresh,
+  });
+
+  const resolveRequest = useAdminMutation({
+    mutationFn: (vars: { requestId: string }) =>
+      resolveServiceRequestFnCall({ data: { tenantId: tenantId!, requestId: vars.requestId } }),
+    successMessage: "Guest request resolved",
     onSuccess: refresh,
   });
 
@@ -547,7 +609,7 @@ export function PosWorkspace({
   }
 
   return (
-    <div className={cn("flex flex-col gap-3 lg:h-full lg:min-h-0", className)}>
+    <div className={cn("flex h-full min-h-0 flex-col gap-3", className)}>
       <div className="shrink-0 space-y-3">
         {/* Compact operational strip: the four figures a cashier glances at,
             in one row, not four large cards — the selling workspace below
@@ -582,28 +644,46 @@ export function PosWorkspace({
               </span>
             </div>
           ))}
+          <button
+            type="button"
+            onClick={() => setMuted(!muted)}
+            className="ml-auto flex items-center gap-1.5 rounded-full border px-2 py-1 text-[0.62rem] font-medium uppercase tracking-wide text-[color:var(--os-ink-3)] transition-colors hover:border-primary"
+            title={
+              muted
+                ? "Alert sound muted — tap to unmute"
+                : unlocked
+                  ? "Alert sound on — tap to mute"
+                  : "Alert sound will start after you tap anywhere"
+            }
+          >
+            {muted ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+            {muted ? "Muted" : "Alerts"}
+          </button>
         </div>
 
         {orderId && <GuestContextBanner tenantId={tenantId} orderId={orderId} />}
       </div>
 
-      {/* Tablet-first: 8"/10" portrait (<1024px) stays single column, in normal
-          document flow, so each pane keeps full-width touch targets and the
-          page scrolls as before — and because Bill now precedes Menu in the
-          markup below, that stacked order is Floor -> Bill -> Menu, not
-          Floor -> Menu -> Bill. At lg+ this becomes a fixed workspace: the
-          grid fills the remaining viewport height and each pane manages its
-          own independent scroll region, so the bill's totals and primary
-          actions never move off-screen while browsing a long menu. */}
-      {/* Structural, not cosmetic: Floor is one column; Bill and Menu are NOT
-          a second/third column beside it — they are two ROWS inside a single
-          right-hand workspace column, so Bill always sits directly above
-          Menu and both share the same horizontal bounds. Proportions are fr
-          units (not fixed px), holding from 1024px through ultrawide:
-          Floor ~28% / right workspace ~72% of the row; within the right
-          workspace, Bill ~30% / Menu ~70% of its height, so Menu — the
-          highest-frequency interaction — owns most of the working area. */}
-      <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(200px,28fr)_minmax(420px,72fr)] xl:gap-4">
+      {/* Viewport-derived at every width, never content-driven: this grid
+          always receives a definite height from the flex-col workspace
+          above (h-full/min-h-0/flex-1, unconditional), and every row/column
+          track below is an explicit minmax(0, Nfr) — never bare "auto" and
+          never a hard pixel floor — so it always resolves to a fraction of
+          that definite height regardless of how much Floor/Bill/Menu
+          content exists. More tables, bill lines or menu items can only
+          change what scrolls *inside* a pane; they can never grow the pane,
+          this grid, the workspace, or the page.
+          Below lg: Floor and the right workspace stack as two proportional
+          ROWS (40fr/60fr) sharing that same fixed height, each still
+          scrolling internally — not two fixed pixel boxes and not normal
+          document flow. At lg+: Floor becomes the left COLUMN and the right
+          workspace the right COLUMN (25fr/75fr), each spanning the grid's
+          full single row. Structural, not cosmetic: Bill and Menu are never
+          a second/third column beside Floor — they are two ROWS inside the
+          right-hand workspace, Bill always directly above Menu, sharing the
+          same horizontal bounds; Menu — the highest-frequency interaction —
+          gets the larger share (~70%) of that column's height. */}
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,40fr)_minmax(0,60fr)] gap-3 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(220px,25fr)_minmax(0,75fr)] xl:gap-4">
         {/* Floor */}
         <SectionCard
           title={isBar ? "Bar floor & tabs" : "Floor"}
@@ -612,9 +692,9 @@ export function PosWorkspace({
               ? "Counter, bar seats and tables — colour follows the tab."
               : "Colour follows the bill, not just the table row."
           }
-          className="lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden"
+          className="flex h-full min-h-0 flex-col overflow-hidden"
         >
-          <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="grid grid-cols-2 gap-2">
               {((board.data as any)?.tables ?? []).map((t: any) => {
                 const tableLife = t.order
@@ -634,22 +714,35 @@ export function PosWorkspace({
                         ? setOrderId(t.order.id)
                         : openBill.mutate({ tableId: t.id, guestCount: t.seats ?? 2 })
                     }
-                    className={`relative min-h-20 rounded-lg border p-3 text-left transition-colors hover:border-primary ${
+                    className={`relative min-h-[104px] rounded-lg border p-3 text-left transition-colors hover:border-primary ${
                       TABLE_TONE_CLASS[tone]
                     } ${orderId && t.order?.id === orderId ? "ring-2 ring-primary" : ""}`}
                   >
                     {t.serviceRequest && (
                       <span
-                        className="absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border border-destructive/50 bg-destructive/10 text-destructive"
-                        title="Guest needs staff"
-                        aria-label="Guest needs staff"
+                        className={cn(
+                          "absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border",
+                          t.serviceRequest.status === "acknowledged"
+                            ? "border-amber-500/50 bg-amber-500/10 text-amber-600"
+                            : "border-destructive/50 bg-destructive/10 text-destructive",
+                        )}
+                        title={
+                          t.serviceRequest.status === "acknowledged"
+                            ? "Staff acknowledged — not yet resolved"
+                            : "Guest needs staff"
+                        }
+                        aria-label={
+                          t.serviceRequest.status === "acknowledged"
+                            ? "Staff acknowledged — not yet resolved"
+                            : "Guest needs staff"
+                        }
                       >
                         <Bell className="size-3.5" />
                       </span>
                     )}
                     <span className="block text-sm font-semibold">{t.code}</span>
                     <span className="block text-xs text-muted-foreground">{t.zone ?? t.name}</span>
-                    <span className="mt-1 block text-xs">
+                    <span className="mt-1.5 block text-sm font-semibold tabular-nums">
                       {t.order ? money(Number(t.order.total ?? 0), currency) : `${t.seats} seats`}
                     </span>
                     <span className="block text-[11px] text-muted-foreground">
@@ -660,7 +753,7 @@ export function PosWorkspace({
               })}
             </div>
           </div>
-          <div className="lg:shrink-0">
+          <div className="shrink-0">
             <div className="mt-3 flex flex-wrap gap-1">
               {FLOOR_LEGEND.map((tone) => (
                 <span
@@ -682,11 +775,49 @@ export function PosWorkspace({
           </div>
         </SectionCard>
 
-        {/* Right workspace: Bill sits directly above Menu — two ROWS in one
-            column, never a second/third column beside Floor. Both share this
-            column's horizontal bounds automatically since they're siblings
-            in the same grid track. */}
-        <div className="grid gap-3 lg:min-h-0 lg:grid-rows-[minmax(220px,30fr)_minmax(320px,70fr)] xl:gap-4">
+        {/* Right workspace: Bill and Menu share this column, never a second/
+            third column beside Floor. At lg+, Bill and Menu are two ROWS
+            sharing this column, and Bill's
+            row carries a measured (not guessed) floor: header + the pinned
+            Total/primary-action footer + section padding need ~189px with
+            zero content — below that, no amount of internal scrolling can
+            make room for Bill's own always-visible chrome. The floor never
+            grows with content (badges/lines/notes all live in the scrollable
+            region above the footer), so it only engages on genuinely short
+            viewports, and only ever redistributes within this already-
+            fixed-height row — it cannot grow this grid, the workspace, or
+            the page.
+            Below lg, Floor+RightWorkspace already share a much shorter
+            stacked budget (see the outer grid above) — too short for BOTH
+            Bill's and Menu's own minimum chrome to coexist at any fixed
+            split, floored or not (measured: Bill's ~189px minimum alone can
+            exceed the entire combined budget on common phone-sized
+            viewports). Splitting height between them is the wrong tool
+            here, so below lg this becomes a single-pane switcher instead: a
+            tab strip picks ONE of Bill/Menu to occupy the full column
+            height at a time — never a fixed pixel guess, never eating into
+            the other's space, and the inactive pane simply isn't rendered
+            rather than being squeezed. */}
+        <div className="flex h-full min-h-0 flex-col gap-3 lg:grid lg:grid-rows-[minmax(190px,30fr)_minmax(0,70fr)] xl:gap-4">
+          <div className="flex shrink-0 gap-2 lg:hidden">
+            <Button
+              type="button"
+              variant={mobileRightTab === "bill" ? "default" : "outline"}
+              className="min-h-11 flex-1"
+              onClick={() => setMobileRightTab("bill")}
+            >
+              Bill{live.length + cart.length > 0 ? ` (${live.length + cart.length})` : ""}
+            </Button>
+            <Button
+              type="button"
+              variant={mobileRightTab === "menu" ? "default" : "outline"}
+              className="min-h-11 flex-1"
+              onClick={() => setMobileRightTab("menu")}
+            >
+              {isBar ? "Drinks" : "Menu"}
+            </Button>
+          </div>
+
           {/* Bill */}
           <SectionCard
             title={orderRow ? `Bill ${orderRow.order_number}` : "Bill"}
@@ -700,7 +831,10 @@ export function PosWorkspace({
                 </Badge>
               ) : undefined
             }
-            className="lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden"
+            className={cn(
+              mobileRightTab === "bill" ? "flex" : "hidden",
+              "h-full min-h-0 flex-1 flex-col overflow-hidden lg:flex",
+            )}
           >
             {!orderId ? (
               <EmptyState
@@ -708,58 +842,93 @@ export function PosWorkspace({
                 description="Tap a table or start a walk-in tab."
               />
             ) : (
-              <div className="space-y-3 lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:space-y-0">
-                {life && (
-                  <div className="space-y-2 rounded-lg border bg-muted/30 p-2 lg:shrink-0">
-                    <ServiceLifecycleBar life={life} compact />
-                    <p className="text-xs text-muted-foreground">{life.reason}</p>
-                    <div className="flex flex-wrap gap-1 text-[11px]">
-                      {life.staged > 0 && <Badge variant="outline">{life.staged} staged</Badge>}
-                      {life.unsent > 0 && <Badge variant="outline">{life.unsent} unsent</Badge>}
-                      {life.inProduction > 0 && (
-                        <Badge variant="secondary">{life.inProduction} in production</Badge>
-                      )}
-                      {life.ready > 0 && <Badge>{life.ready} ready</Badge>}
-                      {life.balance > 0 && (
-                        <Badge variant="outline">Balance {money(life.balance, currency)}</Badge>
-                      )}
-                      {life.delayed && <Badge variant="destructive">Delayed</Badge>}
-                      {life.billRequestedAt && !life.billPresentedAt && (
-                        <Badge variant="secondary">Bill asked for</Badge>
-                      )}
-                      {life.receiptDelivered && (
-                        <Badge variant="secondary">Receipt delivered</Badge>
+              <div className="flex h-full min-h-0 flex-col">
+                {/* Everything here scrolls as one region: status/lifecycle info,
+                    line items and secondary actions can all grow arbitrarily
+                    (30+ badges, 30+ lines, a long "More" list) without ever
+                    touching the pinned Total/primary-action footer below —
+                    that footer is the one thing a cashier must always be
+                    able to reach, so its own height stays bounded (a total
+                    row plus a single button) instead of competing for space
+                    with whatever this bill happens to contain right now. */}
+                <div className="space-y-3 min-h-0 flex-1 overflow-y-auto pt-3">
+                  {life && (
+                    <div className="space-y-2 rounded-lg border bg-muted/30 p-2">
+                      <ServiceLifecycleBar life={life} compact />
+                      <p className="text-xs text-muted-foreground">{life.reason}</p>
+                      <div className="flex flex-wrap gap-1 text-[11px]">
+                        {life.staged > 0 && <Badge variant="outline">{life.staged} staged</Badge>}
+                        {life.unsent > 0 && <Badge variant="outline">{life.unsent} unsent</Badge>}
+                        {life.inProduction > 0 && (
+                          <Badge variant="secondary">{life.inProduction} in production</Badge>
+                        )}
+                        {life.ready > 0 && <Badge>{life.ready} ready</Badge>}
+                        {life.balance > 0 && (
+                          <Badge variant="outline">Balance {money(life.balance, currency)}</Badge>
+                        )}
+                        {life.delayed && <Badge variant="destructive">Delayed</Badge>}
+                        {life.billRequestedAt && !life.billPresentedAt && (
+                          <Badge variant="secondary">Bill asked for</Badge>
+                        )}
+                        {life.receiptDelivered && (
+                          <Badge variant="secondary">Receipt delivered</Badge>
+                        )}
+                      </div>
+                      {activeTable?.serviceRequest && (
+                        <div
+                          className={cn(
+                            "flex items-center justify-between gap-2 rounded-lg border p-2",
+                            activeTable.serviceRequest.status === "acknowledged"
+                              ? "border-amber-500/40 bg-amber-500/5"
+                              : "border-destructive/40 bg-destructive/5",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "flex items-center gap-1.5 text-xs font-medium",
+                              activeTable.serviceRequest.status === "acknowledged"
+                                ? "text-amber-700 dark:text-amber-400"
+                                : "text-destructive",
+                            )}
+                          >
+                            <Bell className="size-3.5" />
+                            {activeTable.serviceRequest.status === "acknowledged"
+                              ? "Acknowledged — awaiting resolution"
+                              : "Guest needs assistance"}
+                          </span>
+                          {activeTable.serviceRequest.status === "acknowledged" ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="min-h-8"
+                              disabled={resolveRequest.isPending}
+                              onClick={() =>
+                                resolveRequest.mutate({
+                                  requestId: activeTable.serviceRequest.id,
+                                })
+                              }
+                            >
+                              Resolve
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="min-h-8"
+                              disabled={acknowledgeRequest.isPending}
+                              onClick={() =>
+                                acknowledgeRequest.mutate({
+                                  requestId: activeTable.serviceRequest.id,
+                                })
+                              }
+                            >
+                              Acknowledge
+                            </Button>
+                          )}
+                        </div>
                       )}
                     </div>
-                    {activeTable?.serviceRequest && (
-                      <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2">
-                        <span className="flex items-center gap-1.5 text-xs font-medium text-destructive">
-                          <Bell className="size-3.5" />
-                          Guest needs assistance
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="min-h-8"
-                          disabled={acknowledgeRequest.isPending}
-                          onClick={() =>
-                            acknowledgeRequest.mutate({ requestId: activeTable.serviceRequest.id })
-                          }
-                        >
-                          Acknowledge
-                        </Button>
-                      </div>
-                    )}
-                    <Button
-                      className="min-h-11 w-full"
-                      disabled={life.nextAction === "none" || life.blocked || sendLines.isPending}
-                      onClick={runNextAction}
-                    >
-                      Next: {life.nextActionLabel}
-                    </Button>
-                  </div>
-                )}
-                <div className="space-y-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pt-3">
+                  )}
                   {live.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -886,15 +1055,12 @@ export function PosWorkspace({
                       />
                     </div>
                   </details>
-                </div>
 
-                <div className="space-y-3 lg:shrink-0 lg:pt-3">
-                  <div className="flex items-center justify-between border-t-2 pt-3 text-base font-semibold">
-                    <span>Total</span>
-                    <span className="tabular-nums">{money(billTotal, currency)}</span>
-                  </div>
-
-                  <div className="grid gap-2">
+                  {/* Manual overrides and account-management actions: secondary
+                      to the one pinned "Next" CTA below, so they live in the
+                      scroll region — always reachable, never competing with
+                      the primary action for the footer's guaranteed space. */}
+                  <div className="grid gap-2 border-t pt-3">
                     <Button
                       className="min-h-11"
                       disabled={cart.length === 0 || sendLines.isPending}
@@ -1011,6 +1177,27 @@ export function PosWorkspace({
                     </div>
                   </div>
                 </div>
+
+                {/* Pinned primary-action footer: bounded to a total row plus
+                    one button, so it always fits inside Bill's allotted
+                    height regardless of how much scrolls above it — this is
+                    the one thing that must never clip, fall off-screen, or
+                    need a page scroll to reach. */}
+                <div className="shrink-0 space-y-2 border-t-2 pt-3">
+                  <div className="flex items-center justify-between text-base font-semibold">
+                    <span>Total</span>
+                    <span className="tabular-nums">{money(billTotal, currency)}</span>
+                  </div>
+                  {life && (
+                    <Button
+                      className="min-h-11 w-full"
+                      disabled={life.nextAction === "none" || life.blocked || sendLines.isPending}
+                      onClick={runNextAction}
+                    >
+                      Next: {life.nextActionLabel}
+                    </Button>
+                  )}
+                </div>
               </div>
             )}
           </SectionCard>
@@ -1023,22 +1210,25 @@ export function PosWorkspace({
                 ? "Tap a drink, pick the serve (single, double, bottle, glass) and add it to the tab."
                 : "Tap an item to configure and stage it on the bill."
             }
-            className="lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden"
+            className={cn(
+              mobileRightTab === "menu" ? "flex" : "hidden",
+              "h-full min-h-0 flex-1 flex-col overflow-hidden lg:flex",
+            )}
           >
-            <div className="lg:shrink-0">
+            <div className="shrink-0">
               <div className="relative mb-2">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={catalogSearch}
                   onChange={(e) => setCatalogSearch(e.target.value)}
                   placeholder={isBar ? "Search drinks…" : "Search the menu…"}
-                  className="h-10 pl-8"
+                  className="h-11 pl-8"
                 />
               </div>
               <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
                 <Button
                   variant={categoryId ? "outline" : "default"}
-                  className="min-h-10 shrink-0 rounded-full"
+                  className="min-h-11 shrink-0 rounded-full"
                   onClick={() => setCategoryId(null)}
                 >
                   All
@@ -1047,7 +1237,7 @@ export function PosWorkspace({
                   <Button
                     key={c.id}
                     variant={categoryId === c.id ? "default" : "outline"}
-                    className="min-h-10 shrink-0 rounded-full"
+                    className="min-h-11 shrink-0 rounded-full"
                     onClick={() => setCategoryId(c.id)}
                   >
                     {c.name}
@@ -1055,7 +1245,7 @@ export function PosWorkspace({
                 ))}
               </div>
             </div>
-            <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+            <div className="min-h-0 flex-1 overflow-y-auto">
               {filtered.length === 0 ? (
                 <EmptyState
                   title={catalogSearch ? "No matches" : isBar ? "No drinks" : "No items"}

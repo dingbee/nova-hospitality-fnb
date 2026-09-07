@@ -13,6 +13,11 @@ import type {
   PurchaseSuggestion,
   PurchasingIntelligence,
 } from "../intelligence/types";
+import type {
+  DemandIntelligence,
+  MultiLocationIntelligence,
+  RevenueIntelligence,
+} from "../intelligence/p05.types";
 import type { RestaurantFinding } from "./decision.types";
 
 const MARGIN_DECLINE_PERCENT = 10;
@@ -453,11 +458,119 @@ export function purchasingFindings(p: PurchasingIntelligence): RestaurantFinding
   return out;
 }
 
+/* ------------------------------ P06: demand ------------------------------ */
+
+/**
+ * P06 — sourced entirely from demand.server.ts's own emergingItems (already
+ * filtered to a >=20% quantity swing on >=3 units — nothing recomputed
+ * here). Deliberately Level 0/informational (optionCatalogue.ts's
+ * demandShiftOptions): there is no recipe/ingredient linkage available at
+ * this layer between a menu item's rising demand and a specific inventory
+ * item to safely reorder, so this never fabricates a replenishment action —
+ * it surfaces for a human to review stock and prep capacity manually.
+ * Skipped entirely (not "insufficient data" — genuinely nothing to say) when
+ * data sufficiency is too low for the trend itself to be trusted.
+ */
+export function demandShiftFindings(demand: DemandIntelligence): RestaurantFinding[] {
+  if (demand.sufficiency === "NO_DATA" || demand.sufficiency === "INSUFFICIENT_DATA") return [];
+  const out: RestaurantFinding[] = [];
+
+  for (const item of demand.emergingItems.slice(0, 3)) {
+    out.push({
+      key: `finding.demand.${item.menuItemId || item.name}`,
+      kind: "demand_shift",
+      severity: (item.trendPercent ?? 0) >= 50 ? "high" : "medium",
+      subject: item.name,
+      headline: `${item.name} demand is rising sharply`,
+      detail: `${item.quantitySold} sold this window versus ${item.previousQuantitySold} the window before — up ${item.trendPercent}%.`,
+      metric: item.trendPercent != null ? `+${item.trendPercent}%` : null,
+      evidence: [
+        { label: "Sold this window", value: String(item.quantitySold) },
+        { label: "Sold prior window", value: String(item.previousQuantitySold) },
+      ],
+      prediction: {
+        key: `prediction.demand.${item.menuItemId || item.name}`,
+        statement: `If the trend holds, ${item.name} continues selling at a materially higher rate than the prior window.`,
+        value: item.trendPercent,
+        unit: "%",
+        horizonDays: demand.windowDays,
+        confidence: item.quantitySold >= 10 ? 0.65 : 0.45,
+        direction: "up",
+      },
+      facts: {
+        menuItemId: item.menuItemId || null,
+        quantitySold: item.quantitySold,
+        previousQuantitySold: item.previousQuantitySold,
+        trendPercent: item.trendPercent,
+      },
+    });
+  }
+
+  return out;
+}
+
+/* ----------------------------- P06: revenue ----------------------------- */
+
+/**
+ * P06 — reads outlet-underperformance signals verbatim from revenue.server.ts's
+ * own `anomalies` and multiLocation.server.ts's own `insights` (both already
+ * computed — the >=50%-below-group-average threshold lives there, not
+ * here). Level 0/informational (optionCatalogue.ts's
+ * revenueUnderperformanceOptions): this system has no safe automated lever
+ * for "make this outlet perform better" — it is deliberately scoped to
+ * OUTLET-level signals only so it never duplicates menu_margin's existing
+ * item-level pricing/margin findings.
+ */
+export function revenueUnderperformanceFindings(
+  revenue: RevenueIntelligence,
+  multiLocation: MultiLocationIntelligence | null,
+): RestaurantFinding[] {
+  const out: RestaurantFinding[] = [];
+  const seen = new Set<string>();
+
+  const sources = [
+    ...revenue.anomalies.filter((i) => i.key.startsWith("revenue.outlet_underperformance")),
+    ...(multiLocation?.insights.filter((i) => i.key.startsWith("multi_location.underperformer")) ??
+      []),
+  ];
+
+  for (const insight of sources) {
+    if (seen.has(insight.key)) continue;
+    seen.add(insight.key);
+    out.push({
+      key: `finding.revenue.${insight.key}`,
+      kind: "revenue_underperformance",
+      severity: insight.severity,
+      subject: insight.title,
+      headline: insight.title,
+      detail: insight.detail,
+      metric: insight.metric ?? null,
+      evidence: [{ label: "Signal", value: insight.detail }],
+      prediction: {
+        key: `prediction.revenue.${insight.key}`,
+        statement: "Without intervention this outlet continues underperforming the group average.",
+        value: null,
+        unit: "",
+        horizonDays: revenue.windowDays,
+        confidence: 0.5,
+        direction: "down",
+      },
+      facts: {},
+    });
+  }
+
+  return out;
+}
+
 export function gatherFindings(input: {
   menu: MenuIntelligence;
   inventory: InventoryIntelligence;
   kitchen: KitchenIntelligence;
   purchasing: PurchasingIntelligence;
+  /** P06 — Pro-tier P05 domains. Optional/null when the caller isn't Pro-entitled or the fetch was skipped; contributes zero findings, never an error. */
+  demand?: DemandIntelligence | null;
+  revenue?: RevenueIntelligence | null;
+  multiLocation?: MultiLocationIntelligence | null;
 }): RestaurantFinding[] {
   const severityRank = { critical: 0, high: 1, medium: 2, low: 3, info: 4 } as const;
   return [
@@ -465,6 +578,10 @@ export function gatherFindings(input: {
     ...menuFindings(input.menu),
     ...kitchenFindings(input.kitchen),
     ...purchasingFindings(input.purchasing),
+    ...(input.demand ? demandShiftFindings(input.demand) : []),
+    ...(input.revenue
+      ? revenueUnderperformanceFindings(input.revenue, input.multiLocation ?? null)
+      : []),
   ].sort((a, b) =>
     severityRank[a.severity] !== severityRank[b.severity]
       ? severityRank[a.severity] - severityRank[b.severity]

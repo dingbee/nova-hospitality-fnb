@@ -23,6 +23,8 @@ const TITLE: Record<RestaurantFinding["kind"], (f: RestaurantFinding) => string>
   kitchen_capacity: (f) => `How should we relieve pressure on ${f.subject}?`,
   purchasing_replenishment: (f) => `How should we replenish ${f.subject}?`,
   supplier_risk: (f) => `How should we respond to the supplier price move on ${f.subject}?`,
+  demand_shift: (f) => `How should we respond to rising demand for ${f.subject}?`,
+  revenue_underperformance: () => "How should we respond to this outlet's underperformance?",
 };
 
 function riskLevelFor(
@@ -127,9 +129,16 @@ function assumptionsFor(f: RestaurantFinding): string[] {
     case "wastage_spike":
       return ["Wastage is being logged consistently through the stock ledger"];
     case "kitchen_capacity":
-      return ["Ticket timestamps are captured accurately", "Covers at dinner peak stay at current levels"];
+      return [
+        "Ticket timestamps are captured accurately",
+        "Covers at dinner peak stay at current levels",
+      ];
     case "supplier_risk":
       return ["The quoted price is current and applies to our normal order volume"];
+    case "demand_shift":
+      return ["Sales mix over this window reflects the near-term trend, not a one-off spike"];
+    case "revenue_underperformance":
+      return ["The comparison window is representative of normal trading for every outlet in it"];
   }
 }
 
@@ -158,6 +167,12 @@ function risksFor(f: RestaurantFinding): string[] {
         "Switching supplier can change product specification and consistency",
         "Delaying the order risks a stockout inside the lead time",
       ];
+    case "demand_shift":
+      return [
+        "Rising demand can outpace stock or prep capacity before the next intelligence run catches it",
+      ];
+    case "revenue_underperformance":
+      return ["A single window's comparison can be skewed by a local, non-recurring event"];
   }
 }
 

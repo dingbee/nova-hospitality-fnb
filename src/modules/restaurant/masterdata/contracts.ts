@@ -32,8 +32,22 @@ export const upsertBusinessProfileSchema = z.object({
   phone: z.string().max(40).optional(),
   email: z.string().email().optional(),
   address: z.string().max(400).optional(),
+  website: z.string().max(200).optional(),
 });
 export type UpsertBusinessProfileInput = z.infer<typeof upsertBusinessProfileSchema>;
+
+/**
+ * settings.serviceRequests.cooldownSeconds — how long after a guest's
+ * "Request staff" alert is resolved before they may request again.
+ * Configurable here rather than hardcoded in the guest component; see
+ * selforder.server.ts's DEFAULT_SERVICE_REQUEST_COOLDOWN_SECONDS for the
+ * fallback a tenant that hasn't configured one yet gets.
+ */
+export const upsertServiceRequestSettingsSchema = z.object({
+  tenantId: uuid,
+  cooldownMinutes: z.number().min(0).max(120),
+});
+export type UpsertServiceRequestSettingsInput = z.infer<typeof upsertServiceRequestSettingsSchema>;
 
 export const listInventoryCategoriesSchema = z.object({
   tenantId: uuid,

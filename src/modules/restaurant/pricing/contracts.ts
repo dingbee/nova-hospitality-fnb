@@ -335,3 +335,53 @@ export const pricingReadinessSchema = z.object({
   channel: z.string().min(1).optional(),
   limit: z.number().int().positive().max(1000).optional(),
 });
+
+/* ---------------- Pricing Centre operator workspace ---------------- */
+
+/** Display-only lifecycle a menu item's commercial price is in, derived from restaurant_prices — never a stored column. */
+export const PRICING_STATES = [
+  "active",
+  "no_price",
+  "pending_approval",
+  "scheduled",
+  "expired",
+] as const;
+export type PricingState = (typeof PRICING_STATES)[number];
+
+export const pricingCatalogueSchema = tenantScope.extend({
+  channel: z.enum(SALES_CHANNELS).default("dine_in"),
+  priceListId: uuid.optional(),
+  menuId: uuid.optional(),
+  categoryId: uuid.optional(),
+  status: z.enum(PRICING_STATES).optional(),
+  search: z.string().max(200).optional(),
+  /** Narrow to specific items — used by the Readiness → Prices handoff and bulk previews. */
+  menuItemIds: z.array(uuid).optional(),
+  limit: z.number().int().min(1).max(1000).default(300),
+});
+export type PricingCatalogueInput = z.infer<typeof pricingCatalogueSchema>;
+
+export const bulkUpsertPriceLineSchema = z.object({
+  menuItemId: uuid,
+  amount: money.min(0),
+});
+
+/**
+ * Configures a price for several menu items in one governed action. Applies
+ * the same scope/channel/price-list/approval to every line and creates one
+ * new price version per item through `upsertPrice` — never a bulk-only
+ * write path, so a batch is exactly N of the same governed calls a human
+ * clicking "Configure" N times would make.
+ */
+export const bulkUpsertPricesSchema = tenantScope.extend({
+  lines: z.array(bulkUpsertPriceLineSchema).min(1).max(200),
+  scope: z.enum(PRICE_SCOPES).default("location"),
+  channel: z.enum(SALES_CHANNELS),
+  priceListId: uuid.nullish(),
+  currency: z.string().min(3).max(8),
+  taxInclusive: z.boolean().default(false),
+  effectiveFrom: z.string().optional(),
+  reason: z.string().max(500).optional(),
+  requiresApproval: z.boolean().default(false),
+});
+export type BulkUpsertPricesInput = z.infer<typeof bulkUpsertPricesSchema>;

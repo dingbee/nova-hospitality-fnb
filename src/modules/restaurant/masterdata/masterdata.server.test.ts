@@ -6,7 +6,7 @@
  * must carry any existing logoUrl forward unchanged.
  */
 import { describe, expect, it } from "vitest";
-import { upsertBusinessProfile } from "./masterdata.server";
+import { upsertBusinessProfile, upsertProperty } from "./masterdata.server";
 
 const TENANT = "tenant-1";
 const OWNER = "user-owner";
@@ -96,5 +96,151 @@ describe("upsertBusinessProfile", () => {
     });
     expect((result as any).settings.tax.vat_percent).toBe(18);
     expect((result as any).settings.service_charge_percent).toBe(10);
+  });
+});
+
+/**
+ * P01 — every NEW property must pass through the commercial classification
+ * engine exactly once (never on update), and the classification must never
+ * be silently skipped even when no commercial policy has been configured
+ * yet for the tenant's plan.
+ */
+function makeFakeSupabaseForProperty() {
+  const tables: Record<string, any[]> = {
+    restaurant_members: [{ tenant_id: TENANT, user_id: OWNER, role: "owner", property_id: null }],
+    restaurant_properties: [],
+    restaurant_subscriptions: [],
+    commercial_plans: [{ id: "plan-core", code: "core" }],
+    commercial_property_policies: [],
+    commercial_property_classifications: [],
+    commercial_overrides: [],
+    commercial_audit_log: [],
+  };
+
+  function from(table: string) {
+    const predicates: Array<(r: any) => boolean> = [];
+    let op: "select" | "insert" | "update" = "select";
+    let payload: any;
+    let wantCount = false;
+    const api: any = {
+      select(_cols?: string, opts?: { count?: string }) {
+        if (opts?.count) wantCount = true;
+        return api;
+      },
+      eq(col: string, val: unknown) {
+        predicates.push((r) => r[col] === val);
+        return api;
+      },
+      is(col: string, val: unknown) {
+        predicates.push((r) => (r[col] ?? null) === val);
+        return api;
+      },
+      or: () => api,
+      lte: () => api,
+      order: () => api,
+      insert(row: any) {
+        op = "insert";
+        payload = row;
+        return api;
+      },
+      update(patch: any) {
+        op = "update";
+        payload = patch;
+        return api;
+      },
+      maybeSingle: () => resolve("maybeSingle"),
+      single: () => resolve("single"),
+      then: (onFulfilled: any, onRejected: any) => resolve("list").then(onFulfilled, onRejected),
+    };
+    async function resolve(mode: "single" | "maybeSingle" | "list") {
+      const rows = tables[table] ?? (tables[table] = []);
+      if (op === "insert") {
+        const stored = { id: `${table}-${rows.length + 1}`, ...payload };
+        rows.push(stored);
+        return { data: stored, error: null };
+      }
+      const matches = rows.filter((r) => predicates.every((p) => p(r)));
+      if (op === "update") {
+        for (const r of matches) Object.assign(r, payload);
+        return { data: matches[0] ?? null, error: null };
+      }
+      if (mode === "list") {
+        const result: any = { data: matches, error: null };
+        if (wantCount) result.count = matches.length;
+        return result;
+      }
+      return { data: matches[0] ?? null, error: mode === "single" && !matches[0] ? { message: "not found" } : null };
+    }
+    return api;
+  }
+
+  return {
+    from,
+    rpc: async () => ({ data: false, error: null }),
+    tables,
+  } as any;
+}
+
+describe("upsertProperty — P01 commercial classification wiring", () => {
+  it("classifies a brand-new property as 'base', non-chargeable, and writes an audit entry", async () => {
+    const sb = makeFakeSupabaseForProperty();
+    const result = await upsertProperty(sb, OWNER, {
+      tenantId: TENANT,
+      name: "Flagship",
+      slug: "flagship",
+      timezone: "Africa/Dar_es_Salaam",
+      currency: "TZS",
+      status: "active",
+    } as any);
+    expect((result as any).commercial).toMatchObject({ classification: "base", chargeable: false });
+    expect(sb.tables.commercial_property_classifications).toHaveLength(1);
+    expect(sb.tables.commercial_audit_log).toHaveLength(1);
+  });
+
+  it("never fabricates a charge when no property policy is configured for the plan", async () => {
+    const sb = makeFakeSupabaseForProperty();
+    await upsertProperty(sb, OWNER, {
+      tenantId: TENANT,
+      name: "Flagship",
+      slug: "flagship",
+      timezone: "Africa/Dar_es_Salaam",
+      currency: "TZS",
+      status: "active",
+    } as any);
+    const second = await upsertProperty(sb, OWNER, {
+      tenantId: TENANT,
+      name: "Second Site",
+      slug: "second-site",
+      timezone: "Africa/Dar_es_Salaam",
+      currency: "TZS",
+      status: "active",
+    } as any);
+    expect((second as any).commercial).toMatchObject({
+      classification: "additional_included",
+      chargeable: false,
+    });
+  });
+
+  it("never re-runs classification on an update — commercial stays null", async () => {
+    const sb = makeFakeSupabaseForProperty();
+    const created = await upsertProperty(sb, OWNER, {
+      tenantId: TENANT,
+      name: "Flagship",
+      slug: "flagship",
+      timezone: "Africa/Dar_es_Salaam",
+      currency: "TZS",
+      status: "active",
+    } as any);
+    const updated = await upsertProperty(sb, OWNER, {
+      id: (created as any).id,
+      tenantId: TENANT,
+      name: "Flagship Renamed",
+      slug: "flagship",
+      timezone: "Africa/Dar_es_Salaam",
+      currency: "TZS",
+      status: "active",
+    } as any);
+    expect((updated as any).commercial).toBeNull();
+    expect(sb.tables.commercial_property_classifications).toHaveLength(1);
   });
 });

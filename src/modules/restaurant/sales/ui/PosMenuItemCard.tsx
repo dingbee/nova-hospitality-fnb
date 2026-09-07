@@ -39,11 +39,13 @@ export function PosMenuItemCard({
         {item.description && (
           <span className="line-clamp-1 text-[11px] text-muted-foreground">{item.description}</span>
         )}
-        <span className="mt-auto pt-1 text-sm font-semibold text-foreground tabular-nums">
-          {money(Number(item.price ?? 0), currency)}
-        </span>
+        {item.priceConfigured === false ? null : (
+          <span className="mt-auto pt-1 text-sm font-semibold text-foreground tabular-nums">
+            {money(Number(item.price ?? 0), currency)}
+          </span>
+        )}
         {item.priceConfigured === false ? (
-          <Badge variant="secondary" className="w-fit">
+          <Badge variant="secondary" className="mt-auto w-fit">
             No active price
           </Badge>
         ) : (

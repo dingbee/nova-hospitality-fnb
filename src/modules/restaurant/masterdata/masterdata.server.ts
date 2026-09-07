@@ -1,12 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase rows are untyped at this boundary. */
 import { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
+import { classifyProperty } from "@/modules/commercial/property-classification.server";
 import type {
   UpsertBusinessProfileInput,
   UpsertInventoryCategoryInput,
   UpsertInventoryUnitInput,
   UpsertPropertyInput,
   UpsertProductCategoryInput,
+  UpsertServiceRequestSettingsInput,
   listAllMasterDataSchema,
   listInventoryCategoriesSchema,
 } from "./contracts";
@@ -25,6 +27,7 @@ export async function upsertProperty(sb: Sb, userId: string, input: UpsertProper
     currency: input.currency,
     status: input.status,
   };
+  const isNewProperty = !input.id;
   const q = input.id
     ? sb
         .from("restaurant_properties")
@@ -34,7 +37,16 @@ export async function upsertProperty(sb: Sb, userId: string, input: UpsertProper
     : sb.from("restaurant_properties").insert({ ...row, settings: {} });
   const { data, error } = await q.select("id, name, slug, status").single();
   if (error) throw new Error(error.message);
-  return data;
+
+  // P01: every NEW property passes through the commercial classification
+  // engine exactly once — base/included/additional_chargeable/programme-
+  // or-override-covered/enterprise — so a chargeable additional property
+  // is never silently activated. Never runs on update, and never runs for
+  // outlets (restaurant_locations), which carry no commercial charge.
+  const commercial = isNewProperty
+    ? await classifyProperty(sb, userId, input.tenantId, data.id)
+    : null;
+  return { ...data, commercial };
 }
 
 export async function upsertBusinessProfile(
@@ -68,7 +80,47 @@ export async function upsertBusinessProfile(
       phone: input.phone ?? null,
       email: input.email ?? null,
       address: input.address ?? null,
+      website: input.website ?? null,
       logoUrl: existingLogoUrl,
+    },
+  };
+  const { data, error } = await sb
+    .from("restaurant_tenants")
+    .update({ settings })
+    .eq("id", input.tenantId)
+    .select("id, name, slug, settings")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+/**
+ * settings.serviceRequests.cooldownSeconds — the one admin-facing control
+ * over how long a guest waits after a resolved "Request staff" alert
+ * before they can request again (selfstaff.server.ts reads this; a
+ * tenant that has never saved one gets DEFAULT_SERVICE_REQUEST_COOLDOWN_
+ * SECONDS instead of a broken/missing value). Spreads the existing settings
+ * object exactly like upsertBusinessProfile above, so saving this can never
+ * clobber settings.business or any other namespace.
+ */
+export async function upsertServiceRequestSettings(
+  sb: Sb,
+  userId: string,
+  input: UpsertServiceRequestSettingsInput,
+) {
+  await assertCapability(sb, userId, input.tenantId, "tenant.manage");
+  const { data: tenant, error: readErr } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", input.tenantId)
+    .single();
+  if (readErr) throw new Error(readErr.message);
+  const settings = {
+    ...(tenant?.settings ?? {}),
+    serviceRequests: {
+      ...((tenant?.settings as { serviceRequests?: Record<string, unknown> } | null)
+        ?.serviceRequests ?? {}),
+      cooldownSeconds: Math.round(input.cooldownMinutes * 60),
     },
   };
   const { data, error } = await sb

@@ -21,12 +21,10 @@ import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "../../ui/useRestaurantWorkspace";
 import {
   applyRestaurantDiscountFn,
-  decideRestaurantPriceFn,
   getRestaurantCommercialEvidenceFn,
   listRestaurantCurrenciesFn,
   listRestaurantDiscountRulesFn,
   listRestaurantExchangeRatesFn,
-  listRestaurantPricesFn,
   listRestaurantPricingAuditFn,
   listRestaurantPromotionsFn,
   listRestaurantServiceChargesFn,
@@ -37,12 +35,12 @@ import {
   upsertRestaurantCurrencyFn,
   upsertRestaurantDiscountRuleFn,
   upsertRestaurantExchangeRateFn,
-  upsertRestaurantPriceFn,
   upsertRestaurantPromotionFn,
   upsertRestaurantServiceChargeFn,
   upsertRestaurantTaxRuleFn,
 } from "../pricing.functions";
 import { PriceListsTab, RoundingTab } from "./CommercialRulesTabs";
+import { PricesTab, type PricesPreselect } from "./PricesWorkspace";
 import { SALES_CHANNELS } from "../contracts";
 
 const TABS = [
@@ -82,6 +80,14 @@ export function PricingCentre() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id as string | undefined;
   const [tab, setTab] = useState<TabId>("prices");
+  // Readiness diagnoses, Prices configures — this is the one link between
+  // them: Readiness never creates or corrects a price itself, it only hands
+  // a menu item (or a status filter, from a KPI card) to the Prices tab.
+  const [pricesPreselect, setPricesPreselect] = useState<PricesPreselect>(null);
+  const goToPrices = (next: PricesPreselect) => {
+    setPricesPreselect(next);
+    setTab("prices");
+  };
 
   if (!ws.isLoading && !ws.data?.tenant) {
     return (
@@ -116,8 +122,16 @@ export function PricingCentre() {
       </nav>
       {tenantId ? (
         <>
-          {tab === "readiness" && <ReadinessTab tenantId={tenantId} />}
-          {tab === "prices" && <PricesTab tenantId={tenantId} />}
+          {tab === "readiness" && (
+            <ReadinessTab tenantId={tenantId} onConfigurePrice={goToPrices} />
+          )}
+          {tab === "prices" && (
+            <PricesTab
+              tenantId={tenantId}
+              preselect={pricesPreselect}
+              onPreselectConsumed={() => setPricesPreselect(null)}
+            />
+          )}
           {tab === "priceLists" && <PriceListsTab tenantId={tenantId} />}
           {tab === "promotions" && <PromotionsTab tenantId={tenantId} />}
           {tab === "taxes" && <TaxesTab tenantId={tenantId} />}
@@ -144,7 +158,13 @@ export function PricingCentre() {
  * it never creates a price, so "not ready" stays visible until someone
  * configures a price deliberately.
  */
-function ReadinessTab({ tenantId }: { tenantId: string }) {
+function ReadinessTab({
+  tenantId,
+  onConfigurePrice,
+}: {
+  tenantId: string;
+  onConfigurePrice: (next: PricesPreselect) => void;
+}) {
   const readinessFn = useServerFn(restaurantPricingReadinessFn);
   const [channel, setChannel] = useState<string>("dine_in");
   const [onlyBlocked, setOnlyBlocked] = useState(true);
@@ -160,10 +180,26 @@ function ReadinessTab({ tenantId }: { tenantId: string }) {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-4">
-        <StatCard label="Sellable items" value={num(report?.total ?? 0, 0)} />
-        <StatCard label="Priced by rules" value={num(report?.ready ?? 0, 0)} />
-        <StatCard label="Cannot be sold" value={num(report?.blocked ?? 0, 0)} />
-        <StatCard label="Menu card differs" value={num(report?.divergent ?? 0, 0)} />
+        <button type="button" className="text-left" onClick={() => onConfigurePrice(null)}>
+          <StatCard label="Sellable items" value={num(report?.total ?? 0, 0)} />
+        </button>
+        <button
+          type="button"
+          className="text-left"
+          onClick={() => onConfigurePrice({ status: "active" })}
+        >
+          <StatCard label="Priced by rules" value={num(report?.ready ?? 0, 0)} />
+        </button>
+        <button
+          type="button"
+          className="text-left"
+          onClick={() => onConfigurePrice({ status: "no_price" })}
+        >
+          <StatCard label="Cannot be sold" value={num(report?.blocked ?? 0, 0)} />
+        </button>
+        <button type="button" className="text-left" onClick={() => setOnlyBlocked(true)}>
+          <StatCard label="Menu card differs" value={num(report?.divergent ?? 0, 0)} />
+        </button>
       </div>
 
       <SectionCard
@@ -217,13 +253,25 @@ function ReadinessTab({ tenantId }: { tenantId: string }) {
                 <span className="flex items-center gap-2">
                   {r.ready ? (
                     <>
-                      <span className="text-sm tabular-nums">{money(r.unitPrice, r.currency ?? "USD")}</span>
+                      <span className="text-sm tabular-nums">
+                        {money(r.unitPrice, r.currency ?? "USD")}
+                      </span>
                       <StatusChip tone="neutral">{String(r.priceSource ?? "rule")}</StatusChip>
-                      {r.divergent ? <StatusChip tone="warning">Menu card differs</StatusChip> : null}
+                      {r.divergent ? (
+                        <StatusChip tone="warning">Menu card differs</StatusChip>
+                      ) : null}
                       <StatusChip tone="success">Sellable</StatusChip>
                     </>
                   ) : (
-                    <StatusChip tone="danger">No price configured</StatusChip>
+                    <>
+                      <StatusChip tone="danger">No price configured</StatusChip>
+                      <Button
+                        size="sm"
+                        onClick={() => onConfigurePrice({ menuItemId: r.menuItemId })}
+                      >
+                        Configure Price
+                      </Button>
+                    </>
                   )}
                 </span>
               </Row>
@@ -233,257 +281,12 @@ function ReadinessTab({ tenantId }: { tenantId: string }) {
 
         {report ? (
           <p className="mt-3 text-xs text-muted-foreground">
-            Rules in force: {report.rulesInForce.prices} prices · {report.rulesInForce.priceLists} price
-            lists · {report.rulesInForce.taxes} tax rules · {report.rulesInForce.serviceCharges} service
-            charges · {report.rulesInForce.promotions} promotions · {report.rulesInForce.roundingRules}{" "}
-            rounding rules.
+            Rules in force: {report.rulesInForce.prices} prices · {report.rulesInForce.priceLists}{" "}
+            price lists · {report.rulesInForce.taxes} tax rules ·{" "}
+            {report.rulesInForce.serviceCharges} service charges · {report.rulesInForce.promotions}{" "}
+            promotions · {report.rulesInForce.roundingRules} rounding rules.
           </p>
         ) : null}
-      </SectionCard>
-    </div>
-  );
-}
-
-/* ---------------- Prices ---------------- */
-
-function PricesTab({ tenantId }: { tenantId: string }) {
-  const qc = useQueryClient();
-  const listFn = useServerFn(listRestaurantPricesFn);
-  const saveFn = useServerFn(upsertRestaurantPriceFn);
-  const decideFn = useServerFn(decideRestaurantPriceFn);
-  const evidenceFn = useServerFn(getRestaurantCommercialEvidenceFn);
-
-  const prices = useQuery({
-    queryKey: ["restaurant.prices", tenantId],
-    queryFn: () => listFn({ data: { tenantId, includeHistory: true, limit: 200 } }),
-  });
-  const evidence = useQuery({
-    queryKey: ["restaurant.commercial.evidence", tenantId],
-    queryFn: () => evidenceFn({ data: { tenantId, lookbackDays: 30 } }),
-  });
-
-  const [menuItemId, setMenuItemId] = useState("");
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("USD");
-  const [scope, setScope] = useState<"tenant" | "property" | "location">("tenant");
-  const [priceChannel, setPriceChannel] = useState("");
-  const [priceListId, setPriceListId] = useState("");
-  const [taxInclusive, setTaxInclusive] = useState(false);
-  const [effectiveFrom, setEffectiveFrom] = useState("");
-  const [reason, setReason] = useState("");
-  const [requiresApproval, setRequiresApproval] = useState(false);
-
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["restaurant.prices", tenantId] });
-    qc.invalidateQueries({ queryKey: ["restaurant.pricing.audit", tenantId] });
-  };
-
-  const save = useAdminMutation({
-    mutationFn: () =>
-      saveFn({
-        data: {
-          tenantId,
-          menuItemId: menuItemId || undefined,
-          scope,
-          channel: priceChannel ? (priceChannel as never) : null,
-          priceListId: priceListId || null,
-          currency,
-          amount: Number(amount),
-          taxInclusive,
-          effectiveFrom: effectiveFrom ? new Date(effectiveFrom).toISOString() : undefined,
-          reason: reason || undefined,
-          requiresApproval,
-          activate: !requiresApproval,
-        },
-      }),
-    successMessage: "New price version created",
-    onSuccess: () => {
-      setAmount("");
-      setReason("");
-      invalidate();
-    },
-  });
-
-  const decide = useAdminMutation({
-    mutationFn: (v: { priceId: string; decision: "approve" | "reject" }) =>
-      decideFn({ data: { tenantId, ...v } }),
-    successMessage: "Price decision recorded",
-    onSuccess: invalidate,
-  });
-
-  const ev = evidence.data as any;
-  const rows = (prices.data ?? []) as any[];
-
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label="Price changes (30d)"
-          value={num(ev?.price_changes?.count ?? 0, 0)}
-          tone="info"
-        />
-        <StatCard
-          label="Awaiting approval"
-          value={num(ev?.price_changes?.pending_approval ?? 0, 0)}
-          tone="gold"
-        />
-        <StatCard
-          label="Gross margin"
-          value={`${num(ev?.revenue?.margin_percent ?? 0)}%`}
-          tone="green"
-        />
-        <StatCard
-          label="Discount rate"
-          value={`${num(ev?.discounts?.discount_rate_percent ?? 0)}%`}
-          tone="warn"
-        />
-      </div>
-
-      <SectionCard
-        title="New price version"
-        description="A change never overwrites the current price — it supersedes it, so past receipts stay reproducible."
-      >
-        <div className="grid gap-3 md:grid-cols-3">
-          <Field label="Menu item ID">
-            <Input
-              className="h-11"
-              value={menuItemId}
-              onChange={(e) => setMenuItemId(e.target.value)}
-              placeholder="uuid"
-            />
-          </Field>
-          <Field label="Amount">
-            <Input
-              className="h-11"
-              type="number"
-              inputMode="decimal"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
-          </Field>
-          <Field label="Currency">
-            <Input
-              className="h-11"
-              value={currency}
-              onChange={(e) => setCurrency(e.target.value.toUpperCase())}
-            />
-          </Field>
-          <Field label="Scope">
-            <select
-              className="h-11 w-full rounded border border-border bg-background px-3 text-sm"
-              value={scope}
-              onChange={(e) => setScope(e.target.value as never)}
-            >
-              <option value="tenant">Tenant default</option>
-              <option value="property">Property override</option>
-              <option value="location">Outlet override</option>
-            </select>
-          </Field>
-          <Field label="Effective from">
-            <Input
-              className="h-11"
-              type="datetime-local"
-              value={effectiveFrom}
-              onChange={(e) => setEffectiveFrom(e.target.value)}
-            />
-          </Field>
-          <Field label="Channel">
-            <select
-              className="h-11 w-full rounded border border-border bg-background px-3 text-sm"
-              value={priceChannel}
-              onChange={(e) => setPriceChannel(e.target.value)}
-            >
-              <option value="">Every channel</option>
-              {SALES_CHANNELS.map((c) => (
-                <option key={c} value={c}>
-                  {c.replace(/_/g, " ")}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Price list (optional)">
-            <Input
-              className="h-11"
-              value={priceListId}
-              onChange={(e) => setPriceListId(e.target.value)}
-              placeholder="price list uuid"
-            />
-          </Field>
-          <Field label="Change reason">
-            <Input
-              className="h-11"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. supplier cost increase"
-            />
-          </Field>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-4">
-          <Toggle label="Tax inclusive" checked={taxInclusive} onChange={setTaxInclusive} />
-          <Toggle
-            label="Send for approval"
-            checked={requiresApproval}
-            onChange={setRequiresApproval}
-          />
-          <Button
-            className="h-11"
-            disabled={!amount || save.isPending}
-            onClick={() => save.mutate(undefined as never)}
-          >
-            Create version
-          </Button>
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        title="Price history"
-        description="Newest first. Superseded versions remain for audit and reprinting."
-      >
-        {rows.length === 0 ? (
-          <EmptyState title="No prices yet" description="Create the first price version above." />
-        ) : (
-          <ul className="divide-y">
-            {rows.map((p) => (
-              <Row key={p.id}>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{money(p.amount, p.currency)}</span>
-                    <StatusChip tone={PRICE_TONE[p.status] ?? "neutral"}>{p.status}</StatusChip>
-                    <StatusChip tone="info">{p.scope}</StatusChip>
-                    <span className="text-xs text-muted-foreground">v{p.version}</span>
-                    {p.tax_inclusive && <StatusChip tone="neutral">tax incl.</StatusChip>}
-                  </div>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {new Date(p.effective_from).toLocaleString()}
-                    {p.effective_to ? ` → ${new Date(p.effective_to).toLocaleString()}` : " → open"}
-                    {p.reason ? ` · ${p.reason}` : ""}
-                  </p>
-                </div>
-                {p.status === "pending_approval" && (
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      className="h-10"
-                      disabled={decide.isPending}
-                      onClick={() => decide.mutate({ priceId: p.id, decision: "approve" })}
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-10"
-                      disabled={decide.isPending}
-                      onClick={() => decide.mutate({ priceId: p.id, decision: "reject" })}
-                    >
-                      Reject
-                    </Button>
-                  </div>
-                )}
-              </Row>
-            ))}
-          </ul>
-        )}
       </SectionCard>
     </div>
   );

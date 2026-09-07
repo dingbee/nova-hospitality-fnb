@@ -9,10 +9,20 @@ import type { Permission } from "./permissions";
  */
 export function usePrincipal() {
   const fn = useServerFn(getCurrentPrincipal);
-  return useQuery({ queryKey: ["nova", "principal"], queryFn: () => fn({}), staleTime: 5 * 60_000 });
+  return useQuery({
+    queryKey: ["nova", "principal"],
+    queryFn: () => fn({}),
+    staleTime: 5 * 60_000,
+  });
 }
 
 export function useCan(perm: Permission): boolean {
   const { data } = usePrincipal();
   return Boolean(data?.permissions.includes(perm));
+}
+
+/** P01: platform-level Commercial Administration access — see CurrentPrincipal.commercialAdmin. */
+export function useIsCommercialAdmin(): boolean {
+  const { data } = usePrincipal();
+  return Boolean(data?.commercialAdmin);
 }

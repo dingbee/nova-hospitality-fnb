@@ -18,6 +18,7 @@ import { emitRestaurantEvent } from "../events/emit.server";
 import { evaluateDiscount } from "./engine";
 import type {
   applyDiscountSchema,
+  BulkUpsertPricesInput,
   decidePriceSchema,
   listCommercialRulesSchema,
   listCurrenciesSchema,
@@ -312,6 +313,52 @@ export async function upsertPrice(
     source: "restaurant-pricing",
   });
   return data;
+}
+
+/**
+ * Configures a price for several menu items at once. Deliberately not a new
+ * write path: each line is exactly one call to `upsertPrice`, so versioning,
+ * superseding, audit and events are identical to configuring the same items
+ * one at a time. A per-line failure (e.g. one item outside the caller's
+ * capability, or an invalid amount) never aborts the rest of the batch —
+ * the operator gets back exactly which lines succeeded and which didn't.
+ */
+export async function bulkUpsertPrices(sb: Sb, userId: string, input: BulkUpsertPricesInput) {
+  const results = await Promise.all(
+    input.lines.map(async (line) => {
+      try {
+        const price = await upsertPrice(sb, userId, {
+          tenantId: input.tenantId,
+          propertyId: input.propertyId,
+          locationId: input.locationId,
+          menuItemId: line.menuItemId,
+          scope: input.scope,
+          priceListId: input.priceListId,
+          channel: input.channel,
+          currency: input.currency,
+          amount: line.amount,
+          taxInclusive: input.taxInclusive,
+          effectiveFrom: input.effectiveFrom,
+          reason: input.reason,
+          requiresApproval: input.requiresApproval,
+          activate: !input.requiresApproval,
+        });
+        return { menuItemId: line.menuItemId, ok: true as const, price };
+      } catch (e) {
+        return {
+          menuItemId: line.menuItemId,
+          ok: false as const,
+          error: e instanceof Error ? e.message : "Could not create this price.",
+        };
+      }
+    }),
+  );
+  return {
+    total: results.length,
+    succeeded: results.filter((r) => r.ok).length,
+    failed: results.filter((r) => !r.ok).length,
+    results,
+  };
 }
 
 export async function decidePrice(

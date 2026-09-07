@@ -9,8 +9,10 @@ import {
   ClipboardList,
   CookingPot,
   CreditCard,
+  Crown,
   FileText,
   GlassWater,
+  Landmark,
   LayoutDashboard,
   Library,
   MessageSquare,
@@ -36,7 +38,14 @@ export interface NavItem {
   to: string;
   label: string;
   icon: LucideIcon;
-  permission: Permission;
+  /** Omit only when `requiresCommercialAdmin` is set — that item is gated a different way. */
+  permission?: Permission;
+  /**
+   * P01: gates the item on platform-level Commercial Administration access
+   * instead of a tenant `Permission` — see CurrentPrincipal.commercialAdmin.
+   * A tenant OWNER's ALL_PERMISSIONS never satisfies this.
+   */
+  requiresCommercialAdmin?: boolean;
   exact?: boolean;
   hint?: string;
 }
@@ -289,6 +298,13 @@ export const NAV_GROUPS: NavGroup[] = [
         permission: "REPORTS:READ",
         hint: "Post-dining ratings and comments",
       },
+      {
+        to: "/admin/restaurant/pro-intelligence",
+        label: "Pro Intelligence",
+        icon: Crown,
+        permission: "REPORTS:READ",
+        hint: "Demand, forecasting, revenue, analytics, executive and multi-location — Pro/Enterprise",
+      },
     ],
   },
   {
@@ -318,6 +334,23 @@ export const NAV_GROUPS: NavGroup[] = [
       },
     ],
   },
+  {
+    // P01: platform-level commercial policy — plans, capabilities,
+    // entitlements, quotas, pricing, property policy, Founding 10,
+    // overrides, subscriptions, audit. Never shown to ordinary tenant
+    // restaurant admins, however many tenant permissions they hold.
+    label: "Commercial Administration",
+    items: [
+      {
+        to: "/admin/commercial",
+        label: "Commercial Centre",
+        icon: Landmark,
+        requiresCommercialAdmin: true,
+        exact: true,
+        hint: "Plans, pricing, entitlements, quotas and commercial governance",
+      },
+    ],
+  },
 ];
 
 export const ACCOUNT_ITEM: NavItem = {
@@ -327,11 +360,13 @@ export const ACCOUNT_ITEM: NavItem = {
   permission: "RESTAURANT:READ",
   hint: "Password and session",
 };
-export function visibleGroups(permissions: readonly string[]): NavGroup[] {
+export function visibleGroups(permissions: readonly string[], commercialAdmin = false): NavGroup[] {
   const held = new Set(permissions);
   return NAV_GROUPS.map((g) => ({
     label: g.label,
-    items: g.items.filter((i) => held.has(i.permission)),
+    items: g.items.filter((i) =>
+      i.requiresCommercialAdmin ? commercialAdmin : i.permission ? held.has(i.permission) : false,
+    ),
   })).filter((g) => g.items.length > 0);
 }
 export function activeItem(pathname: string): NavItem | null {

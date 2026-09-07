@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- fake Supabase rows are untyped at this boundary. */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { askNova } from "./selfnova.server";
 
 /**
@@ -18,6 +18,25 @@ const callReasoningProviderMock = vi.fn();
 vi.mock("@/lib/reasoning-provider.server", () => ({
   callReasoningProvider: (...args: unknown[]) => callReasoningProviderMock(...args),
 }));
+
+/**
+ * P01 completion pass — askNova now gates on "ai_concierge" entitlement/
+ * quota before calling the provider and records usage after. This file's
+ * fake Supabase (fakeDb below) only models the catalogue/table tables the
+ * pre-P01 tests need, not the commercial_* tables assertAiCapability reads
+ * — so, like staffnova.server.test.ts, the commercial module is mocked at
+ * the boundary. Defaults to "always entitled, unmetered" so every existing
+ * test's behavior is unchanged; the dedicated "P01: ai_concierge commercial
+ * gate" block below overrides these per scenario.
+ */
+const assertAiCapabilityMock = vi.fn();
+const recordAiUsageMock = vi.fn();
+vi.mock("@/modules/commercial/ai-governance.server", () => ({
+  assertAiCapability: (...args: unknown[]) => assertAiCapabilityMock(...args),
+  recordAiUsage: (...args: unknown[]) => recordAiUsageMock(...args),
+}));
+assertAiCapabilityMock.mockResolvedValue(undefined);
+recordAiUsageMock.mockResolvedValue(undefined);
 
 const TENANT = "tenant-1";
 const OTHER_TENANT = "tenant-2";
@@ -695,5 +714,79 @@ describe("askNova — real transport wiring (corrective pass regression)", () =>
 
     expect((result as any).ok).toBe(false);
     expect((result as any).reason).toBe("ai_unavailable");
+  });
+});
+
+describe("askNova — P01: ai_concierge commercial gate", () => {
+  beforeEach(() => {
+    assertAiCapabilityMock.mockClear();
+    recordAiUsageMock.mockClear();
+  });
+
+  it("entitlement denial degrades to the same honest ai_unavailable state as any other AI failure — no fabricated reply, no hint this is a billing matter", async () => {
+    const sb = fakeDb(baseRows());
+    assertAiCapabilityMock.mockRejectedValueOnce(new Error("Forbidden — not entitled"));
+    const ai = scriptedAi(JSON.stringify({ reply: "hi", recommendedItemIds: [] }));
+
+    const result = await askNova(sb as any, { tableId: TABLE, message: "What's good?" }, ai);
+
+    expect((result as any).ok).toBe(false);
+    expect((result as any).reason).toBe("ai_unavailable");
+  });
+
+  it("the entitlement/quota check runs BEFORE the provider is called — a commercial denial means the guest's AI request never reaches the provider", async () => {
+    const sb = fakeDb(baseRows());
+    assertAiCapabilityMock.mockRejectedValueOnce(new Error("Quota exceeded"));
+    const ai = vi.fn(async () => ({
+      content: JSON.stringify({ reply: "hi", recommendedItemIds: [] }),
+    }));
+
+    await askNova(sb as any, { tableId: TABLE, message: "What's good?" }, ai);
+
+    expect(ai).not.toHaveBeenCalled();
+  });
+
+  it("is checked with this table's real resolved tenant/property scope, not a client-supplied one", async () => {
+    const sb = fakeDb(baseRows());
+    const ai = scriptedAi(JSON.stringify({ reply: "hi", recommendedItemIds: [] }));
+
+    await askNova(sb as any, { tableId: TABLE, message: "What's good?" }, ai);
+
+    expect(assertAiCapabilityMock).toHaveBeenCalledWith(sb, TENANT, "ai_concierge", null);
+  });
+
+  it("a successful reply records real usage after the provider responds, scoped to this table's tenant, never to the guest's identity (no user id exists for a guest)", async () => {
+    const sb = fakeDb(baseRows());
+    const ai = vi.fn(async () => ({
+      content: JSON.stringify({ reply: "Sure!", recommendedItemIds: [] }),
+      model: "gpt-5.6-terra",
+      inputTokens: 300,
+      outputTokens: 50,
+    }));
+
+    await askNova(sb as any, { tableId: TABLE, message: "What's good?" }, ai);
+
+    expect(recordAiUsageMock).toHaveBeenCalledWith(
+      sb,
+      expect.objectContaining({
+        tenantId: TENANT,
+        propertyId: null,
+        userId: null,
+        capabilityCode: "ai_concierge",
+        model: "gpt-5.6-terra",
+        provider: "openai",
+        inputUsage: 300,
+        outputUsage: 50,
+      }),
+    );
+  });
+
+  it("a failed/unavailable provider call never records usage", async () => {
+    const sb = fakeDb(baseRows());
+    const ai = failingAi();
+
+    await askNova(sb as any, { tableId: TABLE, message: "What's good?" }, ai);
+
+    expect(recordAiUsageMock).not.toHaveBeenCalled();
   });
 });

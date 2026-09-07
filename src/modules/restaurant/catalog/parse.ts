@@ -92,7 +92,16 @@ const MASS: Record<string, number> = { kg: 1000, g: 1 };
 const VOLUME: Record<string, number> = { l: 1000, ml: 1 };
 const COUNT: Record<string, number> = { pc: 1, pcs: 1, piece: 1 };
 
-function unitScale(code: string): { dimension: string; factor: number } | null {
+/**
+ * The canonical dimension + base-unit factor for a well-known unit code —
+ * the same table the master-catalog importer uses to create g/kg/ml/l/pc
+ * correctly. Exported so any other surface that creates a unit (the Units
+ * admin panel, notably) can prefill the same values instead of falling back
+ * to the schema default (dimension='count', factor=1), which is wrong for
+ * anything but a genuine count unit and was the root cause of at least one
+ * recipe costing 1000x too high.
+ */
+export function unitScale(code: string): { dimension: string; factor: number } | null {
   const c = code.toLowerCase();
   if (c in MASS) return { dimension: "mass", factor: MASS[c] };
   if (c in VOLUME) return { dimension: "volume", factor: VOLUME[c] };
@@ -133,7 +142,11 @@ export function resolvePackSize(label: string | null, baseUnit: string | null): 
     return { packSize: null, label: raw, reason: `Unrecognised pack unit in "${raw}".` };
   }
   if (unit.dimension !== base.dimension) {
-    return { packSize: null, label: raw, reason: `Pack unit "${m[3]}" is not comparable with base unit "${baseUnit}".` };
+    return {
+      packSize: null,
+      label: raw,
+      reason: `Pack unit "${m[3]}" is not comparable with base unit "${baseUnit}".`,
+    };
   }
   const totalInBase = (multiplier * quantity * unit.factor) / base.factor;
   return { packSize: Number(totalInBase.toFixed(6)), label: raw };
@@ -169,12 +182,15 @@ export function normaliseRow(row: CatalogSourceRow): NormalisedCatalogRow {
 
   if (!row.baseUnit) issues.push("Missing base unit.");
   else if (!base) issues.push(`Unknown base unit "${row.baseUnit}".`);
-  if (!row.purchaseUnit || row.purchaseUnit.trim().toLowerCase() === "unknown") issues.push("Unknown purchase unit.");
+  if (!row.purchaseUnit || row.purchaseUnit.trim().toLowerCase() === "unknown")
+    issues.push("Unknown purchase unit.");
   else if (!purchase) issues.push(`Unknown purchase unit "${row.purchaseUnit}".`);
   if (pack.reason) issues.push(pack.reason);
 
-  const declared = row.dataStatus?.trim().toUpperCase() === "CONFIRMED" ? "CONFIRMED" : "UNCONFIRMED";
-  const status: "CONFIRMED" | "UNCONFIRMED" = declared === "CONFIRMED" && issues.length === 0 ? "CONFIRMED" : "UNCONFIRMED";
+  const declared =
+    row.dataStatus?.trim().toUpperCase() === "CONFIRMED" ? "CONFIRMED" : "UNCONFIRMED";
+  const status: "CONFIRMED" | "UNCONFIRMED" =
+    declared === "CONFIRMED" && issues.length === 0 ? "CONFIRMED" : "UNCONFIRMED";
 
   return {
     sku: row.sku.trim(),

@@ -371,7 +371,14 @@ export async function fetchSellableCatalog(
           ? ((variants ?? []) as any[]).filter((v) => v.product_id === product.id)
           : [],
         modifier_group_ids: groupIds,
-        price: resolved?.amount ?? i.price,
+        // No `?? i.price` fallback here on purpose: i.price is the menu
+        // item's own base/display field, never an authoritative Pricing
+        // Centre price, and falling back to it would show a number the
+        // order path (insertLines, strict for any catalogued line) would
+        // then refuse — exactly the "displayed price disagrees with what's
+        // orderable" contradiction this catalogue exists to prevent (see
+        // the comment above resolveDisplayPrice's call).
+        price: resolved?.amount ?? null,
         currency: resolved?.currency ?? i.currency,
         /** False means insertLines will refuse this line — the catalogue must not present it as orderable. */
         priceConfigured: resolved !== null,
