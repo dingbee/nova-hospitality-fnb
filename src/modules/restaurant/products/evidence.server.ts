@@ -17,43 +17,60 @@ export async function getProductEvidence(sb: Sb, userId: string, tenantId: strin
   await assertTenantRead(sb, userId, tenantId);
   const now = Date.now();
 
-  const [{ data: products }, { data: recipes }, { data: history }, { data: productions }, { data: soldLines }] =
-    await Promise.all([
-      sb
-        .from("restaurant_products")
-        .select("id, sku, name, price, currency, recipe_id, active, product_type")
-        .eq("tenant_id", tenantId),
-      sb
-        .from("restaurant_recipes")
-        .select("id, code, name, version, status, computed_cost, target_cost, last_reviewed_at, updated_at, currency")
-        .eq("tenant_id", tenantId),
-      sb
-        .from("restaurant_recipe_cost_history")
-        .select("recipe_id, total_cost, computed_at")
-        .eq("tenant_id", tenantId)
-        .order("computed_at", { ascending: false })
-        .limit(600),
-      sb
-        .from("restaurant_productions")
-        .select("id, production_number, recipe_id, status, planned_quantity, actual_quantity, yield_variance_percent, input_cost, completed_at")
-        .eq("tenant_id", tenantId)
-        .eq("status", "completed")
-        .order("completed_at", { ascending: false })
-        .limit(200),
-      sb
-        .from("restaurant_order_items")
-        .select("recipe_id, quantity, line_total, theoretical_cost, line_cost, status")
-        .eq("tenant_id", tenantId)
-        .not("recipe_id", "is", null)
-        .limit(2000),
-    ]);
+  const [
+    { data: products },
+    { data: recipes },
+    { data: history },
+    { data: productions },
+    { data: soldLines },
+    { data: publishedMenus },
+    { data: menuItems },
+  ] = await Promise.all([
+    sb
+      .from("restaurant_products")
+      .select("id, sku, name, price, currency, recipe_id, menu_item_id, active, product_type")
+      .eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_recipes")
+      .select(
+        "id, code, name, version, status, computed_cost, target_cost, last_reviewed_at, updated_at, currency",
+      )
+      .eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_recipe_cost_history")
+      .select("recipe_id, total_cost, computed_at")
+      .eq("tenant_id", tenantId)
+      .order("computed_at", { ascending: false })
+      .limit(600),
+    sb
+      .from("restaurant_productions")
+      .select(
+        "id, production_number, recipe_id, status, planned_quantity, actual_quantity, yield_variance_percent, input_cost, completed_at",
+      )
+      .eq("tenant_id", tenantId)
+      .eq("status", "completed")
+      .order("completed_at", { ascending: false })
+      .limit(200),
+    sb
+      .from("restaurant_order_items")
+      .select("recipe_id, quantity, line_total, theoretical_cost, line_cost, status")
+      .eq("tenant_id", tenantId)
+      .not("recipe_id", "is", null)
+      .limit(2000),
+    sb.from("restaurant_menus").select("id").eq("tenant_id", tenantId).eq("status", "published"),
+    sb
+      .from("restaurant_menu_items")
+      .select("id, menu_id, name, price, currency, available")
+      .eq("tenant_id", tenantId)
+      .eq("available", true),
+  ]);
 
   const recipeRows = (recipes ?? []) as any[];
   const recipeById = new Map(recipeRows.map((r) => [r.id, r]));
 
   /* Cost drift: earliest vs latest recorded cost per recipe. */
   const byRecipe = new Map<string, any[]>();
-  for (const row of ((history ?? []) as any[])) {
+  for (const row of (history ?? []) as any[]) {
     const list = byRecipe.get(row.recipe_id) ?? [];
     list.push(row);
     byRecipe.set(row.recipe_id, list);
@@ -70,7 +87,8 @@ export async function getProductEvidence(sb: Sb, userId: string, tenantId: strin
         earliest_cost: earliest,
         latest_cost: latest,
         drift: Number((latest - earliest).toFixed(4)),
-        drift_percent: earliest > 0 ? Number((((latest - earliest) / earliest) * 100).toFixed(2)) : null,
+        drift_percent:
+          earliest > 0 ? Number((((latest - earliest) / earliest) * 100).toFixed(2)) : null,
         samples: rows.length,
       };
     })
@@ -93,8 +111,37 @@ export async function getProductEvidence(sb: Sb, userId: string, tenantId: strin
 
   /* Products sold with no recipe behind them (retail lines excluded). */
   const missingRecipes = ((products ?? []) as any[])
-    .filter((p) => p.active && !p.recipe_id && p.product_type !== "retail" && p.product_type !== "bundle")
+    .filter(
+      (p) => p.active && !p.recipe_id && p.product_type !== "retail" && p.product_type !== "bundle",
+    )
     .map((p) => ({ product_id: p.id, sku: p.sku, name: p.name, price: Number(p.price ?? 0) }));
+
+  /*
+   * Sellable menu items with no active product row at all — the blind spot
+   * `missingRecipes` above cannot see, because that check only ever looks
+   * at existing restaurant_products rows. A menu item can be published,
+   * priced, and backed by a fully costed active recipe, yet remain entirely
+   * invisible to Pricing Centre and POS costing (both resolve recipe cost
+   * strictly through restaurant_products.menu_item_id — see
+   * catalogue.server.ts/recipes.server.ts's activeRecipeForMenuItem) if
+   * nothing ever created that product row. This is a plain fact about
+   * missing linkage, not a recipe-matching heuristic: it never guesses
+   * which recipe a menu item "should" use.
+   */
+  const publishedMenuIds = new Set(((publishedMenus ?? []) as any[]).map((m) => m.id));
+  const linkedMenuItemIds = new Set(
+    ((products ?? []) as any[])
+      .filter((p) => p.active && p.menu_item_id)
+      .map((p) => p.menu_item_id as string),
+  );
+  const orphanedMenuItems = ((menuItems ?? []) as any[])
+    .filter((m) => publishedMenuIds.has(m.menu_id) && !linkedMenuItemIds.has(m.id))
+    .map((m) => ({
+      menu_item_id: m.id,
+      name: m.name,
+      price: Number(m.price ?? 0),
+      currency: m.currency,
+    }));
 
   /* Production yield variance, as recorded — cause not inferred. */
   const yieldVariance = ((productions ?? []) as any[]).map((p) => ({
@@ -109,10 +156,18 @@ export async function getProductEvidence(sb: Sb, userId: string, tenantId: strin
   }));
 
   /* Theoretical vs actual consumption cost per recipe, from sold lines. */
-  const consumption = new Map<string, { theoretical: number; actual: number; revenue: number; units: number }>();
-  for (const line of ((soldLines ?? []) as any[])) {
+  const consumption = new Map<
+    string,
+    { theoretical: number; actual: number; revenue: number; units: number }
+  >();
+  for (const line of (soldLines ?? []) as any[]) {
     if (line.status === "voided") continue;
-    const bucket = consumption.get(line.recipe_id) ?? { theoretical: 0, actual: 0, revenue: 0, units: 0 };
+    const bucket = consumption.get(line.recipe_id) ?? {
+      theoretical: 0,
+      actual: 0,
+      revenue: 0,
+      units: 0,
+    };
     bucket.theoretical += Number(line.theoretical_cost ?? 0);
     bucket.actual += Number(line.line_cost ?? 0);
     bucket.revenue += Number(line.line_total ?? 0);
@@ -157,6 +212,7 @@ export async function getProductEvidence(sb: Sb, userId: string, tenantId: strin
     cost_drift: costDrift,
     recipe_age: recipeAge,
     missing_recipes: missingRecipes,
+    orphaned_menu_items: orphanedMenuItems,
     yield_variance: yieldVariance,
     theoretical_vs_actual: theoreticalVsActual,
     product_margin: productMargin,
