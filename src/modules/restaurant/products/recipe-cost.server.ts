@@ -70,7 +70,7 @@ export async function resolveRecipeCost(
   const { data: items } = itemIds.length
     ? await sb
         .from("restaurant_inventory_items")
-        .select("id, name, average_cost, unit_id")
+        .select("id, name, average_cost, unit_id, content_per_stock_unit, content_unit_id")
         .in("id", itemIds)
     : { data: [] as any[] };
   const itemMap = new Map<string, any>(((items ?? []) as any[]).map((r) => [r.id, r]));

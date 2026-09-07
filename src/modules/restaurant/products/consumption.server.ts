@@ -124,7 +124,9 @@ export async function consumeForRecipeSale(
   const ids = [...new Set(demand.map((d) => d.inventoryItemId))];
   const { data: items } = await sb
     .from("restaurant_inventory_items")
-    .select("id, name, average_cost, currency, location_id, property_id, unit_id")
+    .select(
+      "id, name, average_cost, currency, location_id, property_id, unit_id, content_per_stock_unit, content_unit_id",
+    )
     .in("id", ids);
   const meta = new Map<string, any>(((items ?? []) as any[]).map((r) => [r.id, r]));
 

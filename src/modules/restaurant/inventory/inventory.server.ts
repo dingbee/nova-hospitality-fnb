@@ -114,6 +114,35 @@ export async function upsertInventoryItem(sb: Sb, userId: string, input: UpsertI
       `"${input.name}": pack size is required — how many stock units one purchase unit contains (a loose-KG item is 1, a 30-egg PACK counted in PC is 30).`,
     );
   }
+  if ((input.contentPerStockUnit != null) !== (input.contentUnitId != null)) {
+    throw new Error(
+      `"${input.name}": content per stock unit needs both a quantity and a unit — provide both, or neither.`,
+    );
+  }
+  // Never guess a conversion: a content unit that is not the same physical
+  // dimension as the consumption unit (ML declared for a KG item, say) is a
+  // modelling error, not something to silently accept. Only checked when
+  // both are actually set — an item with no consumption unit configured yet
+  // has nothing to be incompatible with.
+  if (
+    input.contentUnitId &&
+    input.consumptionUnitId &&
+    input.contentUnitId !== input.consumptionUnitId
+  ) {
+    const { data: dims, error: dimErr } = await sb
+      .from("restaurant_inventory_units")
+      .select("id, code, dimension")
+      .in("id", [input.contentUnitId, input.consumptionUnitId]);
+    if (dimErr) throw new Error(dimErr.message);
+    const byId = new Map(((dims ?? []) as any[]).map((u) => [u.id, u]));
+    const contentUnit = byId.get(input.contentUnitId);
+    const consumptionUnit = byId.get(input.consumptionUnitId);
+    if (contentUnit && consumptionUnit && contentUnit.dimension !== consumptionUnit.dimension) {
+      throw new Error(
+        `"${input.name}": content unit (${contentUnit.code}, ${contentUnit.dimension}) is not compatible with the consumption unit (${consumptionUnit.code}, ${consumptionUnit.dimension}).`,
+      );
+    }
+  }
   const isCreate = !input.id;
   const sku = input.sku ?? (isCreate ? await nextInventorySku(sb, input.tenantId) : undefined);
   const row = {
@@ -151,6 +180,10 @@ export async function upsertInventoryItem(sb: Sb, userId: string, input: UpsertI
     ...(input.isBeverage === undefined ? {} : { is_beverage: input.isBeverage }),
     ...(input.servingSize === undefined ? {} : { serving_size: input.servingSize }),
     ...(input.servingUnitId === undefined ? {} : { serving_unit_id: input.servingUnitId }),
+    ...(input.contentPerStockUnit === undefined
+      ? {}
+      : { content_per_stock_unit: input.contentPerStockUnit }),
+    ...(input.contentUnitId === undefined ? {} : { content_unit_id: input.contentUnitId }),
     updated_at: new Date().toISOString(),
   };
   const q = input.id

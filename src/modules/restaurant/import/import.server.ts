@@ -925,8 +925,8 @@ async function commitInventoryItemRow(
     packSize: Number(m.packSize),
     purchaseUnitId: m.purchaseUnitId ?? undefined,
     consumptionUnitId: m.consumptionUnitId ?? undefined,
-    servingSize: m.servingSize ?? undefined,
-    servingUnitId: m.servingUnitId ?? undefined,
+    contentPerStockUnit: m.contentPerStockUnit ?? undefined,
+    contentUnitId: m.contentUnitId ?? undefined,
     isBeverage: m.isBeverage ?? undefined,
     shelfLifeDays: m.shelfLifeDays ?? undefined,
   });

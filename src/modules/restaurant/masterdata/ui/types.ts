@@ -92,6 +92,9 @@ export interface InventoryItemRow {
   consumption_unit_id: string | null;
   pack_size: number | null;
   shelf_life_days: number | null;
+  /** Packaging/content conversion: how much of `content_unit_id` is in one stock unit (e.g. 750 for a 750ml bottle). */
+  content_per_stock_unit: number | null;
+  content_unit_id: string | null;
 }
 
 export interface SupplierMetadata {

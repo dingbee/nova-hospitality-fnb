@@ -103,7 +103,9 @@ export async function getMenuItemComposition(
   const { data: items } = ids.length
     ? await sb
         .from("restaurant_inventory_items")
-        .select("id, name, sku, current_quantity, average_cost, currency, is_beverage, unit_id")
+        .select(
+          "id, name, sku, current_quantity, average_cost, currency, is_beverage, unit_id, content_per_stock_unit, content_unit_id",
+        )
         .in("id", ids)
     : { data: [] as any[] };
   const meta = new Map(((items ?? []) as any[]).map((r) => [r.id, r]));

@@ -279,22 +279,29 @@ export function stageInventoryItemRow(
   if (mapped.consumptionUnitCode && consumptionUnitRes.status === "unknown") {
     errors.push(`Consumption unit "${mapped.consumptionUnitCode}" was not recognised.`);
   }
-  const servingUnitRes = resolveUnit(mapped.servingUnitCode, ref.units);
-  if (mapped.servingUnitCode && servingUnitRes.status === "unknown") {
-    errors.push(`Content unit "${mapped.servingUnitCode}" was not recognised.`);
+  const contentUnitRes = resolveUnit(mapped.contentUnitCode, ref.units);
+  if (mapped.contentUnitCode && contentUnitRes.status === "unknown") {
+    errors.push(`Content unit "${mapped.contentUnitCode}" was not recognised.`);
   }
-  const servingSize = numField(mapped.servingSize, "Content per stock unit", errors);
+  const contentPerStockUnit = numField(
+    mapped.contentPerStockUnit,
+    "Content per stock unit",
+    errors,
+  );
   // Content per stock unit and content unit are a pair — one without the
   // other is a modelling error the reference screen calls out by name (see
   // the master template's own House Red Wine example): a bottle whose
   // "content" is "750" with no unit, or a unit with no quantity, means
-  // nothing on its own.
+  // nothing on its own. This is deliberately a distinct pair from
+  // servingSize/servingUnitCode (the Bar Pour Setup's own "how much per
+  // glass") — see restaurant_inventory_items' content_per_stock_unit vs
+  // serving_size columns.
   if (
-    (mapped.servingSize && !mapped.servingUnitCode) ||
-    (!mapped.servingSize && mapped.servingUnitCode)
+    (mapped.contentPerStockUnit && !mapped.contentUnitCode) ||
+    (!mapped.contentPerStockUnit && mapped.contentUnitCode)
   ) {
     errors.push(
-      `"${mapped.name ?? "This item"}" gives a content ${mapped.servingSize ? "quantity" : "unit"} but not the ${mapped.servingSize ? "unit" : "quantity"} — both Content per Stock Unit and Content Unit are needed together, or neither.`,
+      `"${mapped.name ?? "This item"}" gives a content ${mapped.contentPerStockUnit ? "quantity" : "unit"} but not the ${mapped.contentPerStockUnit ? "unit" : "quantity"} — both Content per Stock Unit and Content Unit are needed together, or neither.`,
     );
   }
   const isBeverage = parseBoolean(mapped.isBeverage);
@@ -328,9 +335,9 @@ export function stageInventoryItemRow(
       purchaseUnitCode: mapped.purchaseUnitCode ?? null,
       consumptionUnitId: consumptionUnitRes.unit?.id ?? null,
       consumptionUnitCode: mapped.consumptionUnitCode ?? null,
-      servingSize: servingSize ?? null,
-      servingUnitId: servingUnitRes.unit?.id ?? null,
-      servingUnitCode: mapped.servingUnitCode ?? null,
+      contentPerStockUnit: contentPerStockUnit ?? null,
+      contentUnitId: contentUnitRes.unit?.id ?? null,
+      contentUnitCode: mapped.contentUnitCode ?? null,
       isBeverage: isBeverage ?? null,
       shelfLifeDays: shelfLifeDays ?? null,
     },

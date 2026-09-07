@@ -153,11 +153,11 @@ export const LEXIBITE_TEMPLATE_SHEETS: readonly TemplateSheetDef[] = [
       },
       {
         header: "Content per Stock Unit",
-        field: "servingSize",
+        field: "contentPerStockUnit",
         comment:
           "The quantity inside ONE Stock Unit — e.g. a 750ml bottle has 750 here. Required together with Content Unit, or leave both blank.",
       },
-      { header: "Content Unit", field: "servingUnitCode" },
+      { header: "Content Unit", field: "contentUnitCode" },
       {
         header: "Opening Quantity",
         field: "openingQuantity",

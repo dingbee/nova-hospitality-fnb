@@ -250,9 +250,19 @@ export const upsertInventoryItemSchema = tenantScopeSchema.extend({
   shelfLifeDays: z.number().int().min(0).max(3650).optional(),
   /** Beverage / bar configuration — existing columns on restaurant_inventory_items. */
   isBeverage: z.boolean().optional(),
-  /** Standard pour/serving magnitude, expressed in `servingUnitId`. */
+  /** Standard pour/serving magnitude, expressed in `servingUnitId` — the Bar Pour Setup's own "how much per glass", distinct from the packaging fields below. */
   servingSize: z.number().min(0).optional(),
   servingUnitId: uuid.optional(),
+  /**
+   * Packaging/content conversion: how much `contentUnitId` is contained in
+   * ONE stock unit (a 750ml bottle has contentPerStockUnit 750, contentUnitId
+   * = ML). Distinct from packSize (stock units per purchase unit) and from
+   * servingSize (the pour/serving magnitude) — this is the bridge between a
+   * physical-container stock unit and its own contents. Never guessed:
+   * absent unless the operator sets it.
+   */
+  contentPerStockUnit: z.number().positive().optional(),
+  contentUnitId: uuid.optional(),
 });
 export type UpsertInventoryItemInput = z.infer<typeof upsertInventoryItemSchema>;
 

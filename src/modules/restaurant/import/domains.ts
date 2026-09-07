@@ -270,22 +270,24 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       aliases: alias("Consumption Unit", "Recipe Unit", "Usage Unit"),
     },
     {
-      field: "servingSize",
+      field: "contentPerStockUnit",
       // The quantity contained inside one stock unit — e.g. a 750ml bottle
       // (Stock Unit "BTL") has a Content per Stock Unit of 750. Distinct
       // from Pack Size (how many stock units are in one purchase unit — 12
       // bottles in a carton): this is what's *inside* one bottle, not how
       // many bottles are in a case. Maps to restaurant_inventory_items'
-      // existing serving_size column (already wired for beverage costing).
+      // content_per_stock_unit column — itself distinct from serving_size,
+      // which is the Bar Pour Setup's own "how much per glass" and must
+      // never be conflated with the bottle's own content (see bar/pour.ts).
       label: "Content per stock unit",
       required: false,
-      aliases: alias("Content Per Stock Unit", "Serving Size", "Contents", "Fill Size"),
+      aliases: alias("Content Per Stock Unit", "Contents", "Fill Size"),
     },
     {
-      field: "servingUnitCode",
+      field: "contentUnitCode",
       label: "Content unit",
       required: false,
-      aliases: alias("Content Unit", "Serving Unit", "Fill Unit"),
+      aliases: alias("Content Unit", "Fill Unit"),
     },
     {
       field: "isBeverage",

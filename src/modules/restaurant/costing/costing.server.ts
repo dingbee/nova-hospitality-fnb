@@ -93,7 +93,7 @@ export async function computeRecipeCost(sb: Sb, userId: string, input: ComputeRe
   if (ids.length > 0) {
     const { data: inv } = await sb
       .from("restaurant_inventory_items")
-      .select("id, name, average_cost, unit_id")
+      .select("id, name, average_cost, unit_id, content_per_stock_unit, content_unit_id")
       .in("id", ids);
     for (const row of (inv ?? []) as any[]) {
       costs.set(row.id, {
