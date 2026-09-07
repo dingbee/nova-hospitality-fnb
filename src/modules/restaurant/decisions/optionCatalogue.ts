@@ -20,9 +20,12 @@ export const DOMAIN_FOR_KIND: Record<RestaurantFindingKind, DecisionDomain> = {
   kitchen_capacity: "operations",
   purchasing_replenishment: "revenue",
   supplier_risk: "revenue",
+  demand_shift: "operations",
+  revenue_underperformance: "revenue",
 };
 
-const num = (v: unknown, fallback = 0) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
+const num = (v: unknown, fallback = 0) =>
+  typeof v === "number" && Number.isFinite(v) ? v : fallback;
 const bool = (v: unknown) => v === true;
 
 /* ------------------------------ menu ------------------------------ */
@@ -59,7 +62,8 @@ function menuOptions(f: RestaurantFinding): DecisionOption[] {
     {
       key: "adjust_recipe",
       title: "Adjust the recipe",
-      summary: "Re-balance portion sizes or components to recover margin without changing the price.",
+      summary:
+        "Re-balance portion sizes or components to recover margin without changing the price.",
       actionType: "restaurant.menu.reprice_review",
       tactics: [
         "Review portion weights against the costed recipe",
@@ -83,7 +87,10 @@ function menuOptions(f: RestaurantFinding): DecisionOption[] {
       title: "Increase the menu price",
       summary: "Lift the price one band to restore the target margin.",
       actionType: "restaurant.menu.reprice_review",
-      tactics: ["Set the new price against the costed target margin", "Reprint or republish the menu"],
+      tactics: [
+        "Set the new price against the costed target margin",
+        "Reprint or republish the menu",
+      ],
       scores: {
         expected_revenue: highVolume ? 0.8 : 0.55,
         margin_impact: 0.85,
@@ -101,7 +108,10 @@ function menuOptions(f: RestaurantFinding): DecisionOption[] {
       title: "Remove the item from the menu",
       summary: "Delist the dish and redirect demand to a better-performing alternative.",
       actionType: "restaurant.menu.reprice_review",
-      tactics: ["Delist the item at the next menu change", "Brief service on the replacement recommendation"],
+      tactics: [
+        "Delist the item at the next menu change",
+        "Brief service on the replacement recommendation",
+      ],
       scores: {
         expected_revenue: isDog ? 0.6 : 0.3,
         margin_impact: isDog ? 0.75 : 0.5,
@@ -164,7 +174,8 @@ function shortageOptions(f: RestaurantFinding): DecisionOption[] {
     {
       key: "substitute_menu_item",
       title: "Substitute the affected menu items",
-      summary: "Swap in an alternative dish so service is unaffected while stock is replenished normally.",
+      summary:
+        "Swap in an alternative dish so service is unaffected while stock is replenished normally.",
       actionType: "restaurant.menu.reprice_review",
       tactics: [
         "Identify dishes that consume the item",
@@ -229,7 +240,10 @@ function wastageOptions(): DecisionOption[] {
       title: "Tighten prep par levels",
       summary: "Prep to observed demand instead of fixed pars on the highest-waste items.",
       actionType: "restaurant.inventory.replenish_review",
-      tactics: ["Reset par levels for the top waste items", "Re-brief the kitchen on prep quantities"],
+      tactics: [
+        "Reset par levels for the top waste items",
+        "Re-brief the kitchen on prep quantities",
+      ],
       scores: {
         operational_feasibility: 0.85,
         guest_experience: 0.7,
@@ -245,7 +259,10 @@ function wastageOptions(): DecisionOption[] {
       title: "Run a stock rotation and storage audit",
       summary: "Check FIFO discipline, storage temperatures and receiving quality.",
       actionType: "restaurant.inventory.replenish_review",
-      tactics: ["Audit storage and rotation on the waste-heavy items", "Log findings against the stock ledger"],
+      tactics: [
+        "Audit storage and rotation on the waste-heavy items",
+        "Log findings against the stock ledger",
+      ],
       scores: {
         operational_feasibility: 0.7,
         guest_experience: 0.75,
@@ -301,7 +318,10 @@ function kitchenOptions(f: RestaurantFinding): DecisionOption[] {
       title: "Add cover on the station at peak",
       summary: "Roster an additional commis or chef de partie for the dinner peak.",
       actionType: "restaurant.kitchen.staffing_review",
-      tactics: ["Roster additional cover for the peak service", "Confirm the change with the head chef"],
+      tactics: [
+        "Roster additional cover for the peak service",
+        "Confirm the change with the head chef",
+      ],
       scores: {
         operational_feasibility: 0.65,
         guest_experience: 0.85,
@@ -337,7 +357,10 @@ function kitchenOptions(f: RestaurantFinding): DecisionOption[] {
       title: "Reduce menu complexity on the station",
       summary: "Trim the number of made-to-order dishes routed to this station at peak.",
       actionType: "restaurant.menu.reprice_review",
-      tactics: ["Review the dishes routed to the station", "Remove or re-route the slowest one or two"],
+      tactics: [
+        "Review the dishes routed to the station",
+        "Remove or re-route the slowest one or two",
+      ],
       scores: {
         operational_feasibility: 0.7,
         guest_experience: 0.5,
@@ -396,7 +419,10 @@ function purchasingOptions(f: RestaurantFinding): DecisionOption[] {
       title: "Split the order across suppliers",
       summary: "Protect against late delivery by splitting volume with a second approved supplier.",
       actionType: "restaurant.purchase.suggest",
-      tactics: ["Split the quantity across two approved suppliers", "Track delivery performance on both"],
+      tactics: [
+        "Split the quantity across two approved suppliers",
+        "Track delivery performance on both",
+      ],
       scores: {
         expected_revenue: 0.6,
         margin_impact: 0.6,
@@ -414,7 +440,10 @@ function purchasingOptions(f: RestaurantFinding): DecisionOption[] {
       title: "Renegotiate price before ordering",
       summary: "Take the quote back to the supplier, or re-tender, before committing spend.",
       actionType: "restaurant.purchase.suggest",
-      tactics: ["Request a revised quote against our average landed cost", "Re-tender if the gap holds"],
+      tactics: [
+        "Request a revised quote against our average landed cost",
+        "Re-tender if the gap holds",
+      ],
       scores: {
         expected_revenue: 0.6,
         margin_impact: 0.9,
@@ -432,7 +461,10 @@ function purchasingOptions(f: RestaurantFinding): DecisionOption[] {
       title: "Order short and re-measure",
       summary: "Buy only to the lead time and re-check velocity before the next cycle.",
       actionType: "restaurant.inventory.replenish_review",
-      tactics: ["Reduce the order to lead-time cover only", "Re-run purchasing intelligence next week"],
+      tactics: [
+        "Reduce the order to lead-time cover only",
+        "Re-run purchasing intelligence next week",
+      ],
       scores: {
         expected_revenue: 0.45,
         margin_impact: 0.75,
@@ -440,6 +472,103 @@ function purchasingOptions(f: RestaurantFinding): DecisionOption[] {
         strategic_alignment: 0.55,
         operational_feasibility: 0.9,
         risk: 0.55,
+        historical_evidence: 0.5,
+      },
+      tags: [],
+      effort: "low",
+    },
+  ];
+}
+
+/* ------------------------------ P06: demand ------------------------------ */
+
+/**
+ * P06 — Level 0/informational only (see findings.ts's demandShiftFindings
+ * doc comment for why): both options use `restaurant.no_change`, the same
+ * "record the decision, execute nothing" sentinel menuOptions'
+ * `monitor_menu` and wastageOptions' `monitor_waste` already use, rather
+ * than fabricating a stock or pricing action this layer cannot safely tie
+ * to a specific inventory item.
+ */
+function demandShiftOptions(): DecisionOption[] {
+  return [
+    {
+      key: "review_stock_and_prep",
+      title: "Review stock and prep capacity manually",
+      summary:
+        "Confirm the ingredients behind this dish can sustain the higher rate before it becomes a shortage.",
+      actionType: "restaurant.no_change",
+      tactics: [
+        "Check current stock and consumption velocity for this dish's ingredients",
+        "Confirm prep capacity can sustain the higher rate at peak",
+      ],
+      scores: {
+        operational_feasibility: 0.9,
+        guest_experience: 0.75,
+        risk: 0.7,
+        margin_impact: 0.5,
+        historical_evidence: 0.5,
+      },
+      tags: [],
+      effort: "low",
+    },
+    {
+      key: "monitor_demand",
+      title: "Hold and monitor for one more window",
+      summary: "Change nothing and re-measure after the next window.",
+      actionType: "restaurant.no_change",
+      tactics: ["Re-run demand intelligence next window"],
+      scores: {
+        operational_feasibility: 1,
+        guest_experience: 0.7,
+        risk: 0.65,
+        margin_impact: 0.3,
+        historical_evidence: 0.5,
+      },
+      tags: [],
+      effort: "low",
+    },
+  ];
+}
+
+/* ----------------------------- P06: revenue ----------------------------- */
+
+/** P06 — Level 0/informational only (see findings.ts's revenueUnderperformanceFindings doc comment). */
+function revenueUnderperformanceOptions(): DecisionOption[] {
+  return [
+    {
+      key: "review_outlet_operations",
+      title: "Review outlet operations manually",
+      summary:
+        "Compare staffing, menu mix and local demand against the group's better-performing outlets.",
+      actionType: "restaurant.no_change",
+      tactics: [
+        "Compare staffing and menu mix against the top-performing outlet",
+        "Check for a local, non-recurring cause before treating this as a trend",
+      ],
+      scores: {
+        operational_feasibility: 0.85,
+        guest_experience: 0.7,
+        risk: 0.7,
+        expected_revenue: 0.6,
+        strategic_alignment: 0.6,
+        historical_evidence: 0.5,
+      },
+      tags: [],
+      effort: "medium",
+    },
+    {
+      key: "monitor_outlet",
+      title: "Hold and monitor for one more window",
+      summary: "Change nothing and re-measure after the next window.",
+      actionType: "restaurant.no_change",
+      tactics: ["Re-run revenue/multi-location intelligence next window"],
+      scores: {
+        operational_feasibility: 1,
+        guest_experience: 0.7,
+        risk: 0.6,
+        expected_revenue: 0.3,
+        strategic_alignment: 0.4,
         historical_evidence: 0.5,
       },
       tags: [],
@@ -461,6 +590,10 @@ export function optionsFor(f: RestaurantFinding): DecisionOption[] {
     case "purchasing_replenishment":
     case "supplier_risk":
       return purchasingOptions(f);
+    case "demand_shift":
+      return demandShiftOptions();
+    case "revenue_underperformance":
+      return revenueUnderperformanceOptions();
   }
 }
 
@@ -498,19 +631,24 @@ export function constraintsFor(f: RestaurantFinding): DecisionConstraint[] {
       key: "protect_signature_dishes",
       label: "Protect signature dishes",
       source: "strategic_memory",
-      description: "High-volume and star dishes carry the menu's reputation and are not delisted on margin alone.",
+      description:
+        "High-volume and star dishes carry the menu's reputation and are not delisted on margin alone.",
       effect: "exclude",
       penalty: 1,
       violatedByTags: ["menu_removal", "signature_dish"],
     });
   }
 
-  if (!bool(f.facts.hasSupplier) && (f.kind === "purchasing_replenishment" || f.kind === "supplier_risk")) {
+  if (
+    !bool(f.facts.hasSupplier) &&
+    (f.kind === "purchasing_replenishment" || f.kind === "supplier_risk")
+  ) {
     constraints.push({
       key: "no_supplier_on_file",
       label: "No supplier product on file",
       source: "availability",
-      description: "There is no priced supplier product for this item, so a direct order cannot be raised yet.",
+      description:
+        "There is no priced supplier product for this item, so a direct order cannot be raised yet.",
       effect: "exclude",
       penalty: 1,
       violatedByTags: ["no_supplier"],
@@ -522,7 +660,8 @@ export function constraintsFor(f: RestaurantFinding): DecisionConstraint[] {
       key: "service_protection",
       label: "Service protection",
       source: "capacity",
-      description: "Service is already under pressure, so options that add operational load are penalised.",
+      description:
+        "Service is already under pressure, so options that add operational load are penalised.",
       effect: "penalise",
       penalty: 0.06,
       violatedByTags: ["high_ops_load", "labour_cost"],

@@ -1,15 +1,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- server function rows are untyped at this boundary. */
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, type ReactNode } from "react";
 import {
   Activity,
+  ArrowRight,
   BarChart3,
   Boxes,
   Building2,
   Crown,
   LineChart,
+  ListChecks,
   Sparkles,
   TrendingUp,
 } from "lucide-react";
@@ -21,6 +23,7 @@ import { IntelligenceModule } from "@/components/os/IntelligenceModule";
 import { Button } from "@/components/ui/button";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import { resolveCommercialEntitlementFn } from "@/modules/commercial/commercial.functions";
+import { getRestaurantDecisionBoardFn } from "@/modules/restaurant/decisions/decisions.functions";
 import {
   getRestaurantAdvancedAnalyticsFn,
   getRestaurantDemandIntelligenceFn,
@@ -66,6 +69,41 @@ const HEALTH_TONE: Record<string, "neutral" | "success" | "warning" | "danger"> 
   stable: "neutral",
   needs_attention: "warning",
   critical: "danger",
+};
+
+// P06 — same tone maps as the full Decisions workspace
+// (_authenticated.admin.restaurant.decisions.tsx), kept local and minimal:
+// this section is a read-only summary, not a second implementation of that
+// page's approve/execute/verify governance logic.
+const P06_RISK_TONE: Record<string, "neutral" | "info" | "warning" | "danger"> = {
+  info: "neutral",
+  low: "info",
+  medium: "warning",
+  high: "danger",
+  critical: "danger",
+};
+const P06_STATUS_TONE: Record<string, "neutral" | "success" | "warning" | "danger" | "info"> = {
+  proposed: "info",
+  approved: "success",
+  modified: "warning",
+  rejected: "danger",
+  executing: "warning",
+  completed: "success",
+  failed: "danger",
+  expired: "neutral",
+};
+const P06_ACTION_STATUS_TONE: Record<
+  string,
+  "neutral" | "success" | "warning" | "danger" | "info"
+> = {
+  approved: "info",
+  queued: "info",
+  executing: "warning",
+  executed: "success",
+  completed: "success",
+  verified: "success",
+  failed: "danger",
+  verification_failed: "danger",
 };
 
 /** IntelligenceModule's `meta` slot is plain text — this renders the sufficiency label as a string for that slot. */
@@ -219,6 +257,21 @@ function ProIntelligencePage() {
     queryFn: () => multiLocationFn({ data: { tenantId: tenantId as string, windowDays } }),
     enabled: enabled && multiLocationEnt.entitled,
   });
+
+  // P06 — the same decision board the full Decisions workspace reads
+  // (getRestaurantDecisionBoardFn), gated only by ordinary tenant/property
+  // access (assertTenantRead), never by a P05 capability: Core tenants keep
+  // seeing menu/inventory/kitchen/purchasing decisions here exactly as
+  // before, Pro tenants additionally see demand_shift/revenue_underperformance
+  // decisions layered on top by decisions.server.ts's evaluate().
+  const decisionBoardFn = useServerFn(getRestaurantDecisionBoardFn);
+  const decisionBoard = useQuery({
+    queryKey: ["restaurant", "decisions", tenantId, windowDays],
+    queryFn: () =>
+      decisionBoardFn({ data: { tenantId: tenantId as string, windowDays, includeStored: true } }),
+    enabled,
+  });
+  const db = decisionBoard.data as any;
 
   const inv = inventory.data as any;
   const dem = demand.data as any;
@@ -674,6 +727,100 @@ function ProIntelligencePage() {
             <p className="text-xs text-muted-foreground">Loading…</p>
           )}
         </CapabilityGate>
+      </IntelligenceModule>
+
+      <IntelligenceModule
+        icon={<ListChecks className="size-4" />}
+        title="Recommendations, decisions & actions"
+        headline={db?.headline ?? "Insight → recommendation → decision → action → outcome"}
+        defaultOpen
+      >
+        {db ? (
+          <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Every recommendation below traces to a finding from the intelligence above. Nothing
+              here executes automatically — approving, executing and verifying an action happens in
+              the full Decisions workspace.
+            </p>
+
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Recommendations awaiting a decision ({(db.candidates ?? []).length})
+              </p>
+              {(db.candidates ?? []).length === 0 ? (
+                <EmptyState
+                  title="Nothing needs a decision"
+                  description="No finding in this window crossed a decision threshold."
+                />
+              ) : (
+                <ul className="space-y-2 text-sm">
+                  {(db.candidates as any[]).slice(0, 5).map(({ finding, decision }) => (
+                    <li key={decision.key} className="rounded-lg border bg-card/40 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-medium">{decision.title}</span>
+                        <span className="flex items-center gap-2">
+                          <StatusChip tone={P06_RISK_TONE[decision.riskLevel] ?? "neutral"}>
+                            {decision.riskLevel} risk
+                          </StatusChip>
+                          <StatusChip>
+                            {Math.round(decision.confidence * 100)}% confidence
+                          </StatusChip>
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{finding.headline}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Recorded decisions & action status ({(db.stored ?? []).length})
+              </p>
+              {(db.stored ?? []).length === 0 ? (
+                <EmptyState
+                  title="No recorded decisions"
+                  description="Run a decision pass in the Decisions workspace to record proposals for approval."
+                />
+              ) : (
+                <ul className="space-y-2 text-sm">
+                  {(db.stored as any[]).slice(0, 5).map((d) => (
+                    <li key={d.id} className="rounded-lg border bg-card/40 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-medium">{d.title}</span>
+                        <span className="flex flex-wrap items-center gap-2">
+                          <StatusChip tone={P06_STATUS_TONE[d.status] ?? "neutral"}>
+                            {d.status}
+                          </StatusChip>
+                          {d.action ? (
+                            <StatusChip tone={P06_ACTION_STATUS_TONE[d.action.status] ?? "neutral"}>
+                              action: {d.action.status}
+                            </StatusChip>
+                          ) : null}
+                          {d.action?.verified != null ? (
+                            <StatusChip tone={d.action.verified ? "success" : "danger"}>
+                              {d.action.verified ? "outcome verified" : "verification failed"}
+                            </StatusChip>
+                          ) : null}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{d.trigger}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <Button asChild size="sm" variant="outline">
+              <Link to="/admin/restaurant/decisions">
+                Open full Decisions workspace <ArrowRight className="ml-1.5 size-4" />
+              </Link>
+            </Button>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">Loading…</p>
+        )}
       </IntelligenceModule>
     </div>
   );

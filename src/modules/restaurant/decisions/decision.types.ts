@@ -20,6 +20,15 @@ export const RESTAURANT_FINDING_KINDS = [
   "kitchen_capacity",
   "purchasing_replenishment",
   "supplier_risk",
+  // P06 — sourced from the P05 Pro Intelligence engines (demand.server.ts,
+  // revenue.server.ts, multiLocation.server.ts). Both are Level 0/
+  // informational (see optionCatalogue.ts): no safe, already-existing
+  // operational lever exists for "demand is rising" or "this outlet is
+  // underperforming the group", so neither fabricates an action-linked
+  // executor — they enter the same decision board for visibility and
+  // traceability, per the master prompt's explicit anti-fabrication rule.
+  "demand_shift",
+  "revenue_underperformance",
 ] as const;
 export type RestaurantFindingKind = (typeof RESTAURANT_FINDING_KINDS)[number];
 
@@ -30,6 +39,8 @@ export const RESTAURANT_FINDING_LABEL: Record<RestaurantFindingKind, string> = {
   kitchen_capacity: "Kitchen capacity",
   purchasing_replenishment: "Purchasing",
   supplier_risk: "Supplier risk",
+  demand_shift: "Demand shift",
+  revenue_underperformance: "Revenue underperformance",
 };
 
 /** What the prediction layer expects to happen if nothing is done. */
