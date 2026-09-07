@@ -8,13 +8,17 @@ import {
   cancelAgreementSchema,
   cancelSubscriptionSchema,
   checkQuotaSchema,
+  completeRecommendationSchema,
   createAgreementSchema,
+  dismissRecommendationSchema,
   generateInvoiceSchema,
   getCustomerProfileSchema,
   grantCommercialAdminSchema,
   issueInvoiceSchema,
   listAgreementsSchema,
   listAuditLogSchema,
+  listCommercialRecommendationsSchema,
+  listCommercialSignalsSchema,
   listCustomersSchema,
   listInvoicesSchema,
   listOverridesSchema,
@@ -517,4 +521,70 @@ export const listCommercialNotificationsFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./notifications.server");
     return mod.listCommercialNotifications(context.supabase, data);
+  });
+
+/* ================================================================= P04 === */
+
+export const getCommercialIntelligenceOverviewFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => empty.parse(d))
+  .handler(async ({ context }) => {
+    const mod = await import("./intelligence.server");
+    return mod.getCommercialIntelligenceOverview(context.supabase, context.userId);
+  });
+
+export const listCommercialCustomerIntelligenceFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => empty.parse(d))
+  .handler(async ({ context }) => {
+    const mod = await import("./intelligence.server");
+    return mod.listCustomerIntelligence(context.supabase, context.userId);
+  });
+
+export const getCommercialForecastFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => empty.parse(d))
+  .handler(async ({ context }) => {
+    const mod = await import("./intelligence.server");
+    return mod.getCommercialForecast(context.supabase, context.userId);
+  });
+
+export const runCommercialSignalScanFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => empty.parse(d))
+  .handler(async ({ context }) => {
+    const mod = await import("./intelligence.server");
+    return mod.runCommercialSignalScan(context.supabase, context.userId);
+  });
+
+export const listCommercialSignalsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => listCommercialSignalsSchema.parse(d ?? {}))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./intelligence.server");
+    return mod.listCommercialSignals(context.supabase, context.userId, data);
+  });
+
+export const listCommercialRecommendationsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => listCommercialRecommendationsSchema.parse(d ?? {}))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./intelligence.server");
+    return mod.listCommercialRecommendations(context.supabase, context.userId, data);
+  });
+
+export const completeCommercialRecommendationFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => completeRecommendationSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./intelligence.server");
+    return mod.completeRecommendation(context.supabase, context.userId, data);
+  });
+
+export const dismissCommercialRecommendationFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => dismissRecommendationSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./intelligence.server");
+    return mod.dismissRecommendation(context.supabase, context.userId, data);
   });

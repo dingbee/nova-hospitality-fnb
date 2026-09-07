@@ -85,6 +85,12 @@ import {
   CustomersPortfolioPanel,
   RenewalsPanel,
 } from "./CommercialOperations";
+import {
+  CustomerHealthPanel,
+  IntelligenceOverviewPanel,
+  RecommendationsPanel,
+  SignalsPanel,
+} from "./CommercialIntelligence";
 
 const TZS = (n: number | null | undefined) =>
   n == null ? "—" : new Intl.NumberFormat("en-TZ", { maximumFractionDigits: 0 }).format(n) + " TZS";
@@ -259,6 +265,7 @@ export function CommercialCentre() {
           <TabsTrigger value="ops-customers">Customers</TabsTrigger>
           <TabsTrigger value="ops-renewals">Renewals</TabsTrigger>
           <TabsTrigger value="ops-collections">Collections</TabsTrigger>
+          <TabsTrigger value="intelligence">Intelligence</TabsTrigger>
           <TabsTrigger value="overview">Governance</TabsTrigger>
           <TabsTrigger value="plans">Plans</TabsTrigger>
           <TabsTrigger value="capabilities">Capabilities</TabsTrigger>
@@ -288,6 +295,14 @@ export function CommercialCentre() {
         </TabsContent>
         <TabsContent value="ops-collections">
           <CollectionsPanel />
+        </TabsContent>
+        <TabsContent value="intelligence">
+          <div className="space-y-6">
+            <IntelligenceOverviewPanel />
+            <CustomerHealthPanel />
+            <SignalsPanel />
+            <RecommendationsPanel />
+          </div>
         </TabsContent>
         <TabsContent value="overview">
           <OverviewTab data={data} />

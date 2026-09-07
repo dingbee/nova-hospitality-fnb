@@ -607,3 +607,60 @@ export const listPaymentsSchema = z.object({
   invoiceId: uuid.optional(),
 });
 export type ListPaymentsInput = z.infer<typeof listPaymentsSchema>;
+
+/* ============================================================================
+ * P04 — Commercial Intelligence & Automation (browser-safe contracts).
+ * ========================================================================= */
+
+export const SIGNAL_CATEGORIES = [
+  "renewal",
+  "collection",
+  "health",
+  "expansion",
+  "usage",
+  "revenue",
+] as const;
+export type SignalCategory = (typeof SIGNAL_CATEGORIES)[number];
+
+export const SIGNAL_SEVERITIES = ["info", "low", "medium", "high", "critical"] as const;
+export type SignalSeverity = (typeof SIGNAL_SEVERITIES)[number];
+
+export const RECOMMENDATION_ACTION_TYPES = [
+  "REVIEW_CUSTOMER",
+  "CONTACT_CUSTOMER",
+  "REVIEW_RENEWAL",
+  "REVIEW_COLLECTION",
+  "REVIEW_EXPANSION",
+  "REVIEW_UPGRADE",
+  "REVIEW_USAGE",
+] as const;
+export type RecommendationActionType = (typeof RECOMMENDATION_ACTION_TYPES)[number];
+
+export const RECOMMENDATION_STATUSES = ["open", "completed", "dismissed"] as const;
+export type RecommendationStatus = (typeof RECOMMENDATION_STATUSES)[number];
+
+export const listCommercialSignalsSchema = z.object({
+  tenantId: uuid.optional(),
+  status: z.enum(["active", "resolved"]).optional(),
+});
+export type ListCommercialSignalsInput = z.infer<typeof listCommercialSignalsSchema>;
+
+export const listCommercialRecommendationsSchema = z.object({
+  tenantId: uuid.optional(),
+  status: z.enum(RECOMMENDATION_STATUSES).optional(),
+});
+export type ListCommercialRecommendationsInput = z.infer<
+  typeof listCommercialRecommendationsSchema
+>;
+
+export const completeRecommendationSchema = z.object({
+  id: uuid,
+  note: z.string().max(2000).optional(),
+});
+export type CompleteRecommendationInput = z.infer<typeof completeRecommendationSchema>;
+
+export const dismissRecommendationSchema = z.object({
+  id: uuid,
+  reason: z.string().min(3).max(2000),
+});
+export type DismissRecommendationInput = z.infer<typeof dismissRecommendationSchema>;

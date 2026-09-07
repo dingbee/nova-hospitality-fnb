@@ -55,8 +55,8 @@ async function loadActiveAgreement(sb: Sb, tenantId: string) {
   return data ?? null;
 }
 
-/** Every unbilled chargeable property classification for this tenant — never re-priced here, only read (P01 already decided the price). */
-async function loadUnbilledPropertyCharges(sb: Sb, tenantId: string) {
+/** Every unbilled chargeable property classification for this tenant — never re-priced here, only read (P01 already decided the price). Exported for intelligence.server.ts's expansion-opportunity calculation — the one authoritative "what's chargeable but not yet invoiced" query, never re-derived. */
+export async function loadUnbilledPropertyCharges(sb: Sb, tenantId: string) {
   const { data: classifications, error } = await sb
     .from("commercial_property_classifications")
     .select("id, price_applied, currency, decided_at, restaurant_properties(name)")
