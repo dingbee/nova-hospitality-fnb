@@ -176,11 +176,13 @@ export async function resolveGuestTableContext(
  *   pre-check here just gives a clean, hospitality-worded refusal instead
  *   of a constraint-violation error in the common case.
  */
+export type ResolvedGuestSession = { token: string; sessionId: string };
+
 export async function resolveOrStartGuestSession(
   sb: Sb,
   table: GuestTableContext,
   presentedToken: string | null | undefined,
-): Promise<string> {
+): Promise<ResolvedGuestSession> {
   const now = new Date();
   const nowIso = now.toISOString();
 
@@ -208,7 +210,7 @@ export async function resolveOrStartGuestSession(
         .from("restaurant_guest_sessions")
         .update({ last_activity_at: nowIso, expires_at: expiresAt })
         .eq("id", existing.id);
-      return presentedToken;
+      return { token: presentedToken, sessionId: existing.id };
     }
   }
 
@@ -224,23 +226,27 @@ export async function resolveOrStartGuestSession(
 
   const token = generateGuestSessionToken();
   const expiresAt = new Date(now.getTime() + GUEST_SESSION_DURATION_MS).toISOString();
-  const { error } = await sb.from("restaurant_guest_sessions").insert({
-    tenant_id: table.tenantId,
-    property_id: table.propertyId,
-    location_id: table.locationId,
-    table_id: table.tableId,
-    token,
-    status: "active",
-    started_at: nowIso,
-    last_activity_at: nowIso,
-    expires_at: expiresAt,
-  });
-  if (error) {
+  const { data: created, error } = await sb
+    .from("restaurant_guest_sessions")
+    .insert({
+      tenant_id: table.tenantId,
+      property_id: table.propertyId,
+      location_id: table.locationId,
+      table_id: table.tableId,
+      token,
+      status: "active",
+      started_at: nowIso,
+      last_activity_at: nowIso,
+      expires_at: expiresAt,
+    })
+    .select("id")
+    .single();
+  if (error || !created) {
     // The partial unique index caught a race the pre-check above missed —
     // another request just won the same table. Same refusal either way.
     throw new Error(GUEST_SESSION_TABLE_OCCUPIED_MESSAGE);
   }
-  return token;
+  return { token, sessionId: created.id };
 }
 
 /**
@@ -348,17 +354,19 @@ export async function submitGuestOrder(
         // table's order.
         throw new Error("This order could not be found for this table.");
       }
-      const sessionToken = await resolveOrStartGuestSession(sb, table, input.sessionToken);
+      const session = await resolveOrStartGuestSession(sb, table, input.sessionToken);
+      const { guestSessionProjection } = await import("./selfsession.server");
       return {
         ...existing,
         ...(await recalcOrder(sb, table.tenantId, existing.id)),
-        guestSessionToken: sessionToken,
+        guestSessionToken: session.token,
+        session: await guestSessionProjection(sb, { tableId: table.tableId }),
         idempotent: true,
       };
     }
   }
 
-  const sessionToken = await resolveOrStartGuestSession(sb, table, input.sessionToken);
+  const session = await resolveOrStartGuestSession(sb, table, input.sessionToken);
   const catalog = await fetchSellableCatalog(sb, table.tenantId, {
     propertyId: table.propertyId ?? undefined,
     locationId: table.locationId ?? undefined,
@@ -411,6 +419,7 @@ export async function submitGuestOrder(
     currency: table.currency,
     lines: salesLines,
     clientRequestId: input.clientRequestId ?? null,
+    guestSessionId: session.sessionId,
   });
 
   // A guest tapping "Send order" IS the send-to-kitchen action — there is no
@@ -434,7 +443,14 @@ export async function submitGuestOrder(
   }
 
   // Additive: every existing field on `order` is untouched, so any caller
-  // reading order.id/order_number/total keeps working unchanged. Only a new
-  // consumer (order.$tableId.tsx) needs to look at guestSessionToken.
-  return { ...order, guestSessionToken: sessionToken };
+  // reading order.id/order_number/total keeps working unchanged. `session`
+  // is the new dining-session projection (Order A, this new Order B, and
+  // any earlier orders, plus server-derived table totals) — the guest
+  // portal reads it instead of ever tracking only the order it just placed.
+  const { guestSessionProjection } = await import("./selfsession.server");
+  return {
+    ...order,
+    guestSessionToken: session.token,
+    session: await guestSessionProjection(sb, { tableId: table.tableId }),
+  };
 }

@@ -228,15 +228,30 @@ async function unitCostsForMenuItems(sb: Sb, tenantId: string, menuItemIds: stri
 
 /**
  * Fetches everything `resolveCataloguedLineStation`/`resolveOpenItemStation`
- * need to decide a line's final station, scoped to this tenant only — so a
- * client-proposed station id that belongs to another tenant can never match.
+ * need to decide a line's final station, scoped to this tenant AND — when
+ * the order carries one — this property, mirroring the exact
+ * `resolveBarScope` precedent in bar.server.ts (`.eq("property_id", ...)`
+ * only when a propertyId is given). Without this, a beverage classification
+ * fallback in a multi-property tenant could pick another property's bar
+ * station purely by sort order: the ticket would still be created, but the
+ * Bar Workspace — itself correctly property-scoped — would never show it,
+ * and a property-scoped kitchen station could equally leak the other way.
+ * A client-proposed station id belonging to another tenant (or, now, another
+ * property) can never match either way.
  */
-async function loadStationResolutionContext(sb: Sb, tenantId: string, menuItemIds: string[]) {
-  const { data: stationRows } = await sb
+async function loadStationResolutionContext(
+  sb: Sb,
+  tenantId: string,
+  menuItemIds: string[],
+  scope: { propertyId?: string | null } = {},
+) {
+  let stationQuery = sb
     .from("restaurant_stations")
     .select("id, station_type, active, sort_order")
     .eq("tenant_id", tenantId)
     .order("sort_order");
+  if (scope.propertyId) stationQuery = stationQuery.eq("property_id", scope.propertyId);
+  const { data: stationRows } = await stationQuery;
   const allStations = ((stationRows ?? []) as any[]).map(
     (s) => ({ id: s.id, stationType: s.station_type }) satisfies StationRow,
   );
@@ -354,7 +369,9 @@ export async function insertLines(
   // POS, or a direct API call) is a proposal only. The server re-derives the
   // final station the same way pricing is re-derived below — from the
   // product's own configuration, never from what the client sent.
-  const stationCtx = await loadStationResolutionContext(sb, tenantId, [...new Set(ids)]);
+  const stationCtx = await loadStationResolutionContext(sb, tenantId, [...new Set(ids)], {
+    propertyId: ctx.propertyId ?? null,
+  });
   const costs = await unitCostsForMenuItems(sb, tenantId, ids);
   // The recipe version in force at the moment of sale is pinned onto the line,
   // so a later recipe change never rewrites this order's economics.
@@ -687,6 +704,18 @@ export async function createGuestOrder(
      * (restaurant_purchase_requests, restaurant_prices, etc.).
      */
     clientRequestId?: string | null;
+    /**
+     * O12/GEP7 — the dining session (restaurant_guest_sessions.id)
+     * resolveOrStartGuestSession already validated for this exact
+     * submission, server-side, before insertLines or fireGuestOrder ever
+     * runs. Never accepted from the client: submitGuestOrder is the only
+     * caller, and it only ever passes the id its own
+     * resolveOrStartGuestSession call just resolved or created. This is the
+     * sole thing that turns a series of otherwise-unrelated orders into one
+     * continuous guest dining session for the session projection
+     * (selfsession.server.ts) to read back.
+     */
+    guestSessionId?: string | null;
   },
 ) {
   const { data: order, error } = await sb
@@ -706,6 +735,7 @@ export async function createGuestOrder(
       server_user_id: null,
       created_by: null,
       client_request_id: input.clientRequestId ?? null,
+      guest_session_id: input.guestSessionId ?? null,
     })
     .select("id, order_number, currency")
     .single();
