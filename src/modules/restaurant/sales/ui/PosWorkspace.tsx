@@ -677,13 +677,13 @@ export function PosWorkspace({
           ROWS (40fr/60fr) sharing that same fixed height, each still
           scrolling internally — not two fixed pixel boxes and not normal
           document flow. At lg+: Floor becomes the left COLUMN and the right
-          workspace the right COLUMN (28fr/72fr), each spanning the grid's
+          workspace the right COLUMN (25fr/75fr), each spanning the grid's
           full single row. Structural, not cosmetic: Bill and Menu are never
           a second/third column beside Floor — they are two ROWS inside the
           right-hand workspace, Bill always directly above Menu, sharing the
           same horizontal bounds; Menu — the highest-frequency interaction —
           gets the larger share (~70%) of that column's height. */}
-      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,40fr)_minmax(0,60fr)] gap-3 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(200px,28fr)_minmax(420px,72fr)] xl:gap-4">
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,40fr)_minmax(0,60fr)] gap-3 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(220px,25fr)_minmax(0,75fr)] xl:gap-4">
         {/* Floor */}
         <SectionCard
           title={isBar ? "Bar floor & tabs" : "Floor"}
@@ -714,7 +714,7 @@ export function PosWorkspace({
                         ? setOrderId(t.order.id)
                         : openBill.mutate({ tableId: t.id, guestCount: t.seats ?? 2 })
                     }
-                    className={`relative min-h-20 rounded-lg border p-3 text-left transition-colors hover:border-primary ${
+                    className={`relative min-h-[104px] rounded-lg border p-3 text-left transition-colors hover:border-primary ${
                       TABLE_TONE_CLASS[tone]
                     } ${orderId && t.order?.id === orderId ? "ring-2 ring-primary" : ""}`}
                   >
@@ -742,7 +742,7 @@ export function PosWorkspace({
                     )}
                     <span className="block text-sm font-semibold">{t.code}</span>
                     <span className="block text-xs text-muted-foreground">{t.zone ?? t.name}</span>
-                    <span className="mt-1 block text-xs">
+                    <span className="mt-1.5 block text-sm font-semibold tabular-nums">
                       {t.order ? money(Number(t.order.total ?? 0), currency) : `${t.seats} seats`}
                     </span>
                     <span className="block text-[11px] text-muted-foreground">
@@ -798,12 +798,12 @@ export function PosWorkspace({
             height at a time — never a fixed pixel guess, never eating into
             the other's space, and the inactive pane simply isn't rendered
             rather than being squeezed. */}
-        <div className="flex h-full min-h-0 flex-col gap-3 lg:grid lg:grid-rows-[minmax(200px,30fr)_minmax(0,70fr)] xl:gap-4">
+        <div className="flex h-full min-h-0 flex-col gap-3 lg:grid lg:grid-rows-[minmax(190px,30fr)_minmax(0,70fr)] xl:gap-4">
           <div className="flex shrink-0 gap-2 lg:hidden">
             <Button
               type="button"
               variant={mobileRightTab === "bill" ? "default" : "outline"}
-              className="min-h-10 flex-1"
+              className="min-h-11 flex-1"
               onClick={() => setMobileRightTab("bill")}
             >
               Bill{live.length + cart.length > 0 ? ` (${live.length + cart.length})` : ""}
@@ -811,7 +811,7 @@ export function PosWorkspace({
             <Button
               type="button"
               variant={mobileRightTab === "menu" ? "default" : "outline"}
-              className="min-h-10 flex-1"
+              className="min-h-11 flex-1"
               onClick={() => setMobileRightTab("menu")}
             >
               {isBar ? "Drinks" : "Menu"}
@@ -1222,13 +1222,13 @@ export function PosWorkspace({
                   value={catalogSearch}
                   onChange={(e) => setCatalogSearch(e.target.value)}
                   placeholder={isBar ? "Search drinks…" : "Search the menu…"}
-                  className="h-10 pl-8"
+                  className="h-11 pl-8"
                 />
               </div>
               <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
                 <Button
                   variant={categoryId ? "outline" : "default"}
-                  className="min-h-10 shrink-0 rounded-full"
+                  className="min-h-11 shrink-0 rounded-full"
                   onClick={() => setCategoryId(null)}
                 >
                   All
@@ -1237,7 +1237,7 @@ export function PosWorkspace({
                   <Button
                     key={c.id}
                     variant={categoryId === c.id ? "default" : "outline"}
-                    className="min-h-10 shrink-0 rounded-full"
+                    className="min-h-11 shrink-0 rounded-full"
                     onClick={() => setCategoryId(c.id)}
                   >
                     {c.name}

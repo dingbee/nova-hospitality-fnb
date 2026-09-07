@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PageHeader } from "@/components/os/PageHeader";
+import { PosPageHeader } from "@/modules/restaurant/sales/ui/PosPageHeader";
 import { PosWorkspace } from "@/modules/restaurant/sales/ui/PosWorkspace";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/bar/pos")({
@@ -19,14 +19,9 @@ export const Route = createFileRoute("/_authenticated/admin/restaurant/bar/pos")
 
 function BarPosPage() {
   return (
-    <div className="space-y-4 lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:gap-4 lg:space-y-0">
-      <div className="lg:shrink-0">
-        <PageHeader
-          title="Bar POS"
-          description="Counter or seat → drinks → bar prep → running tab → bill → payment → receipt. Same order, pricing and ledger engine as the restaurant till."
-        />
-      </div>
-      <PosWorkspace lens="bar" className="lg:min-h-0 lg:flex-1" />
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <PosPageHeader title="Bar POS" description="Counter/seat → drinks → tab → bill → payment." />
+      <PosWorkspace lens="bar" className="min-h-0 flex-1" />
     </div>
   );
 }

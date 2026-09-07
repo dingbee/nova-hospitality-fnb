@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PageHeader } from "@/components/os/PageHeader";
+import { PosPageHeader } from "@/modules/restaurant/sales/ui/PosPageHeader";
 import { PosWorkspace } from "@/modules/restaurant/sales/ui/PosWorkspace";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/pos")({
@@ -19,13 +19,11 @@ export const Route = createFileRoute("/_authenticated/admin/restaurant/pos")({
 
 function PosPage() {
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="shrink-0">
-        <PageHeader
-          title="Point of sale"
-          description="Table → order → kitchen → payment → receipt. Every sale posts revenue, cost and stock through the same engine."
-        />
-      </div>
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <PosPageHeader
+        title="Restaurant POS"
+        description="Table → order → kitchen → payment → receipt."
+      />
       <PosWorkspace className="min-h-0 flex-1" />
     </div>
   );
