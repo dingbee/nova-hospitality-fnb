@@ -1,11 +1,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- server function rows are untyped at this boundary. */
 /**
- * Import Studio — "Give NoVA your existing data."
+ * Import Studio — two paths into LexiBite.
  *
- * NoVA understands -> NoVA maps -> you review -> NoVA imports. One workspace
- * holds every file for one migration effort; nothing here writes a canonical
- * table directly — every approved row goes through the same service
- * functions manual entry uses (see import.server.ts).
+ * RECOMMENDED: download the LexiBite Import Template, fill it in with
+ * restaurant-native terms and stable codes (no database IDs, no fuzzy
+ * matching needed), upload it back — LexiBite Intelligence recognises it
+ * deterministically and imports it end to end. ADVANCED: bring an existing,
+ * arbitrary spreadsheet — LexiBite Intelligence understands its structure,
+ * maps it, matches it against what already exists, and you review before
+ * anything becomes real. Both paths ride the same staging/review/commit
+ * architecture below — nothing here ever writes a canonical table directly;
+ * every approved row goes through the same service functions manual entry
+ * uses (see import.server.ts / template-import.server.ts).
  */
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -22,8 +28,10 @@ import { StatusChip, type StatusTone } from "@/components/os/StatusChip";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "../../ui/useRestaurantWorkspace";
 import {
+  analyzeLexibiteTemplateUploadFn,
   bulkDecideStagedRecordsFn,
   commitImportWorkspaceFn,
+  commitLexibiteTemplateImportFn,
   confirmImportMappingFn,
   createImportWorkspaceFn,
   decideStagedRecordFn,
@@ -40,14 +48,35 @@ import {
   IMPORT_DOMAIN_LABELS,
   type ImportDomain,
 } from "../domains";
+import { downloadLexibiteTemplate } from "../template-xlsx";
+import type { TemplateIssue } from "../template-import.server";
 
+/**
+ * Customer-facing status labels only — never a raw match_status/severity
+ * value or a numeric confidence score (see the LexiBite import upgrade
+ * spec, Part 11 / Part 20: no technical internals, no percentages).
+ */
 const SEVERITY_META: Record<string, { label: string; tone: StatusTone; icon: string }> = {
-  cannot_map: { label: "Cannot map", tone: "danger", icon: "\u{1F534}" },
-  ambiguous_match: { label: "Ambiguous match", tone: "warning", icon: "\u{1F7E0}" },
-  missing_field: { label: "Missing field", tone: "warning", icon: "\u{1F7E1}" },
-  new_entity: { label: "New entity", tone: "info", icon: "\u{1F535}" },
-  auto_ok: { label: "Auto-validated", tone: "success", icon: "\u{1F7E2}" },
+  cannot_map: { label: "Cannot determine", tone: "danger", icon: "\u{1F534}" },
+  ambiguous_match: { label: "Needs review", tone: "warning", icon: "\u{1F7E0}" },
+  missing_field: { label: "Needs review", tone: "warning", icon: "\u{1F7E1}" },
+  new_entity: { label: "Ready", tone: "info", icon: "\u{1F535}" },
+  auto_ok: { label: "Ready", tone: "success", icon: "\u{1F7E2}" },
 };
+
+/** A domain guess's confidence, translated to language a customer reads instead of a percentage. */
+function domainGuessLabel(confidence: number): string {
+  if (confidence >= 0.7) return "Likely match";
+  if (confidence >= 0.4) return "Possible match";
+  return "Weak match";
+}
+
+/** A sheet whose name alone strongly suggests it isn't operational data — never auto-imported, only flagged for a human to confirm or override. */
+const NON_OPERATIONAL_SHEET_NAME =
+  /read ?me|instructions?|scenarios?|examples?|\bnotes?\b|documentation|test ?data/i;
+function looksNonOperational(sheetName: string): boolean {
+  return NON_OPERATIONAL_SHEET_NAME.test(sheetName);
+}
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -70,10 +99,13 @@ function kindForFile(file: File): "xlsx" | "csv" | "pdf" | "image" | null {
   return null;
 }
 
+type ImportPath = "template" | "advanced" | null;
+
 export function ImportStudio() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [path, setPath] = useState<ImportPath>(null);
 
   if (!tenantId) {
     return (
@@ -86,20 +118,223 @@ export function ImportStudio() {
     );
   }
 
+  const reset = () => {
+    setWorkspaceId(null);
+    setPath(null);
+  };
+
   return (
     <div className="space-y-4">
       <PageHeader
         title="Import Studio"
-        description="Give NoVA your existing menu, inventory, supplier and recipe data. NoVA understands it, maps it, and you review before anything becomes real."
+        description="Bring your restaurant data into LexiBite. Use the LexiBite template for the fastest, most reliable import, or bring an existing spreadsheet and let LexiBite Intelligence understand it for you."
       />
       {workspaceId ? (
-        <WorkspaceDetail
+        <WorkspaceDetail tenantId={tenantId} workspaceId={workspaceId} onBack={reset} />
+      ) : path === "template" ? (
+        <TemplateImportFlow
           tenantId={tenantId}
-          workspaceId={workspaceId}
-          onBack={() => setWorkspaceId(null)}
+          onBack={() => setPath(null)}
+          onImported={setWorkspaceId}
+          onSwitchToAdvanced={() => setPath("advanced")}
         />
+      ) : path === "advanced" ? (
+        <div className="space-y-4">
+          <Button variant="outline" size="sm" onClick={() => setPath(null)}>
+            ← Choose a different way to import
+          </Button>
+          <WorkspaceList tenantId={tenantId} onSelect={setWorkspaceId} />
+        </div>
       ) : (
-        <WorkspaceList tenantId={tenantId} onSelect={setWorkspaceId} />
+        <ImportPathChooser
+          onChooseTemplate={() => setPath("template")}
+          onChooseAdvanced={() => setPath("advanced")}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------------- Path chooser ---------------- */
+
+function ImportPathChooser({
+  onChooseTemplate,
+  onChooseAdvanced,
+}: {
+  onChooseTemplate: () => void;
+  onChooseAdvanced: () => void;
+}) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <SectionCard title="Use the LexiBite template" description="Recommended">
+        <ul className="space-y-1.5 text-sm">
+          <li>✓ Clear restaurant-friendly fields</li>
+          <li>✓ No technical IDs</li>
+          <li>✓ Relationships are handled automatically</li>
+          <li>✓ Built-in examples</li>
+          <li>✓ Faster validation</li>
+          <li>✓ Highest-confidence import</li>
+        </ul>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button className="h-11" onClick={() => downloadLexibiteTemplate()}>
+            Download LexiBite Import Template
+          </Button>
+          <Button className="h-11" variant="outline" onClick={onChooseTemplate}>
+            I already have the template
+          </Button>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Import existing data" description="Advanced · LexiBite Intelligence">
+        <ul className="space-y-1.5 text-sm">
+          <li>✓ Understands unfamiliar spreadsheets</li>
+          <li>✓ Detects menus, inventory, suppliers, recipes</li>
+          <li>✓ Finds likely matches</li>
+          <li>✓ Explains ambiguous records</li>
+          <li>✓ Identifies missing relationships</li>
+          <li>✓ Nothing becomes real until you approve it</li>
+        </ul>
+        <div className="mt-4">
+          <Button className="h-11" variant="outline" onClick={onChooseAdvanced}>
+            Start Advanced Import
+          </Button>
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+/* ---------------- Template path ---------------- */
+
+function TemplateImportFlow({
+  tenantId,
+  onBack,
+  onImported,
+  onSwitchToAdvanced,
+}: {
+  tenantId: string;
+  onBack: () => void;
+  onImported: (workspaceId: string) => void;
+  onSwitchToAdvanced: () => void;
+}) {
+  const analyzeFn = useServerFn(analyzeLexibiteTemplateUploadFn);
+  const commitFn = useServerFn(commitLexibiteTemplateImportFn);
+  const [file, setFile] = useState<{ name: string; base64: string } | null>(null);
+
+  const analyze = useAdminMutation({
+    mutationFn: async (f: File) => {
+      const base64 = await fileToBase64(f);
+      setFile({ name: f.name, base64 });
+      return analyzeFn({ data: { tenantId, fileBase64: base64 } });
+    },
+    silentSuccess: true,
+  });
+
+  const commit = useAdminMutation({
+    mutationFn: () =>
+      commitFn({
+        data: {
+          tenantId,
+          workspaceName: file ? `LexiBite Template — ${file.name}` : "LexiBite Template Import",
+          fileBase64: file!.base64,
+          originalFilename: file?.name,
+        },
+      }),
+    onSuccessToast: (d: any) =>
+      `Import started — ${d.summary.committed} record(s) imported${d.summary.failed ? `, ${d.summary.failed} need attention` : ""}`,
+    onSuccess: (d: any) => onImported(d.workspaceId),
+  });
+
+  const analysis = analyze.data as
+    | {
+        isTemplate: boolean;
+        sheetCounts: Array<{ sheetName: string; present: boolean; rowCount: number }>;
+        issues: TemplateIssue[];
+        ready: boolean;
+      }
+    | undefined;
+
+  return (
+    <div className="space-y-4">
+      <Button variant="outline" size="sm" onClick={onBack}>
+        ← Choose a different way to import
+      </Button>
+
+      <SectionCard
+        title="Upload your completed LexiBite template"
+        description="The file you filled in and saved from the downloaded template."
+      >
+        <Input
+          type="file"
+          className="h-11"
+          accept=".xlsx,.xls"
+          disabled={analyze.isPending}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) analyze.mutate(f);
+            e.target.value = "";
+          }}
+        />
+      </SectionCard>
+
+      {analysis && !analysis.isTemplate && (
+        <SectionCard title="This doesn't look like a LexiBite template">
+          <p className="text-sm text-muted-foreground">
+            LexiBite couldn't recognise this file as a LexiBite Import Template. If this is your own
+            spreadsheet, use Advanced Import instead — LexiBite Intelligence will work out its
+            structure for you.
+          </p>
+          <Button className="mt-3 h-11" variant="outline" onClick={onSwitchToAdvanced}>
+            Switch to Advanced Import
+          </Button>
+        </SectionCard>
+      )}
+
+      {analysis?.isTemplate && (
+        <SectionCard
+          title={
+            analysis.ready ? "Your LexiBite file is ready" : "LexiBite found some things to review"
+          }
+          description={
+            analysis.ready
+              ? "Everything looks good."
+              : `${analysis.issues.filter((i) => i.severity === "needs_attention").length} thing(s) need attention before importing — you can still import now and fix the rest afterwards.`
+          }
+        >
+          <ul className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            {analysis.sheetCounts
+              .filter((s) => s.present)
+              .map((s) => (
+                <li key={s.sheetName} className="rounded-md border p-2">
+                  <span className="block text-xs text-muted-foreground">{s.sheetName}</span>
+                  <span className="font-medium">{s.rowCount} row(s)</span>
+                </li>
+              ))}
+          </ul>
+
+          {analysis.issues.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {analysis.issues
+                .filter((i) => i.severity === "needs_attention")
+                .map((i, idx) => (
+                  <p key={`na-${idx}`} className="text-sm text-destructive">
+                    ⚠ {i.message}
+                  </p>
+                ))}
+              {analysis.issues
+                .filter((i) => i.severity === "warning")
+                .map((i, idx) => (
+                  <p key={`w-${idx}`} className="text-sm text-muted-foreground">
+                    ℹ {i.message}
+                  </p>
+                ))}
+            </div>
+          )}
+
+          <Button className="mt-4 h-11" disabled={commit.isPending} onClick={() => commit.mutate()}>
+            Import now
+          </Button>
+        </SectionCard>
       )}
     </div>
   );
@@ -184,7 +419,7 @@ function WorkspaceList({
         ) : (
           <EmptyState
             title="No imports yet"
-            description="Start one above to bring existing menu, inventory, supplier or recipe data into NoVA."
+            description="Start one above to bring existing menu, inventory, supplier or recipe data into LexiBite."
           />
         )}
       </SectionCard>
@@ -308,8 +543,8 @@ function WorkspaceDetail({
 
       {unmappedColumns.length > 0 && (
         <SectionCard
-          title="Columns NoVA didn't recognise"
-          description="Nothing is lost — the original values are kept with every row — but nothing here maps to a NOVA field yet. Review these before committing."
+          title="Columns LexiBite didn't recognise"
+          description="Nothing is lost — the original values are kept with every row — but nothing here maps to a LexiBite field yet. Review these before committing."
         >
           <ul className="space-y-1 text-sm">
             {unmappedColumns.map((u: any) => (
@@ -557,12 +792,13 @@ function SheetStager({
 }) {
   const suggestFn = useServerFn(suggestImportMappingFn);
   const confirmFn = useServerFn(confirmImportMappingFn);
-  // Empty string means "no domain chosen" — NoVA found no confident match, so
-  // staging this sheet requires a deliberate human pick rather than a silent
-  // guess (an unreviewed default here previously caused a sheet with no real
-  // match, e.g. a README or notes tab, to be staged under whatever domain
-  // happened to be first in the list, misreporting every one of its rows as
-  // that domain's required field being "missing").
+  // Empty string means "no domain chosen" — LexiBite Intelligence found no
+  // confident match, so staging this sheet requires a deliberate human pick
+  // rather than a silent guess (an unreviewed default here previously
+  // caused a sheet with no real match, e.g. a README or notes tab, to be
+  // staged under whatever domain happened to be first in the list,
+  // misreporting every one of its rows as that domain's required field
+  // being "missing").
   const [domain, setDomain] = useState<ImportDomain | "">(guesses[0]?.domain ?? "");
   const [mapping, setMapping] = useState<Array<{
     sourceColumn: string;
@@ -571,6 +807,8 @@ function SheetStager({
     auto: boolean;
   }> | null>(null);
   const [open, setOpen] = useState(false);
+  const [overrideNonOperational, setOverrideNonOperational] = useState(false);
+  const flaggedNonOperational = guesses.length === 0 && looksNonOperational(sheetName);
 
   const suggest = useAdminMutation({
     mutationFn: () =>
@@ -597,6 +835,27 @@ function SheetStager({
     },
   });
 
+  if (flaggedNonOperational && !overrideNonOperational) {
+    return (
+      <div className="rounded-md border border-dashed p-3 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-medium">{sheetName}</span>
+          <StatusChip tone="neutral">Not imported</StatusChip>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          LexiBite identified this sheet as documentation or test material, not operational data.
+        </p>
+        <button
+          type="button"
+          className="mt-1 text-xs text-muted-foreground underline underline-offset-2"
+          onClick={() => setOverrideNonOperational(true)}
+        >
+          Import this sheet anyway
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-md border p-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -607,7 +866,7 @@ function SheetStager({
           ) : (
             guesses.map((g) => (
               <StatusChip key={g.domain} tone="info">
-                {IMPORT_DOMAIN_LABELS[g.domain]} {Math.round(g.confidence * 100)}%
+                {IMPORT_DOMAIN_LABELS[g.domain]} · {domainGuessLabel(g.confidence)}
               </StatusChip>
             ))
           )}
@@ -710,7 +969,7 @@ function ExceptionQueue({
   return (
     <SectionCard
       title="Review"
-      description="NoVA does the bulk work — exact matches are already approved. A human resolves the rest."
+      description="LexiBite Intelligence does the bulk work — exact matches are already approved. A human resolves the rest."
     >
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {Object.entries(SEVERITY_META).map(([key, meta]) => (
@@ -851,7 +1110,6 @@ function StagedRowItem({
         <span className="block text-xs text-muted-foreground">
           {r.sheet_name ? `${r.sheet_name} · ` : ""}
           {IMPORT_DOMAIN_LABELS[r.domain as ImportDomain]} · row {r.source_row} · {meta.label}
-          {r.match_confidence != null ? ` · ${Math.round(r.match_confidence * 100)}% match` : ""}
           {linkedTo && linkedTo !== label ? ` · linked to "${linkedTo}"` : ""}
         </span>
         {r.validation_errors?.length > 0 && (
@@ -882,9 +1140,9 @@ function StagedRowItem({
               value={chosenId}
               onChange={(e) => setChosenId(e.target.value)}
             >
-              {candidates.map((c) => (
+              {candidates.map((c, idx) => (
                 <option key={c.id} value={c.id}>
-                  {c.label} ({Math.round(c.score * 100)}%)
+                  {c.label} ({idx === 0 ? "best match" : "possible match"})
                 </option>
               ))}
             </select>

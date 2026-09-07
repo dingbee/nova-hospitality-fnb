@@ -193,6 +193,22 @@ export const listCategoriesSchema = z.object({
   kind: z.string().max(40).default("menu"),
 });
 
+export const upsertCategorySchema = tenantScopeSchema.extend({
+  id: uuid.optional(),
+  parentId: uuid.optional(),
+  kind: z.string().max(40).default("menu"),
+  name: z.string().min(1).max(160),
+  slug: z
+    .string()
+    .min(1)
+    .max(120)
+    .regex(/^[a-z0-9-]+$/),
+  description: z.string().max(2000).optional(),
+  sortOrder: z.number().int().min(0).default(0),
+  active: z.boolean().default(true),
+});
+export type UpsertCategoryInput = z.infer<typeof upsertCategorySchema>;
+
 /* ---------------- Inventory ---------------- */
 
 export const listInventorySchema = tenantScopeSchema.extend({

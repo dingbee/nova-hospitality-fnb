@@ -11,13 +11,18 @@ import { matchCatalogItem, type CatalogMatchResult } from "../catalog/matching";
 import type { UnitRow } from "../inventory/units";
 import { parseBoolean, parseNumber, resolveUnit } from "./normalize";
 import {
+  categoryCandidates,
   inventoryItemCandidates,
+  menuCandidates,
   menuItemCandidates,
   modifierGroupCandidates,
+  productCandidates,
   stationCandidates,
   supplierCandidates,
+  type CategoryRow,
   type InventoryItemRow,
   type MenuItemRow,
+  type MenuRow,
   type ModifierGroupRow,
   type ProductRow,
   type StationRow,
@@ -242,7 +247,13 @@ export function stageInventoryItemRow(
   const reorderPoint = numField(mapped.reorderPoint, "Reorder point", errors);
   const parLevel = numField(mapped.parLevel, "Par level", errors);
   const averageCost = numField(mapped.averageCost, "Unit cost", errors);
-  const packSize = numField(mapped.packSize, "Pack size", errors);
+  // Pack size is genuinely optional on a source sheet — an item bought and
+  // stocked in the same unit (no case/carton) has an implicit pack size of
+  // 1, matching restaurant_inventory_items' own DB default. Left unresolved
+  // this used to make commitInventoryItemRow reject the row outright (its
+  // own contract requires a positive pack size — see upsertInventoryItem),
+  // which was never correct for the ordinary case of a non-cased item.
+  const packSize = numField(mapped.packSize, "Pack size", errors) ?? 1;
   const openingQuantity = numField(mapped.openingQuantity, "Opening quantity", errors);
 
   let categoryId: string | null = null;
@@ -259,6 +270,35 @@ export function stageInventoryItemRow(
     errors.push(`Unit "${mapped.unitCode}" was not recognised — confirm the stock unit manually.`);
   }
   const openingUnitRes = resolveUnit(mapped.openingUnit, ref.units);
+
+  const purchaseUnitRes = resolveUnit(mapped.purchaseUnitCode, ref.units);
+  if (mapped.purchaseUnitCode && purchaseUnitRes.status === "unknown") {
+    errors.push(`Purchase unit "${mapped.purchaseUnitCode}" was not recognised.`);
+  }
+  const consumptionUnitRes = resolveUnit(mapped.consumptionUnitCode, ref.units);
+  if (mapped.consumptionUnitCode && consumptionUnitRes.status === "unknown") {
+    errors.push(`Consumption unit "${mapped.consumptionUnitCode}" was not recognised.`);
+  }
+  const servingUnitRes = resolveUnit(mapped.servingUnitCode, ref.units);
+  if (mapped.servingUnitCode && servingUnitRes.status === "unknown") {
+    errors.push(`Content unit "${mapped.servingUnitCode}" was not recognised.`);
+  }
+  const servingSize = numField(mapped.servingSize, "Content per stock unit", errors);
+  // Content per stock unit and content unit are a pair — one without the
+  // other is a modelling error the reference screen calls out by name (see
+  // the master template's own House Red Wine example): a bottle whose
+  // "content" is "750" with no unit, or a unit with no quantity, means
+  // nothing on its own.
+  if (
+    (mapped.servingSize && !mapped.servingUnitCode) ||
+    (!mapped.servingSize && mapped.servingUnitCode)
+  ) {
+    errors.push(
+      `"${mapped.name ?? "This item"}" gives a content ${mapped.servingSize ? "quantity" : "unit"} but not the ${mapped.servingSize ? "unit" : "quantity"} — both Content per Stock Unit and Content Unit are needed together, or neither.`,
+    );
+  }
+  const isBeverage = parseBoolean(mapped.isBeverage);
+  const shelfLifeDays = numField(mapped.shelfLifeDays, "Shelf life", errors);
 
   const results = matchCatalogItem(
     { barcode: mapped.barcode, sku: mapped.sku, name: mapped.name },
@@ -284,6 +324,15 @@ export function stageInventoryItemRow(
       openingQuantity: openingQuantity ?? null,
       openingUnitId: openingUnitRes.unit?.id ?? null,
       openingUnit: mapped.openingUnit ?? null,
+      purchaseUnitId: purchaseUnitRes.unit?.id ?? null,
+      purchaseUnitCode: mapped.purchaseUnitCode ?? null,
+      consumptionUnitId: consumptionUnitRes.unit?.id ?? null,
+      consumptionUnitCode: mapped.consumptionUnitCode ?? null,
+      servingSize: servingSize ?? null,
+      servingUnitId: servingUnitRes.unit?.id ?? null,
+      servingUnitCode: mapped.servingUnitCode ?? null,
+      isBeverage: isBeverage ?? null,
+      shelfLifeDays: shelfLifeDays ?? null,
     },
     matchStatus: c.status,
     matchedEntityId: c.id,
@@ -309,6 +358,7 @@ export function stageSupplierProductRow(
       supplier_sku: string | null;
       barcode: string | null;
     }[];
+    units?: readonly UnitRow[];
     propertyCurrency?: string;
   },
 ): StageResult {
@@ -322,6 +372,10 @@ export function stageSupplierProductRow(
   const packSize = numField(mapped.packSize, "Pack size", errors);
   const minOrderQuantity = numField(mapped.minOrderQuantity, "Minimum order quantity", errors);
   const leadTimeDays = numField(mapped.leadTimeDays, "Lead time", errors);
+  const unitRes = resolveUnit(mapped.unitCode, ref.units ?? []);
+  if (mapped.unitCode && unitRes.status === "unknown") {
+    errors.push(`Purchase unit "${mapped.unitCode}" was not recognised.`);
+  }
 
   const supplierMatch = classifyExisting(
     matchCatalogItem(
@@ -378,6 +432,8 @@ export function stageSupplierProductRow(
       supplierSku: mapped.supplierSku ?? null,
       barcode: mapped.itemBarcode ?? null,
       name: mapped.name ?? mapped.itemName ?? null,
+      unitCode: mapped.unitCode ?? null,
+      unitId: unitRes.unit?.id ?? null,
       packSize: packSize ?? null,
       unitPrice: unitPrice ?? null,
       currency: mapped.currency ?? null,
@@ -394,13 +450,117 @@ export function stageSupplierProductRow(
   };
 }
 
+/* ---------------- Menu ---------------- */
+
+const MENU_STATUS_ALIASES: Record<string, string> = {
+  draft: "draft",
+  published: "published",
+  live: "published",
+  active: "published",
+  archived: "archived",
+};
+
+export function stageMenuRow(
+  mapped: Record<string, string>,
+  ref: { menus: readonly MenuRow[] },
+): StageResult {
+  const errors: string[] = [];
+  if (!mapped.code) errors.push(required("Menu code is missing."));
+  if (!mapped.name) errors.push(required("Menu name is missing."));
+  const statusRaw = mapped.status?.trim().toLowerCase();
+  const status = statusRaw ? (MENU_STATUS_ALIASES[statusRaw] ?? null) : null;
+  if (statusRaw && !status) {
+    errors.push(
+      `Status "${mapped.status}" was not recognised — use Draft, Published or Archived. Left as Draft.`,
+    );
+  }
+
+  const results = matchCatalogItem(
+    { sku: mapped.code, name: mapped.name },
+    menuCandidates(ref.menus),
+  );
+  const c = classify(results);
+
+  return {
+    mappedData: {
+      code: mapped.code ?? null,
+      name: mapped.name ?? null,
+      serviceType: mapped.serviceType ?? null,
+      status: status ?? "draft",
+      currency: mapped.currency ?? null,
+      description: mapped.description ?? null,
+    },
+    matchStatus: c.status,
+    matchedEntityId: c.id,
+    matchedEntityTable: c.id ? "restaurant_menus" : null,
+    matchConfidence: c.confidence,
+    matchEvidence: c.evidence,
+    matchCandidates: c.candidates ?? [],
+    validationErrors: errors,
+    severity: computeSeverity(c.status, errors),
+  };
+}
+
+/* ---------------- Category ---------------- */
+
+export function stageCategoryRow(
+  mapped: Record<string, string>,
+  ref: { categories: readonly CategoryRow[]; menus: readonly MenuRow[] },
+): StageResult {
+  const errors: string[] = [];
+  if (!mapped.code) errors.push(required("Category code is missing."));
+  if (!mapped.name) errors.push(required("Category name is missing."));
+  const sortOrder = numField(mapped.sortOrder, "Sort order", errors) ?? 0;
+
+  // Advisory only — restaurant_categories has no menu_id column (categories
+  // are shared tenant-wide per kind, see menu.server.ts#upsertCategory), so
+  // an unrecognised Menu Code never blocks the category itself. It still
+  // catches a real typo before the customer notices a category "missing"
+  // from a menu that was really just a mismatched code.
+  if (mapped.menuCode) {
+    const menuMatch = matchCatalogItem(
+      { sku: mapped.menuCode, name: mapped.menuCode },
+      menuCandidates(ref.menus),
+    );
+    if (!menuMatch[0] || menuMatch[0].score === 0) {
+      errors.push(
+        `Menu "${mapped.menuCode}" was not found — this category will still be created, but confirm the menu code.`,
+      );
+    }
+  }
+
+  const results = matchCatalogItem(
+    { sku: mapped.code, name: mapped.name },
+    categoryCandidates(ref.categories),
+  );
+  const c = classify(results);
+
+  return {
+    mappedData: {
+      menuCode: mapped.menuCode ?? null,
+      code: mapped.code ?? null,
+      name: mapped.name ?? null,
+      sortOrder,
+    },
+    matchStatus: c.status,
+    matchedEntityId: c.id,
+    matchedEntityTable: c.id ? "restaurant_categories" : null,
+    matchConfidence: c.confidence,
+    matchEvidence: c.evidence,
+    matchCandidates: c.candidates ?? [],
+    validationErrors: errors,
+    severity: computeSeverity(c.status, errors),
+  };
+}
+
 /* ---------------- Menu item ---------------- */
 
 export function stageMenuItemRow(
   mapped: Record<string, string>,
   ref: {
     menuItems: readonly MenuItemRow[];
-    categories: readonly { id: string; name: string }[];
+    categories: readonly CategoryRow[];
+    menus?: readonly MenuRow[];
     propertyCurrency?: string;
   },
 ): StageResult {
@@ -409,8 +569,35 @@ export function stageMenuItemRow(
   if (ref.propertyCurrency) checkCurrency(mapped.currency, ref.propertyCurrency, errors);
   const price = numField(mapped.price, "Price", errors, { required: true });
 
+  // A code is the primary key — resolved by exact match against the menus/
+  // categories already staged and committed earlier in this same import (see
+  // IMPORT_DOMAIN_COMMIT_ORDER: menu and category both land before
+  // menu_item). Only when no code is given at all does this fall back to the
+  // existing free-text categoryName match, exactly as before — a sheet with
+  // no Menu Code/Category Code column (like the existing O12 workbook, or
+  // any other Advanced Import source) behaves identically to today.
+  let menuId: string | null = null;
+  if (mapped.menuCode && ref.menus) {
+    const menuMatch = classifyExisting(
+      matchCatalogItem({ sku: mapped.menuCode, name: mapped.menuCode }, menuCandidates(ref.menus)),
+      `Menu "${mapped.menuCode}"`,
+    );
+    if (menuMatch.error) errors.push(required(menuMatch.error));
+    menuId = menuMatch.id;
+  }
+
   let categoryId: string | null = null;
-  if (mapped.categoryName) {
+  if (mapped.categoryCode) {
+    const catMatch = classifyExisting(
+      matchCatalogItem(
+        { sku: mapped.categoryCode, name: mapped.categoryCode },
+        categoryCandidates(ref.categories),
+      ),
+      `Category "${mapped.categoryCode}"`,
+    );
+    if (catMatch.id) categoryId = catMatch.id;
+    else errors.push(`Category "${mapped.categoryCode}" not found — will be left uncategorised.`);
+  } else if (mapped.categoryName) {
     const cat = ref.categories.find(
       (c) => c.name.toLowerCase() === mapped.categoryName!.toLowerCase(),
     );
@@ -421,16 +608,21 @@ export function stageMenuItemRow(
   const results = matchCatalogItem({ name: mapped.name }, menuItemCandidates(ref.menuItems));
   const c = classify(results);
   const available = parseBoolean(mapped.available);
+  const sortOrder = numField(mapped.sortOrder, "Sort order", errors) ?? 0;
 
   return {
     mappedData: {
       name: mapped.name ?? null,
+      menuId,
+      menuCode: mapped.menuCode ?? null,
       categoryId,
+      categoryCode: mapped.categoryCode ?? null,
       categoryName: mapped.categoryName ?? null,
       description: mapped.description ?? null,
       price: price ?? null,
       currency: mapped.currency ?? null,
       available: available ?? true,
+      sortOrder,
     },
     matchStatus: c.status,
     matchedEntityId: c.id,
@@ -537,30 +729,52 @@ export function stageVariantRow(
   },
 ): StageResult {
   const errors: string[] = [];
-  if (!mapped.productMenuItemName)
+  if (!mapped.itemCode && !mapped.productMenuItemName)
     errors.push(required("Dish/drink this variant belongs to is missing."));
   if (!mapped.name) errors.push(required("Variant name is missing."));
   const price = numField(mapped.price, "Price", errors, { required: true });
   if (price !== undefined && price < 0) errors.push(required("Price cannot be negative."));
   const priceIsDelta = parseBoolean(mapped.priceIsDelta) ?? false;
 
-  const menuItemMatch = classifyExisting(
-    matchCatalogItem({ name: mapped.productMenuItemName }, menuItemCandidates(ref.menuItems)),
-    `Dish/drink "${mapped.productMenuItemName ?? "?"}"`,
-  );
+  // A code resolves directly against the product bridge row's own SKU — no
+  // fuzzy name step, and no dependency on the menu item's own identity at
+  // all (a product's sku is stable even if the dish is later renamed). Only
+  // absent a code does this fall back to the existing name -> menu item ->
+  // product chain, unchanged from before.
   let productId: string | null = null;
-  let chainStatus: MatchStatus = menuItemMatch.status;
-  if (menuItemMatch.error) errors.push(required(menuItemMatch.error));
-  if (menuItemMatch.id) {
-    const product = ref.products.find((p) => p.menu_item_id === menuItemMatch.id);
-    if (product) productId = product.id;
-    else {
-      errors.push(
-        required(
-          `Dish "${mapped.productMenuItemName}" has no product/station link yet — import the product/station relationship first, then re-stage this sheet.`,
-        ),
-      );
-      chainStatus = "unmatched";
+  let chainStatus: MatchStatus = "new_entity";
+  let chainConfidence: number | null = null;
+  let chainEvidence: string[] = [];
+  if (mapped.itemCode) {
+    const productMatch = classifyExisting(
+      matchCatalogItem({ sku: mapped.itemCode }, productCandidates(ref.products)),
+      `Item "${mapped.itemCode}"`,
+    );
+    if (productMatch.error) errors.push(required(productMatch.error));
+    productId = productMatch.id;
+    chainStatus = productMatch.status;
+    chainConfidence = productMatch.confidence;
+    chainEvidence = productMatch.evidence;
+  } else {
+    const menuItemMatch = classifyExisting(
+      matchCatalogItem({ name: mapped.productMenuItemName }, menuItemCandidates(ref.menuItems)),
+      `Dish/drink "${mapped.productMenuItemName ?? "?"}"`,
+    );
+    chainStatus = menuItemMatch.status;
+    chainConfidence = menuItemMatch.confidence;
+    chainEvidence = menuItemMatch.evidence;
+    if (menuItemMatch.error) errors.push(required(menuItemMatch.error));
+    if (menuItemMatch.id) {
+      const product = ref.products.find((p) => p.menu_item_id === menuItemMatch.id);
+      if (product) productId = product.id;
+      else {
+        errors.push(
+          required(
+            `Dish "${mapped.productMenuItemName}" has no product/station link yet — import the product/station relationship first, then re-stage this sheet.`,
+          ),
+        );
+        chainStatus = "unmatched";
+      }
     }
   }
 
@@ -590,6 +804,7 @@ export function stageVariantRow(
   return {
     matchCandidates: [],
     mappedData: {
+      itemCode: mapped.itemCode ?? null,
       productMenuItemName: mapped.productMenuItemName ?? null,
       productId,
       name: mapped.name ?? null,
@@ -597,12 +812,13 @@ export function stageVariantRow(
       price: price ?? null,
       priceIsDelta,
       active: parseBoolean(mapped.active) ?? true,
+      sortOrder: numField(mapped.sortOrder, "Sort order", errors) ?? 0,
     },
     matchStatus: finalStatus,
     matchedEntityId: variantStatus.id,
     matchedEntityTable: variantStatus.id ? "restaurant_product_variants" : null,
-    matchConfidence: menuItemMatch.confidence,
-    matchEvidence: menuItemMatch.evidence,
+    matchConfidence: chainConfidence,
+    matchEvidence: chainEvidence,
     validationErrors: errors,
     severity: computeSeverity(finalStatus, errors),
   };
@@ -642,6 +858,7 @@ export function stageModifierGroupRow(
       maxSelect,
       required: required_,
       active: parseBoolean(mapped.active) ?? true,
+      sortOrder: numField(mapped.sortOrder, "Sort order", errors) ?? 0,
     },
     matchStatus: c.status,
     matchedEntityId: c.id,
@@ -760,6 +977,7 @@ export function stageModifierRow(
       unitId: unitRes.unit?.id ?? null,
       unitCode: mapped.unitCode ?? null,
       active: parseBoolean(mapped.active) ?? true,
+      sortOrder: numField(mapped.sortOrder, "Sort order", errors) ?? 0,
     },
     matchStatus: finalStatus,
     matchedEntityId: modifierStatus.id,
@@ -783,28 +1001,47 @@ export function stageProductModifierGroupRow(
   },
 ): StageResult {
   const errors: string[] = [];
-  if (!mapped.productMenuItemName)
+  if (!mapped.itemCode && !mapped.productMenuItemName)
     errors.push(required("Dish/drink to attach this modifier group to is missing."));
   if (!mapped.modifierGroupCode) errors.push(required("Modifier group is missing."));
   const sortOrder = numField(mapped.sortOrder, "Sort order", errors) ?? 0;
 
-  const menuItemMatch = classifyExisting(
-    matchCatalogItem({ name: mapped.productMenuItemName }, menuItemCandidates(ref.menuItems)),
-    `Dish/drink "${mapped.productMenuItemName ?? "?"}"`,
-  );
-  if (menuItemMatch.error) errors.push(required(menuItemMatch.error));
+  // Same code-first, name-fallback resolution as stageVariantRow — see its
+  // own comment for why a code skips the menu-item hop entirely.
   let productId: string | null = null;
-  let chainStatus: MatchStatus = menuItemMatch.status;
-  if (menuItemMatch.id) {
-    const product = ref.products.find((p) => p.menu_item_id === menuItemMatch.id);
-    if (product) productId = product.id;
-    else {
-      errors.push(
-        required(
-          `Dish "${mapped.productMenuItemName}" has no product/station link yet — import the product/station relationship first, then re-stage this sheet.`,
-        ),
-      );
-      chainStatus = "unmatched";
+  let chainStatus: MatchStatus = "new_entity";
+  let chainConfidence: number | null = null;
+  let chainEvidence: string[] = [];
+  if (mapped.itemCode) {
+    const productMatch = classifyExisting(
+      matchCatalogItem({ sku: mapped.itemCode }, productCandidates(ref.products)),
+      `Item "${mapped.itemCode}"`,
+    );
+    if (productMatch.error) errors.push(required(productMatch.error));
+    productId = productMatch.id;
+    chainStatus = productMatch.status;
+    chainConfidence = productMatch.confidence;
+    chainEvidence = productMatch.evidence;
+  } else {
+    const menuItemMatch = classifyExisting(
+      matchCatalogItem({ name: mapped.productMenuItemName }, menuItemCandidates(ref.menuItems)),
+      `Dish/drink "${mapped.productMenuItemName ?? "?"}"`,
+    );
+    if (menuItemMatch.error) errors.push(required(menuItemMatch.error));
+    chainStatus = menuItemMatch.status;
+    chainConfidence = menuItemMatch.confidence;
+    chainEvidence = menuItemMatch.evidence;
+    if (menuItemMatch.id) {
+      const product = ref.products.find((p) => p.menu_item_id === menuItemMatch.id);
+      if (product) productId = product.id;
+      else {
+        errors.push(
+          required(
+            `Dish "${mapped.productMenuItemName}" has no product/station link yet — import the product/station relationship first, then re-stage this sheet.`,
+          ),
+        );
+        chainStatus = "unmatched";
+      }
     }
   }
 
@@ -837,6 +1074,7 @@ export function stageProductModifierGroupRow(
   return {
     matchCandidates: [],
     mappedData: {
+      itemCode: mapped.itemCode ?? null,
       productMenuItemName: mapped.productMenuItemName ?? null,
       productId,
       modifierGroupCode: mapped.modifierGroupCode ?? null,
@@ -846,8 +1084,8 @@ export function stageProductModifierGroupRow(
     matchStatus: finalStatus,
     matchedEntityId: null,
     matchedEntityTable: productId && groupMatch.id ? "restaurant_product_modifier_groups" : null,
-    matchConfidence: Math.min(menuItemMatch.confidence ?? 1, groupMatch.confidence ?? 1),
-    matchEvidence: [...menuItemMatch.evidence, ...groupMatch.evidence],
+    matchConfidence: Math.min(chainConfidence ?? 1, groupMatch.confidence ?? 1),
+    matchEvidence: [...chainEvidence, ...groupMatch.evidence],
     validationErrors: errors,
     severity: computeSeverity(finalStatus, errors),
   };
@@ -861,10 +1099,12 @@ export function stageRecipeComponentRow(
     menuItems: readonly MenuItemRow[];
     inventoryItems: readonly InventoryItemRow[];
     units: readonly UnitRow[];
+    /** Optional — only needed to resolve itemCode. Absent ref.products with an itemCode-only row degrades gracefully to "not found", same as any other unmatched reference. */
+    products?: readonly ProductRow[];
   },
 ): StageResult {
   const errors: string[] = [];
-  if (!mapped.menuItemName)
+  if (!mapped.itemCode && !mapped.menuItemName)
     errors.push(required("Dish/drink to attach this ingredient to is missing."));
   if (!mapped.ingredientName && !mapped.ingredientSku && !mapped.ingredientBarcode) {
     errors.push(required("Ingredient to link is missing (name, SKU or barcode)."));
@@ -877,10 +1117,44 @@ export function stageRecipeComponentRow(
     errors.push(`Unit "${mapped.unitCode}" was not recognised — confirm it manually.`);
   }
 
-  const menuItemMatch = classifyExisting(
-    matchCatalogItem({ name: mapped.menuItemName }, menuItemCandidates(ref.menuItems)),
-    `Dish/drink "${mapped.menuItemName ?? "?"}"`,
-  );
+  // A code resolves through the product bridge row (restaurant_products,
+  // matched by its own sku) straight to its menu_item_id — the same code
+  // stageVariantRow/stageProductModifierGroupRow use, since restaurant_
+  // recipe_components stores menu_item_id directly rather than product_id.
+  // Falls back to the existing name match when no code is given.
+  let menuItemId: string | null = null;
+  let menuItemStatus: MatchStatus = "new_entity";
+  let menuItemConfidence: number | null = null;
+  let menuItemEvidence: string[] = [];
+  if (mapped.itemCode) {
+    const productMatch = classifyExisting(
+      matchCatalogItem({ sku: mapped.itemCode }, productCandidates(ref.products ?? [])),
+      `Item "${mapped.itemCode}"`,
+    );
+    if (productMatch.error) errors.push(required(productMatch.error));
+    menuItemStatus = productMatch.status;
+    menuItemConfidence = productMatch.confidence;
+    menuItemEvidence = productMatch.evidence;
+    if (productMatch.id) {
+      const product = (ref.products ?? []).find((p) => p.id === productMatch.id);
+      menuItemId = product?.menu_item_id ?? null;
+      if (!menuItemId) {
+        errors.push(required(`Item "${mapped.itemCode}" has no dish linked to it yet.`));
+        menuItemStatus = "unmatched";
+      }
+    }
+  } else {
+    const menuItemMatch = classifyExisting(
+      matchCatalogItem({ name: mapped.menuItemName }, menuItemCandidates(ref.menuItems)),
+      `Dish/drink "${mapped.menuItemName ?? "?"}"`,
+    );
+    if (menuItemMatch.error) errors.push(required(menuItemMatch.error));
+    menuItemId = menuItemMatch.id;
+    menuItemStatus = menuItemMatch.status;
+    menuItemConfidence = menuItemMatch.confidence;
+    menuItemEvidence = menuItemMatch.evidence;
+  }
+
   const ingredientMatch = classifyExisting(
     matchCatalogItem(
       { barcode: mapped.ingredientBarcode, sku: mapped.ingredientSku, name: mapped.ingredientName },
@@ -888,16 +1162,16 @@ export function stageRecipeComponentRow(
     ),
     `Ingredient "${mapped.ingredientName ?? mapped.ingredientSku ?? mapped.ingredientBarcode ?? "?"}"`,
   );
-  if (menuItemMatch.error) errors.push(required(menuItemMatch.error));
   if (ingredientMatch.error) errors.push(required(ingredientMatch.error));
 
-  const overallStatus = worse(menuItemMatch.status, ingredientMatch.status);
+  const overallStatus = worse(menuItemStatus, ingredientMatch.status);
 
   return {
     matchCandidates: [],
     mappedData: {
+      itemCode: mapped.itemCode ?? null,
       menuItemName: mapped.menuItemName ?? null,
-      menuItemId: menuItemMatch.id,
+      menuItemId,
       ingredientName: mapped.ingredientName ?? null,
       ingredientSku: mapped.ingredientSku ?? null,
       ingredientBarcode: mapped.ingredientBarcode ?? null,
@@ -911,8 +1185,8 @@ export function stageRecipeComponentRow(
     matchStatus: overallStatus,
     matchedEntityId: null,
     matchedEntityTable: null,
-    matchConfidence: Math.min(menuItemMatch.confidence ?? 1, ingredientMatch.confidence ?? 1),
-    matchEvidence: [...menuItemMatch.evidence, ...ingredientMatch.evidence],
+    matchConfidence: Math.min(menuItemConfidence ?? 1, ingredientMatch.confidence ?? 1),
+    matchEvidence: [...menuItemEvidence, ...ingredientMatch.evidence],
     validationErrors: errors,
     severity: computeSeverity(overallStatus, errors),
   };

@@ -46,6 +46,8 @@ export const IMPORT_DOMAINS = [
   "supplier",
   "inventory_item",
   "supplier_product",
+  "menu",
+  "category",
   "menu_item",
   "product_station",
   "variant",
@@ -61,6 +63,8 @@ export const IMPORT_DOMAIN_LABELS: Record<ImportDomain, string> = {
   supplier: "Suppliers",
   inventory_item: "Inventory items",
   supplier_product: "Supplier products",
+  menu: "Menus",
+  category: "Categories",
   menu_item: "Menu items",
   product_station: "Products (menu item ↔ station)",
   variant: "Variants",
@@ -73,14 +77,19 @@ export const IMPORT_DOMAIN_LABELS: Record<ImportDomain, string> = {
 
 /**
  * Commit dependency order — a later domain may reference an entity resolved
- * by an earlier one. `product_station` must land before `variant`,
- * `modifier`/`product_modifier_group` must land after `modifier_group`, and
- * `product_modifier_group` must land after `product_station` too.
+ * by an earlier one. `menu` and `category` must land before `menu_item`
+ * (which resolves a row's Menu Code / Category Code against them),
+ * `product_station` must land before `variant`, `product_modifier_group`
+ * and `recipe_component` (all three may resolve a row's Item Code against
+ * the product bridge row `product_station` creates), `modifier`/
+ * `product_modifier_group` must land after `modifier_group`.
  */
 export const IMPORT_DOMAIN_COMMIT_ORDER: readonly ImportDomain[] = [
   "supplier",
   "inventory_item",
   "supplier_product",
+  "menu",
+  "category",
   "menu_item",
   "product_station",
   "variant",
@@ -248,6 +257,48 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       required: false,
       aliases: alias("Opening Unit", "Opening Uom", "Count Unit"),
     },
+    {
+      field: "purchaseUnitCode",
+      label: "Purchase unit (how it's bought)",
+      required: false,
+      aliases: alias("Purchase Unit", "Buy Unit", "Order Unit"),
+    },
+    {
+      field: "consumptionUnitCode",
+      label: "Consumption unit (how it's used)",
+      required: false,
+      aliases: alias("Consumption Unit", "Recipe Unit", "Usage Unit"),
+    },
+    {
+      field: "servingSize",
+      // The quantity contained inside one stock unit — e.g. a 750ml bottle
+      // (Stock Unit "BTL") has a Content per Stock Unit of 750. Distinct
+      // from Pack Size (how many stock units are in one purchase unit — 12
+      // bottles in a carton): this is what's *inside* one bottle, not how
+      // many bottles are in a case. Maps to restaurant_inventory_items'
+      // existing serving_size column (already wired for beverage costing).
+      label: "Content per stock unit",
+      required: false,
+      aliases: alias("Content Per Stock Unit", "Serving Size", "Contents", "Fill Size"),
+    },
+    {
+      field: "servingUnitCode",
+      label: "Content unit",
+      required: false,
+      aliases: alias("Content Unit", "Serving Unit", "Fill Unit"),
+    },
+    {
+      field: "isBeverage",
+      label: "Is beverage",
+      required: false,
+      aliases: alias("Is Beverage", "Beverage"),
+    },
+    {
+      field: "shelfLifeDays",
+      label: "Shelf life (days)",
+      required: false,
+      aliases: alias("Shelf Life", "Shelf Life Days", "Shelf Life (Days)"),
+    },
   ],
   supplier_product: [
     {
@@ -294,7 +345,13 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "name",
       label: "Supplier's product name",
       required: false,
-      aliases: alias("Product Name", "Description", "Name"),
+      aliases: alias("Product Name", "Description", "Name", "Supplier Product Name"),
+    },
+    {
+      field: "unitCode",
+      label: "Purchase unit (how the supplier sells it)",
+      required: false,
+      aliases: alias("Purchase Unit", "Unit", "UOM"),
     },
     {
       field: "packSize",
@@ -336,12 +393,93 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       aliases: alias("Lead Time", "Lead Time Days"),
     },
   ],
+  menu: [
+    {
+      field: "code",
+      label: "Menu code",
+      required: true,
+      aliases: alias("Menu Code", "Code"),
+    },
+    {
+      field: "name",
+      label: "Menu name",
+      required: true,
+      aliases: alias("Menu Name", "Name"),
+    },
+    {
+      field: "serviceType",
+      label: "Type",
+      required: false,
+      aliases: alias("Type", "Service Type"),
+    },
+    {
+      field: "status",
+      label: "Status",
+      required: false,
+      aliases: alias("Status"),
+    },
+    {
+      field: "currency",
+      label: "Currency (if not the property's own)",
+      required: false,
+      aliases: alias("Currency", "Ccy", "Curr"),
+    },
+    {
+      field: "description",
+      label: "Description",
+      required: false,
+      aliases: alias("Description", "Details"),
+    },
+  ],
+  category: [
+    {
+      field: "menuCode",
+      // Categories are shared tenant-wide in the data model (there is no
+      // menu_id column on restaurant_categories) — this column cross-checks
+      // that the category is actually declared for a menu that exists, but
+      // it does not scope the created category row to that menu. See the
+      // "declared for a different menu" advisory in stage.ts.
+      label: "Menu code (to cross-check)",
+      required: false,
+      aliases: alias("Menu Code", "Menu"),
+    },
+    {
+      field: "code",
+      label: "Category code",
+      required: true,
+      aliases: alias("Category Code", "Code"),
+    },
+    {
+      field: "name",
+      label: "Category name",
+      required: true,
+      aliases: alias("Category Name", "Name", "Category"),
+    },
+    {
+      field: "sortOrder",
+      label: "Sort order",
+      required: false,
+      aliases: alias("Sort Order", "Order", "Position"),
+    },
+  ],
   menu_item: [
     {
       field: "name",
       label: "Dish/drink name",
       required: true,
       aliases: alias("Item Name", "Name", "Dish", "Menu Item", "Product Name"),
+    },
+    {
+      field: "menuCode",
+      label: "Menu code (to match)",
+      required: false,
+      aliases: alias("Menu Code", "Menu"),
+    },
+    {
+      field: "categoryCode",
+      label: "Category code (to match)",
+      required: false,
+      aliases: alias("Category Code"),
     },
     {
       field: "categoryName",
@@ -380,6 +518,12 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       required: false,
       aliases: alias("Available", "Active", "In Stock", "On Menu"),
     },
+    {
+      field: "sortOrder",
+      label: "Sort order",
+      required: false,
+      aliases: alias("Sort Order", "Order", "Position"),
+    },
   ],
   product_station: [
     {
@@ -415,9 +559,20 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
   ],
   variant: [
     {
+      field: "itemCode",
+      // Preferred over productMenuItemName when present — an exact code
+      // match against the product bridge row's own SKU, never fuzzy. Not
+      // hard-required here because a name-only source sheet (no codes at
+      // all) is still legitimate — see the "Dish/drink to match is missing"
+      // check in stageVariantRow, which requires at least one of the two.
+      label: "Item code (to match)",
+      required: false,
+      aliases: alias("Item Code", "Product Code", "SKU"),
+    },
+    {
       field: "productMenuItemName",
       label: "Dish/drink (to match)",
-      required: true,
+      required: false,
       aliases: alias("Menu Item", "Product", "Item Name", "Dish"),
     },
     {
@@ -436,19 +591,25 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "price",
       label: "Price",
       required: true,
-      aliases: alias("Price", "Variant Price"),
+      aliases: alias("Price", "Variant Price", "Price Delta"),
     },
     {
       field: "priceIsDelta",
       label: "Price is a delta",
       required: false,
-      aliases: alias("Price Is Delta", "Is Delta", "Delta"),
+      aliases: alias("Price Is Delta", "Is Delta", "Delta", "Pricing Method"),
     },
     {
       field: "active",
       label: "Active",
       required: false,
       aliases: alias("Active", "Available"),
+    },
+    {
+      field: "sortOrder",
+      label: "Sort order",
+      required: false,
+      aliases: alias("Sort Order", "Order", "Position"),
     },
   ],
   modifier_group: [
@@ -468,13 +629,13 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "minSelect",
       label: "Min select",
       required: false,
-      aliases: alias("Min Select", "Minimum", "Min"),
+      aliases: alias("Min Select", "Minimum", "Min", "Minimum Selections"),
     },
     {
       field: "maxSelect",
       label: "Max select",
       required: false,
-      aliases: alias("Max Select", "Maximum", "Max"),
+      aliases: alias("Max Select", "Maximum", "Max", "Maximum Selections"),
     },
     {
       field: "required",
@@ -487,6 +648,12 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       label: "Active",
       required: false,
       aliases: alias("Active", "Available"),
+    },
+    {
+      field: "sortOrder",
+      label: "Sort order",
+      required: false,
+      aliases: alias("Sort Order", "Order", "Position"),
     },
   ],
   modifier: [
@@ -524,7 +691,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "ingredientSku",
       label: "Ingredient SKU",
       required: false,
-      aliases: alias("Ingredient SKU", "SKU"),
+      aliases: alias("Ingredient SKU", "SKU", "Inventory SKU"),
     },
     {
       field: "ingredientBarcode",
@@ -550,12 +717,24 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       required: false,
       aliases: alias("Active", "Available"),
     },
+    {
+      field: "sortOrder",
+      label: "Sort order",
+      required: false,
+      aliases: alias("Sort Order", "Order", "Position"),
+    },
   ],
   product_modifier_group: [
     {
+      field: "itemCode",
+      label: "Item code (to match)",
+      required: false,
+      aliases: alias("Item Code", "Product Code", "SKU"),
+    },
+    {
       field: "productMenuItemName",
       label: "Dish/drink (to match)",
-      required: true,
+      required: false,
       aliases: alias("Menu Item", "Product", "Item Name", "Dish"),
     },
     {
@@ -573,9 +752,21 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
   ],
   recipe_component: [
     {
+      field: "itemCode",
+      // Resolved via the product bridge row's own SKU (restaurant_products),
+      // which is where recipe_component's menu_item_id actually comes from
+      // once a code is given — see stageRecipeComponentRow. Preferred over
+      // menuItemName when present; not hard-required since a name-only
+      // source is still legitimate (see the "Dish/drink to match is
+      // missing" check, which requires at least one of the two).
+      label: "Item code (to match)",
+      required: false,
+      aliases: alias("Item Code", "Product Code"),
+    },
+    {
       field: "menuItemName",
       label: "Dish/drink (to match)",
-      required: true,
+      required: false,
       aliases: alias("Recipe", "Dish", "Menu Item", "Menu Item Name", "Item Name", "Product"),
     },
     {
@@ -697,6 +888,8 @@ const DOMAIN_SIGNAL_WORDS: Record<ImportDomain, readonly string[]> = {
     "Average Cost",
   ),
   supplier_product: alias("Supplier SKU", "MOQ", "Min Order", "Case Size", "Vendor SKU"),
+  menu: alias("Menu Code", "Menu Name", "Service Type"),
+  category: alias("Category Code", "Category Name", "Sort Order"),
   menu_item: alias("Menu Item", "Selling Price", "Menu Price", "Menu Section", "On Menu", "Dish"),
   product_station: alias("Station", "Station Code", "Production Station", "Destination"),
   variant: alias("Variant", "Variant Name", "Price Is Delta", "Size", "Option"),
