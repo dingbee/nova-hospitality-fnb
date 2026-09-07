@@ -50,6 +50,7 @@ import {
 import { GUEST_PAYMENT_METHODS } from "@/modules/restaurant/selforder/selfpay.contracts";
 import { requestGuestBillFn } from "@/modules/restaurant/selforder/selfbill.functions";
 import { guestOrderProgressFn } from "@/modules/restaurant/selforder/selftrack.functions";
+import { guestSessionProjectionFn } from "@/modules/restaurant/selforder/selfsession.functions";
 import {
   guestStaffRequestStatusFn,
   requestStaffFn,
@@ -488,35 +489,14 @@ function GuestOrderPage() {
 
   if (confirmed) {
     return (
-      <div className="flex min-h-dvh flex-col items-center gap-3 bg-background px-6 pt-20 pb-16 text-center pt-safe">
-        <span className="flex size-16 items-center justify-center rounded-full bg-primary/10">
-          <CheckCircle2 className="size-9 text-primary" aria-hidden />
-        </span>
-        <h1 className="font-display mt-2 text-2xl text-foreground">Order sent</h1>
-        <p className="text-sm text-muted-foreground">
-          Order <span className="font-medium text-foreground">{confirmed.orderNumber}</span> ·{" "}
-          {money(confirmed.total, currency)}
-        </p>
-        <p className="max-w-xs text-sm text-muted-foreground">
-          Your order is on its way to the kitchen and bar. A member of staff will bring it out
-          shortly.
-        </p>
-        <OrderProgressPanel tableId={tableId} orderId={confirmed.orderId} />
-        <RequestStaffPanel tableId={tableId} orderId={confirmed.orderId} />
-        <RequestBillPanel tableId={tableId} orderId={confirmed.orderId} />
-        <GuestPaymentPanel tableId={tableId} orderId={confirmed.orderId} />
-        <GuestFeedbackPanel tableId={tableId} orderId={confirmed.orderId} />
-        <Button
-          variant="outline"
-          className="mt-4 min-h-11"
-          onClick={() => {
-            dismissRecovery();
-            setConfirmed(null);
-          }}
-        >
-          Order more
-        </Button>
-      </div>
+      <TableSessionScreen
+        tableId={tableId}
+        justPlacedOrderId={confirmed.orderId}
+        onOrderMore={() => {
+          dismissRecovery();
+          setConfirmed(null);
+        }}
+      />
     );
   }
 
@@ -903,6 +883,138 @@ function RecoveryPrompt({
           Start a new order
         </Button>
       </div>
+    </div>
+  );
+}
+
+const SESSION_STAGE_LABEL: Record<string, string> = {
+  received: "Order received",
+  preparing: "Preparing",
+  ready: "Ready",
+  served: "Served",
+  cancelled: "Cancelled",
+};
+
+/**
+ * The continuous "your table" view a guest lands on after every order —
+ * the first (Order A) and every one after it (Order B, Order C, ...). Never
+ * a single-order confirmation screen: it always reads the whole active
+ * dining session (guestSessionProjectionFn), so placing another order can
+ * never make an earlier one disappear, and the guest always sees what they
+ * currently owe across every order they've placed at this table so far.
+ * The just-placed order stays pinned to the top and keeps its own live
+ * production tracker/staff-request/bill/payment/feedback panels — all of
+ * that stays order-scoped exactly as before; this only adds the session
+ * list and table-wide totals around it.
+ */
+function TableSessionScreen({
+  tableId,
+  justPlacedOrderId,
+  onOrderMore,
+}: {
+  tableId: string;
+  justPlacedOrderId: string;
+  onOrderMore: () => void;
+}) {
+  const sessionFn = useServerFn(guestSessionProjectionFn);
+  const session = useQuery({
+    queryKey: ["selforder.session", tableId],
+    // Polled at the same cadence as OrderProgressPanel below it — a second
+    // order placed from another tab, or a payment recorded by staff,
+    // reaches this screen within the same window as production status
+    // already does, with no separate realtime layer.
+    queryFn: () => sessionFn({ data: { tableId } }),
+    refetchInterval: 8_000,
+    networkMode: "always",
+  });
+
+  const data = session.data;
+  const currency = data?.totals.currency ?? "USD";
+  const orders = data?.orders ?? [];
+  // The order just placed is always shown first, whatever the session's own
+  // chronological order — it's what the guest came to this screen to see.
+  const ordered = [...orders].sort((a, b) =>
+    a.id === justPlacedOrderId ? -1 : b.id === justPlacedOrderId ? 1 : 0,
+  );
+
+  return (
+    <div className="flex min-h-dvh flex-col items-center gap-3 bg-background px-6 pt-16 pb-16 text-center pt-safe">
+      <span className="flex size-16 items-center justify-center rounded-full bg-primary/10">
+        <CheckCircle2 className="size-9 text-primary" aria-hidden />
+      </span>
+      <div>
+        <h1 className="font-display mt-2 text-2xl text-foreground">Order sent</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {data?.session ? `Your table — ${data.session.table.name}` : "Your dining session"}
+        </p>
+      </div>
+      <p className="max-w-xs text-sm text-muted-foreground">
+        Your order is on its way to the kitchen and bar. A member of staff will bring it out
+        shortly.
+      </p>
+
+      {ordered.length > 0 && (
+        <div className="w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
+          <p className="eyebrow mb-2">Your orders</p>
+          <ul className="space-y-2.5">
+            {ordered.map((o) => (
+              <li key={o.id} className="flex items-center justify-between gap-2 text-sm">
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-foreground">
+                    Order {o.orderNumber}
+                    {o.id === justPlacedOrderId && (
+                      <span className="ml-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                        Just sent
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {SESSION_STAGE_LABEL[o.overallStage] ?? o.overallStage}
+                  </p>
+                </div>
+                <span className="shrink-0 font-medium text-foreground">
+                  {money(o.total, currency)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {data && data.orders.length > 0 && (
+        <div className="w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Table total</span>
+            <span className="font-semibold text-foreground">
+              {money(data.totals.total, currency)}
+            </span>
+          </div>
+          {data.totals.paid > 0 && (
+            <div className="mt-1.5 flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Paid</span>
+              <span className="font-medium text-foreground">
+                {money(data.totals.paid, currency)}
+              </span>
+            </div>
+          )}
+          <div className="mt-1.5 flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Outstanding</span>
+            <span className="font-semibold text-foreground">
+              {money(data.totals.outstanding, currency)}
+            </span>
+          </div>
+        </div>
+      )}
+
+      <OrderProgressPanel tableId={tableId} orderId={justPlacedOrderId} />
+      <RequestStaffPanel tableId={tableId} orderId={justPlacedOrderId} />
+      <RequestBillPanel tableId={tableId} orderId={justPlacedOrderId} />
+      <GuestPaymentPanel tableId={tableId} orderId={justPlacedOrderId} />
+      <GuestFeedbackPanel tableId={tableId} orderId={justPlacedOrderId} />
+
+      <Button variant="outline" className="mt-4 min-h-11" onClick={onOrderMore}>
+        Order more
+      </Button>
     </div>
   );
 }

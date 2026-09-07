@@ -291,6 +291,7 @@ describe("direct server-function bypass", () => {
     join(ROOT, "src/modules/restaurant/selforder/selfnova.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selforder.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfpay.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selfsession.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfstaff.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selftrack.functions.ts"),
   ].sort();

@@ -395,8 +395,9 @@ function fakeSessionsSb(initialRows: any[] = []) {
           };
         }
         seq += 1;
-        rows.push({ id: `session-${seq}`, ...payload });
-        return { data: null, error: null };
+        const inserted = { id: `session-${seq}`, ...payload };
+        rows.push(inserted);
+        return single ? { data: inserted, error: null } : { data: [inserted], error: null };
       }
       return { data: null, error: null };
     }
@@ -422,6 +423,7 @@ function fakeSessionsSb(initialRows: any[] = []) {
         return api;
       },
       maybeSingle: () => resolve(true),
+      single: () => resolve(true),
       then: (onFulfilled: any, onRejected: any) => resolve(false).then(onFulfilled, onRejected),
     };
     return api;
@@ -466,7 +468,7 @@ function activeSessionRow(overrides: Partial<Record<string, unknown>> = {}) {
 describe("resolveOrStartGuestSession", () => {
   it("issues a new session when the table has none active — first legitimate scan", async () => {
     const { sb, rows } = fakeSessionsSb([]);
-    const token = await resolveOrStartGuestSession(sb, TABLE_1, undefined);
+    const { token } = await resolveOrStartGuestSession(sb, TABLE_1, undefined);
     expect(token).toEqual(expect.any(String));
     expect(token.length).toBeGreaterThanOrEqual(32);
     expect(rows).toHaveLength(1);
@@ -476,7 +478,7 @@ describe("resolveOrStartGuestSession", () => {
   it("reuses and extends a presented token that matches an active, unexpired session on this table", async () => {
     const existing = activeSessionRow();
     const { sb, rows } = fakeSessionsSb([existing]);
-    const token = await resolveOrStartGuestSession(sb, TABLE_1, "existing-token");
+    const { token } = await resolveOrStartGuestSession(sb, TABLE_1, "existing-token");
     expect(token).toBe("existing-token");
     expect(rows).toHaveLength(1); // reused, not duplicated
     expect(new Date(rows[0].expires_at).getTime()).toBeGreaterThan(
@@ -497,7 +499,7 @@ describe("resolveOrStartGuestSession", () => {
       expires_at: new Date(Date.now() - 60_000).toISOString(),
     });
     const { sb, rows } = fakeSessionsSb([stale]);
-    const token = await resolveOrStartGuestSession(sb, TABLE_1, "stale-token");
+    const { token } = await resolveOrStartGuestSession(sb, TABLE_1, "stale-token");
     expect(token).not.toBe("stale-token");
     const staleRow = rows.find((r) => r.token === "stale-token");
     expect(staleRow?.status).toBe("expired");
@@ -512,7 +514,7 @@ describe("resolveOrStartGuestSession", () => {
       closed_at: new Date().toISOString(),
     });
     const { sb, rows } = fakeSessionsSb([closed]);
-    const token = await resolveOrStartGuestSession(sb, TABLE_1, "closed-token");
+    const { token } = await resolveOrStartGuestSession(sb, TABLE_1, "closed-token");
     expect(token).not.toBe("closed-token");
     expect(rows.filter((r) => r.status === "active")).toHaveLength(1);
   });
@@ -520,7 +522,7 @@ describe("resolveOrStartGuestSession", () => {
   it("cross-table isolation: a token valid for table 1 does not authorize table 2, and does not block a fresh session there", async () => {
     const table1Session = activeSessionRow();
     const { sb, rows } = fakeSessionsSb([table1Session]);
-    const token = await resolveOrStartGuestSession(sb, TABLE_2, "existing-token");
+    const { token } = await resolveOrStartGuestSession(sb, TABLE_2, "existing-token");
     expect(token).not.toBe("existing-token");
     const table2Row = rows.find((r) => r.table_id === "table-2");
     expect(table2Row).toMatchObject({ status: "active" });
@@ -548,7 +550,7 @@ describe("closeActiveGuestSession", () => {
     await closeActiveGuestSession(sb, "table-1", "table_released");
     expect(rows[0]).toMatchObject({ status: "closed", closed_reason: "table_released" });
 
-    const token = await resolveOrStartGuestSession(sb, TABLE_1, "existing-token");
+    const { token } = await resolveOrStartGuestSession(sb, TABLE_1, "existing-token");
     expect(token).not.toBe("existing-token"); // a fresh scan now starts a new session
   });
 
