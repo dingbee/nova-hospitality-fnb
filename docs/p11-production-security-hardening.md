@@ -1,5 +1,188 @@
 # P11 — Production & Security Hardening Certification
 
+---
+
+## CONTINUATION PASS (commit `a038c4b` → this commit)
+
+This section documents a second P11 pass whose objective was to close
+evidence gaps in the certification below — specifically, replacing
+"policies look reasonable" with genuine database-boundary proof using
+real authenticated-role RLS enforcement, and re-verifying nothing from
+the first pass had drifted.
+
+### State verification (before any action)
+
+- Git: local HEAD and `origin/claude/nova-fnb-engineering-constitution-f1peif`
+  both at `a038c4b`, clean working tree.
+- Live advisor re-pull: identical to the certified state —
+  `security_definer_view` and `rls_disabled_in_public` ERRORs still absent,
+  `anon_security_definer_function_executable` still 0,
+  `authenticated_security_definer_function_executable` still 34,
+  `rls_enabled_no_policy` still INFO/2, leaked-password still WARN.
+- Live migration history: `p11_security_definer_and_rls_hardening`,
+  `p11_anon_execute_revocation`, `p11_anon_execute_revocation_public_grant`
+  all present and applied, in order, matching
+  `standalone/db/migrations/0048_p11_security_hardening.sql`.
+
+**Conclusion: nothing had drifted. No re-application needed.**
+
+### New technique: genuine RLS-boundary testing without external credentials
+
+`auth.uid()`/`auth.role()` (confirmed by reading their definitions) read
+from the session-local GUC `request.jwt.claims` — the same mechanism
+Supabase's own SQL editor uses to test RLS. This session has no
+anon/publishable key or real user password to authenticate over HTTP, but
+it does have a genuine, real production database connection. Using
+`SET LOCAL ROLE authenticated; SET LOCAL request.jwt.claims = '{"sub":"<uuid>","role":"authenticated"}';`
+inside a transaction (always closed with `ROLLBACK`, never `COMMIT`, for
+any write-attempt test) executes queries as the literal Postgres
+`authenticated` role — RLS-enforced exactly as PostgREST would enforce it
+for that real user — rather than as the elevated management connection.
+This is real evidence, not a simulation of evidence.
+
+Two genuinely real, pre-existing UAT tenants/users were used — no
+synthetic data created:
+
+| Identity | Tenant | Role | Notes |
+|---|---|---|---|
+| `599d7ea7-1a65-4343-911b-72504c9ef742` | Tenant A (`cebda97b-...`) | owner | Also platform-wide `commercial_administrators` (bootstrap grant from P01) — **excluded** from tenant-isolation testing once this was discovered (see below), used only as a control |
+| `a5e60e73-abb1-48b9-ad18-e3edaae4262d` | Tenant A (`cebda97b-...`) | purchasing_officer | Confirmed zero `commercial_administrators` / `rbac_user_roles` rows — clean, tenant-scoped-only test subject |
+
+### Methodological correction caught mid-test (worth recording, not hiding)
+
+The first tenant-isolation query used the Tenant A **owner** as the test
+identity and found they could read 1 row from **Tenant B's**
+`restaurant_properties` — alarming at first glance. Investigation traced
+this to a second, additive RLS policy on that table,
+`"properties readable by commercial admins" ... USING (restaurant_is_commercial_admin(auth.uid()))`,
+and confirmed via `commercial_administrators` that this specific user was
+deliberately bootstrap-granted that platform-wide role during the P01
+commercial-architecture phase ("P01 bootstrap commercial admin grant").
+This is by-design platform administration (the SaaS operator's own
+billing/commercial team seeing across tenants), not a tenant-isolation
+defect — but it meant this user was contaminated as an isolation-test
+subject. Re-run with the clean `purchasing_officer` identity below.
+
+### Live RLS-boundary test results (real, authenticated-role, transaction-rolled-back)
+
+| # | Test | Identity | Target | Operation | Result | Verdict |
+|---|---|---|---|---|---|---|
+| 1 | Cross-tenant read | Tenant A purchasing_officer | Tenant B `restaurant_properties` | SELECT | 0 rows (own tenant: 2) | **PASS** |
+| 2 | Cross-tenant read by direct ID | Tenant A purchasing_officer | Tenant B property UUID | SELECT by id | 0 rows | **PASS** — no enumeration-by-ID |
+| 3 | Cross-tenant read | Tenant A purchasing_officer | Tenant B `restaurant_locations` | SELECT | 0 rows | **PASS** |
+| 4 | Cross-tenant read | Tenant A purchasing_officer | Tenant B `restaurant_products` | SELECT | 0 rows | **PASS** |
+| 5 | Own-tenant read | Tenant A purchasing_officer | Tenant A `restaurant_orders` | SELECT | 54/54 rows (matches unrestricted baseline exactly) | **PASS** — correct full access, no under- or over-permission |
+| 6 | Cross-tenant read | Tenant A purchasing_officer | Tenant B `restaurant_orders`/`order_items`/`payments` | SELECT (joined) | 0 rows | **PASS** |
+| 7 | Own-tenant read by direct ID | Tenant A purchasing_officer | Tenant A order UUID | SELECT by id | 1 row | **PASS** — correctly readable |
+| 8 | Cross-tenant write | Tenant A purchasing_officer | Tenant B `restaurant_properties` | UPDATE (name), `RETURNING id` | 0 rows affected | **PASS** — write boundary enforced |
+| 9 | Privilege escalation (role, not tenant) | Tenant A purchasing_officer (not owner/general_manager) | own tenant's `restaurant_properties` | UPDATE, `RETURNING id` | 0 rows affected | **PASS** — role-based write restriction enforced even within own tenant |
+| 10 | Storage path-ownership boundary | Tenant A purchasing_officer | own vs. other tenant storage path prefix | `restaurant_owns_menu_image_path()` direct evaluation | own: `true`, other: `false` | **PASS** |
+
+All 10 are genuine database-boundary results, not UI behavior, not
+static policy reading. Every read/write attempt used the real Postgres
+`authenticated` role subject to real RLS; every write attempt was rolled
+back, leaving production data unmodified (verified: this is UAT/test
+tenant data, not real customer data, and no mutation was retained
+regardless).
+
+**This directly satisfies §6 (tenant isolation) and §7 (privilege
+escalation) with real evidence in the specific tables the master prompt
+names as priority — `restaurant_orders`, `restaurant_order_items`,
+`restaurant_payments`, `restaurant_products` — plus properties and
+locations.** Outlet-level isolation and a second real cross-tenant
+direction (Tenant B user → Tenant A) were **not** tested: Tenant B
+currently has zero members, so no second real identity exists to test
+from, and no property-scoped (non-null `property_id`) member currently
+exists in either tenant to test outlet/property-level scoping
+specifically (both real Tenant A members are tenant-wide, `property_id
+IS NULL`). This is disclosed as **UNVERIFIED**, not assumed — the RLS
+policies for property/outlet scoping (`restaurant_can_read_scoped`,
+`restaurant_can_write_scoped`, confirmed live-used by 22 policies in the
+reclassification below) exist and are structurally identical to the
+tenant-scoping mechanism just proven, but were not independently
+exercised with a real property-scoped identity in this pass.
+
+### §3.3 SECURITY DEFINER reclassification (all 34 remaining functions)
+
+Systematic reclassification via `pg_proc`/`information_schema` (not
+guessed): all 34 have `search_path=public` hardened, all have
+`PUBLIC`/`anon` EXECUTE fully revoked (confirmed 0 anon-executable
+functions remain), all show `authenticated`-only EXECUTE.
+
+- **22 of 34 are directly referenced in a live `pg_policies` `qual`/`with_check`**
+  (`is_any_staff`, `nova_has_permission`, `restaurant_can_manage_intelligence`,
+  `restaurant_can_read(_scoped/_scoped_strict/_transfer)`,
+  `restaurant_can_write(_scoped/_transfer)`, `restaurant_daily_close_property`,
+  `restaurant_fiscal_configuration_property`, `restaurant_fiscal_device_property`,
+  `restaurant_fiscal_receipt_property`, `restaurant_is_commercial_admin`,
+  `restaurant_location_property`, `restaurant_order_property`,
+  `restaurant_purchase_order_property`, `restaurant_reconciliation_audit_property`,
+  `restaurant_requisition_property`, `restaurant_stock_transfer_destination_property`,
+  `restaurant_stock_transfer_source_property`) — this is the textbook-correct
+  SECURITY DEFINER pattern (bypass one table's RLS to resolve a foreign
+  key's tenant/property scope for another table's policy) and requires no
+  change.
+- **5 are confirmed called directly via `.rpc()` from application code**
+  (`has_any_role`, `nova_permissions_for`, `restaurant_fiscal_next_counter`,
+  `restaurant_next_document_number`, plus `restaurant_is_commercial_admin`
+  which is also RLS-used) — legitimate, requires no change.
+- **`restaurant_owns_menu_image_path`** is used by every write/update/delete
+  policy on all three storage buckets (confirmed directly, §9 above) — the
+  grep for `pg_policies WHERE schemaname='public'` in this reclassification
+  pass missed it because storage policies live in the `storage` schema, not
+  `public`; corrected by direct verification. Legitimate, requires no change.
+- **A residual set of 6** (`has_role`, `restaurant_day_is_locked`,
+  `restaurant_expected_tender`, `restaurant_is_platform_admin`,
+  `restaurant_reconciliation_exception_property`,
+  `restaurant_reconciliation_run_property`) have no confirmed `.rpc()`
+  caller and no confirmed `public`-schema RLS reference in this pass's
+  query. Per this task's explicit instruction ("only modify a function if
+  its exposure is proven unnecessary and the change can be validated
+  safely") — exposure was **not** proven unnecessary here (their naming
+  and shape exactly matches the 22 confirmed-necessary siblings, e.g.
+  `restaurant_reconciliation_exception_property` sits alongside the
+  confirmed-RLS-used `restaurant_reconciliation_audit_property` and
+  `restaurant_reconciliation_run_property` for the same table family —
+  plausibly all three are used together and this pass's grep missed one
+  case). **Left untouched.** Risk is low regardless: `anon` has never had
+  access to any of these, `search_path` is hardened, and they are
+  read-only property/lock/tender-amount lookups, not mutations.
+
+**No SECURITY DEFINER changes were made in this continuation pass** — the
+reclassification confirmed the existing 34 are legitimate or
+not-provably-unnecessary, consistent with "do not blanket-revoke."
+
+### §4 — Leaked-password protection: re-confirmed unfixable from this session
+
+Re-checked for any newly available path: no Supabase management/personal
+access token exists in this container's environment (`env | grep -i
+supabase` and a broader `SBP_`/`ACCESS_TOKEN`/`MGMT` grep both empty
+except an unrelated `CLOUDSDK_AUTH_ACCESS_TOKEN`), and the available
+`mcp__Supabase__*` toolset has no Auth-configuration endpoint (only
+project/database/branch/edge-function tools). **State unchanged: WARN,
+disabled.** This requires either the Supabase Dashboard
+(Authentication → Sign In / Providers → Password) or the Management API
+with a personal access token — both outside this session's access.
+**Marked UNVERIFIED/BLOCKED, not fabricated as fixed.**
+
+### Regression
+
+`npx vitest run`: 150/150 files, 1957/1957 tests — identical to the
+pre-continuation baseline, confirming this pass's read-only verification
+work (no schema/grant changes were made) caused zero regression, as
+expected.
+
+### What this continuation did NOT newly verify
+
+Consistent with the original certification's disclosed gaps, this pass
+did not newly verify: leaked-password protection (blocked, see above),
+backup/recovery, production deployment chain (Vercel/domain/HTTPS/email),
+monitoring/observability, a production smoke test, outlet-level isolation
+specifically, or a second real cross-tenant direction (no Tenant B member
+exists). These remain **UNVERIFIED** for the same reasons as before:
+no credentials or infrastructure access to Vercel, email, or a second
+real tenant's user account exist in this session.
+
 ## Scope note (read first)
 
 P11's master prompt specifies 53 sections spanning database security,
