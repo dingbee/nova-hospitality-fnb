@@ -4,6 +4,7 @@ import {
   bootstrapTenantSchema,
   createFirstOutletSchema,
   getOnboardingStatusSchema,
+  recordOnboardingEventSchema,
   setOperatingModelSchema,
 } from "./contracts";
 
@@ -37,4 +38,12 @@ export const getOnboardingStatusFn = createServerFn({ method: "GET" })
   .handler(async ({ data, context }) => {
     const mod = await import("./onboarding.server");
     return mod.getOnboardingStatus(context.supabase, context.userId, data.tenantId);
+  });
+
+export const recordOnboardingEventFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => recordOnboardingEventSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./onboarding.server");
+    return mod.recordOnboardingEvent(context.supabase, context.userId, data);
   });

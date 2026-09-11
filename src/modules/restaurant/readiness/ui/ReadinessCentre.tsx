@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "../../ui/useRestaurantWorkspace";
+import { recordOnboardingEventFn } from "../../onboarding/onboarding.functions";
 import { confirmGoLiveFn, getReadinessReportFn } from "../readiness.functions";
 import type { GoLiveState, ReadinessItem, ReadinessStatus } from "../contracts";
 
@@ -73,6 +74,24 @@ export function ReadinessCentre() {
     successMessage: "You're live.",
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["restaurant.readiness", tenantId] }),
   });
+
+  // §14/§20 — P12 handoff telemetry. Onboarding's "Continue setup" appends
+  // `?ref=onboarding`; landing here with it present is the actual proof the
+  // handoff completed (the route rendered, for this tenant), not just that
+  // the button was clicked. Fires once per real arrival, never on an
+  // in-app remount.
+  const handoffEmittedRef = React.useRef(false);
+  const recordEventFn = useServerFn(recordOnboardingEventFn);
+  React.useEffect(() => {
+    if (!tenantId || handoffEmittedRef.current) return;
+    if (typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).get("ref") !== "onboarding") return;
+    handoffEmittedRef.current = true;
+    void recordEventFn({
+      data: { tenantId, type: "restaurant.onboarding.p13_handoff.completed", payload: {} },
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   const [announcement, setAnnouncement] = React.useState("");
   const prevProgress = React.useRef<number | null>(null);

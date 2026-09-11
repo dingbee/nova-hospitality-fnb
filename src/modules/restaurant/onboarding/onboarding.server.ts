@@ -24,9 +24,11 @@ import type { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { upsertProperty } from "../masterdata/masterdata.server";
 import { upsertLocation } from "../inventory/locations.server";
+import { emitRestaurantEvent } from "../events/emit.server";
 import type {
   bootstrapTenantSchema,
   createFirstOutletSchema,
+  recordOnboardingEventSchema,
   setOperatingModelSchema,
 } from "./contracts";
 
@@ -142,6 +144,29 @@ export async function setOperatingModel(
     .single();
   if (error) throw new Error(error.message);
   return data;
+}
+
+/**
+ * §20 — records one funnel-telemetry fact. Best-effort: `emitRestaurantEvent`
+ * never throws (a boundary rejection or infra failure is swallowed and
+ * logged), so a telemetry failure can never block onboarding. The caller
+ * must already belong to the tenant — this never runs before
+ * `bootstrapTenant` has created it, so the same tenant-scope check every
+ * other restaurant event goes through applies here too.
+ */
+export async function recordOnboardingEvent(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof recordOnboardingEventSchema>,
+): Promise<{ delivered: boolean; duplicate: boolean }> {
+  const result = await emitRestaurantEvent(sb, userId, {
+    type: input.type,
+    tenantId: input.tenantId,
+    payload: input.payload,
+    source: "onboarding",
+    occurredAt: input.occurredAt,
+  });
+  return { delivered: result.delivered, duplicate: result.duplicate };
 }
 
 export type OnboardingStage = "property" | "outlet" | "operating_model" | "ready";

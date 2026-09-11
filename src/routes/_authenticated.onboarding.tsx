@@ -27,19 +27,41 @@ import {
   bootstrapTenantFn,
   createFirstOutletFn,
   getOnboardingStatusFn,
+  recordOnboardingEventFn,
   setOperatingModelFn,
 } from "@/modules/restaurant/onboarding/onboarding.functions";
 import {
   BUSINESS_TYPES,
   BUSINESS_TYPE_LABELS,
+  COUNTRIES,
   OPERATING_MODES,
   OPERATING_MODE_LABELS,
   SERVICE_FEATURES,
   SERVICE_FEATURE_LABELS,
   type BusinessType,
+  type Country,
+  type OnboardingEventType,
   type OperatingMode,
   type ServiceFeature,
 } from "@/modules/restaurant/onboarding/contracts";
+
+/**
+ * §20 — one hook, reused by every step, wrapping the telemetry server fn.
+ * Best-effort by design: a telemetry failure is swallowed here (in
+ * addition to being swallowed server-side by `emitRestaurantEvent`) so it
+ * can never surface as a user-facing error or block a step transition.
+ */
+function useEmitOnboarding() {
+  const fn = useServerFn(recordOnboardingEventFn);
+  return (
+    tenantId: string,
+    type: OnboardingEventType,
+    payload: Record<string, string | number | boolean | null> = {},
+    occurredAt?: string,
+  ) => {
+    void fn({ data: { tenantId, type, payload, occurredAt } }).catch(() => {});
+  };
+}
 
 export const Route = createFileRoute("/_authenticated/onboarding")({
   head: () => ({
@@ -75,11 +97,18 @@ function StepShell({
 function ProgressHeader({ percent, stepLabel }: { percent: number; stepLabel: string }) {
   return (
     <div className="mb-4 w-full max-w-lg">
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
+      {/* §19 — announces each step transition to screen-reader users without moving focus. */}
+      <div role="status" aria-live="polite" className="sr-only">
+        {stepLabel} — {percent}% complete
+      </div>
+      <div
+        aria-hidden="true"
+        className="flex items-center justify-between text-xs text-muted-foreground"
+      >
         <span>{stepLabel}</span>
         <span>{percent}% complete</span>
       </div>
-      <Progress value={percent} className="mt-2 h-1.5" />
+      <Progress value={percent} aria-hidden="true" className="mt-2 h-1.5" />
     </div>
   );
 }
@@ -89,6 +118,7 @@ function OnboardingPage() {
   const qc = useQueryClient();
   const ws = useRestaurantWorkspace();
   const tenant = ws.data?.tenant ?? null;
+  const emit = useEmitOnboarding();
 
   const statusFn = useServerFn(getOnboardingStatusFn);
   const status = useQuery({
@@ -96,6 +126,19 @@ function OnboardingPage() {
     queryFn: () => statusFn({ data: { tenantId: tenant!.id } }),
     enabled: Boolean(tenant?.id),
   });
+
+  // §10/§20 — did this browser tab already have a tenant the very first
+  // time the workspace resolved? Only that shape of arrival is a genuine
+  // *resume* — landing here moments after creating the business in this
+  // same session is forward progress, not a return visit.
+  const hadTenantOnMountRef = useRef<boolean | null>(null);
+  const resumedEmittedRef = useRef(false);
+  const completedEmittedRef = useRef(false);
+  useEffect(() => {
+    if (!ws.isLoading && hadTenantOnMountRef.current === null) {
+      hadTenantOnMountRef.current = Boolean(tenant);
+    }
+  }, [ws.isLoading, tenant]);
 
   // Resumable navigation: once we know the tenant's true stage, land there
   // — never restart the wizard, never re-show a step whose data already
@@ -106,14 +149,35 @@ function OnboardingPage() {
       setStep(null); // no tenant yet -> the "create your business" screen below.
       return;
     }
-    if (status.data) setStep(status.data.stage as Step);
+    if (status.data) {
+      setStep(status.data.stage as Step);
+      if (
+        hadTenantOnMountRef.current === true &&
+        !resumedEmittedRef.current &&
+        status.data.stage !== "ready"
+      ) {
+        resumedEmittedRef.current = true;
+        emit(tenant.id, "restaurant.onboarding.resumed", { stage: status.data.stage });
+      }
+      if (status.data.stage === "ready" && !completedEmittedRef.current) {
+        completedEmittedRef.current = true;
+        emit(tenant.id, "restaurant.onboarding.completed", {});
+      }
+    }
+    // `emit` is stable across renders (useServerFn/useCallback identity); omitting it
+    // avoids re-running this effect on every render while still calling the latest closure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenant, status.data]);
 
   // §7 — new account, no tenant yet: welcome + business creation.
   if (!ws.isLoading && !tenant) {
     return (
       <WelcomeAndBusinessStep
-        onCreated={() => void qc.invalidateQueries({ queryKey: ["restaurant.workspace"] })}
+        onCreated={(tenantId) => {
+          void qc.invalidateQueries({ queryKey: ["restaurant.workspace"] });
+          hadTenantOnMountRef.current = false; // this tenant was just created — never a "resume".
+          void tenantId;
+        }}
       />
     );
   }
@@ -157,7 +221,10 @@ function OnboardingPage() {
       <ProgressHeader percent={100} stepLabel="Ready" />
       <ReadyStep
         businessName={status.data?.businessName ?? tenant!.name}
-        onContinue={() => navigate({ to: "/admin/restaurant/setup" })}
+        onContinue={() => {
+          emit(tenant!.id, "restaurant.onboarding.p13_handoff.initiated", {});
+          navigate({ to: "/admin/restaurant/setup", search: { ref: "onboarding" } });
+        }}
       />
     </Centered>
   );
@@ -165,19 +232,32 @@ function OnboardingPage() {
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-10 text-foreground">
+    <main className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-10 text-foreground">
       {children}
-    </div>
+    </main>
   );
 }
 
 /* ---------------- Step 1: Welcome + business creation ---------------- */
 
-function WelcomeAndBusinessStep({ onCreated }: { onCreated: () => void }) {
+function WelcomeAndBusinessStep({ onCreated }: { onCreated: (tenantId: string) => void }) {
   const navigate = useNavigate();
   const bootstrapFn = useServerFn(bootstrapTenantFn);
+  const emit = useEmitOnboarding();
   const [name, setName] = useState("");
   const [businessType, setBusinessType] = useState<BusinessType>("restaurant");
+  const [country, setCountry] = useState<Country>("Tanzania");
+
+  // §20 — this screen IS "entered" and "welcome_viewed"; both are captured
+  // once, at the true moment they happened, and flushed after the tenant
+  // that will scope them exists (see the module doc comment on
+  // `recordOnboardingEventSchema`). "business.started" captures real
+  // intent — the first field interaction — not just the page rendering.
+  const [enteredAt] = useState(() => new Date().toISOString());
+  const startedAtRef = useRef<string | null>(null);
+  const markStarted = () => {
+    if (!startedAtRef.current) startedAtRef.current = new Date().toISOString();
+  };
 
   const create = useAdminMutation({
     mutationFn: () =>
@@ -185,13 +265,24 @@ function WelcomeAndBusinessStep({ onCreated }: { onCreated: () => void }) {
         data: {
           name: name.trim(),
           businessType,
+          country,
           currency: "TZS",
           timezone: "Africa/Dar_es_Salaam",
         },
       }),
     successMessage: "Your restaurant is created.",
-    onSuccess: () => {
-      onCreated();
+    onSuccess: (data) => {
+      const tenantId = data.tenantId;
+      emit(tenantId, "restaurant.onboarding.entered", {}, enteredAt);
+      emit(tenantId, "restaurant.onboarding.welcome_viewed", {}, enteredAt);
+      emit(
+        tenantId,
+        "restaurant.onboarding.business.started",
+        { businessType },
+        startedAtRef.current ?? enteredAt,
+      );
+      emit(tenantId, "restaurant.onboarding.business.completed", { businessType, country });
+      onCreated(tenantId);
       navigate({ to: "/onboarding" });
     },
   });
@@ -243,12 +334,15 @@ function WelcomeAndBusinessStep({ onCreated }: { onCreated: () => void }) {
               autoFocus
               required
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                markStarted();
+                setName(e.target.value);
+              }}
               placeholder="e.g. Kilimanjaro Grill"
               className="mt-2 w-full rounded-md border bg-background px-4 py-3 text-sm outline-none focus:border-primary"
             />
           </label>
-          <div>
+          <div role="radiogroup" aria-label="What kind of business is it?">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               What kind of business is it?
             </p>
@@ -257,8 +351,13 @@ function WelcomeAndBusinessStep({ onCreated }: { onCreated: () => void }) {
                 <button
                   key={t}
                   type="button"
-                  onClick={() => setBusinessType(t)}
-                  className={`rounded-md border px-3 py-2 text-left text-xs transition-colors ${
+                  role="radio"
+                  aria-checked={businessType === t}
+                  onClick={() => {
+                    markStarted();
+                    setBusinessType(t);
+                  }}
+                  className={`min-h-11 rounded-md border px-3 py-2 text-left text-xs transition-colors ${
                     businessType === t
                       ? "border-primary bg-primary/10 font-medium text-primary"
                       : "border-border text-muted-foreground hover:border-primary/40"
@@ -269,10 +368,31 @@ function WelcomeAndBusinessStep({ onCreated }: { onCreated: () => void }) {
               ))}
             </div>
           </div>
+          <label className="block text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Which country do you operate in?
+            <select
+              value={country}
+              onChange={(e) => {
+                markStarted();
+                setCountry(e.target.value as Country);
+              }}
+              className="mt-2 min-h-11 w-full rounded-md border bg-background px-4 py-3 text-sm outline-none focus:border-primary"
+            >
+              {COUNTRIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-[11px] font-normal normal-case text-muted-foreground">
+              This decides which local requirements — like Tanzania's TRA receipt rules — apply to
+              your setup.
+            </span>
+          </label>
           <Button
             type="submit"
             disabled={create.isPending || name.trim().length < 2}
-            className="w-full"
+            className="min-h-11 w-full"
           >
             {create.isPending && <Loader2 className="mr-2 size-4 animate-spin" />} Create your
             restaurant
@@ -295,8 +415,20 @@ function PropertyOutletStep({
   onCreated: () => void;
 }) {
   const createFn = useServerFn(createFirstOutletFn);
+  const emit = useEmitOnboarding();
   const [propertyName, setPropertyName] = useState(businessName);
   const [outletName, setOutletName] = useState(businessName);
+
+  // §20 — fires once per real mount of this step (a re-render from typing
+  // doesn't remount it), so "started" reflects genuinely arriving here.
+  const startedEmittedRef = useRef(false);
+  useEffect(() => {
+    if (startedEmittedRef.current) return;
+    startedEmittedRef.current = true;
+    emit(tenantId, "restaurant.onboarding.property.started", {});
+    emit(tenantId, "restaurant.onboarding.outlet.started", {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   const create = useAdminMutation({
     mutationFn: () =>
@@ -304,7 +436,11 @@ function PropertyOutletStep({
         data: { tenantId, propertyName: propertyName.trim(), outletName: outletName.trim() },
       }),
     successMessage: "Your outlet is ready.",
-    onSuccess: onCreated,
+    onSuccess: () => {
+      emit(tenantId, "restaurant.onboarding.property.completed", {});
+      emit(tenantId, "restaurant.onboarding.outlet.completed", {});
+      onCreated();
+    },
   });
   const submitting = useRef(false);
   const submitOnce = () => {
@@ -357,7 +493,7 @@ function PropertyOutletStep({
           disabled={
             create.isPending || propertyName.trim().length < 2 || outletName.trim().length < 2
           }
-          className="w-full"
+          className="min-h-11 w-full"
         >
           {create.isPending && <Loader2 className="mr-2 size-4 animate-spin" />} Add your first
           outlet
@@ -371,13 +507,28 @@ function PropertyOutletStep({
 
 function OperatingModelStep({ tenantId, onSaved }: { tenantId: string; onSaved: () => void }) {
   const setFn = useServerFn(setOperatingModelFn);
+  const emit = useEmitOnboarding();
   const [mode, setMode] = useState<OperatingMode>("table_service");
   const [features, setFeatures] = useState<ServiceFeature[]>(["kitchen"]);
+
+  const viewedEmittedRef = useRef(false);
+  useEffect(() => {
+    if (viewedEmittedRef.current) return;
+    viewedEmittedRef.current = true;
+    emit(tenantId, "restaurant.onboarding.operating_model.viewed", {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
 
   const save = useAdminMutation({
     mutationFn: () => setFn({ data: { tenantId, operatingMode: mode, serviceFeatures: features } }),
     successMessage: "Operating model saved.",
-    onSuccess: onSaved,
+    onSuccess: () => {
+      emit(tenantId, "restaurant.onboarding.operating_model.selected", {
+        operatingMode: mode,
+        featureCount: features.length,
+      });
+      onSaved();
+    },
   });
   const submitting = useRef(false);
   const submitOnce = () => {
@@ -399,7 +550,7 @@ function OperatingModelStep({ tenantId, onSaved }: { tenantId: string; onSaved: 
       description="This determines which setup steps are relevant next — you can change it later without losing anything you've already configured."
     >
       <div className="space-y-4">
-        <div>
+        <div role="radiogroup" aria-label="Service style">
           <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Service style
           </p>
@@ -408,8 +559,10 @@ function OperatingModelStep({ tenantId, onSaved }: { tenantId: string; onSaved: 
               <button
                 key={m}
                 type="button"
+                role="radio"
+                aria-checked={mode === m}
                 onClick={() => setMode(m)}
-                className={`rounded-md border px-3 py-2 text-left text-xs transition-colors ${
+                className={`min-h-11 rounded-md border px-3 py-2 text-left text-xs transition-colors ${
                   mode === m
                     ? "border-primary bg-primary/10 font-medium text-primary"
                     : "border-border text-muted-foreground hover:border-primary/40"
@@ -420,15 +573,15 @@ function OperatingModelStep({ tenantId, onSaved }: { tenantId: string; onSaved: 
             ))}
           </div>
         </div>
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        <fieldset>
+          <legend className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Also using
-          </p>
+          </legend>
           <div className="mt-2 grid grid-cols-2 gap-2">
             {SERVICE_FEATURES.map((f) => (
               <label
                 key={f}
-                className={`flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors ${
+                className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors ${
                   features.includes(f)
                     ? "border-primary bg-primary/10"
                     : "border-border text-muted-foreground"
@@ -444,14 +597,14 @@ function OperatingModelStep({ tenantId, onSaved }: { tenantId: string; onSaved: 
               </label>
             ))}
           </div>
-        </div>
+        </fieldset>
         <Button
           onClick={() => {
             if (save.isPending) return;
             submitOnce();
           }}
           disabled={save.isPending}
-          className="w-full"
+          className="min-h-11 w-full"
         >
           {save.isPending && <Loader2 className="mr-2 size-4 animate-spin" />} Continue
         </Button>
@@ -473,7 +626,7 @@ function ReadyStep({ businessName, onContinue }: { businessName: string; onConti
         You're on the Core plan — you can see what's included, and what needs an upgrade, once
         you're inside.
       </div>
-      <Button onClick={onContinue} className="w-full">
+      <Button onClick={onContinue} className="min-h-11 w-full">
         Continue setup
       </Button>
       <p className="mt-3 text-center text-xs text-muted-foreground">

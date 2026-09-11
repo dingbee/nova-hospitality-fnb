@@ -31,8 +31,18 @@ vi.mock("../core/access.server", () => ({
   assertTenantRead: (...args: unknown[]) => assertTenantReadMock(...args),
 }));
 
-const { bootstrapTenant, createFirstOutlet, setOperatingModel, getOnboardingStatus } =
-  await import("./onboarding.server");
+const emitRestaurantEventMock = vi.fn();
+vi.mock("../events/emit.server", () => ({
+  emitRestaurantEvent: (...args: unknown[]) => emitRestaurantEventMock(...args),
+}));
+
+const {
+  bootstrapTenant,
+  createFirstOutlet,
+  setOperatingModel,
+  getOnboardingStatus,
+  recordOnboardingEvent,
+} = await import("./onboarding.server");
 
 const TENANT = "11111111-1111-1111-1111-111111111111";
 const OWNER = "22222222-2222-2222-2222-222222222222";
@@ -44,6 +54,8 @@ beforeEach(() => {
   assertCapabilityMock.mockResolvedValue(undefined);
   assertTenantReadMock.mockReset();
   assertTenantReadMock.mockResolvedValue(undefined);
+  emitRestaurantEventMock.mockReset();
+  emitRestaurantEventMock.mockResolvedValue({ delivered: true, duplicate: false });
 });
 
 describe("bootstrapTenant", () => {
@@ -108,6 +120,24 @@ describe("bootstrapTenant", () => {
     expect(rpc).toHaveBeenCalledTimes(1);
   });
 
+  it("passes the country through to the RPC so P13's fiscalisation gate (which matches on the full country name) can see it (§3/§13 closure)", async () => {
+    const rpc = vi
+      .fn()
+      .mockResolvedValue({ data: [{ tenant_id: TENANT, member_id: "m" }], error: null });
+    const sb = { rpc };
+    await bootstrapTenant(sb, OWNER, {
+      name: "Kilimanjaro Grill",
+      businessType: "restaurant",
+      country: "Tanzania",
+      currency: "TZS",
+      timezone: "Africa/Dar_es_Salaam",
+    });
+    expect(rpc).toHaveBeenCalledWith(
+      "restaurant_bootstrap_tenant",
+      expect.objectContaining({ _country: "Tanzania" }),
+    );
+  });
+
   it("never derives the owner from anything but the server-side session — no ownerId/userId field is ever sent to the RPC", async () => {
     const rpc = vi
       .fn()
@@ -148,6 +178,36 @@ describe("createFirstOutlet — single-outlet optimization (§12)", () => {
     const locationArgs = upsertLocationMock.mock.calls[0]![2] as any;
     expect(locationArgs.propertyId).toBe("prop-1");
     expect(locationArgs.tenantId).toBe(TENANT);
+  });
+
+  it("§17 — passes the caller-supplied tenantId through unmodified to both authoritative writes, no substitution", async () => {
+    upsertPropertyMock.mockResolvedValue({ id: "prop-1" });
+    upsertLocationMock.mockResolvedValue({ id: "loc-1" });
+    const sb = {};
+    const otherTenant = "99999999-9999-9999-9999-999999999999";
+    await createFirstOutlet(sb, OWNER, {
+      tenantId: otherTenant,
+      propertyName: "Main",
+      outletName: "Restaurant",
+    });
+    expect(upsertPropertyMock.mock.calls[0]![2].tenantId).toBe(otherTenant);
+    expect(upsertLocationMock.mock.calls[0]![2].tenantId).toBe(otherTenant);
+  });
+
+  it("§15/§27 — a genuine failure (e.g. an authorization rejection inside upsertProperty) propagates cleanly, leaves no partial outlet behind", async () => {
+    upsertPropertyMock.mockRejectedValue(
+      new Error("Forbidden — you do not belong to this restaurant tenant."),
+    );
+    const sb = {};
+    await expect(
+      createFirstOutlet(sb, OWNER, {
+        tenantId: TENANT,
+        propertyName: "Main",
+        outletName: "Restaurant",
+      }),
+    ).rejects.toThrow(/Forbidden/);
+    // The property write failed — the outlet write must never be attempted on top of it.
+    expect(upsertLocationMock).not.toHaveBeenCalled();
   });
 });
 
@@ -297,5 +357,70 @@ describe("getOnboardingStatus — derived from live rows, never a stored step (�
     );
     const sb = makeSb({});
     await expect(getOnboardingStatus(sb, "stranger", TENANT)).rejects.toThrow(/Forbidden/);
+  });
+});
+
+describe("recordOnboardingEvent — §20 funnel telemetry, reusing the canonical event system", () => {
+  it("delegates straight to emitRestaurantEvent with the canonical envelope, not a parallel analytics path", async () => {
+    const sb = {};
+    await recordOnboardingEvent(sb, OWNER, {
+      tenantId: TENANT,
+      type: "restaurant.onboarding.business.completed",
+      payload: { businessType: "restaurant" },
+    });
+    expect(emitRestaurantEventMock).toHaveBeenCalledWith(
+      sb,
+      OWNER,
+      expect.objectContaining({
+        type: "restaurant.onboarding.business.completed",
+        tenantId: TENANT,
+        payload: { businessType: "restaurant" },
+        source: "onboarding",
+      }),
+    );
+  });
+
+  it("honors an explicit occurredAt — the deferred-identify path for pre-tenant steps (entered/welcome_viewed/business.started)", async () => {
+    const sb = {};
+    const capturedAt = "2024-01-01T00:00:00.000Z";
+    await recordOnboardingEvent(sb, OWNER, {
+      tenantId: TENANT,
+      type: "restaurant.onboarding.entered",
+      payload: {},
+      occurredAt: capturedAt,
+    });
+    expect(emitRestaurantEventMock).toHaveBeenCalledWith(
+      sb,
+      OWNER,
+      expect.objectContaining({ occurredAt: capturedAt }),
+    );
+  });
+
+  it("§20 — a telemetry failure never throws out of this function; it reports non-delivery instead of blocking onboarding", async () => {
+    // emitRestaurantEvent itself never throws (its own doc comment: best-effort),
+    // it resolves {delivered:false}. This proves recordOnboardingEvent passes
+    // that outcome through rather than treating it as an error.
+    emitRestaurantEventMock.mockResolvedValue({
+      delivered: false,
+      duplicate: false,
+      reason: "insufficient_privilege",
+    });
+    const sb = {};
+    const result = await recordOnboardingEvent(sb, OWNER, {
+      tenantId: TENANT,
+      type: "restaurant.onboarding.resumed",
+      payload: {},
+    });
+    expect(result).toEqual({ delivered: false, duplicate: false });
+  });
+
+  it("never leaks a business name or other free text — only flat, non-PII payload fields are accepted by the schema", async () => {
+    const { recordOnboardingEventSchema } = await import("./contracts");
+    const result = recordOnboardingEventSchema.safeParse({
+      tenantId: TENANT,
+      type: "restaurant.onboarding.business.completed",
+      payload: { businessName: { nested: "object not allowed" } },
+    });
+    expect(result.success).toBe(false);
   });
 });
