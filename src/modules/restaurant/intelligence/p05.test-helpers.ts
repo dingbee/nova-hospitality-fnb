@@ -11,6 +11,8 @@ export interface FakeTables {
   [table: string]: any[];
 }
 
+type NotFilter = { col: string; op: string; val: any };
+
 export function createP05FakeSupabase(
   tables: FakeTables,
   rpcHandlers: Record<string, (args: any) => any> = {},
@@ -23,6 +25,7 @@ export function createP05FakeSupabase(
       gte: [string, any][];
       lt: [string, any][];
       in: [string, any[]][];
+      not: NotFilter[];
     },
   ): boolean {
     for (const [col, val] of filters.eq) if (row[col] !== val) return false;
@@ -30,6 +33,11 @@ export function createP05FakeSupabase(
     for (const [col, val] of filters.gte) if (!(row[col] >= val)) return false;
     for (const [col, val] of filters.lt) if (!(row[col] < val)) return false;
     for (const [col, vals] of filters.in) if (!vals.includes(row[col])) return false;
+    for (const { col, op, val } of filters.not) {
+      // Only "is" is exercised by any current caller (menu.server.ts's
+      // .not("closed_at", "is", null)) — extend as new usages appear.
+      if (op === "is" && val === null && row[col] == null) return false;
+    }
     return true;
   }
 
@@ -40,7 +48,8 @@ export function createP05FakeSupabase(
       gte: [string, any][];
       lt: [string, any][];
       in: [string, any[]][];
-    } = { eq: [], neq: [], gte: [], lt: [], in: [] };
+      not: NotFilter[];
+    } = { eq: [], neq: [], gte: [], lt: [], in: [], not: [] };
     let limitN: number | null = null;
     let orderBy: { col: string; ascending: boolean } | null = null;
     let wantCount = false;
@@ -75,6 +84,10 @@ export function createP05FakeSupabase(
       },
       is(col: string, val: any) {
         filters.eq.push([col, val]);
+        return api;
+      },
+      not(col: string, op: string, val: any) {
+        filters.not.push({ col, op, val });
         return api;
       },
       or() {

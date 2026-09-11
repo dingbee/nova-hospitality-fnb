@@ -130,6 +130,34 @@ export interface OutletRevenuePerformance {
   averageOrderValue: number;
 }
 
+/**
+ * P07 — Sales ≠ Revenue ≠ Cash Collection, made explicit rather than left
+ * implicit in a single `total`. Every field is read straight off
+ * restaurant_orders' own decomposition columns (subtotal/discount_total/
+ * tax_total/service_charge/total/paid_total) for the same closed,
+ * non-refunded order set `totalRevenue` is computed from — never a second
+ * derivation of "revenue".
+ *
+ *  - grossSales: subtotal before discount (what the menu priced at).
+ *  - netSales: `total` — the billed amount after discount, tax, and
+ *    service charge (identical to `totalRevenue` above; repeated here so
+ *    the sales-composition block is self-contained for a reader/export).
+ *  - cashCollected: `paid_total` summed — money actually received.
+ *  - outstandingAmount: netSales - cashCollected — billed but not yet
+ *    settled (partial payment / unsettled order). Never negative in a
+ *    correct dataset; a negative value here is itself a data-quality
+ *    signal, not clamped away.
+ */
+export interface SalesComposition {
+  grossSales: number;
+  discountTotal: number;
+  taxTotal: number;
+  serviceChargeTotal: number;
+  netSales: number;
+  cashCollected: number;
+  outstandingAmount: number;
+}
+
 export interface RevenueIntelligence {
   generatedAt: string;
   windowDays: number;
@@ -141,6 +169,7 @@ export interface RevenueIntelligence {
   revenueTrendPercent: number | null;
   totalOrders: number;
   averageOrderValue: number;
+  salesComposition: SalesComposition;
   series: RevenuePeriodPoint[];
   byServicePeriod: ServicePeriodDemand[];
   topContributors: RevenueItemContribution[];
