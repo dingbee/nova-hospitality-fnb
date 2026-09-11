@@ -170,7 +170,7 @@ export async function requestMobileMoneyCollection(
 ): Promise<MobileMoneyStatusView> {
   const { data: order } = await sb
     .from("restaurant_orders")
-    .select("id, tenant_id, property_id, location_id, currency")
+    .select("id, tenant_id, property_id, location_id, currency, status, total, paid_total")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.orderId)
     .single();
@@ -181,6 +181,166 @@ export async function requestMobileMoneyCollection(
     locationId: order.location_id,
   });
 
+  return createCollectionForOrder(
+    sb,
+    order,
+    {
+      tenantId: input.tenantId,
+      amount: input.amount,
+      customerPhone: input.customerPhone,
+      clientRequestId: input.clientRequestId,
+      createdBy: userId,
+    },
+    adapterOverride,
+  );
+}
+
+/**
+ * Guest self-order counterpart of requestMobileMoneyCollection above — the
+ * exact same Payment Core state machine and server-authoritative
+ * payability/amount derivation (createCollectionForOrder below), never a
+ * second engine. The only difference is the authorization boundary: a
+ * table id (resolveGuestTableContext — the same guest scoping
+ * selfpay.server.ts's Pesapal path already uses), never a staff capability
+ * check. This is what lets a guest's "Mobile Money" selection resolve
+ * through the SAME outlet configuration POS reads, instead of silently
+ * routing through an unrelated payment mechanism.
+ */
+export async function requestGuestMobileMoneyCollection(
+  sb: Sb,
+  input: {
+    tableId: string;
+    orderId: string;
+    customerPhone?: string | null;
+    clientRequestId: string;
+  },
+  adapterOverride?: MobileMoneyAdapter | null,
+): Promise<MobileMoneyStatusView> {
+  const { resolveGuestTableContext } = await import("../../selforder/selforder.server");
+  const table = await resolveGuestTableContext(sb, input.tableId);
+  const { data: order } = await sb
+    .from("restaurant_orders")
+    .select(
+      "id, tenant_id, property_id, location_id, currency, status, total, paid_total, table_id",
+    )
+    .eq("tenant_id", table.tenantId)
+    .eq("id", input.orderId)
+    .eq("table_id", input.tableId)
+    .maybeSingle();
+  if (!order) throw new Error("Order not found for this table.");
+
+  // A guest never proposes an amount — unlike POS, there is no split-payment
+  // UI here. The only number that can ever mean anything is the order's own
+  // full amount due, computed the same way createCollectionForOrder itself
+  // re-derives and re-checks it below (that inner check is not redundant: it
+  // is the one place both this path and the POS path share, so a future
+  // change to either can never silently reopen the amount-authority gap).
+  const amountDue = Math.max(0, Number(order.total) - Number(order.paid_total));
+
+  return createCollectionForOrder(
+    sb,
+    order,
+    {
+      tenantId: table.tenantId,
+      amount: amountDue,
+      customerPhone: input.customerPhone,
+      clientRequestId: input.clientRequestId,
+      createdBy: null,
+    },
+    adapterOverride,
+  );
+}
+
+/**
+ * Guest-safe read: the active Mobile Money configuration for a table's own
+ * location, sourced from the exact same restaurant_mobile_money_accounts
+ * row POS's getMobileMoneyAccount reads — never a copy, never a second
+ * table. Returns null when nothing is configured/active; never guesses. The
+ * merchant number is only ever returned in lipa_namba mode — it is what the
+ * guest must pay TO (not a secret, mirrored on the POS screen too);
+ * connected-mode accounts never expose provider detail to the guest.
+ */
+export async function getGuestMobileMoneyAccount(
+  sb: Sb,
+  input: { tableId: string },
+): Promise<{
+  mode: MobileMoneyMode;
+  network: string;
+  merchantNumber: string | null;
+} | null> {
+  const { resolveGuestTableContext } = await import("../../selforder/selforder.server");
+  const table = await resolveGuestTableContext(sb, input.tableId);
+  if (!table.locationId) return null;
+  const { data: account } = await sb
+    .from("restaurant_mobile_money_accounts")
+    .select("mode, network, merchant_number, activation_state")
+    .eq("tenant_id", table.tenantId)
+    .eq("location_id", table.locationId)
+    .maybeSingle();
+  if (!account || account.activation_state !== "active") return null;
+  return {
+    mode: account.mode,
+    network: account.network,
+    merchantNumber: account.mode === "lipa_namba" ? account.merchant_number : null,
+  };
+}
+
+/**
+ * Guest-safe status read for a collection the guest's own browser is
+ * polling — scoped by table AND the collection's own order (never by
+ * collection id alone), exactly like selfpay.server.ts's loadGuestOrder.
+ */
+export async function getGuestMobileMoneyStatus(
+  sb: Sb,
+  input: { tableId: string; collectionId: string },
+): Promise<MobileMoneyStatusView | null> {
+  const { resolveGuestTableContext } = await import("../../selforder/selforder.server");
+  const table = await resolveGuestTableContext(sb, input.tableId);
+  const { data } = await sb
+    .from("restaurant_mobile_money_collections")
+    .select("*")
+    .eq("tenant_id", table.tenantId)
+    .eq("id", input.collectionId)
+    .maybeSingle();
+  if (!data) return null;
+  const { data: order } = await sb
+    .from("restaurant_orders")
+    .select("table_id")
+    .eq("tenant_id", table.tenantId)
+    .eq("id", data.order_id)
+    .maybeSingle();
+  if (!order || order.table_id !== input.tableId) return null;
+  return toStatusView(data);
+}
+
+/**
+ * The Payment Core proper — everything after "who is allowed to ask for
+ * this collection" is identical whether the caller is a POS cashier or a
+ * guest's own browser: idempotency, server-authoritative payability/amount
+ * (never trusting `input.amount` as a fact), account resolution, the
+ * provider round-trip, and the resulting collection row. One state
+ * machine, one settlement path, two authorization boundaries above it.
+ */
+async function createCollectionForOrder(
+  sb: Sb,
+  order: {
+    id: string;
+    property_id: string | null;
+    location_id: string;
+    currency: string;
+    status: string;
+    total: number | string;
+    paid_total: number | string;
+  },
+  input: {
+    tenantId: string;
+    amount: number;
+    customerPhone?: string | null;
+    clientRequestId: string;
+    createdBy: string | null;
+  },
+  adapterOverride?: MobileMoneyAdapter | null,
+): Promise<MobileMoneyStatusView> {
   const { data: existing } = await sb
     .from("restaurant_mobile_money_collections")
     .select("*")
@@ -188,6 +348,34 @@ export async function requestMobileMoneyCollection(
     .eq("idempotency_key", input.clientRequestId)
     .maybeSingle();
   if (existing) return toStatusView(existing);
+
+  // Server-authoritative payability + amount, exactly like selfpay.server.ts's
+  // initiateGuestPayment: a collection can never be created for more than the
+  // order's own (order.total - order.paid_total), computed fresh here — the
+  // client's `input.amount` is a proposal, never a fact, whether it came from
+  // the POS UI, a guest browser, or a crafted request. Reuses the guest
+  // payment path's own PAYABLE_ORDER_STATUSES (dynamic import — selfpay.
+  // server.ts's own static import graph reaches sales/pos.server.ts, which
+  // would otherwise create a load-time circular reference back through this
+  // module's other dynamic sales.server imports below), never a second
+  // definition of "payable".
+  const { PAYABLE_ORDER_STATUSES } = await import("../../selforder/selfpay.server");
+  if (!PAYABLE_ORDER_STATUSES.has(order.status)) {
+    throw new Error(`This order cannot accept a payment in its current state (${order.status}).`);
+  }
+  const amountDue = Math.max(0, Number(order.total) - Number(order.paid_total));
+  if (amountDue <= 0) {
+    throw new Error("This order is already fully paid.");
+  }
+  const requestedAmount = Number(input.amount);
+  if (!(requestedAmount > 0) || requestedAmount > amountDue + AMOUNT_TOLERANCE) {
+    throw new Error(
+      `Requested amount must be more than zero and cannot exceed the amount due (${amountDue.toFixed(2)} ${order.currency}).`,
+    );
+  }
+  // Clamp to amountDue in case of float noise right at the boundary — never
+  // lets the collected amount exceed what is actually owed.
+  const amount = Math.min(requestedAmount, amountDue);
 
   const { data: account } = await sb
     .from("restaurant_mobile_money_accounts")
@@ -213,11 +401,11 @@ export async function requestMobileMoneyCollection(
       network: account.network,
       merchant_number_snapshot: account.merchant_number,
       customer_phone: input.customerPhone ?? null,
-      amount: input.amount,
+      amount,
       currency: order.currency ?? "TZS",
       environment: account.environment,
       idempotency_key: input.clientRequestId,
-      created_by: userId,
+      created_by: input.createdBy,
     })
     .select("*")
     .single();
@@ -235,6 +423,7 @@ export async function requestMobileMoneyCollection(
     return toStatusView(raced);
   }
 
+  const eventActor = input.createdBy ?? "guest";
   const adapter =
     adapterOverride !== undefined
       ? adapterOverride
@@ -254,7 +443,7 @@ export async function requestMobileMoneyCollection(
     network: account.network,
     merchantNumber: account.merchant_number,
     customerPhone: input.customerPhone ?? null,
-    amount: input.amount,
+    amount,
     currency: order.currency ?? "TZS",
     reference: `mm:${collection.id}`,
   });
@@ -269,7 +458,7 @@ export async function requestMobileMoneyCollection(
     });
     await emitCollectionEvent(
       sb,
-      userId,
+      eventActor,
       "restaurant.payment.mobile_money.request.failed",
       order,
       collection,
@@ -288,7 +477,7 @@ export async function requestMobileMoneyCollection(
   });
   await emitCollectionEvent(
     sb,
-    userId,
+    eventActor,
     "restaurant.payment.mobile_money.requested",
     order,
     collection,

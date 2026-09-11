@@ -26,11 +26,17 @@ const getReceipt = vi.fn(async () => ({}) as any);
 vi.mock("../../sales/sales.server", () => ({ recalcOrder, transitionOrder }));
 vi.mock("../../sales/receipts.server", () => ({ getReceipt }));
 
+const { resolveGuestTableContext } = vi.hoisted(() => ({ resolveGuestTableContext: vi.fn() }));
+vi.mock("../../selforder/selforder.server", () => ({ resolveGuestTableContext }));
+
 import {
   cancelMobileMoneyCollection,
   confirmMobileMoneyCollection,
   failMobileMoneyCollection,
+  getGuestMobileMoneyAccount,
+  getGuestMobileMoneyStatus,
   handleMobileMoneyWebhookEvent,
+  requestGuestMobileMoneyCollection,
   requestMobileMoneyCollection,
   reverseMobileMoneyCollection,
 } from "./mobilemoney.server";
@@ -139,6 +145,9 @@ function order(overrides: Partial<Record<string, any>> = {}) {
     property_id: null,
     location_id: LOCATION_A,
     currency: "TZS",
+    status: "open",
+    total: 100000,
+    paid_total: 0,
     ...overrides,
   };
 }
@@ -561,5 +570,273 @@ describe("pure helpers", () => {
       expect(operatorMessageForCollectionState(s, "connected")).not.toMatch(forbidden);
       expect(operatorMessageForCollectionState(s, "lipa_namba")).not.toMatch(forbidden);
     }
+  });
+});
+
+describe("requestMobileMoneyCollection — server-authoritative amount and payability", () => {
+  it("AMOUNT ATTACK: rejects amount = 0", async () => {
+    const db = fakeDb({ orders: [order()], accounts: [activeAccount()] });
+    await expect(
+      requestMobileMoneyCollection(
+        db as any,
+        USER,
+        { tenantId: TENANT, orderId: ORDER, amount: 0, clientRequestId: "atk-zero" },
+        createTestMobileMoneyAdapter("success"),
+      ),
+    ).rejects.toThrow(/more than zero/i);
+  });
+
+  it("AMOUNT ATTACK: rejects a negative amount", async () => {
+    const db = fakeDb({ orders: [order()], accounts: [activeAccount()] });
+    await expect(
+      requestMobileMoneyCollection(
+        db as any,
+        USER,
+        { tenantId: TENANT, orderId: ORDER, amount: -500, clientRequestId: "atk-neg" },
+        createTestMobileMoneyAdapter("success"),
+      ),
+    ).rejects.toThrow(/more than zero/i);
+  });
+
+  it("AMOUNT ATTACK: a client-supplied amount far above the order total is clamped-rejected, never collected as-is", async () => {
+    const db = fakeDb({
+      orders: [order({ total: 5000, paid_total: 0 })],
+      accounts: [activeAccount()],
+    });
+    await expect(
+      requestMobileMoneyCollection(
+        db as any,
+        USER,
+        { tenantId: TENANT, orderId: ORDER, amount: 999999, clientRequestId: "atk-over" },
+        createTestMobileMoneyAdapter("success"),
+      ),
+    ).rejects.toThrow(/amount due/i);
+  });
+
+  it("AMOUNT ATTACK: an amount above what remains due on a partially-paid order is rejected, even though it is below the order's full total", async () => {
+    const db = fakeDb({
+      orders: [order({ total: 5000, paid_total: 3000 })], // 2000 due
+      accounts: [activeAccount()],
+    });
+    await expect(
+      requestMobileMoneyCollection(
+        db as any,
+        USER,
+        { tenantId: TENANT, orderId: ORDER, amount: 2500, clientRequestId: "atk-partial" },
+        createTestMobileMoneyAdapter("success"),
+      ),
+    ).rejects.toThrow(/amount due/i);
+    // Exactly the amount due is accepted.
+    await expect(
+      requestMobileMoneyCollection(
+        db as any,
+        USER,
+        { tenantId: TENANT, orderId: ORDER, amount: 2000, clientRequestId: "atk-partial-ok" },
+        createTestMobileMoneyAdapter("success"),
+      ),
+    ).resolves.toMatchObject({ amount: 2000 });
+  });
+
+  it("STATE ATTACK: refuses to collect against an order that is already fully paid", async () => {
+    const db = fakeDb({
+      orders: [order({ total: 5000, paid_total: 5000 })],
+      accounts: [activeAccount()],
+    });
+    await expect(
+      requestMobileMoneyCollection(
+        db as any,
+        USER,
+        { tenantId: TENANT, orderId: ORDER, amount: 100, clientRequestId: "atk-paid" },
+        createTestMobileMoneyAdapter("success"),
+      ),
+    ).rejects.toThrow(/already fully paid/i);
+  });
+
+  it("STATE ATTACK: refuses to collect against a closed order", async () => {
+    const db = fakeDb({
+      orders: [order({ status: "closed" })],
+      accounts: [activeAccount()],
+    });
+    await expect(
+      requestMobileMoneyCollection(
+        db as any,
+        USER,
+        { tenantId: TENANT, orderId: ORDER, amount: 100, clientRequestId: "atk-closed" },
+        createTestMobileMoneyAdapter("success"),
+      ),
+    ).rejects.toThrow(/current state/i);
+  });
+
+  it("STATE ATTACK: refuses to collect against a cancelled order", async () => {
+    const db = fakeDb({
+      orders: [order({ status: "cancelled" })],
+      accounts: [activeAccount()],
+    });
+    await expect(
+      requestMobileMoneyCollection(
+        db as any,
+        USER,
+        { tenantId: TENANT, orderId: ORDER, amount: 100, clientRequestId: "atk-cancelled" },
+        createTestMobileMoneyAdapter("success"),
+      ),
+    ).rejects.toThrow(/current state/i);
+  });
+});
+
+describe("Guest Mobile Money — table-scoped authorization boundary", () => {
+  const TABLE_A = "table-a";
+  const TABLE_B = "table-b";
+
+  function guestContext(overrides: Partial<Record<string, any>> = {}) {
+    return {
+      tableId: TABLE_A,
+      tableCode: "A1",
+      tableName: "A1",
+      tenantId: TENANT,
+      tenantName: "Demo",
+      businessName: "Demo",
+      businessLogoUrl: null,
+      propertyId: null,
+      locationId: LOCATION_A,
+      currency: "TZS",
+      serviceRequestCooldownSeconds: 0,
+      ...overrides,
+    };
+  }
+
+  it("resolves the active account for the guest's own table location, merchant number only in lipa_namba mode", async () => {
+    resolveGuestTableContext.mockResolvedValue(guestContext());
+    const db = fakeDb({ orders: [], accounts: [activeAccount({ mode: "lipa_namba" })] });
+    await expect(getGuestMobileMoneyAccount(db as any, { tableId: TABLE_A })).resolves.toEqual({
+      mode: "lipa_namba",
+      network: "mpesa",
+      merchantNumber: "123456",
+    });
+  });
+
+  it("never exposes a merchant number for a connected-mode account", async () => {
+    resolveGuestTableContext.mockResolvedValue(guestContext());
+    const db = fakeDb({ orders: [], accounts: [activeAccount({ mode: "connected" })] });
+    await expect(
+      getGuestMobileMoneyAccount(db as any, { tableId: TABLE_A }),
+    ).resolves.toMatchObject({ merchantNumber: null });
+  });
+
+  it("returns null (never an error) when the outlet has no active account configured", async () => {
+    resolveGuestTableContext.mockResolvedValue(guestContext());
+    const db = fakeDb({
+      orders: [],
+      accounts: [activeAccount({ activation_state: "inactive" })],
+    });
+    await expect(getGuestMobileMoneyAccount(db as any, { tableId: TABLE_A })).resolves.toBeNull();
+  });
+
+  it("CONFIGURATION CONSISTENCY: guest and POS resolve the exact same account row for the same outlet", async () => {
+    const account = activeAccount({ mode: "lipa_namba", merchant_number: "987654" });
+    resolveGuestTableContext.mockResolvedValue(guestContext());
+    const db = fakeDb({ orders: [order()], accounts: [account] });
+    const guestView = await getGuestMobileMoneyAccount(db as any, { tableId: TABLE_A });
+    await expect(
+      requestMobileMoneyCollection(
+        db as any,
+        USER,
+        { tenantId: TENANT, orderId: ORDER, amount: 100000, clientRequestId: "consistency-1" },
+        createTestMobileMoneyAdapter("success"),
+      ),
+    ).resolves.toMatchObject({ merchantNumber: account.merchant_number });
+    expect(guestView?.merchantNumber).toBe(account.merchant_number);
+  });
+
+  it("IDENTITY ATTACK: a guest at one table cannot request a collection against another table's order", async () => {
+    resolveGuestTableContext.mockResolvedValue(guestContext({ tableId: TABLE_B }));
+    const db = fakeDb({
+      orders: [order({ table_id: TABLE_A })],
+      accounts: [activeAccount()],
+    });
+    await expect(
+      requestGuestMobileMoneyCollection(db as any, {
+        tableId: TABLE_B,
+        orderId: ORDER,
+        clientRequestId: "guest-atk-1",
+      }),
+    ).rejects.toThrow(/not found for this table/i);
+  });
+
+  it("a guest never proposes an amount — the collection is always for the server-derived amount due, even on a partially-paid order", async () => {
+    resolveGuestTableContext.mockResolvedValue(guestContext());
+    const db = fakeDb({
+      orders: [order({ table_id: TABLE_A, total: 5000, paid_total: 3000 })], // 2000 due
+      accounts: [activeAccount()],
+    });
+    await expect(
+      requestGuestMobileMoneyCollection(db as any, {
+        tableId: TABLE_A,
+        orderId: ORDER,
+        clientRequestId: "guest-amount-1",
+      }),
+    ).resolves.toMatchObject({ amount: 2000 });
+  });
+
+  it("STATE ATTACK: refuses a guest collection against an order that is already fully paid", async () => {
+    resolveGuestTableContext.mockResolvedValue(guestContext());
+    const db = fakeDb({
+      orders: [order({ table_id: TABLE_A, total: 5000, paid_total: 5000 })],
+      accounts: [activeAccount()],
+    });
+    await expect(
+      requestGuestMobileMoneyCollection(db as any, {
+        tableId: TABLE_A,
+        orderId: ORDER,
+        clientRequestId: "guest-atk-paid",
+      }),
+    ).rejects.toThrow(/already fully paid/i);
+  });
+
+  it("REPLAY: a duplicate guest request (browser refresh / double tap) with the same clientRequestId is idempotent, never a second collection", async () => {
+    resolveGuestTableContext.mockResolvedValue(guestContext());
+    const db = fakeDb({
+      orders: [order({ table_id: TABLE_A })],
+      accounts: [activeAccount()],
+    });
+    const first = await requestGuestMobileMoneyCollection(db as any, {
+      tableId: TABLE_A,
+      orderId: ORDER,
+      clientRequestId: "guest-replay-1",
+    });
+    const second = await requestGuestMobileMoneyCollection(db as any, {
+      tableId: TABLE_A,
+      orderId: ORDER,
+      clientRequestId: "guest-replay-1",
+    });
+    expect(second.collectionId).toBe(first.collectionId);
+  });
+
+  it("IDENTITY ATTACK: a guest at one table cannot poll the status of a collection created for another table's order", async () => {
+    resolveGuestTableContext.mockResolvedValueOnce(guestContext({ tableId: TABLE_A }));
+    const db = fakeDb({
+      orders: [order({ table_id: TABLE_A })],
+      accounts: [activeAccount()],
+    });
+    const created = await requestGuestMobileMoneyCollection(db as any, {
+      tableId: TABLE_A,
+      orderId: ORDER,
+      clientRequestId: "guest-status-1",
+    });
+
+    resolveGuestTableContext.mockResolvedValueOnce(guestContext({ tableId: TABLE_B }));
+    await expect(
+      getGuestMobileMoneyStatus(db as any, {
+        tableId: TABLE_B,
+        collectionId: created.collectionId,
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("returns null (never throws) for a status poll against an unknown collection id", async () => {
+    resolveGuestTableContext.mockResolvedValue(guestContext());
+    const db = fakeDb({ orders: [order()], accounts: [activeAccount()] });
+    await expect(
+      getGuestMobileMoneyStatus(db as any, { tableId: TABLE_A, collectionId: "nope" }),
+    ).resolves.toBeNull();
   });
 });

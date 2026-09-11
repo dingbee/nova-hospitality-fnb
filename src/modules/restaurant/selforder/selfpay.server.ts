@@ -25,7 +25,16 @@ import type { InitiateGuestPaymentInput } from "./selfpay.contracts";
 
 type Sb = any;
 
-const PAYABLE_ORDER_STATUSES = new Set(["open", "sent", "served"]);
+/**
+ * The one canonical "is this order still open to take a payment against"
+ * definition — reused by every automated/unattended collection path
+ * (guest Pesapal/card here, Mobile Money's requestMobileMoneyCollection in
+ * mobilemoney.server.ts) so a second, competing definition of "payable"
+ * never exists. Cash/card entered directly by a staff member at the till
+ * (takePosPayment) is a distinct, attended, capability-gated flow and
+ * intentionally does not go through this check.
+ */
+export const PAYABLE_ORDER_STATUSES = new Set(["open", "sent", "served"]);
 
 /** A guest's own order, and nothing else — scoped by table AND order id, mirroring how a receipt share token scopes access. */
 async function loadGuestOrder(sb: Sb, tenantId: string, tableId: string, orderId: string) {
