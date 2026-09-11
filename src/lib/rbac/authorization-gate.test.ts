@@ -581,3 +581,33 @@ describe("tenant / property / outlet isolation", () => {
     expect(s).not.toMatch(/is_any_staff/);
   });
 });
+
+/* --------------------------------------------- identity-check self-only gate */
+describe("RBAC identity-check functions refuse to answer for another user", () => {
+  // Regression for a live-verified defect (P11 continuation, 0050): these
+  // functions are SECURITY DEFINER, callable by `authenticated` via
+  // PostgREST RPC, and every legitimate caller (RLS policy or app server)
+  // only ever passes its own auth.uid(). Without a self-check, any signed-in
+  // user could pass a *different* user's id directly over the RPC endpoint
+  // and read that user's roles/permissions/staff/commercial-admin status.
+  const SELF_ONLY = [
+    "has_any_role",
+    "is_any_staff",
+    "nova_has_permission",
+    "nova_permissions_for",
+    "restaurant_is_commercial_admin",
+  ];
+
+  it("requires _user_id = auth.uid() in its latest definition", () => {
+    for (const fn of SELF_ONLY) {
+      const body = latestFunctionBody(fn);
+      expect(body.length, `${fn}: no definition found`).toBeGreaterThan(0);
+      expect(body, `${fn} must gate on _user_id = auth.uid()`).toMatch(/_user_id\s*=\s*auth\.uid\(\)/);
+    }
+  });
+
+  it("has_role and restaurant_is_platform_admin inherit the guard by delegating to has_any_role", () => {
+    expect(latestFunctionBody("has_role")).toMatch(/has_any_role\(_user_id/);
+    expect(latestFunctionBody("restaurant_is_platform_admin")).toMatch(/has_any_role\(_user_id/);
+  });
+});
