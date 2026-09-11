@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { PRODUCT } from "@/config/product";
 
-export const Route = createFileRoute("/auth/sign-up")({
+export const Route = createFileRoute("/auth_/sign-up")({
   head: () => ({
     meta: [
       { title: `Create your account — ${PRODUCT.shortName}` },

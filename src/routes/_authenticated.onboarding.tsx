@@ -16,7 +16,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Loader2, UtensilsCrossed } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
@@ -195,6 +195,19 @@ function WelcomeAndBusinessStep({ onCreated }: { onCreated: () => void }) {
       navigate({ to: "/onboarding" });
     },
   });
+  // §34 — mutation.isPending only updates on the next render, so two clicks
+  // landing in the same tick (a fast double-tap) can both pass the disabled
+  // check. This ref is checked-and-set synchronously, closing that race.
+  const submitting = useRef(false);
+  const submitOnce = () => {
+    if (submitting.current) return;
+    submitting.current = true;
+    create.mutate(undefined, {
+      onSettled: () => {
+        submitting.current = false;
+      },
+    });
+  };
 
   return (
     <Centered>
@@ -219,8 +232,8 @@ function WelcomeAndBusinessStep({ onCreated }: { onCreated: () => void }) {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (name.trim().length < 2) return;
-            create.mutate();
+            if (create.isPending || name.trim().length < 2) return;
+            submitOnce();
           }}
           className="space-y-4"
         >
@@ -293,6 +306,16 @@ function PropertyOutletStep({
     successMessage: "Your outlet is ready.",
     onSuccess: onCreated,
   });
+  const submitting = useRef(false);
+  const submitOnce = () => {
+    if (submitting.current) return;
+    submitting.current = true;
+    create.mutate(undefined, {
+      onSettled: () => {
+        submitting.current = false;
+      },
+    });
+  };
 
   return (
     <StepShell
@@ -302,8 +325,9 @@ function PropertyOutletStep({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (propertyName.trim().length < 2 || outletName.trim().length < 2) return;
-          create.mutate();
+          if (create.isPending || propertyName.trim().length < 2 || outletName.trim().length < 2)
+            return;
+          submitOnce();
         }}
         className="space-y-4"
       >
@@ -355,6 +379,16 @@ function OperatingModelStep({ tenantId, onSaved }: { tenantId: string; onSaved: 
     successMessage: "Operating model saved.",
     onSuccess: onSaved,
   });
+  const submitting = useRef(false);
+  const submitOnce = () => {
+    if (submitting.current) return;
+    submitting.current = true;
+    save.mutate(undefined, {
+      onSettled: () => {
+        submitting.current = false;
+      },
+    });
+  };
 
   const toggleFeature = (f: ServiceFeature) =>
     setFeatures((prev) => (prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f]));
@@ -411,7 +445,14 @@ function OperatingModelStep({ tenantId, onSaved }: { tenantId: string; onSaved: 
             ))}
           </div>
         </div>
-        <Button onClick={() => save.mutate()} disabled={save.isPending} className="w-full">
+        <Button
+          onClick={() => {
+            if (save.isPending) return;
+            submitOnce();
+          }}
+          disabled={save.isPending}
+          className="w-full"
+        >
           {save.isPending && <Loader2 className="mr-2 size-4 animate-spin" />} Continue
         </Button>
       </div>
