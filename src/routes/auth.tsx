@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import { Loader2, UtensilsCrossed } from "lucide-react";
 import { toast } from "sonner";
@@ -7,7 +7,10 @@ import { PRODUCT } from "@/config/product";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
-    meta: [{ title: `Sign in — ${PRODUCT.shortName}` }, { name: "robots", content: "noindex,nofollow" }],
+    meta: [
+      { title: `Sign in — ${PRODUCT.shortName}` },
+      { name: "robots", content: "noindex,nofollow" },
+    ],
   }),
   component: AuthPage,
 });
@@ -79,6 +82,12 @@ function AuthPage() {
         >
           {loading && <Loader2 className="size-4 animate-spin" />} Sign in
         </button>
+        <p className="mt-4 text-center text-xs text-muted-foreground">
+          New restaurant?{" "}
+          <Link to="/auth/sign-up" className="font-medium text-primary hover:underline">
+            Create an account
+          </Link>
+        </p>
       </form>
     </div>
   );

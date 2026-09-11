@@ -28,6 +28,7 @@ import {
   Truck,
   Upload,
   UserCog,
+  Users,
   Wine,
   Wrench,
   type LucideIcon,
@@ -320,10 +321,17 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         to: "/admin/restaurant/setup",
-        label: "Restaurant setup",
+        label: "Readiness centre",
         icon: Wrench,
         permission: "SETTINGS:READ",
-        hint: "Tenancy, outlets and master data",
+        hint: "What's configured, what's blocked, and what to fix before going live",
+      },
+      {
+        to: "/admin/restaurant/staff",
+        label: "Staff & roles",
+        icon: Users,
+        permission: "SETTINGS:READ",
+        hint: "Who has access and what they can do",
       },
       {
         to: "/admin/restaurant/settings",

@@ -156,7 +156,11 @@ export function PourConfigSheet({
               This beverage uses a liquid consumption unit but its container content has not been
               configured.
             </p>
-            <Link to="/admin/restaurant/setup" className="text-xs font-medium underline">
+            <Link
+              to="/admin/restaurant/setup"
+              search={{ ref: undefined }}
+              className="text-xs font-medium underline"
+            >
               Configure item
             </Link>
           </div>

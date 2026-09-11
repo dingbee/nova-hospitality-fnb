@@ -163,6 +163,26 @@ export const RESTAURANT_EVENT_TYPES = [
   "restaurant.payment.mobile_money.request.failed",
   "restaurant.payment.mobile_money.confirmed",
   "restaurant.payment.mobile_money.reversed",
+  /* --- P12 first-run onboarding funnel telemetry. Product-analytics facts
+     about the activation journey, not operational facts about a running
+     restaurant — kept in this one canonical taxonomy anyway, per the
+     project's "no parallel analytics engine" rule. See
+     `onboarding/contracts.ts`'s `ONBOARDING_EVENT_TYPES` (kept in sync;
+     literal here to avoid a domain->canonical-registry import cycle). --- */
+  "restaurant.onboarding.entered",
+  "restaurant.onboarding.welcome_viewed",
+  "restaurant.onboarding.business.started",
+  "restaurant.onboarding.business.completed",
+  "restaurant.onboarding.property.started",
+  "restaurant.onboarding.property.completed",
+  "restaurant.onboarding.outlet.started",
+  "restaurant.onboarding.outlet.completed",
+  "restaurant.onboarding.operating_model.viewed",
+  "restaurant.onboarding.operating_model.selected",
+  "restaurant.onboarding.resumed",
+  "restaurant.onboarding.completed",
+  "restaurant.onboarding.p13_handoff.initiated",
+  "restaurant.onboarding.p13_handoff.completed",
 ] as const;
 export type RestaurantEventType = (typeof RESTAURANT_EVENT_TYPES)[number];
 
@@ -318,6 +338,20 @@ export const RESTAURANT_EVENT_SEVERITY: Record<
   "restaurant.payment.mobile_money.request.failed": "medium",
   "restaurant.payment.mobile_money.confirmed": "info",
   "restaurant.payment.mobile_money.reversed": "high",
+  "restaurant.onboarding.entered": "info",
+  "restaurant.onboarding.welcome_viewed": "info",
+  "restaurant.onboarding.business.started": "info",
+  "restaurant.onboarding.business.completed": "info",
+  "restaurant.onboarding.property.started": "info",
+  "restaurant.onboarding.property.completed": "info",
+  "restaurant.onboarding.outlet.started": "info",
+  "restaurant.onboarding.outlet.completed": "info",
+  "restaurant.onboarding.operating_model.viewed": "info",
+  "restaurant.onboarding.operating_model.selected": "info",
+  "restaurant.onboarding.resumed": "info",
+  "restaurant.onboarding.completed": "info",
+  "restaurant.onboarding.p13_handoff.initiated": "info",
+  "restaurant.onboarding.p13_handoff.completed": "info",
 };
 
 export const restaurantEventSchema = z.object({

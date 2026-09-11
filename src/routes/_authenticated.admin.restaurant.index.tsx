@@ -120,8 +120,14 @@ function RestaurantOverview() {
   if (!ws.data?.tenant) {
     return (
       <EmptyState
-        title="No restaurant tenant"
-        description="You are not a member of any Restaurant & Bar OS tenant yet."
+        title="Let's set up your restaurant"
+        description="You haven't created a business yet, or you're not a member of one. Get started in a few minutes."
+        icon={Store}
+        action={
+          <Button asChild>
+            <Link to="/onboarding">Create your restaurant</Link>
+          </Button>
+        }
       />
     );
   }
