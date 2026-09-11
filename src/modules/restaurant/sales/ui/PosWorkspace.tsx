@@ -669,11 +669,11 @@ export function PosWorkspace({
           above (h-full/min-h-0/flex-1, unconditional), and every row/column
           track below is an explicit minmax(0, Nfr) — never bare "auto" and
           never a hard pixel floor — so it always resolves to a fraction of
-          that definite height regardless of how much Floor/Bill/Menu
-          content exists. More tables, bill lines or menu items can only
+          that definite height regardless of how much Floor/Menu/Bill
+          content exists. More tables, menu items or bill lines can only
           change what scrolls *inside* a pane; they can never grow the pane,
           this grid, the workspace, or the page.
-          Below lg: Floor and the right workspace stack as two proportional
+          Below lg: Floor and a Menu/Bill switcher stack as two proportional
           ROWS (40fr/60fr) sharing that same fixed height, each still
           scrolling internally — not two fixed pixel boxes and not normal
           document flow. Floor's row carries a measured 330px floor — header
@@ -686,16 +686,17 @@ export function PosWorkspace({
           auto-sized track lets a wide child (e.g. Floor's card grid) blow
           out past the viewport with no scrollbar to show for it, since the
           overflow gets silently clipped by a downstream overflow-hidden
-          instead. At lg+: Floor becomes the left COLUMN and the right
-          workspace the right COLUMN (32fr/68fr), each spanning the grid's
-          full single row. Structural, not cosmetic: Bill and Menu are never
-          a second/third column beside Floor — they are two ROWS inside the
-          right-hand workspace, Bill always directly above Menu, sharing the
-          same horizontal bounds; Menu — the highest-frequency interaction —
-          gets the larger share (~57%) of that column's height, with Bill's
-          ~43% sized to keep a short line-item ticket fully visible without
-          forcing an internal scroll for it. */}
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[minmax(330px,40fr)_minmax(0,60fr)] gap-3 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(220px,32fr)_minmax(0,68fr)] xl:gap-4">
+          instead.
+          At lg+: THREE simultaneous columns, Floor | Menu | Bill, each
+          spanning the grid's full single row — never Floor beside a
+          Bill-over-Menu stack. Bill stays persistently visible next to Menu
+          so a cashier never navigates away from the catalogue to see what
+          just got added. The Menu/Bill wrapper below uses `lg:contents` so
+          its two children (Menu, then Bill, in that DOM order) become
+          direct items of THIS grid at lg+, landing in columns 2 and 3 by
+          normal auto-placement — while below lg that same wrapper is a real
+          flex column holding the tab-switcher behavior unchanged. */}
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[minmax(330px,40fr)_minmax(0,60fr)] gap-3 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(200px,22fr)_minmax(0,45fr)_minmax(300px,33fr)] xl:gap-4">
         {/* Floor */}
         <SectionCard
           title={isBar ? "Bar floor & tabs" : "Floor"}
@@ -787,39 +788,16 @@ export function PosWorkspace({
           </div>
         </SectionCard>
 
-        {/* Right workspace: Bill and Menu share this column, never a second/
-            third column beside Floor. At lg+, Bill and Menu are two ROWS
-            sharing this column, and Bill's
-            row carries a measured (not guessed) floor: header + the pinned
-            Total/primary-action footer + section padding need ~189px with
-            zero content — below that, no amount of internal scrolling can
-            make room for Bill's own always-visible chrome. The floor never
-            grows with content (badges/lines/notes all live in the scrollable
-            region above the footer), so it only engages on genuinely short
-            viewports, and only ever redistributes within this already-
-            fixed-height row — it cannot grow this grid, the workspace, or
-            the page.
-            Below lg, Floor+RightWorkspace already share a much shorter
-            stacked budget (see the outer grid above) — too short for BOTH
-            Bill's and Menu's own minimum chrome to coexist at any fixed
-            split, floored or not (measured: Bill's ~189px minimum alone can
-            exceed the entire combined budget on common phone-sized
-            viewports). Splitting height between them is the wrong tool
-            here, so below lg this becomes a single-pane switcher instead: a
-            tab strip picks ONE of Bill/Menu to occupy the full column
-            height at a time — never a fixed pixel guess, never eating into
-            the other's space, and the inactive pane simply isn't rendered
-            rather than being squeezed. */}
-        <div className="flex h-full min-h-0 flex-col gap-3 lg:grid lg:grid-rows-[minmax(190px,47fr)_minmax(0,53fr)] xl:gap-4">
+        {/* Menu+Bill wrapper: below lg this is a real flex column holding
+            the mobile tab switcher (Menu/Bill share this one pane's height,
+            switched by tab — see the comment on the outer grid above for
+            why splitting height between them doesn't fit on short
+            viewports). At lg+ it dissolves via `lg:contents`: Menu and Bill
+            (in that DOM order) become direct items of the OUTER three-
+            column grid, landing in columns 2 and 3 — persistently
+            side-by-side, never stacked, never a tab away from each other. */}
+        <div className="flex h-full min-h-0 flex-col gap-3 lg:contents">
           <div className="flex shrink-0 gap-2 lg:hidden">
-            <Button
-              type="button"
-              variant={mobileRightTab === "bill" ? "default" : "outline"}
-              className="min-h-11 flex-1"
-              onClick={() => setMobileRightTab("bill")}
-            >
-              Bill{live.length + cart.length > 0 ? ` (${live.length + cart.length})` : ""}
-            </Button>
             <Button
               type="button"
               variant={mobileRightTab === "menu" ? "default" : "outline"}
@@ -828,7 +806,90 @@ export function PosWorkspace({
             >
               {isBar ? "Drinks" : "Menu"}
             </Button>
+            <Button
+              type="button"
+              variant={mobileRightTab === "bill" ? "default" : "outline"}
+              className="min-h-11 flex-1"
+              onClick={() => setMobileRightTab("bill")}
+            >
+              Bill{live.length + cart.length > 0 ? ` (${live.length + cart.length})` : ""}
+            </Button>
           </div>
+
+          {/* Menu */}
+          <SectionCard
+            title={isBar ? "Drinks" : "Menu"}
+            description={
+              isBar
+                ? "Tap a drink, pick the serve (single, double, bottle, glass) and add it to the tab."
+                : "Tap an item to configure and stage it on the bill."
+            }
+            className={cn(
+              mobileRightTab === "menu" ? "flex" : "hidden",
+              "h-full min-h-0 flex-1 flex-col overflow-hidden p-4 lg:flex",
+            )}
+          >
+            <div className="shrink-0">
+              <div className="relative mb-2">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={catalogSearch}
+                  onChange={(e) => setCatalogSearch(e.target.value)}
+                  placeholder={isBar ? "Search drinks…" : "Search the menu…"}
+                  className="h-11 pl-8"
+                />
+              </div>
+              <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+                <Button
+                  variant={categoryId ? "outline" : "default"}
+                  className="min-h-11 shrink-0 rounded-full"
+                  onClick={() => setCategoryId(null)}
+                >
+                  All
+                </Button>
+                {categories.map((c) => (
+                  <Button
+                    key={c.id}
+                    variant={categoryId === c.id ? "default" : "outline"}
+                    className="min-h-11 shrink-0 rounded-full"
+                    onClick={() => setCategoryId(c.id)}
+                  >
+                    {c.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {filtered.length === 0 ? (
+                <EmptyState
+                  title={catalogSearch ? "No matches" : isBar ? "No drinks" : "No items"}
+                  description={
+                    catalogSearch
+                      ? "Try a different search or category."
+                      : isBar
+                        ? "Publish a beverage menu to sell from the bar till."
+                        : "Publish a menu to sell from this till."
+                  }
+                />
+              ) : (
+                // Menu now occupies its own ~45%-width column (not the full
+                // right side), so the target is three cards per row at
+                // desktop — never the five-column grid a full-width Menu
+                // pane used to fit.
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {filtered.map((i) => (
+                    <PosMenuItemCard
+                      key={i.id}
+                      item={i}
+                      currency={currency}
+                      disabled={!orderId || i.available === false || i.priceConfigured === false}
+                      onSelect={() => setPickerItem(i)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </SectionCard>
 
           {/* Bill */}
           <SectionCard
@@ -1257,77 +1318,6 @@ export function PosWorkspace({
                 </div>
               </div>
             )}
-          </SectionCard>
-
-          {/* Menu */}
-          <SectionCard
-            title={isBar ? "Drinks" : "Menu"}
-            description={
-              isBar
-                ? "Tap a drink, pick the serve (single, double, bottle, glass) and add it to the tab."
-                : "Tap an item to configure and stage it on the bill."
-            }
-            className={cn(
-              mobileRightTab === "menu" ? "flex" : "hidden",
-              "h-full min-h-0 flex-1 flex-col overflow-hidden p-4 lg:flex",
-            )}
-          >
-            <div className="shrink-0">
-              <div className="relative mb-2">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={catalogSearch}
-                  onChange={(e) => setCatalogSearch(e.target.value)}
-                  placeholder={isBar ? "Search drinks…" : "Search the menu…"}
-                  className="h-11 pl-8"
-                />
-              </div>
-              <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
-                <Button
-                  variant={categoryId ? "outline" : "default"}
-                  className="min-h-11 shrink-0 rounded-full"
-                  onClick={() => setCategoryId(null)}
-                >
-                  All
-                </Button>
-                {categories.map((c) => (
-                  <Button
-                    key={c.id}
-                    variant={categoryId === c.id ? "default" : "outline"}
-                    className="min-h-11 shrink-0 rounded-full"
-                    onClick={() => setCategoryId(c.id)}
-                  >
-                    {c.name}
-                  </Button>
-                ))}
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {filtered.length === 0 ? (
-                <EmptyState
-                  title={catalogSearch ? "No matches" : isBar ? "No drinks" : "No items"}
-                  description={
-                    catalogSearch
-                      ? "Try a different search or category."
-                      : isBar
-                        ? "Publish a beverage menu to sell from the bar till."
-                        : "Publish a menu to sell from this till."
-                  }
-                />
-              ) : (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
-                  {filtered.map((i) => (
-                    <PosMenuItemCard
-                      key={i.id}
-                      item={i}
-                      currency={currency}
-                      disabled={!orderId || i.available === false || i.priceConfigured === false}
-                      onSelect={() => setPickerItem(i)}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
           </SectionCard>
         </div>
       </div>
