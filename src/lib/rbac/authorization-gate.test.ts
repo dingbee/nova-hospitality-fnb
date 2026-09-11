@@ -602,7 +602,9 @@ describe("RBAC identity-check functions refuse to answer for another user", () =
     for (const fn of SELF_ONLY) {
       const body = latestFunctionBody(fn);
       expect(body.length, `${fn}: no definition found`).toBeGreaterThan(0);
-      expect(body, `${fn} must gate on _user_id = auth.uid()`).toMatch(/_user_id\s*=\s*auth\.uid\(\)/);
+      expect(body, `${fn} must gate on _user_id = auth.uid()`).toMatch(
+        /_user_id\s*=\s*auth\.uid\(\)/,
+      );
     }
   });
 
