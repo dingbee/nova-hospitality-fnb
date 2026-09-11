@@ -1,16 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { SetupWorkbench } from "@/modules/restaurant/masterdata/ui/SetupWorkbench";
+import { ReadinessCentre } from "@/modules/restaurant/readiness/ui/ReadinessCentre";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/setup")({
   head: () => ({
     meta: [
-      { title: "Restaurant Setup — Restaurant & Bar OS" },
+      { title: "Readiness Centre — Restaurant & Bar OS" },
       {
         name: "description",
-        content: "Configure a restaurant from blank: business, outlets, stores, units, categories, items and suppliers.",
+        content: "What must be configured or fixed before this restaurant is ready to operate.",
       },
       { name: "robots", content: "noindex,nofollow" },
     ],
   }),
-  component: SetupWorkbench,
+  component: ReadinessCentre,
 });
