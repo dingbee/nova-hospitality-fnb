@@ -29,6 +29,7 @@ import type {
   RevenueIntelligence,
   RevenueItemContribution,
   RevenuePeriodPoint,
+  SalesComposition,
   ServicePeriodDemand,
 } from "./p05.types";
 
@@ -56,7 +57,9 @@ export async function getRevenueIntelligence(
 
   let ordersQuery = sb
     .from("restaurant_orders")
-    .select("id, location_id, service_period_id, opened_at, total, payment_state, currency, status")
+    .select(
+      "id, location_id, service_period_id, opened_at, subtotal, discount_total, tax_total, service_charge, total, paid_total, payment_state, currency, status",
+    )
     .eq("tenant_id", tenantId)
     .eq("status", "closed")
     .neq("payment_state", "refunded")
@@ -89,6 +92,27 @@ export async function getRevenueIntelligence(
   const revenueTrendPercent = percentChange(totalRevenue, previousRevenue);
   const averageOrderValue =
     currentOrders.length > 0 ? round(totalRevenue / currentOrders.length) : 0;
+
+  // P07 §5 — Sales ≠ Revenue ≠ Cash Collection, made explicit. Every figure
+  // here is a straight sum of restaurant_orders' own decomposition columns
+  // for the exact same closed/non-refunded current-window order set
+  // totalRevenue is computed from — never a second derivation.
+  const grossSales = round(currentOrders.reduce((s, o) => s + Number(o.subtotal ?? 0), 0));
+  const discountTotal = round(currentOrders.reduce((s, o) => s + Number(o.discount_total ?? 0), 0));
+  const taxTotal = round(currentOrders.reduce((s, o) => s + Number(o.tax_total ?? 0), 0));
+  const serviceChargeTotal = round(
+    currentOrders.reduce((s, o) => s + Number(o.service_charge ?? 0), 0),
+  );
+  const cashCollected = round(currentOrders.reduce((s, o) => s + Number(o.paid_total ?? 0), 0));
+  const salesComposition: SalesComposition = {
+    grossSales,
+    discountTotal,
+    taxTotal,
+    serviceChargeTotal,
+    netSales: totalRevenue,
+    cashCollected,
+    outstandingAmount: round(totalRevenue - cashCollected),
+  };
 
   // Daily revenue series for the current window.
   const dailyMap = new Map<string, { revenue: number; orders: number }>();
@@ -261,6 +285,7 @@ export async function getRevenueIntelligence(
     revenueTrendPercent,
     totalOrders: currentOrders.length,
     averageOrderValue,
+    salesComposition,
     series,
     byServicePeriod,
     topContributors,
