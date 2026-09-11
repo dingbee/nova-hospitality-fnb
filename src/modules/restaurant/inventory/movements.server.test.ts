@@ -205,6 +205,99 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
     expect(fake.movements[0].quantity).toBe(-2);
   });
 
+  it("Section 18 scenario 11/12 — a wine recipe line in ml deducts a fractional BOTTLE quantity via the content bridge, idempotently", async () => {
+    const ML = { id: "unit-ml", code: "ML", name: "Millilitre", dimension: "volume", factor: 1 };
+    const BTL = { id: "unit-btl", code: "BTL", name: "Bottle", dimension: "count", factor: 1 };
+    const fake = makeFakeSupabase({
+      items: [
+        {
+          id: "item-wine",
+          name: "House Red Wine 750ml",
+          average_cost: 8000, // TZS per bottle
+          currency: "TZS",
+          unit_id: BTL.id,
+          content_per_stock_unit: 750,
+          content_unit_id: ML.id,
+          allow_negative: true,
+          current_quantity: 12,
+        },
+      ],
+      components: [
+        {
+          id: "comp-wine",
+          menu_item_id: "menu-glass-of-wine",
+          inventory_item_id: "item-wine",
+          quantity: 150, // ml, the standard pour
+          unit_id: ML.id,
+          yield_percent: 100,
+        },
+      ],
+      units: [ML, BTL],
+    });
+
+    const args = {
+      tenantId: TENANT,
+      orderId: "order-1",
+      orderItemId: "item-1",
+      menuItemId: "menu-glass-of-wine",
+      quantity: 1,
+    };
+    const cost = await consumeForOrderItem(fake.supabase, USER, args);
+
+    // 150ml / 750ml-per-bottle = 0.2 BTL, priced at TZS 8,000/bottle = 1,600.
+    expect(cost).toBe(1600);
+    expect(fake.movements).toHaveLength(1);
+    expect(fake.movements[0].quantity).toBeCloseTo(-0.2, 6); // stock deducted in BOTTLES, never a raw 150
+    expect(fake.movements[0].unit_id).toBe(BTL.id); // the ledger stays in the item's own stock unit
+
+    // Idempotency: re-closing the same order item (a retry, a duplicate
+    // webhook) must never double-deduct — the dedupe key is unchanged.
+    await consumeForOrderItem(fake.supabase, USER, args);
+    expect(fake.movements).toHaveLength(1);
+  });
+
+  it("Section 18 scenario 6 — selling 60 pours of 150ml wine consumes exactly one carton's content (9,000ml = 12 bottles)", async () => {
+    const ML = { id: "unit-ml", code: "ML", name: "Millilitre", dimension: "volume", factor: 1 };
+    const BTL = { id: "unit-btl", code: "BTL", name: "Bottle", dimension: "count", factor: 1 };
+    const fake = makeFakeSupabase({
+      items: [
+        {
+          id: "item-wine",
+          name: "House Red Wine 750ml",
+          average_cost: 8000,
+          currency: "TZS",
+          unit_id: BTL.id,
+          content_per_stock_unit: 750,
+          content_unit_id: ML.id,
+          allow_negative: true,
+          current_quantity: 12,
+        },
+      ],
+      components: [
+        {
+          id: "comp-wine",
+          menu_item_id: "menu-glass-of-wine",
+          inventory_item_id: "item-wine",
+          quantity: 150,
+          unit_id: ML.id,
+          yield_percent: 100,
+        },
+      ],
+      units: [ML, BTL],
+    });
+
+    const cost = await consumeForOrderItem(fake.supabase, USER, {
+      tenantId: TENANT,
+      orderId: "order-1",
+      orderItemId: "item-1",
+      menuItemId: "menu-glass-of-wine",
+      quantity: 60,
+    });
+
+    expect(fake.movements[0].quantity).toBeCloseTo(-12, 6); // 9,000ml = exactly 12 bottles
+    expect(cost).toBeCloseTo(96000, 4); // 12 bottles at TZS 8,000 = the full carton cost
+  });
+
   it("refuses to close an order line whose component unit cannot be converted to the item's stock unit, rather than miscosting it", async () => {
     const fake = makeFakeSupabase({
       items: [

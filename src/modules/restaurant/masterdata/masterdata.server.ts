@@ -296,7 +296,7 @@ export async function listAllMasterData(
     sb
       .from("restaurant_inventory_items")
       .select(
-        "id, name, sku, item_type, current_quantity, par_level, reorder_point, average_cost, currency, status, category_id, unit_id, location_id, track_batches, allow_negative, purchase_unit_id, consumption_unit_id, pack_size, shelf_life_days",
+        "id, name, sku, item_type, current_quantity, par_level, reorder_point, average_cost, currency, status, category_id, unit_id, location_id, track_batches, allow_negative, purchase_unit_id, consumption_unit_id, pack_size, shelf_life_days, content_per_stock_unit, content_unit_id",
       )
       .eq("tenant_id", tenantId)
       .order("name"),

@@ -546,6 +546,38 @@ function ProIntelligencePage() {
                   value={rev.marginDataAvailable ? "Available" : "Unavailable"}
                 />
               </div>
+              {rev.salesComposition ? (
+                <div>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Sales composition — gross sales, net sales and cash collected are three
+                    different numbers
+                  </p>
+                  <ul className="divide-y text-sm">
+                    {[
+                      ["Gross sales (before discount)", rev.salesComposition.grossSales],
+                      ["Discounts", -rev.salesComposition.discountTotal],
+                      ["Tax", rev.salesComposition.taxTotal],
+                      ["Service charge", rev.salesComposition.serviceChargeTotal],
+                      ["Net sales (billed)", rev.salesComposition.netSales],
+                      ["Cash collected", rev.salesComposition.cashCollected],
+                      [
+                        "Outstanding (billed, not yet collected)",
+                        rev.salesComposition.outstandingAmount,
+                      ],
+                    ].map(([label, value]) => (
+                      <li
+                        key={label as string}
+                        className="flex items-center justify-between gap-2 py-2"
+                      >
+                        <span>{label}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {money(value as number, rev.currency)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               <InsightList insights={rev.insights} />
               {rev.topContributors?.length > 0 ? (
                 <div>
@@ -707,20 +739,52 @@ function ProIntelligencePage() {
             ) : (
               <div className="space-y-4">
                 <InsightList insights={ml.insights} />
-                <ul className="divide-y text-sm">
-                  {ml.locations.map((l: any) => (
-                    <li
-                      key={l.locationId}
-                      className="flex flex-wrap items-center justify-between gap-2 py-2"
-                    >
-                      <span className="font-medium">{l.name}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {money(l.revenue, ml.currency)} · {l.orders} orders ·{" "}
-                        {l.atRiskInventoryCount} at risk
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                {ml.propertyRollups?.length > 0 ? (
+                  <div>
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      By property (enterprise portfolio)
+                    </p>
+                    <ul className="divide-y text-sm">
+                      {ml.propertyRollups.map((p: any) => (
+                        <li
+                          key={p.propertyId}
+                          className="flex flex-wrap items-center justify-between gap-2 py-2"
+                        >
+                          <span className="font-medium">
+                            {p.name}
+                            {p.propertyId === ml.bestPerformingProperty ? " — top" : ""}
+                            {p.propertyId === ml.worstPerformingProperty
+                              ? " — needs attention"
+                              : ""}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {money(p.revenue, ml.currency)} · {p.outletCount} outlet(s) · {p.orders}{" "}
+                            orders · {p.atRiskInventoryCount} at risk
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                <div>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    By outlet
+                  </p>
+                  <ul className="divide-y text-sm">
+                    {ml.locations.map((l: any) => (
+                      <li
+                        key={l.locationId}
+                        className="flex flex-wrap items-center justify-between gap-2 py-2"
+                      >
+                        <span className="font-medium">{l.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {money(l.revenue, ml.currency)} · {l.orders} orders ·{" "}
+                          {l.atRiskInventoryCount} at risk
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             )
           ) : (

@@ -223,7 +223,9 @@ describe("stageProductStationRow", () => {
       {
         menuItems,
         stations,
-        existingProducts: [{ id: "prod-1", menu_item_id: "mi-1", station_id: "st-1" }],
+        existingProducts: [
+          { id: "prod-1", menu_item_id: "mi-1", station_id: "st-1", sku: "PROD-1" },
+        ],
       },
     );
     expect(r.matchStatus).toBe("exact_match");
@@ -253,7 +255,7 @@ describe("stageProductStationRow", () => {
 
 describe("stageVariantRow", () => {
   const menuItems = [{ id: "mi-1", name: "Grilled Chicken", menu_id: "menu-1" }];
-  const products = [{ id: "prod-1", menu_item_id: "mi-1", station_id: "st-1" }];
+  const products = [{ id: "prod-1", menu_item_id: "mi-1", station_id: "st-1", sku: "PROD-1" }];
 
   it("stages a new variant once the product/station link exists", () => {
     const r = stageVariantRow(
@@ -405,7 +407,7 @@ describe("stageModifierRow", () => {
 
 describe("stageProductModifierGroupRow", () => {
   const menuItems = [{ id: "mi-1", name: "Grilled Chicken", menu_id: "menu-1" }];
-  const products = [{ id: "prod-1", menu_item_id: "mi-1", station_id: "st-1" }];
+  const products = [{ id: "prod-1", menu_item_id: "mi-1", station_id: "st-1", sku: "PROD-1" }];
   const modifierGroups = [{ id: "mg-1", code: "SPICE", name: "Spice level" }];
 
   it("links an existing product to an existing modifier group", () => {

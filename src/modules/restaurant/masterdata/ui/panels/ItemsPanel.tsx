@@ -26,6 +26,8 @@ const empty = {
   purchaseUnitId: "" as string | null,
   consumptionUnitId: "" as string | null,
   packSize: 1,
+  contentPerStockUnit: null as number | null,
+  contentUnitId: "" as string | null,
   currentQuantity: 0,
   parLevel: 0,
   reorderPoint: 0,
@@ -61,6 +63,26 @@ export function ItemsPanel({ tenantId, data }: { tenantId: string; data: MasterD
     value: u.id,
     label: `${u.name} (${u.code})`,
   }));
+  const unitById = new Map((data.units ?? []).map((u) => [u.id, u]));
+
+  const stockUnitRow = form.unitId ? unitById.get(form.unitId) : undefined;
+  const purchaseUnitRow = form.purchaseUnitId ? unitById.get(form.purchaseUnitId) : undefined;
+  const consumptionUnitRow = form.consumptionUnitId
+    ? unitById.get(form.consumptionUnitId)
+    : undefined;
+  const contentUnitRow = form.contentUnitId ? unitById.get(form.contentUnitId) : undefined;
+  // The stock unit is a physical container (a bottle, a can, a sack) whose
+  // own content is a different physical quantity than the consumption unit
+  // it is poured/portioned into — that gap is what "content per stock unit"
+  // bridges. A discrete item (PC stocked and consumed in PC) needs no
+  // bridge: direct conversion already works.
+  const needsContentBridge =
+    Boolean(stockUnitRow) &&
+    Boolean(consumptionUnitRow) &&
+    stockUnitRow!.dimension !== consumptionUnitRow!.dimension;
+  const contentPartiallyConfigured =
+    (form.contentPerStockUnit != null && form.contentPerStockUnit > 0) !==
+    Boolean(form.contentUnitId);
 
   function openCreate() {
     setEditing(null);
@@ -79,6 +101,9 @@ export function ItemsPanel({ tenantId, data }: { tenantId: string; data: MasterD
       purchaseUnitId: i.purchase_unit_id ?? null,
       consumptionUnitId: i.consumption_unit_id ?? null,
       packSize: Number(i.pack_size ?? 1),
+      contentPerStockUnit:
+        i.content_per_stock_unit == null ? null : Number(i.content_per_stock_unit),
+      contentUnitId: i.content_unit_id ?? null,
       currentQuantity: i.current_quantity ?? 0,
       parLevel: i.par_level ?? 0,
       reorderPoint: i.reorder_point ?? 0,
@@ -129,6 +154,9 @@ export function ItemsPanel({ tenantId, data }: { tenantId: string; data: MasterD
                 purchaseUnitId: i.purchase_unit_id ?? undefined,
                 consumptionUnitId: i.consumption_unit_id ?? undefined,
                 packSize: Number(i.pack_size ?? 1),
+                contentPerStockUnit:
+                  i.content_per_stock_unit == null ? undefined : Number(i.content_per_stock_unit),
+                contentUnitId: i.content_unit_id ?? undefined,
                 status: active ? "active" : "inactive",
               } as never,
             });
@@ -160,11 +188,16 @@ export function ItemsPanel({ tenantId, data }: { tenantId: string; data: MasterD
               purchaseUnitId: form.purchaseUnitId || undefined,
               consumptionUnitId: form.consumptionUnitId || undefined,
               packSize: form.packSize,
+              contentPerStockUnit:
+                form.contentPerStockUnit != null && form.contentPerStockUnit > 0
+                  ? form.contentPerStockUnit
+                  : undefined,
+              contentUnitId: form.contentUnitId || undefined,
             },
           })
         }
         pending={mutation.isPending}
-        disabled={!form.name || !(form.packSize > 0)}
+        disabled={!form.name || !(form.packSize > 0) || contentPartiallyConfigured}
       >
         <FieldRow>
           <Field label="Name" required>
@@ -232,6 +265,58 @@ export function ItemsPanel({ tenantId, data }: { tenantId: string; data: MasterD
             />
           </Field>
         </FieldRow>
+
+        {needsContentBridge ? (
+          <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+            <div>
+              <p className="text-sm font-medium">Packaging &amp; conversion</p>
+              <p className="text-xs text-muted-foreground">
+                {stockUnitRow?.name ?? "The stock unit"} is a container — this is how much{" "}
+                {consumptionUnitRow?.name.toLowerCase() ?? "consumption quantity"} is inside one.
+              </p>
+            </div>
+            <FieldRow>
+              <Field
+                label="Content per stock unit"
+                hint="How much consumable quantity is contained in one stock unit."
+              >
+                <QuantityField
+                  value={form.contentPerStockUnit ?? 0}
+                  onChange={(v) =>
+                    setForm((f) => ({ ...f, contentPerStockUnit: v > 0 ? v : null }))
+                  }
+                  step={50}
+                  suffix={contentUnitRow?.code ?? ""}
+                />
+              </Field>
+              <Field label="Content unit">
+                <SearchSelect
+                  options={unitOptions}
+                  value={form.contentUnitId}
+                  onChange={(v) => setForm((f) => ({ ...f, contentUnitId: v }))}
+                  placeholder="Select unit"
+                />
+              </Field>
+            </FieldRow>
+            {form.contentPerStockUnit &&
+            form.contentPerStockUnit > 0 &&
+            form.contentUnitId &&
+            contentUnitRow ? (
+              <p className="text-sm font-medium text-foreground">
+                1 {purchaseUnitRow?.name ?? "Purchase unit"} = {form.packSize}{" "}
+                {stockUnitRow?.name ?? "Stock units"} ={" "}
+                {(form.packSize * form.contentPerStockUnit).toLocaleString()}{" "}
+                {contentUnitRow.code.toUpperCase()}
+              </p>
+            ) : (
+              <p className="text-xs text-[color:var(--os-warn)]">
+                This item uses a liquid/mass consumption unit but its container content has not been
+                configured yet. Bar Pour Setup cannot make an active pour until this is set.
+              </p>
+            )}
+          </div>
+        ) : null}
+
         <FieldRow>
           <Field label="Opening quantity">
             <QuantityField

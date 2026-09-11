@@ -18,13 +18,21 @@ const TENANT = "11111111-1111-1111-1111-111111111111";
 const USER = "22222222-2222-2222-2222-222222222222";
 const LOCATION = "33333333-3333-3333-3333-333333333333";
 
-function makeFakeSupabase(opts: { existingBarcode?: string } = {}) {
+const UNITS = [
+  { id: "unit-ml", code: "ML", name: "Millilitre", dimension: "volume" },
+  { id: "unit-l", code: "L", name: "Litre", dimension: "volume" },
+  { id: "unit-kg", code: "KG", name: "Kilogram", dimension: "mass" },
+  { id: "unit-btl", code: "BTL", name: "Bottle", dimension: "count" },
+];
+
+function makeFakeSupabase(opts: { existingBarcode?: string; role?: string } = {}) {
   const items: Record<string, any> = {};
   const movements: any[] = [];
   let seq = 0;
 
   function builder(table: string) {
     const filters: Record<string, unknown> = {};
+    const inFilters: Record<string, unknown[]> = {};
     let op: "select" | "update" | "insert" = "select";
     let payload: any;
 
@@ -32,6 +40,10 @@ function makeFakeSupabase(opts: { existingBarcode?: string } = {}) {
       select: () => api,
       eq: (col: string, val: unknown) => {
         filters[col] = val;
+        return api;
+      },
+      in: (col: string, vals: unknown[]) => {
+        inFilters[col] = vals;
         return api;
       },
       update: (patch: any) => {
@@ -50,9 +62,12 @@ function makeFakeSupabase(opts: { existingBarcode?: string } = {}) {
     };
 
     async function resolve() {
+      if (table === "restaurant_inventory_units") {
+        return { data: UNITS.filter((u) => inFilters.id?.includes(u.id)), error: null };
+      }
       if (table === "restaurant_members")
         return {
-          data: [{ tenant_id: TENANT, user_id: USER, role: "inventory_manager" }],
+          data: [{ tenant_id: TENANT, user_id: USER, role: opts.role ?? "inventory_manager" }],
           error: null,
         };
 
@@ -407,5 +422,149 @@ describe("upsertInventoryItem — pack size is real conversion configuration, ne
     } as any);
     expect(fake.items[created.id].pack_size).toBe(5);
     expect(fake.items[created.id].name).toBe("Cooking oil (sunflower)");
+  });
+});
+
+describe("upsertInventoryItem — Section 18 scenarios 9/10/14/15: packaging content is never guessed", () => {
+  it("Section 16 — persists content_per_stock_unit and content_unit_id for a bottled beverage, exactly as configured", async () => {
+    const fake = makeFakeSupabase();
+    const result = await upsertInventoryItem(fake.supabase, USER, {
+      tenantId: TENANT,
+      name: "House Red Wine 750ml",
+      itemType: "beverage",
+      unitId: "unit-btl",
+      consumptionUnitId: "unit-ml",
+      contentPerStockUnit: 750,
+      contentUnitId: "unit-ml",
+      currentQuantity: 0,
+      averageCost: 8000,
+      currency: "TZS",
+      trackBatches: false,
+      allowNegative: false,
+      packSize: 12,
+    } as any);
+    expect(fake.items[result.id].content_per_stock_unit).toBe(750);
+    expect(fake.items[result.id].content_unit_id).toBe("unit-ml");
+  });
+
+  it("scenario — refuses a quantity without a unit ('provide both, or neither')", async () => {
+    const fake = makeFakeSupabase();
+    await expect(
+      upsertInventoryItem(fake.supabase, USER, {
+        tenantId: TENANT,
+        name: "House Red Wine 750ml",
+        itemType: "beverage",
+        unitId: "unit-btl",
+        contentPerStockUnit: 750,
+        // contentUnitId intentionally omitted
+        currentQuantity: 0,
+        averageCost: 8000,
+        currency: "TZS",
+        trackBatches: false,
+        allowNegative: false,
+        packSize: 12,
+      } as any),
+    ).rejects.toThrow(/provide both, or neither/i);
+  });
+
+  it("scenario — refuses a unit without a quantity", async () => {
+    const fake = makeFakeSupabase();
+    await expect(
+      upsertInventoryItem(fake.supabase, USER, {
+        tenantId: TENANT,
+        name: "House Red Wine 750ml",
+        itemType: "beverage",
+        unitId: "unit-btl",
+        contentUnitId: "unit-ml",
+        currentQuantity: 0,
+        averageCost: 8000,
+        currency: "TZS",
+        trackBatches: false,
+        allowNegative: false,
+        packSize: 12,
+      } as any),
+    ).rejects.toThrow(/provide both, or neither/i);
+  });
+
+  it("Section 18 scenario 10 — refuses a content unit whose dimension is incompatible with the consumption unit, never guessing a conversion", async () => {
+    const fake = makeFakeSupabase();
+    await expect(
+      upsertInventoryItem(fake.supabase, USER, {
+        tenantId: TENANT,
+        name: "Flour 25kg bag",
+        itemType: "ingredient",
+        unitId: "unit-btl", // stand-in stock unit
+        consumptionUnitId: "unit-kg", // mass
+        contentPerStockUnit: 25,
+        contentUnitId: "unit-ml", // volume — incompatible with kg
+        currentQuantity: 0,
+        averageCost: 0,
+        currency: "TZS",
+        trackBatches: false,
+        allowNegative: false,
+        packSize: 1,
+      } as any),
+    ).rejects.toThrow(/not compatible/i);
+  });
+
+  it("Section 18 scenario 15 — editing unrelated item metadata never touches an already-configured content conversion", async () => {
+    const fake = makeFakeSupabase();
+    const created = await upsertInventoryItem(fake.supabase, USER, {
+      tenantId: TENANT,
+      name: "House Red Wine 750ml",
+      itemType: "beverage",
+      unitId: "unit-btl",
+      consumptionUnitId: "unit-ml",
+      contentPerStockUnit: 750,
+      contentUnitId: "unit-ml",
+      currentQuantity: 0,
+      averageCost: 8000,
+      currency: "TZS",
+      trackBatches: false,
+      allowNegative: false,
+      packSize: 12,
+    } as any);
+    expect(fake.items[created.id].content_per_stock_unit).toBe(750);
+
+    // Editing the reorder point (content fields omitted from this payload
+    // entirely) must leave the previously-configured conversion untouched —
+    // an omitted field is "don't touch", never a silent reset to null.
+    await upsertInventoryItem(fake.supabase, USER, {
+      tenantId: TENANT,
+      id: created.id,
+      name: "House Red Wine 750ml",
+      itemType: "beverage",
+      unitId: "unit-btl",
+      consumptionUnitId: "unit-ml",
+      reorderPoint: 6,
+      currentQuantity: 0,
+      averageCost: 8000,
+      currency: "TZS",
+      trackBatches: false,
+      allowNegative: false,
+      packSize: 12,
+    } as any);
+    expect(fake.items[created.id].content_per_stock_unit).toBe(750);
+    expect(fake.items[created.id].content_unit_id).toBe("unit-ml");
+    expect(fake.items[created.id].reorder_point).toBe(6);
+  });
+
+  it("Section 18 scenario 14 — capability enforcement is unchanged: a member without inventory.manage is still rejected", async () => {
+    const fake = makeFakeSupabase({ role: "server" }); // no inventory.manage grant
+    await expect(
+      upsertInventoryItem(fake.supabase, USER, {
+        tenantId: TENANT,
+        name: "House Red Wine 750ml",
+        itemType: "beverage",
+        contentPerStockUnit: 750,
+        contentUnitId: "unit-ml",
+        currentQuantity: 0,
+        averageCost: 8000,
+        currency: "TZS",
+        trackBatches: false,
+        allowNegative: false,
+        packSize: 12,
+      } as any),
+    ).rejects.toThrow();
   });
 });

@@ -35,7 +35,7 @@ import {
   versionRestaurantRecipeFn,
   listRestaurantModifierGroupsFn,
 } from "@/modules/restaurant/products/catalog.functions";
-import { ChefHat, Factory, Package, Plus, TrendingUp } from "lucide-react";
+import { ChefHat, Factory, Package, Plus, TrendingUp, Unlink } from "lucide-react";
 import { hasRestaurantCapability } from "@/modules/restaurant/core/permissions";
 import { ProductSheet } from "@/modules/restaurant/products/ui/ProductSheet";
 import { VariantSheet } from "@/modules/restaurant/products/ui/VariantSheet";
@@ -243,7 +243,7 @@ function ProductRecipeCentre() {
         description="Purchase → inventory → recipe → production → product → sale → actual cost. Recipes are versioned; published versions are never rewritten."
       />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard
           label="Products"
           value={ev?.counts?.products ?? productRows.length}
@@ -267,6 +267,12 @@ function ProductRecipeCentre() {
           value={ev?.missing_recipes?.length ?? 0}
           icon={TrendingUp}
           tone={(ev?.missing_recipes?.length ?? 0) > 0 ? "warn" : "neutral"}
+        />
+        <StatCard
+          label="Menu items with no product"
+          value={ev?.orphaned_menu_items?.length ?? 0}
+          icon={Unlink}
+          tone={(ev?.orphaned_menu_items?.length ?? 0) > 0 ? "warn" : "neutral"}
         />
       </div>
 
@@ -574,6 +580,29 @@ function ProductRecipeCentre() {
                       {row.drift_percent != null
                         ? ` (${row.drift_percent > 0 ? "+" : ""}${row.drift_percent}%)`
                         : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Menu items with no product"
+            description="Sellable, published menu items with no restaurant_products row at all — invisible to Pricing Centre and POS costing even if their recipe is active and fully costed. Open Products and link one to close the gap."
+          >
+            {(ev?.orphaned_menu_items ?? []).length === 0 ? (
+              <EmptyState
+                title="Every published menu item is linked"
+                description="No commercially orphaned menu items right now."
+              />
+            ) : (
+              <ul className="divide-y text-sm">
+                {(ev?.orphaned_menu_items ?? []).map((row: any) => (
+                  <li key={row.menu_item_id} className="flex items-center justify-between py-2">
+                    <span>{row.name}</span>
+                    <span className="text-xs text-destructive">
+                      {money(row.price, row.currency)}
                     </span>
                   </li>
                 ))}

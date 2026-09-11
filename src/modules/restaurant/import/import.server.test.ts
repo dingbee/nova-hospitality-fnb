@@ -35,6 +35,7 @@ function resetDb() {
   db.restaurant_inventory_items = [];
   db.restaurant_inventory_categories = [];
   db.restaurant_categories = [];
+  db.restaurant_menus = [];
   db.restaurant_menu_items = [];
   db.restaurant_supplier_products = [];
   db.restaurant_locations = [{ id: "loc-1", name: "Dry Store", tenant_id: TENANT }];
@@ -328,11 +329,33 @@ vi.mock("../inventory/inventory.server", () => ({
 vi.mock("../menu/menu.server", () => ({
   upsertMenu: vi.fn(async (_sb: any, _u: string, input: any) => {
     const row = {
-      id: nextId("menu"),
+      id: input.id ?? nextId("menu"),
       tenant_id: input.tenantId,
       name: input.name,
+      slug: input.slug,
       status: input.status,
     };
+    const existingIdx = db.restaurant_menus!.findIndex((r) => r.id === row.id);
+    if (existingIdx >= 0)
+      db.restaurant_menus![existingIdx] = { ...db.restaurant_menus![existingIdx], ...row };
+    else db.restaurant_menus!.push(row);
+    return row;
+  }),
+  upsertCategory: vi.fn(async (_sb: any, _u: string, input: any) => {
+    const row = {
+      id: input.id ?? nextId("cat"),
+      tenant_id: input.tenantId,
+      name: input.name,
+      slug: input.slug,
+      kind: input.kind,
+    };
+    const existingIdx = db.restaurant_categories!.findIndex((r) => r.id === row.id);
+    if (existingIdx >= 0)
+      db.restaurant_categories![existingIdx] = {
+        ...db.restaurant_categories![existingIdx],
+        ...row,
+      };
+    else db.restaurant_categories!.push(row);
     return row;
   }),
   upsertMenuItem: vi.fn(async (_sb: any, _u: string, input: any) => {
@@ -492,6 +515,11 @@ import {
   suggestImportMapping,
   uploadImportSource,
 } from "./import.server";
+import {
+  analyzeLexibiteTemplateUpload,
+  commitLexibiteTemplateImport,
+} from "./template-import.server";
+import { lexibiteTemplateBase64 } from "./template-xlsx";
 
 beforeEach(() => {
   resetDb();
@@ -1558,5 +1586,76 @@ describe("pre-freeze cleanup — controlled small import regression (spec sectio
     expect(summary.byDomain.supplier_product).toBe(1);
     expect(summary.byDomain.menu_item).toBe(1);
     expect(summary.byDomain.recipe_component).toBe(1);
+  });
+});
+
+describe("LexiBite template deterministic import — end to end", () => {
+  it("imports the real generated template into a brand-new tenant across every domain, resolving forward references via multi-round staging", async () => {
+    const base64 = lexibiteTemplateBase64();
+
+    const analysis = await analyzeLexibiteTemplateUpload(sb, USER, {
+      tenantId: TENANT,
+      fileBase64: base64,
+    });
+    expect(analysis.isTemplate).toBe(true);
+    expect(analysis.detection.markerFound).toBe(true);
+    expect(analysis.ready).toBe(true);
+    expect(analysis.issues.filter((i) => i.severity === "needs_attention")).toEqual([]);
+
+    const result = await commitLexibiteTemplateImport(sb, USER, {
+      tenantId: TENANT,
+      workspaceName: "LexiBite Template Import",
+      fileBase64: base64,
+    });
+
+    expect(result.summary.failed).toBe(0);
+    // Menu -> menu_item -> product_station -> {variant, recipe_component,
+    // product_modifier_group} is a four-level chain against a brand-new,
+    // empty tenant — this can only fully commit across multiple rounds.
+    expect(result.rounds).toBeGreaterThan(1);
+
+    expect(db.restaurant_suppliers).toHaveLength(1);
+    expect(db.restaurant_inventory_items).toHaveLength(3);
+    expect(db.restaurant_supplier_products).toHaveLength(1);
+    expect(db.restaurant_menus).toHaveLength(1);
+    expect(db.restaurant_categories).toHaveLength(1);
+    expect(db.restaurant_menu_items).toHaveLength(1);
+    expect(db.restaurant_products).toHaveLength(1);
+    expect(db.restaurant_product_variants).toHaveLength(1);
+    expect(db.restaurant_modifier_groups).toHaveLength(1);
+    expect(db.restaurant_modifiers).toHaveLength(1);
+    expect(db.restaurant_product_modifier_groups).toHaveLength(1);
+    expect(recipeComponents).toHaveLength(2);
+
+    // The wine's packaging semantics landed on the real inventory columns,
+    // not folded into pack size — the exact distinction Part 4 of the spec
+    // calls out as the one thing the importer must never confuse.
+    const wine = db.restaurant_inventory_items!.find((r) => r.sku === "WINE-RED-750");
+    expect(wine).toBeTruthy();
+  });
+
+  it("refuses to run the deterministic path against a workbook that is not a LexiBite template", async () => {
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["Product", "Qty"],
+      ["Widget", "5"],
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    const base64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
+
+    const analysis = await analyzeLexibiteTemplateUpload(sb, USER, {
+      tenantId: TENANT,
+      fileBase64: base64,
+    });
+    expect(analysis.isTemplate).toBe(false);
+
+    await expect(
+      commitLexibiteTemplateImport(sb, USER, {
+        tenantId: TENANT,
+        workspaceName: "x",
+        fileBase64: base64,
+      }),
+    ).rejects.toThrow(/not recognised as a LexiBite Import Template/);
   });
 });

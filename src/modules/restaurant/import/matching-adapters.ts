@@ -38,10 +38,21 @@ export interface ProductRow {
   id: string;
   menu_item_id: string | null;
   station_id: string | null;
+  sku: string | null;
 }
 export interface ModifierGroupRow {
   id: string;
   code: string;
+  name: string;
+}
+export interface MenuRow {
+  id: string;
+  slug: string;
+  name: string;
+}
+export interface CategoryRow {
+  id: string;
+  slug: string;
   name: string;
 }
 
@@ -75,6 +86,27 @@ export function modifierGroupCandidates(
   rows: readonly ModifierGroupRow[],
 ): CatalogMatchCandidate[] {
   return rows.map((r) => ({ id: r.id, sku: r.code, name: r.name }));
+}
+
+/**
+ * Products (the menu-item ↔ station bridge row) are matched by their own
+ * tenant-unique SKU — the "Item Code" a LexiBite template row cross-
+ * references directly, rather than the dish's name. A product with no sku
+ * yet (should not normally happen — product_station always sets one) falls
+ * back to its own id so it can never accidentally collide with a real code.
+ */
+export function productCandidates(rows: readonly ProductRow[]): CatalogMatchCandidate[] {
+  return rows.map((r) => ({ id: r.id, sku: r.sku ?? r.id, name: r.sku ?? r.id }));
+}
+
+/** Menus are matched by their tenant-unique slug (the LexiBite template's Menu Code, normalised). */
+export function menuCandidates(rows: readonly MenuRow[]): CatalogMatchCandidate[] {
+  return rows.map((r) => ({ id: r.id, sku: r.slug, name: r.name }));
+}
+
+/** Categories are matched by their tenant-unique (per kind) slug — the LexiBite template's Category Code, normalised. */
+export function categoryCandidates(rows: readonly CategoryRow[]): CatalogMatchCandidate[] {
+  return rows.map((r) => ({ id: r.id, sku: r.slug, name: r.name }));
 }
 
 /** Best match, or null when nothing scores above the floor — never a forced pick. */

@@ -52,6 +52,15 @@ function baseRevenue(overrides: Partial<RevenueIntelligence> = {}): RevenueIntel
     revenueTrendPercent: 4,
     totalOrders: 40,
     averageOrderValue: 12500,
+    salesComposition: {
+      grossSales: 520000,
+      discountTotal: 20000,
+      taxTotal: 0,
+      serviceChargeTotal: 0,
+      netSales: 500000,
+      cashCollected: 500000,
+      outstandingAmount: 0,
+    },
     series: [],
     byServicePeriod: [],
     topContributors: [],
@@ -135,6 +144,9 @@ describe("revenueUnderperformanceFindings", () => {
       locations: [],
       bestPerforming: "loc-a",
       worstPerforming: "loc-b",
+      propertyRollups: [],
+      bestPerformingProperty: null,
+      worstPerformingProperty: null,
       insights: [
         {
           key: "multi_location.underperformer.loc-b",

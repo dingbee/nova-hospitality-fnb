@@ -97,6 +97,99 @@ describe("getMultiLocationIntelligence — correctness", () => {
   });
 });
 
+describe("getMultiLocationIntelligence — P09 property rollups", () => {
+  it("groups outlet summaries into property rollups, correctly attributing revenue by property", async () => {
+    const sb = createP05FakeSupabase({
+      restaurant_members: [OWNER_MEMBER],
+      restaurant_properties: [
+        { id: "prop-a", tenant_id: TENANT_A, name: "Kilimanjaro Grill" },
+        { id: "prop-b", tenant_id: TENANT_A, name: "Serengeti Bistro" },
+      ],
+      restaurant_locations: [
+        { id: "loc-a1", tenant_id: TENANT_A, name: "Grill West", property_id: "prop-a" },
+        { id: "loc-a2", tenant_id: TENANT_A, name: "Grill East", property_id: "prop-a" },
+        { id: "loc-b1", tenant_id: TENANT_A, name: "Bistro Main", property_id: "prop-b" },
+      ],
+      restaurant_orders: [
+        {
+          id: "o1",
+          tenant_id: TENANT_A,
+          location_id: "loc-a1",
+          total: 30000,
+          currency: "TZS",
+          status: "closed",
+          payment_state: "paid",
+          opened_at: iso(1),
+        },
+        {
+          id: "o2",
+          tenant_id: TENANT_A,
+          location_id: "loc-a2",
+          total: 20000,
+          currency: "TZS",
+          status: "closed",
+          payment_state: "paid",
+          opened_at: iso(1),
+        },
+        {
+          id: "o3",
+          tenant_id: TENANT_A,
+          location_id: "loc-b1",
+          total: 5000,
+          currency: "TZS",
+          status: "closed",
+          payment_state: "paid",
+          opened_at: iso(1),
+        },
+      ],
+    });
+    const result = await getMultiLocationIntelligence(sb, OWNER, {
+      tenantId: TENANT_A,
+      windowDays: 30,
+    });
+    expect(result.propertyRollups).toEqual([
+      {
+        propertyId: "prop-a",
+        name: "Kilimanjaro Grill",
+        revenue: 50000,
+        orders: 2,
+        atRiskInventoryCount: 0,
+        outletCount: 2,
+      },
+      {
+        propertyId: "prop-b",
+        name: "Serengeti Bistro",
+        revenue: 5000,
+        orders: 1,
+        atRiskInventoryCount: 0,
+        outletCount: 1,
+      },
+    ]);
+    expect(result.bestPerformingProperty).toBe("prop-a");
+    expect(result.worstPerformingProperty).toBe("prop-b");
+    expect(
+      result.insights.some((i) => i.key.startsWith("multi_location.property_underperformance")),
+    ).toBe(true);
+  });
+
+  it("returns an empty property rollup for a single-property tenant rather than a fabricated one-item list", async () => {
+    const sb = createP05FakeSupabase({
+      restaurant_members: [OWNER_MEMBER],
+      restaurant_locations: [
+        { id: "loc-a", tenant_id: TENANT_A, name: "Downtown", property_id: "prop-only" },
+        { id: "loc-b", tenant_id: TENANT_A, name: "Uptown", property_id: "prop-only" },
+      ],
+      restaurant_orders: [],
+    });
+    const result = await getMultiLocationIntelligence(sb, OWNER, {
+      tenantId: TENANT_A,
+      windowDays: 30,
+    });
+    expect(result.propertyRollups).toEqual([]);
+    expect(result.bestPerformingProperty).toBeNull();
+  });
+});
+
 describe("getMultiLocationIntelligence — entitlement & isolation", () => {
   it("hard-denies a caller not entitled to multi_location_command (no narrowed fallback)", async () => {
     const { CommercialEntitlementError } = await import("@/modules/commercial/resolver.server");
@@ -135,5 +228,48 @@ describe("getMultiLocationIntelligence — entitlement & isolation", () => {
       windowDays: 30,
     });
     expect(result.locations.map((l) => l.locationId)).toEqual(["loc-mine"]);
+  });
+
+  it("P09 — a caller scoped to one property never sees another property's rollup, even in aggregate", async () => {
+    const scopedMember = {
+      tenant_id: TENANT_A,
+      user_id: OWNER,
+      role: "owner",
+      property_id: "prop-mine",
+    };
+    const sb = createP05FakeSupabase({
+      restaurant_members: [scopedMember],
+      restaurant_properties: [
+        { id: "prop-mine", tenant_id: TENANT_A, name: "Mine" },
+        { id: "prop-other", tenant_id: TENANT_A, name: "Other" },
+      ],
+      restaurant_locations: [
+        { id: "loc-mine-1", tenant_id: TENANT_A, name: "Mine 1", property_id: "prop-mine" },
+        { id: "loc-mine-2", tenant_id: TENANT_A, name: "Mine 2", property_id: "prop-mine" },
+        { id: "loc-other", tenant_id: TENANT_A, name: "Other outlet", property_id: "prop-other" },
+      ],
+      restaurant_orders: [
+        {
+          id: "o-other",
+          tenant_id: TENANT_A,
+          location_id: "loc-other",
+          total: 999999,
+          currency: "TZS",
+          status: "closed",
+          payment_state: "paid",
+          opened_at: iso(1),
+        },
+      ],
+    });
+    const result = await getMultiLocationIntelligence(sb, OWNER, {
+      tenantId: TENANT_A,
+      windowDays: 30,
+    });
+    // Two accessible outlets, both under prop-mine — a single accessible
+    // property produces no rollup at all (nothing to compare), and
+    // prop-other's 999999 revenue must never surface anywhere in the result.
+    expect(result.propertyRollups).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain("prop-other");
+    expect(JSON.stringify(result)).not.toContain("999999");
   });
 });

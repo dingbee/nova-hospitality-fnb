@@ -101,23 +101,127 @@ export function describeConversion(result: ConversionResult): string {
 }
 
 /**
+ * A quantity already in the item's own packaging content unit (e.g. ml for
+ * a bottle whose content is declared in ml), converted into stock units via
+ * that item's `content_per_stock_unit` — the bridge for a stock unit that is
+ * a physical container (a bottle, a can, a sack) rather than itself a
+ * dimensional unit convertUnits can reason about. `contentPerStockUnit`
+ * must be a positive, already-validated fact (see
+ * restaurant_inventory_items.content_per_stock_unit) — this function never
+ * guesses one.
+ */
+export function consumptionToStockViaContent(
+  quantity: number,
+  fromUnit: UnitRow | undefined,
+  contentUnit: UnitRow | undefined,
+  contentPerStockUnit: number | null | undefined,
+  stockUnit: UnitRow | undefined,
+): ConversionResult {
+  const content = Number(contentPerStockUnit ?? 0);
+  if (!(content > 0) || !contentUnit) {
+    return {
+      quantity,
+      steps: [],
+      exact: false,
+      reason: "This item's packaging content (e.g. ml per bottle) has not been configured.",
+    };
+  }
+  const toContentUnit = convertUnits(quantity, fromUnit, contentUnit);
+  if (!toContentUnit.exact) return toContentUnit;
+  return {
+    quantity: toContentUnit.quantity / content,
+    steps: [
+      ...toContentUnit.steps,
+      {
+        label: "content",
+        from: contentUnit.code,
+        to: stockUnit?.code ?? "stock unit",
+        factor: 1 / content,
+      },
+    ],
+    exact: true,
+  };
+}
+
+/**
+ * The reverse of `consumptionToStockViaContent`: one stock unit (a bottle),
+ * expressed in whichever unit the caller wants (ml, a serving unit, …) via
+ * the item's own declared content.
+ */
+export function stockToConsumptionViaContent(
+  quantity: number,
+  stockUnit: UnitRow | undefined,
+  contentPerStockUnit: number | null | undefined,
+  contentUnit: UnitRow | undefined,
+  toUnit: UnitRow | undefined,
+): ConversionResult {
+  const content = Number(contentPerStockUnit ?? 0);
+  if (!(content > 0) || !contentUnit) {
+    return {
+      quantity,
+      steps: [],
+      exact: false,
+      reason: "This item's packaging content (e.g. ml per bottle) has not been configured.",
+    };
+  }
+  const contentQty = quantity * content;
+  const converted = convertUnits(contentQty, contentUnit, toUnit);
+  if (!converted.exact) return converted;
+  return {
+    quantity: converted.quantity,
+    steps: [
+      {
+        label: "content",
+        from: stockUnit?.code ?? "stock unit",
+        to: contentUnit.code,
+        factor: content,
+      },
+      ...converted.steps,
+    ],
+    exact: true,
+  };
+}
+
+/**
  * Convert a recipe/modifier component's quantity — expressed in whichever
  * unit the line was written in — into the inventory item's own stock unit,
  * the unit `average_cost` is priced per. A component with no unit of its
  * own, or one that already matches the item's stock unit, is a no-op: most
- * lines are entered directly in stock units and never need this. A real
- * dimension mismatch (a KG item's line entered in PC, say) is a modelling
- * error — callers get `exact: false` and decide how to surface it, the same
- * contract convertUnits already gives receiving.server.ts.
+ * lines are entered directly in stock units and never need this.
+ *
+ * A direct dimensional conversion (component unit -> stock unit) is tried
+ * first, exactly as before. When that fails — the ordinary case for a
+ * physical-container stock unit like a bottle, which is not itself a
+ * volume/mass/count unit convertUnits can reason about — and the item has
+ * declared its own packaging content (content_per_stock_unit +
+ * content_unit_id), the conversion is retried through that content as the
+ * bridge (component unit -> content unit -> stock units). An item with
+ * neither a direct match nor a declared content still gets the original
+ * `exact: false` + reason: this never guesses a conversion.
  */
 export function componentToStock(
   quantity: number,
   componentUnitId: string | null | undefined,
-  item: { unit_id?: string | null | undefined },
+  item: {
+    unit_id?: string | null | undefined;
+    content_per_stock_unit?: number | null | undefined;
+    content_unit_id?: string | null | undefined;
+  },
   unitById: Map<string, UnitRow>,
 ): ConversionResult {
   if (!componentUnitId || !item.unit_id || componentUnitId === item.unit_id) {
     return { quantity, steps: [], exact: true };
   }
-  return convertUnits(quantity, unitById.get(componentUnitId), unitById.get(item.unit_id));
+  const direct = convertUnits(quantity, unitById.get(componentUnitId), unitById.get(item.unit_id));
+  if (direct.exact) return direct;
+  if (item.content_unit_id) {
+    return consumptionToStockViaContent(
+      quantity,
+      unitById.get(componentUnitId),
+      unitById.get(item.content_unit_id),
+      item.content_per_stock_unit,
+      unitById.get(item.unit_id),
+    );
+  }
+  return direct;
 }

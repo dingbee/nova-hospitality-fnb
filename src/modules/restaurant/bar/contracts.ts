@@ -144,15 +144,23 @@ export interface BarBeverage {
   averageCost: number;
   currency: string;
   stockUnitCode: string | null;
+  /** Container content (e.g. 750 ml per bottle) — read-only here, owned by the Stock Item. */
+  contentPerStockUnit: number | null;
+  contentUnitId: string | null;
+  contentUnitCode: string | null;
   servingSize: number | null;
   servingUnitId: string | null;
   servingUnitCode: string | null;
   poursPerStockUnit: number | null;
   stockPerPour: number | null;
   pourCost: number | null;
+  /** Cost per one unit of the container content (e.g. cost per ml). */
+  costPerContentUnit: number | null;
   poursAvailable: number | null;
   low: boolean;
   pourIssue?: string;
+  /** True when a liquid/mass consumption unit is configured but packaging content is missing. */
+  packagingConversionRequired?: boolean;
 }
 
 export interface BarVarianceRow {
@@ -183,7 +191,13 @@ export interface BarSnapshot {
   pendingRequisitions: Array<{ id: string; reference: string; status: string; createdAt: string }>;
   openTransfers: Array<{ id: string; transferNumber: string; status: string; createdAt: string }>;
   lowStock: Array<{ itemId: string; name: string; onHand: number; reorderPoint: number | null }>;
-  expiring: Array<{ batchId: string; itemName: string; batchNumber: string | null; expiryDate: string; quantity: number }>;
+  expiring: Array<{
+    batchId: string;
+    itemName: string;
+    batchNumber: string | null;
+    expiryDate: string;
+    quantity: number;
+  }>;
   sales: {
     currency: string;
     net: number;

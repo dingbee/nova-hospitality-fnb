@@ -133,6 +133,51 @@ describe("getRevenueIntelligence — correctness", () => {
     expect(result.insights.some((i) => i.key === "revenue.margin_unavailable")).toBe(true);
   });
 
+  it("P07: sales composition decomposes gross/discount/tax/service-charge/cash-collected independently of totalRevenue", async () => {
+    const orders = [
+      order(1, 11500, {
+        id: "o1",
+        subtotal: 12000,
+        discount_total: 1000,
+        tax_total: 400,
+        service_charge: 100,
+        paid_total: 11500,
+      }),
+      order(2, 5750, {
+        id: "o2",
+        subtotal: 6000,
+        discount_total: 500,
+        tax_total: 200,
+        service_charge: 50,
+        paid_total: 3000, // partially paid — must surface as outstanding, not hidden inside "revenue"
+      }),
+    ];
+    const sb = createP05FakeSupabase({
+      restaurant_members: [OWNER_MEMBER],
+      restaurant_orders: orders,
+      restaurant_locations: [],
+      restaurant_service_periods: [],
+      restaurant_order_items: [],
+      restaurant_profitability_snapshots: [],
+    });
+    const result = await getRevenueIntelligence(sb, OWNER, { tenantId: TENANT_A, windowDays: 30 });
+    expect(result.totalRevenue).toBe(17250); // 11500 + 5750 — unaffected by the new fields
+    expect(result.salesComposition).toEqual({
+      grossSales: 18000,
+      discountTotal: 1500,
+      taxTotal: 600,
+      serviceChargeTotal: 150,
+      netSales: 17250,
+      cashCollected: 14500,
+      outstandingAmount: 2750,
+    });
+    // The accounting identity the whole point of this block rests on.
+    const c = result.salesComposition;
+    expect(
+      Number((c.grossSales - c.discountTotal + c.taxTotal + c.serviceChargeTotal).toFixed(2)),
+    ).toBe(c.netSales);
+  });
+
   it("flags an outlet materially underperforming the group average", async () => {
     const orders = [
       order(1, 100000, { id: "o1", location_id: "loc-strong" }),

@@ -183,7 +183,9 @@ export async function consumeLineModifiers(
       if (demand <= 0) continue;
       const { data: item } = await sb
         .from("restaurant_inventory_items")
-        .select("id, name, average_cost, currency, location_id, property_id, unit_id")
+        .select(
+          "id, name, average_cost, currency, location_id, property_id, unit_id, content_per_stock_unit, content_unit_id",
+        )
         .eq("id", def.inventory_item_id)
         .single();
       const unitCost = Number(item?.average_cost ?? 0);

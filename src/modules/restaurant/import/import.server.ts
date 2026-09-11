@@ -16,7 +16,7 @@ import { convertUnits, type UnitRow } from "../inventory/units";
 import { insertMovement } from "../inventory/movements.server";
 import { upsertInventoryItem } from "../inventory/inventory.server";
 import { upsertSupplier, upsertSupplierProduct } from "../suppliers/suppliers.server";
-import { upsertMenu, upsertMenuItem } from "../menu/menu.server";
+import { upsertCategory, upsertMenu, upsertMenuItem } from "../menu/menu.server";
 import { upsertRecipeComponent } from "../costing/costing.server";
 import {
   attachModifierGroup,
@@ -37,8 +37,10 @@ import {
 import { suggestDomainViaAi, suggestFieldViaAi } from "./ai-assist";
 import { applyMapping } from "./normalize";
 import {
+  stageCategoryRow,
   stageInventoryItemRow,
   stageMenuItemRow,
+  stageMenuRow,
   stageModifierGroupRow,
   stageModifierRow,
   stageOpeningStockRow,
@@ -489,6 +491,7 @@ async function fetchRefData(sb: Sb, tenantId: string) {
     { data: inventoryItems },
     { data: units },
     { data: inventoryCategories },
+    { data: menus },
     { data: menuCategories },
     { data: menuItems },
     { data: supplierProducts },
@@ -510,9 +513,10 @@ async function fetchRefData(sb: Sb, tenantId: string) {
       .select("id, code, name, dimension, factor, base_unit_id")
       .or(`tenant_id.is.null,tenant_id.eq.${tenantId}`),
     sb.from("restaurant_inventory_categories").select("id, name").eq("tenant_id", tenantId),
+    sb.from("restaurant_menus").select("id, slug, name").eq("tenant_id", tenantId),
     sb
       .from("restaurant_categories")
-      .select("id, name")
+      .select("id, slug, name")
       .eq("tenant_id", tenantId)
       .eq("kind", "menu"),
     sb.from("restaurant_menu_items").select("id, name, menu_id").eq("tenant_id", tenantId),
@@ -522,7 +526,10 @@ async function fetchRefData(sb: Sb, tenantId: string) {
       .eq("tenant_id", tenantId),
     sb.from("restaurant_locations").select("id, name").eq("tenant_id", tenantId),
     sb.from("restaurant_stations").select("id, code, name").eq("tenant_id", tenantId),
-    sb.from("restaurant_products").select("id, menu_item_id, station_id").eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_products")
+      .select("id, menu_item_id, station_id, sku")
+      .eq("tenant_id", tenantId),
     sb.from("restaurant_product_variants").select("id, product_id, name").eq("tenant_id", tenantId),
     sb.from("restaurant_modifier_groups").select("id, code, name").eq("tenant_id", tenantId),
     sb.from("restaurant_modifiers").select("id, group_id, name").eq("tenant_id", tenantId),
@@ -536,6 +543,7 @@ async function fetchRefData(sb: Sb, tenantId: string) {
     inventoryItems: inventoryItems ?? [],
     units: (units ?? []) as UnitRow[],
     inventoryCategories: inventoryCategories ?? [],
+    menus: menus ?? [],
     menuCategories: menuCategories ?? [],
     menuItems: menuItems ?? [],
     supplierProducts: supplierProducts ?? [],
@@ -569,12 +577,18 @@ function stageRow(
         suppliers: ref.suppliers,
         inventoryItems: ref.inventoryItems,
         existingSupplierProducts: ref.supplierProducts,
+        units: ref.units,
         propertyCurrency: ref.propertyCurrency,
       });
+    case "menu":
+      return stageMenuRow(mappedRaw, { menus: ref.menus });
+    case "category":
+      return stageCategoryRow(mappedRaw, { categories: ref.menuCategories, menus: ref.menus });
     case "menu_item":
       return stageMenuItemRow(mappedRaw, {
         menuItems: ref.menuItems,
         categories: ref.menuCategories,
+        menus: ref.menus,
         propertyCurrency: ref.propertyCurrency,
       });
     case "product_station":
@@ -610,6 +624,7 @@ function stageRow(
         menuItems: ref.menuItems,
         inventoryItems: ref.inventoryItems,
         units: ref.units,
+        products: ref.products,
       });
     case "opening_stock":
       return stageOpeningStockRow(mappedRaw, {
@@ -908,6 +923,12 @@ async function commitInventoryItemRow(
     trackBatches: false,
     allowNegative: false,
     packSize: Number(m.packSize),
+    purchaseUnitId: m.purchaseUnitId ?? undefined,
+    consumptionUnitId: m.consumptionUnitId ?? undefined,
+    contentPerStockUnit: m.contentPerStockUnit ?? undefined,
+    contentUnitId: m.contentUnitId ?? undefined,
+    isBeverage: m.isBeverage ?? undefined,
+    shelfLifeDays: m.shelfLifeDays ?? undefined,
   });
   return result.id as string;
 }
@@ -933,6 +954,7 @@ async function commitSupplierProductRow(
     supplierSku: m.supplierSku ?? undefined,
     barcode: m.barcode ?? undefined,
     name: m.name ?? m.itemName ?? "Supplier product",
+    unitId: m.unitId ?? undefined,
     packSize: m.packSize ?? undefined,
     unitPrice: Number(m.unitPrice ?? 0),
     currency: m.currency ?? propertyCurrency,
@@ -943,15 +965,66 @@ async function commitSupplierProductRow(
   return result.id as string;
 }
 
-async function commitMenuItemRow(
+async function commitMenuRow(
   sb: Sb,
   userId: string,
   tenantId: string,
-  menuId: string,
+  propertyId: string | null,
+  locationId: string | null,
   record: any,
   propertyCurrency: string,
 ): Promise<string> {
   const m = record.mapped_data;
+  const slug = slugify(m.code ?? m.name);
+  const result = await upsertMenu(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    propertyId: propertyId ?? undefined,
+    locationId: locationId ?? undefined,
+    name: m.name,
+    slug,
+    version: 1,
+    status: (m.status ?? "draft") as "draft" | "published" | "archived",
+    currency: m.currency ?? propertyCurrency,
+    description: m.description ?? undefined,
+  });
+  return result.id as string;
+}
+
+async function commitCategoryRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+): Promise<string> {
+  const m = record.mapped_data;
+  const slug = slugify(m.code ?? m.name);
+  const result = await upsertCategory(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    kind: "menu",
+    name: m.name,
+    slug,
+    sortOrder: Number(m.sortOrder ?? 0),
+    active: true,
+  });
+  return result.id as string;
+}
+
+async function commitMenuItemRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  fallbackMenuId: string,
+  record: any,
+  propertyCurrency: string,
+): Promise<string> {
+  const m = record.mapped_data;
+  // A row that resolved its own Menu Code at staging time (the LexiBite
+  // template path, or any source sheet with a menu-code column) targets
+  // that menu directly; only a source with no menu concept at all falls
+  // back to the workspace's single target/draft menu, exactly as before.
+  const menuId = m.menuId ?? fallbackMenuId;
   const slug = `${slugify(m.name)}-${record.source_row}`;
   const result = await upsertMenuItem(sb, userId, {
     tenantId,
@@ -966,7 +1039,7 @@ async function commitMenuItemRow(
     available: m.available ?? true,
     tags: [],
     allergens: [],
-    sortOrder: 0,
+    sortOrder: Number(m.sortOrder ?? 0),
   });
   return result.id as string;
 }
@@ -1029,7 +1102,7 @@ async function commitVariantRow(
     priceIsDelta: Boolean(m.priceIsDelta),
     yieldFactor: 1,
     active: m.active ?? true,
-    sortOrder: 0,
+    sortOrder: Number(m.sortOrder ?? 0),
   });
   return result.id as string;
 }
@@ -1050,7 +1123,7 @@ async function commitModifierGroupRow(
     maxSelect: Number(m.maxSelect ?? 1),
     required: Boolean(m.required),
     active: m.active ?? true,
-    sortOrder: 0,
+    sortOrder: Number(m.sortOrder ?? 0),
   });
   return result.id as string;
 }
@@ -1091,7 +1164,7 @@ async function commitModifierRow(
     quantity: Number(m.quantity ?? 0),
     unitId: m.unitId ?? undefined,
     active: m.active ?? true,
-    sortOrder: 0,
+    sortOrder: Number(m.sortOrder ?? 0),
   });
   return result.id as string;
 }
@@ -1299,7 +1372,13 @@ export async function commitImportWorkspace(
     const pending = (records ?? []) as any[];
     if (pending.length === 0) continue;
 
-    if (domain === "menu_item" && !targetMenuId) {
+    // Only when a row genuinely has no menu of its own — a row that resolved
+    // its own Menu Code at staging time (the LexiBite template path, or any
+    // source with a menu-code column) never needs this fallback; creating
+    // one anyway would leave an unused, orphaned draft menu behind.
+    const needsFallbackMenu =
+      domain === "menu_item" && !targetMenuId && pending.some((r) => !r.mapped_data?.menuId);
+    if (needsFallbackMenu) {
       const menu = await upsertMenu(sb, userId, {
         tenantId: input.tenantId,
         propertyId: workspace.property_id ?? undefined,
@@ -1338,6 +1417,20 @@ export async function commitImportWorkspace(
               record,
               propertyCurrency,
             );
+            break;
+          case "menu":
+            committedEntityId = await commitMenuRow(
+              sb,
+              userId,
+              input.tenantId,
+              workspace.property_id ?? null,
+              workspace.location_id ?? null,
+              record,
+              propertyCurrency,
+            );
+            break;
+          case "category":
+            committedEntityId = await commitCategoryRow(sb, userId, input.tenantId, record);
             break;
           case "menu_item":
             committedEntityId = await commitMenuItemRow(

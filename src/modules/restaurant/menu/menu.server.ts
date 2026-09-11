@@ -4,6 +4,7 @@ import {
   listCategoriesSchema,
   listMenuItemsSchema,
   listMenusSchema,
+  type UpsertCategoryInput,
   type UpsertMenuInput,
   type UpsertMenuItemInput,
 } from "../core/contracts";
@@ -141,4 +142,37 @@ export async function listCategories(
     .order("sort_order");
   if (error) throw new Error(error.message);
   return data ?? [];
+}
+
+/**
+ * restaurant_categories is shared tenant-wide per `kind` (there is no
+ * menu_id column — see restaurant_menus/restaurant_menu_items above, which
+ * each carry their own menu_id/category_id instead). A category is not
+ * scoped to one menu even when a customer's own source data associates it
+ * with one — see the Import Studio LexiBite template's Category sheet,
+ * whose Menu Code column cross-checks rather than scopes.
+ */
+export async function upsertCategory(sb: Sb, userId: string, input: UpsertCategoryInput) {
+  await assertCapability(sb, userId, input.tenantId, "menu.manage");
+  const row = {
+    tenant_id: input.tenantId,
+    parent_id: input.parentId ?? null,
+    kind: input.kind,
+    name: input.name,
+    slug: input.slug,
+    description: input.description ?? null,
+    sort_order: input.sortOrder,
+    active: input.active,
+    updated_at: new Date().toISOString(),
+  };
+  const q = input.id
+    ? sb
+        .from("restaurant_categories")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
+    : sb.from("restaurant_categories").insert(row);
+  const { data, error } = await q.select("id, name, slug, kind, sort_order").single();
+  if (error) throw new Error(error.message);
+  return data;
 }

@@ -48,6 +48,12 @@ import {
   initiateGuestPaymentFn,
 } from "@/modules/restaurant/selforder/selfpay.functions";
 import { GUEST_PAYMENT_METHODS } from "@/modules/restaurant/selforder/selfpay.contracts";
+import {
+  getGuestMobileMoneyAccountFn,
+  getGuestMobileMoneyStatusFn,
+  requestGuestMobileMoneyCollectionFn,
+} from "@/modules/restaurant/selforder/selfmobilemoney.functions";
+import { MM_NETWORK_LABELS } from "@/modules/restaurant/payments/mobilemoney/contracts";
 import { requestGuestBillFn } from "@/modules/restaurant/selforder/selfbill.functions";
 import { guestOrderProgressFn } from "@/modules/restaurant/selforder/selftrack.functions";
 import { guestSessionProjectionFn } from "@/modules/restaurant/selforder/selfsession.functions";
@@ -1601,12 +1607,24 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
   const statusFn = useServerFn(guestOrderStatusFn);
   const initiateFn = useServerFn(initiateGuestPaymentFn);
   const confirmFn = useServerFn(confirmGuestPaymentFn);
+  const mmAccountFn = useServerFn(getGuestMobileMoneyAccountFn);
   const [method, setMethod] = useState<(typeof GUEST_PAYMENT_METHODS)[number]>("mobile_money");
 
   const status = useQuery({
     queryKey: ["selforder.paymentStatus", tableId, orderId],
     queryFn: () => statusFn({ data: { tableId, orderId } }),
     refetchInterval: 8_000,
+    networkMode: "always",
+  });
+
+  // The outlet's own configured Mobile Money capability — read once here so
+  // "Mobile Money" resolves through the SAME account POS reads, never a
+  // second, unrelated concept. Card always stays on the existing Pesapal
+  // flow below regardless of this; only "mobile_money" branches on it.
+  const mmAccount = useQuery({
+    queryKey: ["selforder.mobileMoneyAccount", tableId],
+    queryFn: () => mmAccountFn({ data: { tableId } }),
+    staleTime: 60_000,
     networkMode: "always",
   });
 
@@ -1659,6 +1677,13 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
   const confirmResult = confirm.data;
   const initiateResult = initiate.data;
 
+  // Mobile Money resolves through the outlet's own configured account —
+  // when it's merchant-number (Lipa Namba) mode, the guest pays the actual
+  // configured merchant number and staff confirm it, never a Pesapal
+  // checkout for an unrelated "mobile money" concept. Connected mode (or no
+  // account configured at all) keeps the existing Pesapal flow unchanged.
+  const useMerchantNumberFlow = method === "mobile_money" && mmAccount.data?.mode === "lipa_namba";
+
   return (
     <div className="mt-2 w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
       <div className="flex items-center justify-between text-sm">
@@ -1679,42 +1704,158 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
         ))}
       </div>
 
-      {confirmResult && !confirmResult.ok && (
-        <p className="mt-3 text-xs text-muted-foreground">
-          {confirmResult.reason === "declined" &&
-            `Payment wasn't accepted${confirmResult.detail ? `: ${confirmResult.detail}` : "."} Please try again or pay a member of staff.`}
-          {confirmResult.reason === "expired" && "That payment attempt expired. Please try again."}
-          {confirmResult.reason === "provider_not_configured" &&
-            "Online payment isn't available at this venue yet — please pay a member of staff."}
-          {confirmResult.reason === "already_paid" && "This order is already settled."}
-        </p>
-      )}
-      {confirmResult?.ok && confirmResult.status === "pending" && (
-        <p className="mt-3 text-xs text-muted-foreground">
-          Still confirming your payment — this will update automatically.
-        </p>
-      )}
-      {initiateResult && !initiateResult.ok && (
-        <p className="mt-3 text-xs text-muted-foreground">
-          {initiateResult.reason === "provider_not_configured" &&
-            "Online payment isn't available at this venue yet — please pay a member of staff."}
-          {initiateResult.reason === "not_payable" && "This order can no longer be paid online."}
-          {initiateResult.reason === "already_paid" && "This order is already settled."}
-        </p>
-      )}
-      {(initiate.isError || confirm.isError) && (
-        <p className="mt-3 text-xs text-destructive">
-          Couldn't reach the payment service. Please try again.
-        </p>
-      )}
+      {useMerchantNumberFlow ? (
+        <GuestMerchantNumberPayment
+          tableId={tableId}
+          orderId={orderId}
+          amountDue={s.amountDue}
+          currency={currency}
+          network={mmAccount.data!.network}
+          merchantNumber={mmAccount.data!.merchantNumber}
+          onSettled={() => status.refetch()}
+        />
+      ) : (
+        <>
+          {confirmResult && !confirmResult.ok && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              {confirmResult.reason === "declined" &&
+                `Payment wasn't accepted${confirmResult.detail ? `: ${confirmResult.detail}` : "."} Please try again or pay a member of staff.`}
+              {confirmResult.reason === "expired" &&
+                "That payment attempt expired. Please try again."}
+              {confirmResult.reason === "provider_not_configured" &&
+                "Online payment isn't available at this venue yet — please pay a member of staff."}
+              {confirmResult.reason === "already_paid" && "This order is already settled."}
+            </p>
+          )}
+          {confirmResult?.ok && confirmResult.status === "pending" && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Still confirming your payment — this will update automatically.
+            </p>
+          )}
+          {initiateResult && !initiateResult.ok && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              {initiateResult.reason === "provider_not_configured" &&
+                "Online payment isn't available at this venue yet — please pay a member of staff."}
+              {initiateResult.reason === "not_payable" &&
+                "This order can no longer be paid online."}
+              {initiateResult.reason === "already_paid" && "This order is already settled."}
+            </p>
+          )}
+          {(initiate.isError || confirm.isError) && (
+            <p className="mt-3 text-xs text-destructive">
+              Couldn't reach the payment service. Please try again.
+            </p>
+          )}
 
-      <Button
-        className="mt-3 min-h-11 w-full rounded-full text-base"
-        disabled={initiate.isPending}
-        onClick={() => initiate.mutate()}
-      >
-        {initiate.isPending ? "Redirecting…" : "Pay now"}
-      </Button>
+          <Button
+            className="mt-3 min-h-11 w-full rounded-full text-base"
+            disabled={initiate.isPending}
+            onClick={() => initiate.mutate()}
+          >
+            {initiate.isPending ? "Redirecting…" : "Pay now"}
+          </Button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Merchant-number (Lipa Namba) Mobile Money — the guest pays the outlet's
+ * own configured merchant number externally; nothing here ever marks the
+ * order paid. A real collection is requested (Payment Core, the same one
+ * POS uses); staff mark it received from the till. Polls the guest-scoped
+ * status read until it reaches a terminal state.
+ */
+function GuestMerchantNumberPayment({
+  tableId,
+  orderId,
+  amountDue,
+  currency,
+  network,
+  merchantNumber,
+  onSettled,
+}: {
+  tableId: string;
+  orderId: string;
+  amountDue: number;
+  currency: string;
+  network: string;
+  merchantNumber: string | null;
+  onSettled: () => void;
+}) {
+  const requestFn = useServerFn(requestGuestMobileMoneyCollectionFn);
+  const statusFn = useServerFn(getGuestMobileMoneyStatusFn);
+  const [collectionId, setCollectionId] = useState<string | null>(null);
+  const clientRequestId = useMemo(
+    () =>
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `gmm-${Date.now()}-${Math.random()}`,
+    [tableId, orderId],
+  );
+
+  const request = useMutation({
+    mutationFn: () => requestFn({ data: { tableId, orderId, clientRequestId } }),
+    networkMode: "always",
+    onSuccess: (view) => setCollectionId(view.collectionId),
+  });
+
+  const status = useQuery({
+    queryKey: ["selforder.mobileMoneyStatus", tableId, collectionId],
+    queryFn: () => statusFn({ data: { tableId, collectionId: collectionId! } }),
+    enabled: Boolean(collectionId),
+    refetchInterval: (q) => {
+      const s = q.state.data?.state;
+      return s && ["pending_customer", "processing", "created", "initiated"].includes(s)
+        ? 4_000
+        : false;
+    },
+  });
+
+  const view = status.data;
+  useEffect(() => {
+    if (view?.state === "paid") onSettled();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per terminal transition
+  }, [view?.state]);
+
+  const networkLabel = MM_NETWORK_LABELS[network as keyof typeof MM_NETWORK_LABELS] ?? network;
+
+  if (!collectionId) {
+    return (
+      <div className="mt-3 space-y-3">
+        <div className="rounded-xl border bg-muted/40 p-3 text-sm">
+          <p className="font-medium">Pay to</p>
+          <p className="mt-1">
+            {networkLabel} · <span className="font-semibold">{merchantNumber ?? "—"}</span>
+          </p>
+          <p className="mt-1 text-muted-foreground">Amount: {money(amountDue, currency)}</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            After paying, your payment will be confirmed by the restaurant.
+          </p>
+        </div>
+        {request.isError && (
+          <p className="text-xs text-destructive">Couldn't start this payment. Please try again.</p>
+        )}
+        <Button
+          className="min-h-11 w-full rounded-full text-base"
+          disabled={request.isPending}
+          onClick={() => request.mutate()}
+        >
+          {request.isPending ? "Starting…" : "I've paid"}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border bg-muted/40 p-3 text-center text-sm">
+      <p className="font-semibold">{view?.operatorMessage ?? "Requesting payment…"}</p>
+      {view?.state !== "paid" && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          {networkLabel} · {merchantNumber ?? "—"} · {money(amountDue, currency)}
+        </p>
+      )}
     </div>
   );
 }

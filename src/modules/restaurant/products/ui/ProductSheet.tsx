@@ -12,6 +12,7 @@ import { EntitySheet, Field, FieldRow, SearchSelect } from "@/modules/restaurant
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { upsertRestaurantProductFn, listRestaurantRecipesFn } from "../catalog.functions";
 import { listRestaurantStationsFn } from "../../kitchen/kitchen.functions";
+import { listRestaurantMenuItemsFn } from "../../menu/menu.functions";
 import { PRODUCT_TYPES } from "../contracts";
 
 interface ProductSheetProps {
@@ -26,11 +27,13 @@ export function ProductSheet({ open, onOpenChange, tenantId, product }: ProductS
   const upsertFn = useServerFn(upsertRestaurantProductFn);
   const recipesFn = useServerFn(listRestaurantRecipesFn);
   const stationsFn = useServerFn(listRestaurantStationsFn);
+  const menuItemsFn = useServerFn(listRestaurantMenuItemsFn);
 
   const [sku, setSku] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [productType, setProductType] = useState<(typeof PRODUCT_TYPES)[number]>("standard");
+  const [menuItemId, setMenuItemId] = useState<string | null>(null);
   const [recipeId, setRecipeId] = useState<string | null>(null);
   const [stationId, setStationId] = useState<string | null>(null);
   const [price, setPrice] = useState("0");
@@ -43,6 +46,7 @@ export function ProductSheet({ open, onOpenChange, tenantId, product }: ProductS
     setName(product?.name ?? "");
     setDescription(product?.description ?? "");
     setProductType(product?.product_type ?? "standard");
+    setMenuItemId(product?.menu_item_id ?? null);
     setRecipeId(product?.recipe_id ?? null);
     setStationId(product?.station_id ?? null);
     setPrice(String(product?.price ?? 0));
@@ -60,6 +64,16 @@ export function ProductSheet({ open, onOpenChange, tenantId, product }: ProductS
     queryFn: () => stationsFn({ data: { tenantId } }),
     enabled: open,
   });
+  // The canonical menu -> product -> recipe link: without this field a
+  // sellable, recipe-backed menu item has no way to reach Pricing Centre's
+  // cost view (catalogue.server.ts resolves recipe cost strictly through
+  // this product row) or POS costing, even though its recipe is active and
+  // fully costed. See products-recipe-orphan.server.test.ts.
+  const menuItems = useQuery({
+    queryKey: ["restaurant.menu-items", tenantId],
+    queryFn: () => menuItemsFn({ data: { tenantId, limit: 500 } }),
+    enabled: open,
+  });
 
   const save = useAdminMutation({
     mutationFn: () =>
@@ -71,6 +85,7 @@ export function ProductSheet({ open, onOpenChange, tenantId, product }: ProductS
           name,
           description: description || undefined,
           productType,
+          menuItemId: menuItemId ?? undefined,
           recipeId: recipeId ?? undefined,
           stationId: stationId ?? undefined,
           price: Number(price) || 0,
@@ -122,19 +137,33 @@ export function ProductSheet({ open, onOpenChange, tenantId, product }: ProductS
             ))}
           </select>
         </Field>
-        <Field label="Recipe (optional)" hint="Leave blank for retail lines with no recipe.">
+        <Field
+          label="Menu item (optional)"
+          hint="Link this product to the menu item it sells — required for Pricing Centre and POS to see this product's recipe cost. Leave blank for a product that isn't sold directly off the menu (a component, a variant-only base, etc.)."
+        >
           <SearchSelect
-            options={((recipes.data ?? []) as any[]).map((r) => ({
-              value: r.id,
-              label: r.name,
-              hint: r.code,
+            options={((menuItems.data ?? []) as any[]).map((m) => ({
+              value: m.id,
+              label: m.name,
             }))}
-            value={recipeId}
-            onChange={setRecipeId}
-            placeholder="No recipe"
+            value={menuItemId}
+            onChange={setMenuItemId}
+            placeholder="No menu item"
           />
         </Field>
       </FieldRow>
+      <Field label="Recipe (optional)" hint="Leave blank for retail lines with no recipe.">
+        <SearchSelect
+          options={((recipes.data ?? []) as any[]).map((r) => ({
+            value: r.id,
+            label: r.name,
+            hint: r.code,
+          }))}
+          value={recipeId}
+          onChange={setRecipeId}
+          placeholder="No recipe"
+        />
+      </Field>
       <Field
         label="Production destination"
         hint="Where this item is made — decides kitchen vs. bar routing on every ticket, the POS, and self-order. Leave blank to fall back to the item's category (e.g. a category named 'Cocktails' or 'Bar' routes to the bar automatically)."

@@ -65,6 +65,9 @@ function makeFixture() {
       property_id: PROPERTY_A1,
       location_id: LOC_A1,
       currency: "TZS",
+      status: "open",
+      total: 5000,
+      paid_total: 0,
     },
     {
       id: ORDER_A2,
@@ -72,6 +75,9 @@ function makeFixture() {
       property_id: PROPERTY_A2,
       location_id: LOC_A2,
       currency: "TZS",
+      status: "open",
+      total: 5000,
+      paid_total: 0,
     },
   ];
   const accounts: any[] = [

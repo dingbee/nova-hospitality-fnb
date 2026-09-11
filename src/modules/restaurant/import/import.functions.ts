@@ -15,6 +15,39 @@ import {
 } from "./contracts";
 import { IMPORT_DOMAINS } from "./domains";
 
+const uuid = z.string().uuid();
+const templateFileBase64 = z.string().max(Math.ceil((10 * 1024 * 1024 * 4) / 3) + 1024);
+
+const analyzeLexibiteTemplateUploadSchema = z.object({
+  tenantId: uuid,
+  fileBase64: templateFileBase64,
+});
+
+const commitLexibiteTemplateImportSchema = z.object({
+  tenantId: uuid,
+  propertyId: uuid.optional(),
+  locationId: uuid.optional(),
+  workspaceName: z.string().min(2).max(160),
+  fileBase64: templateFileBase64,
+  originalFilename: z.string().max(255).optional(),
+});
+
+export const analyzeLexibiteTemplateUploadFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => analyzeLexibiteTemplateUploadSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./template-import.server");
+    return mod.analyzeLexibiteTemplateUpload(context.supabase, context.userId, data);
+  });
+
+export const commitLexibiteTemplateImportFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => commitLexibiteTemplateImportSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./template-import.server");
+    return mod.commitLexibiteTemplateImport(context.supabase, context.userId, data);
+  });
+
 export const createImportWorkspaceFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => createImportWorkspaceSchema.parse(d))

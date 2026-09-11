@@ -193,6 +193,22 @@ export const listCategoriesSchema = z.object({
   kind: z.string().max(40).default("menu"),
 });
 
+export const upsertCategorySchema = tenantScopeSchema.extend({
+  id: uuid.optional(),
+  parentId: uuid.optional(),
+  kind: z.string().max(40).default("menu"),
+  name: z.string().min(1).max(160),
+  slug: z
+    .string()
+    .min(1)
+    .max(120)
+    .regex(/^[a-z0-9-]+$/),
+  description: z.string().max(2000).optional(),
+  sortOrder: z.number().int().min(0).default(0),
+  active: z.boolean().default(true),
+});
+export type UpsertCategoryInput = z.infer<typeof upsertCategorySchema>;
+
 /* ---------------- Inventory ---------------- */
 
 export const listInventorySchema = tenantScopeSchema.extend({
@@ -234,9 +250,19 @@ export const upsertInventoryItemSchema = tenantScopeSchema.extend({
   shelfLifeDays: z.number().int().min(0).max(3650).optional(),
   /** Beverage / bar configuration — existing columns on restaurant_inventory_items. */
   isBeverage: z.boolean().optional(),
-  /** Standard pour/serving magnitude, expressed in `servingUnitId`. */
+  /** Standard pour/serving magnitude, expressed in `servingUnitId` — the Bar Pour Setup's own "how much per glass", distinct from the packaging fields below. */
   servingSize: z.number().min(0).optional(),
   servingUnitId: uuid.optional(),
+  /**
+   * Packaging/content conversion: how much `contentUnitId` is contained in
+   * ONE stock unit (a 750ml bottle has contentPerStockUnit 750, contentUnitId
+   * = ML). Distinct from packSize (stock units per purchase unit) and from
+   * servingSize (the pour/serving magnitude) — this is the bridge between a
+   * physical-container stock unit and its own contents. Never guessed:
+   * absent unless the operator sets it.
+   */
+  contentPerStockUnit: z.number().positive().optional(),
+  contentUnitId: uuid.optional(),
 });
 export type UpsertInventoryItemInput = z.infer<typeof upsertInventoryItemSchema>;
 

@@ -306,7 +306,7 @@ export async function listBeverages(
   let q = sb
     .from("restaurant_inventory_items")
     .select(
-      "id, name, sku, category_id, unit_id, consumption_unit_id, serving_size, serving_unit_id, is_beverage, item_type, current_quantity, reorder_point, par_level, average_cost, currency",
+      "id, name, sku, category_id, unit_id, consumption_unit_id, content_per_stock_unit, content_unit_id, serving_size, serving_unit_id, is_beverage, item_type, current_quantity, reorder_point, par_level, average_cost, currency",
     )
     .eq("tenant_id", input.tenantId)
     .order("name")
@@ -319,12 +319,24 @@ export async function listBeverages(
   return ((data ?? []) as any[]).map((i) => {
     const stockUnit = i.unit_id ? units.get(i.unit_id) : undefined;
     const servingUnit = i.serving_unit_id ? units.get(i.serving_unit_id) : undefined;
+    const contentUnit = i.content_unit_id ? units.get(i.content_unit_id) : undefined;
+    const contentPerStockUnit =
+      i.content_per_stock_unit == null ? null : Number(i.content_per_stock_unit);
     const maths = pourMaths({
       servingSize: i.serving_size == null ? null : Number(i.serving_size),
       servingUnit,
       stockUnit,
+      contentPerStockUnit,
+      contentUnit,
     });
     const onHand = Number(i.current_quantity ?? 0);
+    const averageCost = Number(i.average_cost ?? 0);
+    // Cost per one unit of the declared container content (e.g. cost per ml),
+    // derived from the existing average_cost — never a second cost basis.
+    const costPerContentUnit =
+      contentPerStockUnit && contentPerStockUnit > 0
+        ? round6(averageCost / contentPerStockUnit)
+        : null;
     return {
       itemId: i.id,
       name: i.name,
@@ -333,18 +345,23 @@ export async function listBeverages(
       onHand,
       reorderPoint: i.reorder_point == null ? null : Number(i.reorder_point),
       parLevel: i.par_level == null ? null : Number(i.par_level),
-      averageCost: Number(i.average_cost ?? 0),
+      averageCost,
       currency: i.currency ?? "TZS",
       stockUnitCode: stockUnit?.code ?? null,
+      contentPerStockUnit,
+      contentUnitId: i.content_unit_id ?? null,
+      contentUnitCode: contentUnit?.code ?? null,
       servingSize: i.serving_size == null ? null : Number(i.serving_size),
       servingUnitId: i.serving_unit_id ?? null,
       servingUnitCode: servingUnit?.code ?? null,
       poursPerStockUnit: maths.poursPerStockUnit,
       stockPerPour: maths.stockPerPour,
-      pourCost: computePourCost(Number(i.average_cost ?? 0), maths),
+      pourCost: computePourCost(averageCost, maths),
+      costPerContentUnit,
       poursAvailable: poursAvailable(onHand, maths),
       low: i.reorder_point != null && onHand <= Number(i.reorder_point),
       ...(maths.exact ? {} : { pourIssue: maths.reason }),
+      ...(maths.missingPackagingConversion ? { packagingConversionRequired: true } : {}),
     } satisfies BarBeverage;
   });
 }

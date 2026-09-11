@@ -8,7 +8,7 @@ export const Route = createFileRoute("/_authenticated/admin/restaurant/import-st
       {
         name: "description",
         content:
-          "Bring existing menu, inventory, supplier and recipe data into NoVA — mapped, matched and reviewed before anything is imported.",
+          "Bring your restaurant data into LexiBite with the LexiBite Import Template, or use LexiBite Intelligence to understand an existing spreadsheet — reviewed before anything is imported.",
       },
       { name: "robots", content: "noindex,nofollow" },
     ],

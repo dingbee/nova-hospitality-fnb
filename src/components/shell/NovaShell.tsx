@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { LogOut, ShieldAlert } from "lucide-react";
+import { ChevronLeft, ChevronRight, LogOut, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { usePrincipal } from "@/lib/rbac/usePermissions";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
@@ -25,6 +25,30 @@ export function NovaShell({ children }: { children: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [staffNovaOpen, setStaffNovaOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // Desktop sidebar rail collapse — a per-viewer display preference, not
+  // data, so it lives in localStorage rather than round-tripping to the
+  // server. Read lazily (not in an effect) so the very first paint already
+  // reflects the viewer's last choice instead of flashing expanded first.
+  const [railCollapsed, setRailCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem("nova-sidebar-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleRail = () => {
+    setRailCollapsed((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("nova-sidebar-collapsed", next ? "1" : "0");
+      } catch {
+        // Private browsing / storage disabled — the toggle still works for
+        // this session, it just won't be remembered next visit.
+      }
+      return next;
+    });
+  };
 
   // UI affordance only — askStaffNovaFn independently re-enforces
   // intelligence.read server-side against the verified JWT userId on every
@@ -103,9 +127,32 @@ export function NovaShell({ children }: { children: ReactNode }) {
       <div className="flex">
         <aside
           aria-label="Primary navigation"
-          className="sticky top-16 hidden h-[calc(100vh-4rem)] w-64 shrink-0 overflow-y-auto border-r border-[color:var(--nova-line)] bg-[color:var(--nova-surface)] lg:block"
+          className={`sticky top-16 hidden h-[calc(100vh-4rem)] shrink-0 flex-col overflow-y-auto border-r border-[color:var(--nova-line)] bg-[color:var(--nova-surface)] transition-[width] duration-150 lg:flex ${
+            railCollapsed ? "w-16" : "w-64"
+          }`}
         >
-          <NavPanel groups={groups} collapsed={collapsed} onToggleGroup={toggleGroup} />
+          <div className="flex-1 overflow-y-auto">
+            <NavPanel
+              groups={groups}
+              collapsed={collapsed}
+              onToggleGroup={toggleGroup}
+              rail={railCollapsed}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={toggleRail}
+            aria-label={railCollapsed ? "Expand navigation" : "Collapse navigation"}
+            title={railCollapsed ? "Expand navigation" : "Collapse navigation"}
+            className="sticky bottom-0 flex min-h-11 shrink-0 items-center justify-center gap-2 border-t border-[color:var(--nova-line)] bg-[color:var(--nova-surface)] text-xs font-medium text-[color:var(--nova-ink-3)] hover:text-[color:var(--nova-ink)]"
+          >
+            {railCollapsed ? (
+              <ChevronRight className="size-4" />
+            ) : (
+              <ChevronLeft className="size-4" />
+            )}
+            {!railCollapsed && "Collapse"}
+          </button>
         </aside>
 
         <MobileNavDrawer

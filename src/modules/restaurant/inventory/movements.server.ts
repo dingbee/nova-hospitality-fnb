@@ -370,7 +370,9 @@ export async function consumeForOrderItem(
 
   const { data: inv } = await sb
     .from("restaurant_inventory_items")
-    .select("id, name, average_cost, currency, location_id, property_id, unit_id")
+    .select(
+      "id, name, average_cost, currency, location_id, property_id, unit_id, content_per_stock_unit, content_unit_id",
+    )
     .in(
       "id",
       rows.map((c) => c.inventory_item_id),

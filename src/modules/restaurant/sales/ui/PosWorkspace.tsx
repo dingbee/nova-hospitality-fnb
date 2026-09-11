@@ -669,21 +669,34 @@ export function PosWorkspace({
           above (h-full/min-h-0/flex-1, unconditional), and every row/column
           track below is an explicit minmax(0, Nfr) — never bare "auto" and
           never a hard pixel floor — so it always resolves to a fraction of
-          that definite height regardless of how much Floor/Bill/Menu
-          content exists. More tables, bill lines or menu items can only
+          that definite height regardless of how much Floor/Menu/Bill
+          content exists. More tables, menu items or bill lines can only
           change what scrolls *inside* a pane; they can never grow the pane,
           this grid, the workspace, or the page.
-          Below lg: Floor and the right workspace stack as two proportional
+          Below lg: Floor and a Menu/Bill switcher stack as two proportional
           ROWS (40fr/60fr) sharing that same fixed height, each still
           scrolling internally — not two fixed pixel boxes and not normal
-          document flow. At lg+: Floor becomes the left COLUMN and the right
-          workspace the right COLUMN (25fr/75fr), each spanning the grid's
-          full single row. Structural, not cosmetic: Bill and Menu are never
-          a second/third column beside Floor — they are two ROWS inside the
-          right-hand workspace, Bill always directly above Menu, sharing the
-          same horizontal bounds; Menu — the highest-frequency interaction —
-          gets the larger share (~70%) of that column's height. */}
-      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,40fr)_minmax(0,60fr)] gap-3 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(220px,25fr)_minmax(0,75fr)] xl:gap-4">
+          document flow. Floor's row carries a measured 330px floor — header
+          + one row of table cards + the status legend + the walk-in button
+          need that much before anything can scroll; without it, a
+          short/narrow phone viewport can squeeze Floor's card row to a
+          sliver a few px tall, which is not "scrolls internally", it's
+          unreadable. The single mobile column track is itself an
+          explicit minmax(0,1fr), not a bare implicit column — an implicit
+          auto-sized track lets a wide child (e.g. Floor's card grid) blow
+          out past the viewport with no scrollbar to show for it, since the
+          overflow gets silently clipped by a downstream overflow-hidden
+          instead.
+          At lg+: THREE simultaneous columns, Floor | Menu | Bill, each
+          spanning the grid's full single row — never Floor beside a
+          Bill-over-Menu stack. Bill stays persistently visible next to Menu
+          so a cashier never navigates away from the catalogue to see what
+          just got added. The Menu/Bill wrapper below uses `lg:contents` so
+          its two children (Menu, then Bill, in that DOM order) become
+          direct items of THIS grid at lg+, landing in columns 2 and 3 by
+          normal auto-placement — while below lg that same wrapper is a real
+          flex column holding the tab-switcher behavior unchanged. */}
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[minmax(330px,40fr)_minmax(0,60fr)] gap-3 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(200px,22fr)_minmax(0,45fr)_minmax(300px,33fr)] xl:gap-4">
         {/* Floor */}
         <SectionCard
           title={isBar ? "Bar floor & tabs" : "Floor"}
@@ -692,7 +705,7 @@ export function PosWorkspace({
               ? "Counter, bar seats and tables — colour follows the tab."
               : "Colour follows the bill, not just the table row."
           }
-          className="flex h-full min-h-0 flex-col overflow-hidden"
+          className="flex h-full min-h-0 flex-col overflow-hidden p-4"
         >
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="grid grid-cols-2 gap-2">
@@ -775,39 +788,16 @@ export function PosWorkspace({
           </div>
         </SectionCard>
 
-        {/* Right workspace: Bill and Menu share this column, never a second/
-            third column beside Floor. At lg+, Bill and Menu are two ROWS
-            sharing this column, and Bill's
-            row carries a measured (not guessed) floor: header + the pinned
-            Total/primary-action footer + section padding need ~189px with
-            zero content — below that, no amount of internal scrolling can
-            make room for Bill's own always-visible chrome. The floor never
-            grows with content (badges/lines/notes all live in the scrollable
-            region above the footer), so it only engages on genuinely short
-            viewports, and only ever redistributes within this already-
-            fixed-height row — it cannot grow this grid, the workspace, or
-            the page.
-            Below lg, Floor+RightWorkspace already share a much shorter
-            stacked budget (see the outer grid above) — too short for BOTH
-            Bill's and Menu's own minimum chrome to coexist at any fixed
-            split, floored or not (measured: Bill's ~189px minimum alone can
-            exceed the entire combined budget on common phone-sized
-            viewports). Splitting height between them is the wrong tool
-            here, so below lg this becomes a single-pane switcher instead: a
-            tab strip picks ONE of Bill/Menu to occupy the full column
-            height at a time — never a fixed pixel guess, never eating into
-            the other's space, and the inactive pane simply isn't rendered
-            rather than being squeezed. */}
-        <div className="flex h-full min-h-0 flex-col gap-3 lg:grid lg:grid-rows-[minmax(190px,30fr)_minmax(0,70fr)] xl:gap-4">
+        {/* Menu+Bill wrapper: below lg this is a real flex column holding
+            the mobile tab switcher (Menu/Bill share this one pane's height,
+            switched by tab — see the comment on the outer grid above for
+            why splitting height between them doesn't fit on short
+            viewports). At lg+ it dissolves via `lg:contents`: Menu and Bill
+            (in that DOM order) become direct items of the OUTER three-
+            column grid, landing in columns 2 and 3 — persistently
+            side-by-side, never stacked, never a tab away from each other. */}
+        <div className="flex h-full min-h-0 flex-col gap-3 lg:contents">
           <div className="flex shrink-0 gap-2 lg:hidden">
-            <Button
-              type="button"
-              variant={mobileRightTab === "bill" ? "default" : "outline"}
-              className="min-h-11 flex-1"
-              onClick={() => setMobileRightTab("bill")}
-            >
-              Bill{live.length + cart.length > 0 ? ` (${live.length + cart.length})` : ""}
-            </Button>
             <Button
               type="button"
               variant={mobileRightTab === "menu" ? "default" : "outline"}
@@ -816,7 +806,90 @@ export function PosWorkspace({
             >
               {isBar ? "Drinks" : "Menu"}
             </Button>
+            <Button
+              type="button"
+              variant={mobileRightTab === "bill" ? "default" : "outline"}
+              className="min-h-11 flex-1"
+              onClick={() => setMobileRightTab("bill")}
+            >
+              Bill{live.length + cart.length > 0 ? ` (${live.length + cart.length})` : ""}
+            </Button>
           </div>
+
+          {/* Menu */}
+          <SectionCard
+            title={isBar ? "Drinks" : "Menu"}
+            description={
+              isBar
+                ? "Tap a drink, pick the serve (single, double, bottle, glass) and add it to the tab."
+                : "Tap an item to configure and stage it on the bill."
+            }
+            className={cn(
+              mobileRightTab === "menu" ? "flex" : "hidden",
+              "h-full min-h-0 flex-1 flex-col overflow-hidden p-4 lg:flex",
+            )}
+          >
+            <div className="shrink-0">
+              <div className="relative mb-2">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={catalogSearch}
+                  onChange={(e) => setCatalogSearch(e.target.value)}
+                  placeholder={isBar ? "Search drinks…" : "Search the menu…"}
+                  className="h-11 pl-8"
+                />
+              </div>
+              <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+                <Button
+                  variant={categoryId ? "outline" : "default"}
+                  className="min-h-11 shrink-0 rounded-full"
+                  onClick={() => setCategoryId(null)}
+                >
+                  All
+                </Button>
+                {categories.map((c) => (
+                  <Button
+                    key={c.id}
+                    variant={categoryId === c.id ? "default" : "outline"}
+                    className="min-h-11 shrink-0 rounded-full"
+                    onClick={() => setCategoryId(c.id)}
+                  >
+                    {c.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {filtered.length === 0 ? (
+                <EmptyState
+                  title={catalogSearch ? "No matches" : isBar ? "No drinks" : "No items"}
+                  description={
+                    catalogSearch
+                      ? "Try a different search or category."
+                      : isBar
+                        ? "Publish a beverage menu to sell from the bar till."
+                        : "Publish a menu to sell from this till."
+                  }
+                />
+              ) : (
+                // Menu now occupies its own ~45%-width column (not the full
+                // right side), so the target is three cards per row at
+                // desktop — never the five-column grid a full-width Menu
+                // pane used to fit.
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {filtered.map((i) => (
+                    <PosMenuItemCard
+                      key={i.id}
+                      item={i}
+                      currency={currency}
+                      disabled={!orderId || i.available === false || i.priceConfigured === false}
+                      onSelect={() => setPickerItem(i)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </SectionCard>
 
           {/* Bill */}
           <SectionCard
@@ -833,7 +906,7 @@ export function PosWorkspace({
             }
             className={cn(
               mobileRightTab === "bill" ? "flex" : "hidden",
-              "h-full min-h-0 flex-1 flex-col overflow-hidden lg:flex",
+              "h-full min-h-0 flex-1 flex-col overflow-hidden p-4 lg:flex",
             )}
           >
             {!orderId ? (
@@ -851,7 +924,104 @@ export function PosWorkspace({
                     able to reach, so its own height stays bounded (a total
                     row plus a single button) instead of competing for space
                     with whatever this bill happens to contain right now. */}
-                <div className="space-y-3 min-h-0 flex-1 overflow-y-auto pt-3">
+                <div className="space-y-2 min-h-0 flex-1 overflow-y-auto pt-2">
+                  {/* Line items are the most important thing on a bill — they
+                      render first, above the fold, before the lifecycle
+                      status block below. Same scroll region, just item-first
+                      priority so a cashier sees WHAT'S ON THE BILL without
+                      needing to scroll past status chrome first. The column
+                      header row below doubles as the section's own label —
+                      matching the reference ticket, which has no separate
+                      "On the bill" caption above its Qty/Item/... columns. */}
+                  {live.length > 0 && (
+                    <div className="space-y-1">
+                      <span className="sr-only">On the bill</span>
+                      {/* A professional POS order ticket, not a card per line:
+                          Qty / Item / Notes / Price / Total columns, the
+                          header row only shown once md+ has room for it —
+                          below that the same data still renders per row, just
+                          without the redundant column headings. */}
+                      <div className="hidden grid-cols-[2rem_1fr_8rem_5.5rem_5.5rem_2.25rem] gap-2 px-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground md:grid">
+                        <span>Qty</span>
+                        <span>Item</span>
+                        <span>Notes / Modifiers</span>
+                        <span className="text-right">Price</span>
+                        <span className="text-right">Total</span>
+                        <span />
+                      </div>
+                      <div className="divide-y rounded-lg border bg-card">
+                        {live.map((i) => {
+                          const noteText =
+                            i.notes ||
+                            (i.modifiers ?? []).map((m: any) => m.name).join(", ") ||
+                            "—";
+                          return (
+                            <div
+                              key={i.id}
+                              className="grid grid-cols-[2rem_1fr_2.25rem] items-start gap-2 p-1.5 text-sm md:grid-cols-[2rem_1fr_8rem_5.5rem_5.5rem_2.25rem] md:items-center md:py-1"
+                            >
+                              <span className="tabular-nums text-muted-foreground">
+                                {Number(i.quantity)}
+                              </span>
+                              <span className="min-w-0">
+                                <span className="block truncate font-medium">{i.description}</span>
+                                {/* Status/seat/notes only stack onto a second
+                                    line on mobile, where there's no separate
+                                    Notes column to hold them — at md+ they'd
+                                    just double every row's height for no
+                                    reason, since Notes/Modifiers already has
+                                    its own column there. */}
+                                <span className="mt-0.5 flex flex-wrap items-center gap-1.5 md:hidden">
+                                  {i.seat_number && (
+                                    <span className="text-xs text-muted-foreground">
+                                      Seat {i.seat_number}
+                                    </span>
+                                  )}
+                                  <StatusChip tone={itemStatusTone(i.status)}>
+                                    {i.status}
+                                  </StatusChip>
+                                  <span className="text-xs text-muted-foreground">{noteText}</span>
+                                </span>
+                              </span>
+                              <span className="hidden truncate text-xs text-muted-foreground md:block">
+                                {noteText}
+                              </span>
+                              <span className="hidden text-right tabular-nums text-muted-foreground md:block">
+                                {money(Number(i.unit_price ?? 0), currency)}
+                              </span>
+                              <span className="hidden text-right font-medium tabular-nums md:block">
+                                {money(Number(i.line_total ?? 0), currency)}
+                              </span>
+                              <span className="flex items-start justify-end gap-1 md:contents">
+                                <span className="text-right font-medium tabular-nums md:hidden">
+                                  {money(Number(i.line_total ?? 0), currency)}
+                                </span>
+                                {canVoid && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="size-8 justify-self-end"
+                                    onClick={() => {
+                                      const reason = window.prompt("Reason for voiding this line?");
+                                      if (reason && reason.trim().length >= 3) {
+                                        voidLine.mutate({
+                                          orderItemId: i.id,
+                                          reason: reason.trim(),
+                                        });
+                                      }
+                                    }}
+                                  >
+                                    <Trash2 className="size-4" />
+                                  </Button>
+                                )}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {life && (
                     <div className="space-y-2 rounded-lg border bg-muted/30 p-2">
                       <ServiceLifecycleBar life={life} compact />
@@ -927,58 +1097,6 @@ export function PosWorkspace({
                           )}
                         </div>
                       )}
-                    </div>
-                  )}
-                  {live.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        On the bill
-                      </p>
-                      {live.map((i) => (
-                        <div
-                          key={i.id}
-                          className="flex items-start justify-between gap-2 rounded border bg-card p-2 text-sm"
-                        >
-                          <span className="min-w-0">
-                            <span className="block font-medium">
-                              {Number(i.quantity)} × {i.description}
-                            </span>
-                            {(i.modifiers ?? []).length > 0 && (
-                              <span className="block text-xs text-muted-foreground">
-                                {(i.modifiers ?? []).map((m: any) => m.name).join(", ")}
-                              </span>
-                            )}
-                            <span className="mt-1 flex items-center gap-1.5">
-                              {i.seat_number && (
-                                <span className="text-xs text-muted-foreground">
-                                  Seat {i.seat_number}
-                                </span>
-                              )}
-                              <StatusChip tone={itemStatusTone(i.status)}>{i.status}</StatusChip>
-                            </span>
-                          </span>
-                          <span className="flex shrink-0 items-center gap-1">
-                            <span className="tabular-nums">
-                              {money(Number(i.line_total ?? 0), currency)}
-                            </span>
-                            {canVoid && (
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="size-8"
-                                onClick={() => {
-                                  const reason = window.prompt("Reason for voiding this line?");
-                                  if (reason && reason.trim().length >= 3) {
-                                    voidLine.mutate({ orderItemId: i.id, reason: reason.trim() });
-                                  }
-                                }}
-                              >
-                                <Trash2 className="size-4" />
-                              </Button>
-                            )}
-                          </span>
-                        </div>
-                      ))}
                     </div>
                   )}
 
@@ -1183,7 +1301,7 @@ export function PosWorkspace({
                     height regardless of how much scrolls above it — this is
                     the one thing that must never clip, fall off-screen, or
                     need a page scroll to reach. */}
-                <div className="shrink-0 space-y-2 border-t-2 pt-3">
+                <div className="shrink-0 space-y-2 border-t-2 pt-2">
                   <div className="flex items-center justify-between text-base font-semibold">
                     <span>Total</span>
                     <span className="tabular-nums">{money(billTotal, currency)}</span>
@@ -1200,77 +1318,6 @@ export function PosWorkspace({
                 </div>
               </div>
             )}
-          </SectionCard>
-
-          {/* Menu */}
-          <SectionCard
-            title={isBar ? "Drinks" : "Menu"}
-            description={
-              isBar
-                ? "Tap a drink, pick the serve (single, double, bottle, glass) and add it to the tab."
-                : "Tap an item to configure and stage it on the bill."
-            }
-            className={cn(
-              mobileRightTab === "menu" ? "flex" : "hidden",
-              "h-full min-h-0 flex-1 flex-col overflow-hidden lg:flex",
-            )}
-          >
-            <div className="shrink-0">
-              <div className="relative mb-2">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={catalogSearch}
-                  onChange={(e) => setCatalogSearch(e.target.value)}
-                  placeholder={isBar ? "Search drinks…" : "Search the menu…"}
-                  className="h-11 pl-8"
-                />
-              </div>
-              <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
-                <Button
-                  variant={categoryId ? "outline" : "default"}
-                  className="min-h-11 shrink-0 rounded-full"
-                  onClick={() => setCategoryId(null)}
-                >
-                  All
-                </Button>
-                {categories.map((c) => (
-                  <Button
-                    key={c.id}
-                    variant={categoryId === c.id ? "default" : "outline"}
-                    className="min-h-11 shrink-0 rounded-full"
-                    onClick={() => setCategoryId(c.id)}
-                  >
-                    {c.name}
-                  </Button>
-                ))}
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {filtered.length === 0 ? (
-                <EmptyState
-                  title={catalogSearch ? "No matches" : isBar ? "No drinks" : "No items"}
-                  description={
-                    catalogSearch
-                      ? "Try a different search or category."
-                      : isBar
-                        ? "Publish a beverage menu to sell from the bar till."
-                        : "Publish a menu to sell from this till."
-                  }
-                />
-              ) : (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-                  {filtered.map((i) => (
-                    <PosMenuItemCard
-                      key={i.id}
-                      item={i}
-                      currency={currency}
-                      disabled={!orderId || i.available === false || i.priceConfigured === false}
-                      onSelect={() => setPickerItem(i)}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
           </SectionCard>
         </div>
       </div>
