@@ -6,7 +6,7 @@ export type StatusTone = "success" | "warning" | "danger" | "info" | "neutral";
 const toneClasses: Record<StatusTone, string> = {
   success: "bg-[color:var(--os-success-soft)] text-[color:var(--os-success)]",
   warning: "bg-[color:var(--os-warn-soft)] text-[color:var(--os-warn)]",
-  danger: "bg-[color:var(--os-danger-soft)] text-[color:var(--os-danger)]",
+  danger: "bg-[color:var(--os-danger-soft)] text-[color:var(--os-danger-strong)]",
   info: "bg-[color:var(--os-info-soft)] text-[color:var(--os-info)]",
   neutral: "bg-muted text-muted-foreground",
 };

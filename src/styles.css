@@ -288,13 +288,14 @@
     --os-green-soft: rgba(52,103,57,0.08);
     --os-gold: #C0B87A;
     --os-gold-soft: rgba(192,184,122,0.14);
-    --os-info: #3D6FA8;
+    --os-info: #396BA4;
     --os-info-soft: rgba(61,111,168,0.10);
-    --os-warn: #B7791F;
+    --os-warn: #965800;
     --os-warn-soft: rgba(183,121,31,0.12);
     --os-danger: #B4433C;
     --os-danger-soft: rgba(180,67,60,0.10);
-    --os-success: #2F8F55;
+    --os-danger-strong: var(--os-danger); /* badge text-on-soft role; already AA vs its own soft bg in light theme */
+    --os-success: #18783E;
     --os-success-soft: rgba(47,143,85,0.10);
 
     --os-shadow-card: 0 1px 0 rgba(26,26,26,0.02), 0 2px 8px -4px rgba(26,26,26,0.06), 0 12px 32px -20px rgba(26,26,26,0.10);
@@ -606,7 +607,7 @@
 
   --os-ink: #F5F5F3;          /* primary text on dark */
   --os-ink-2: #B7B9BC;        /* secondary */
-  --os-ink-3: #7E8185;        /* muted */
+  --os-ink-3: #8B8E92;        /* muted; AA-corrected (was #7E8185, 4.00:1 on --os-surface-2) */
 
   --os-green: #5EA56D;
   --os-green-soft: rgba(94,165,109,0.14);
@@ -616,9 +617,10 @@
   --os-info-soft: rgba(122,167,214,0.12);
   --os-warn: #D8A94A;
   --os-warn-soft: rgba(216,169,74,0.14);
-  --os-danger: #C65D5D;
+  --os-danger: #C65D5D;       /* solid role (e.g. destructive button bg w/ white text); unchanged */
   --os-danger-soft: rgba(198,93,93,0.14);
-  --os-success: #5EA56D;
+  --os-danger-strong: #E87F7F; /* badge text-on-soft role; AA-corrected (was var(--os-danger), 3.28:1 on its own soft bg) */
+  --os-success: #66AD75;      /* AA-corrected (was #5EA56D, 4.25:1 on its own soft bg) */
   --os-success-soft: rgba(94,165,109,0.14);
 
   --os-shadow-card:

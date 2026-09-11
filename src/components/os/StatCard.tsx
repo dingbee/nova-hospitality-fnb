@@ -8,7 +8,7 @@ const toneClass: Record<Tone, string> = {
   gold: "bg-[color:var(--os-gold-soft)]   text-[color:var(--os-gold)]",
   info: "bg-[color:var(--os-info-soft)]   text-[color:var(--os-info)]",
   warn: "bg-[color:var(--os-warn-soft)]   text-[color:var(--os-warn)]",
-  danger: "bg-[color:var(--os-danger-soft)] text-[color:var(--os-danger)]",
+  danger: "bg-[color:var(--os-danger-soft)] text-[color:var(--os-danger-strong)]",
   neutral: "bg-white/[0.04] text-[color:var(--os-ink-2)]",
 };
 
@@ -67,7 +67,7 @@ export function StatCard({
               "rounded-full px-2 py-0.5 text-[0.65rem] font-medium",
               trend.positive
                 ? "bg-[color:var(--os-success-soft)] text-[color:var(--os-success)]"
-                : "bg-[color:var(--os-danger-soft)] text-[color:var(--os-danger)]",
+                : "bg-[color:var(--os-danger-soft)] text-[color:var(--os-danger-strong)]",
             )}
           >
             {trend.value}
