@@ -20,7 +20,7 @@ import { accessibleLocationIds, assertTenantRead, getTenantScope } from "../core
 import { getInventoryIntelligence } from "./inventory.server";
 import { round } from "./analysis";
 import type { RestaurantInsight } from "./types";
-import type { LocationSummary, MultiLocationIntelligence } from "./p05.types";
+import type { LocationSummary, MultiLocationIntelligence, PropertyRollup } from "./p05.types";
 
 type Sb = any;
 const DAY = 864e5;
@@ -70,6 +70,9 @@ export async function getMultiLocationIntelligence(
       locations: [],
       bestPerforming: null,
       worstPerforming: null,
+      propertyRollups: [],
+      bestPerformingProperty: null,
+      worstPerformingProperty: null,
       insights: [
         {
           key: "multi_location.no_locations",
@@ -136,7 +139,63 @@ export async function getMultiLocationIntelligence(
   );
   summaries.sort((a, b) => b.revenue - a.revenue);
 
+  // P09 — group the same already-computed summaries by property. Only
+  // properties actually represented among the caller's accessible outlets
+  // appear here — a Property A-scoped caller's rollup can never mention
+  // Property B, because `locations` above was already filtered to
+  // `accessibleLocationIds` before this point.
+  const propertyIds = [
+    ...new Set(summaries.map((s) => s.propertyId).filter((id): id is string => !!id)),
+  ];
+  let propertyRollups: PropertyRollup[] = [];
+  let bestPerformingProperty: string | null = null;
+  let worstPerformingProperty: string | null = null;
+  if (propertyIds.length > 1) {
+    const { data: propRows } = await sb
+      .from("restaurant_properties")
+      .select("id, name")
+      .eq("tenant_id", tenantId)
+      .in("id", propertyIds);
+    const propertyNames = new Map(((propRows ?? []) as any[]).map((p) => [p.id, p.name as string]));
+    const byProperty = new Map<string, PropertyRollup>();
+    for (const s of summaries) {
+      if (!s.propertyId) continue;
+      const row =
+        byProperty.get(s.propertyId) ??
+        ({
+          propertyId: s.propertyId,
+          name: propertyNames.get(s.propertyId) ?? "Property",
+          revenue: 0,
+          orders: 0,
+          atRiskInventoryCount: 0,
+          outletCount: 0,
+        } satisfies PropertyRollup);
+      row.revenue = round(row.revenue + s.revenue);
+      row.orders += s.orders;
+      row.atRiskInventoryCount += s.atRiskInventoryCount;
+      row.outletCount += 1;
+      byProperty.set(s.propertyId, row);
+    }
+    propertyRollups = [...byProperty.values()].sort((a, b) => b.revenue - a.revenue);
+    bestPerformingProperty = propertyRollups[0]?.propertyId ?? null;
+    worstPerformingProperty =
+      propertyRollups.length > 0 ? propertyRollups[propertyRollups.length - 1]!.propertyId : null;
+  }
+
   const insights: RestaurantInsight[] = [];
+  if (propertyRollups.length >= 2) {
+    const worstProp = propertyRollups[propertyRollups.length - 1]!;
+    const avgProp = propertyRollups.reduce((s, p) => s + p.revenue, 0) / propertyRollups.length;
+    if (avgProp > 0 && worstProp.revenue < avgProp * 0.5) {
+      insights.push({
+        key: `multi_location.property_underperformance.${worstProp.propertyId}`,
+        severity: "medium",
+        title: `${worstProp.name} is materially underperforming the enterprise average`,
+        detail: `${currency} ${worstProp.revenue.toLocaleString()} across ${worstProp.outletCount} outlet(s) versus a portfolio average of ${currency} ${round(avgProp).toLocaleString()}.`,
+        recommendation: "Investigate this property's performance against the enterprise portfolio.",
+      });
+    }
+  }
   if (summaries.length >= 2) {
     const best = summaries[0]!;
     const worst = summaries[summaries.length - 1]!;
@@ -168,6 +227,9 @@ export async function getMultiLocationIntelligence(
     locations: summaries,
     bestPerforming: summaries[0]?.locationId ?? null,
     worstPerforming: summaries.length > 0 ? summaries[summaries.length - 1]!.locationId : null,
+    propertyRollups,
+    bestPerformingProperty,
+    worstPerformingProperty,
     insights,
   };
 }

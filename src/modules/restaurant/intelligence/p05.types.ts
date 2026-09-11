@@ -236,6 +236,23 @@ export interface LocationSummary {
   topInsight: RestaurantInsight | null;
 }
 
+/**
+ * P09 §12-14 — the Enterprise → Property tier this capability was already
+ * one grouping-step away from: `locations` above already spans every
+ * outlet the caller can see across every property they have access to
+ * (getMultiLocationIntelligence's own location query is tenant-wide unless
+ * narrowed by `propertyId`); this simply rolls those same, already-computed
+ * summaries up by property — never a second revenue/inventory computation.
+ */
+export interface PropertyRollup {
+  propertyId: string;
+  name: string;
+  revenue: number;
+  orders: number;
+  atRiskInventoryCount: number;
+  outletCount: number;
+}
+
 export interface MultiLocationIntelligence {
   generatedAt: string;
   windowDays: number;
@@ -243,5 +260,9 @@ export interface MultiLocationIntelligence {
   locations: LocationSummary[];
   bestPerforming: string | null;
   worstPerforming: string | null;
+  /** Populated only when the caller's accessible outlets span more than one property — a single-property tenant has nothing to roll up. */
+  propertyRollups: PropertyRollup[];
+  bestPerformingProperty: string | null;
+  worstPerformingProperty: string | null;
   insights: RestaurantInsight[];
 }

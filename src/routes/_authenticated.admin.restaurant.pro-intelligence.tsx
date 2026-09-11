@@ -739,20 +739,52 @@ function ProIntelligencePage() {
             ) : (
               <div className="space-y-4">
                 <InsightList insights={ml.insights} />
-                <ul className="divide-y text-sm">
-                  {ml.locations.map((l: any) => (
-                    <li
-                      key={l.locationId}
-                      className="flex flex-wrap items-center justify-between gap-2 py-2"
-                    >
-                      <span className="font-medium">{l.name}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {money(l.revenue, ml.currency)} · {l.orders} orders ·{" "}
-                        {l.atRiskInventoryCount} at risk
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                {ml.propertyRollups?.length > 0 ? (
+                  <div>
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      By property (enterprise portfolio)
+                    </p>
+                    <ul className="divide-y text-sm">
+                      {ml.propertyRollups.map((p: any) => (
+                        <li
+                          key={p.propertyId}
+                          className="flex flex-wrap items-center justify-between gap-2 py-2"
+                        >
+                          <span className="font-medium">
+                            {p.name}
+                            {p.propertyId === ml.bestPerformingProperty ? " — top" : ""}
+                            {p.propertyId === ml.worstPerformingProperty
+                              ? " — needs attention"
+                              : ""}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {money(p.revenue, ml.currency)} · {p.outletCount} outlet(s) · {p.orders}{" "}
+                            orders · {p.atRiskInventoryCount} at risk
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                <div>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    By outlet
+                  </p>
+                  <ul className="divide-y text-sm">
+                    {ml.locations.map((l: any) => (
+                      <li
+                        key={l.locationId}
+                        className="flex flex-wrap items-center justify-between gap-2 py-2"
+                      >
+                        <span className="font-medium">{l.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {money(l.revenue, ml.currency)} · {l.orders} orders ·{" "}
+                          {l.atRiskInventoryCount} at risk
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             )
           ) : (

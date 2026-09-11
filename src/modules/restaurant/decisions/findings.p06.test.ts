@@ -144,6 +144,9 @@ describe("revenueUnderperformanceFindings", () => {
       locations: [],
       bestPerforming: "loc-a",
       worstPerforming: "loc-b",
+      propertyRollups: [],
+      bestPerformingProperty: null,
+      worstPerformingProperty: null,
       insights: [
         {
           key: "multi_location.underperformer.loc-b",
