@@ -471,6 +471,29 @@ export async function addPosLines(sb: Sb, userId: string, input: AddPosLinesInpu
   if (!OPEN_STATES.includes(order.status))
     throw new Error("This bill is closed and can no longer be modified.");
 
+  // Idempotency (P10): a batch replayed with the same clientRequestId — the
+  // offline sync engine's retry-after-timeout/refresh-during-sync case —
+  // must produce exactly the lines it produced the first time, never a
+  // second copy. Every line in one addPosLines call is stamped with the
+  // same key (unlike restaurant_orders/_payments, one client_request_id
+  // here spans N rows, so this is an existence check, not a unique-index
+  // insert-conflict catch — mirroring openPosOrder's own
+  // check-before-create shape at the batch level instead of the row level).
+  if (input.clientRequestId) {
+    const { data: alreadyInserted } = await sb
+      .from("restaurant_order_items")
+      .select(
+        "id, menu_item_id, station_id, description, quantity, unit_price, discount, tax_amount, line_total, status, course, notes",
+      )
+      .eq("tenant_id", input.tenantId)
+      .eq("order_id", input.orderId)
+      .eq("client_request_id", input.clientRequestId);
+    if (alreadyInserted && alreadyInserted.length > 0) {
+      const totals = await recalcOrder(sb, input.tenantId, input.orderId);
+      return { items: alreadyInserted, order: totals, idempotent: true };
+    }
+  }
+
   const inserted = await insertLines(sb, input.tenantId, input.orderId, toSalesLines(input.lines), {
     currency: order.currency ?? "TZS",
     propertyId: order.property_id,
@@ -478,6 +501,7 @@ export async function addPosLines(sb: Sb, userId: string, input: AddPosLinesInpu
     orderType: order.order_type,
     exchangeRate: Number(order.exchange_rate ?? 1),
     userId,
+    clientRequestId: input.clientRequestId ?? null,
   });
   const totals = await recalcOrder(sb, input.tenantId, input.orderId);
 
@@ -495,7 +519,7 @@ export async function addPosLines(sb: Sb, userId: string, input: AddPosLinesInpu
       order_total: Number(totals.total),
     },
   });
-  return { items: inserted, order: totals };
+  return { items: inserted, order: totals, idempotent: false };
 }
 
 /**

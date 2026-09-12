@@ -95,6 +95,7 @@
     "eslint-plugin-prettier": "^5.2.6",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
+    "fake-indexeddb": "^6.2.5",
     "globals": "^15.15.0",
     "jsqr": "^1.4.0",
     "pngjs": "^7.0.0",
@@ -111,6 +112,6 @@
       "entities": "4.5.0"
     }
   },
-  "description": "NOVA Hospitality F&B \u2014 Restaurant & Bar OS",
+  "description": "NOVA Hospitality F&B — Restaurant & Bar OS",
   "version": "1.0.0"
 }
