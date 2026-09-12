@@ -12,6 +12,7 @@ export {
   listRestaurantMembersFn,
   upsertRestaurantMemberFn,
   removeRestaurantMemberFn,
+  updateRestaurantMemberRoleFn,
 } from "./core/tenancy.functions";
 export { emitRestaurantEventFn } from "./events/events.functions";
 export {

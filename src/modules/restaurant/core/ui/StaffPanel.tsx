@@ -21,7 +21,7 @@ import { useRestaurantWorkspace } from "../../ui/useRestaurantWorkspace";
 import {
   listRestaurantMembersFn,
   removeRestaurantMemberFn,
-  upsertRestaurantMemberFn,
+  updateRestaurantMemberRoleFn,
 } from "../tenancy.functions";
 import { RESTAURANT_ROLES } from "../contracts";
 import { RESTAURANT_ROLE_LABELS } from "../permissions";
@@ -38,18 +38,13 @@ export function StaffPanel() {
     enabled: Boolean(tenantId),
   });
 
-  const upsertFn = useServerFn(upsertRestaurantMemberFn);
+  const updateRoleFn = useServerFn(updateRestaurantMemberRoleFn);
   const updateRole = useAdminMutation({
-    mutationFn: (vars: {
-      memberId: string;
-      userId: string;
-      role: string;
-      propertyId: string | null;
-    }) =>
-      upsertFn({
+    mutationFn: (vars: { memberId: string; role: string; propertyId: string | null }) =>
+      updateRoleFn({
         data: {
           tenantId: tenantId!,
-          userId: vars.userId,
+          memberId: vars.memberId,
           role: vars.role as never,
           propertyId: vars.propertyId,
         },
@@ -134,7 +129,6 @@ export function StaffPanel() {
                         onChange={(e) =>
                           updateRole.mutate({
                             memberId: m.id,
-                            userId: m.user_id,
                             role: e.target.value,
                             propertyId: m.property_id,
                           })
