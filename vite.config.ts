@@ -1,5 +1,9 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import { VitePWA } from "vite-plugin-pwa";
+// Side-effect only: augments vite's `UserConfig` type with vitest's `test`
+// option, so the `test` key below typechecks against the wrapped
+// defineConfig's vite-derived UserConfig type.
+import "vitest/config";
 
 /**
  * NOVA Hospitality F&B — Restaurant & Bar OS.
@@ -8,6 +12,13 @@ import { VitePWA } from "vite-plugin-pwa";
  * only the runtime target differs (see src/modules/runtime/runtime-config.ts).
  */
 export default defineConfig({
+  test: {
+    // e2e/ holds Playwright specs (run via `npx playwright test`), not
+    // vitest tests — without this, vitest's default *.spec.ts glob picks
+    // them up too and fails, since they use @playwright/test's `test`,
+    // not vitest's.
+    exclude: ["**/node_modules/**", "e2e/**"],
+  },
   plugins: [
     VitePWA({
       manifest: false,

@@ -8,3 +8,6 @@ src/routeTree.gen.ts
 standalone/.env
 local/.env
 *.log
+e2e/.generated
+playwright-report
+test-results

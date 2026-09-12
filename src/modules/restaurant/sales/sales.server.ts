@@ -361,6 +361,9 @@ export async function insertLines(
      * name/price from the catalogue, never trusted verbatim off the wire.
      */
     trusted?: boolean;
+    /** P10: stamped on every row this call inserts, so a replayed batch can
+     * be recognised and short-circuited (see pos.server.ts's addPosLines). */
+    clientRequestId?: string | null;
   },
 ) {
   const trusted = ctx.trusted !== false;
@@ -529,6 +532,7 @@ export async function insertLines(
       course: l.course ?? null,
       notes: l.notes ?? null,
       status: "ordered",
+      client_request_id: ctx.clientRequestId ?? null,
     };
   });
   const { data, error } = await sb

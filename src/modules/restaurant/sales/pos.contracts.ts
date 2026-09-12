@@ -69,6 +69,16 @@ export const addPosLinesSchema = z.object({
   tenantId: uuid,
   orderId: uuid,
   lines: z.array(posLineSchema).min(1),
+  /**
+   * Optional so the internal call from `openPosOrder` (adding a new order's
+   * initial lines) doesn't need one — that whole call is already covered by
+   * the order's own `clientRequestId` (a retried `openPosOrder` short-circuits
+   * before ever reaching `addPosLines` again). When a caller does supply one
+   * (P10's offline sync engine always does), the same batch replayed twice
+   * returns the already-inserted lines instead of inserting a second copy —
+   * see pos.server.ts's `addPosLines`.
+   */
+  clientRequestId: z.string().min(6).max(80).optional(),
 });
 export type AddPosLinesInput = z.infer<typeof addPosLinesSchema>;
 
