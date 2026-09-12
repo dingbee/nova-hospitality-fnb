@@ -300,6 +300,27 @@ describe("sync engine — status observability", () => {
   });
 });
 
+describe("sync engine — bounded queue growth", () => {
+  it("a successful sync pass prunes old SYNCED entries (P10 Phase 19 'no unbounded queue growth'), never anything still pending/failed/conflicted", async () => {
+    const oldSynced = await enqueueOpenOrder("old-synced");
+    const { transitionQueueEntry } = await import("./queue");
+    await transitionQueueEntry(oldSynced.operationId, { state: "SYNCED" });
+    const { put, STORES: dbStores } = await import("./db");
+    const raw = await getQueueEntry(oldSynced.operationId);
+    await put(dbStores.queue, { ...raw, createdAt: new Date(0).toISOString() });
+
+    const stillPending = await enqueueOpenOrder("still-pending-after-prune");
+    const callers = makeCallers();
+    await syncPendingQueue(TENANT, callers);
+
+    expect(await getQueueEntry(oldSynced.operationId)).toBeUndefined();
+    // The newly-synced entry from THIS pass is recent, not older than the
+    // prune window, so it survives — pruning only removes what was already
+    // old, not everything SYNCED.
+    expect(await getQueueEntry(stillPending.operationId)).toBeTruthy();
+  });
+});
+
 describe("sync engine — re-entrancy / concurrent invocation", () => {
   it("two concurrent syncPendingQueue calls for the same tenant never both process the same PENDING entry into a double server call", async () => {
     // Simulates a UI that fires sync both on a reconnect event and a

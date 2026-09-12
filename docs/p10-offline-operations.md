@@ -132,7 +132,11 @@ itself still only a queued, not-yet-synced `open_order`).
 States: `PENDING → PROCESSING → SYNCED`, or
 `RETRYABLE_FAILURE`/`CONFLICT`/`DEAD_LETTER`/`CANCELLED`. Nothing ever
 deletes a failed entry — `pruneSynced` only ever removes old **SYNCED**
-rows. `enqueue()` enforces a tenant-scoped unique index on
+rows (default: older than 7 days), and runs automatically at the end of
+every successful `syncPendingQueue` pass (best-effort — a pruning failure
+never fails the sync itself), so a device that stays online for months
+does not accumulate an unbounded queue. `enqueue()` enforces a
+tenant-scoped unique index on
 `clientRequestId` (`by_tenant_clientRequestId`, `unique: true`) so a
 double-click before the in-memory guard runs cannot create two queue
 entries racing for the same idempotency key.
@@ -308,15 +312,15 @@ artifacts (`e2e/.generated/`) are gitignored.
 
 ## 16. Test evidence
 
-- `src/modules/restaurant/offline/*.test.ts` — 10 files, 94 tests:
+- `src/modules/restaurant/offline/*.test.ts` — 10 files, 95 tests:
   `db.test.ts`, `device.test.ts`, `auth.test.ts`, `connectivity.test.ts`,
   `queue.test.ts`, `conflict.test.ts`, `syncEngine.test.ts`,
   `snapshot.test.ts`, `security.test.ts` (adversarial: tenant/device/user
   isolation, tampered payload, replay, cross-tenant replay, stale/revoked
   authorization), `chaos.test.ts` (reload/crash-mid-sync, repeated
   reconnect cycles, failed-mutation recovery).
-- Full project suite: 165 files / 2109 tests, all passing (includes the
-  94 above).
+- Full project suite: 165 files / 2110 tests, all passing (includes the
+  95 above).
 - `e2e/offline-realbrowser.spec.ts` — 15/15 passing (§15).
 - `npx tsc --noEmit` — 0 new errors (3 pre-existing, unrelated baseline
   errors in `menuReasoning.server.test.ts`/`router.tsx`/

@@ -22,7 +22,13 @@
  */
 import { classifyOutcome } from "./conflict";
 import type { ConflictRecord, QueuedOperation } from "./contracts";
-import { getQueueEntry, listQueueByState, listQueueForTenant, transitionQueueEntry } from "./queue";
+import {
+  getQueueEntry,
+  listQueueByState,
+  listQueueForTenant,
+  pruneSynced,
+  transitionQueueEntry,
+} from "./queue";
 import { put, STORES } from "./db";
 
 /** An order reference a queued add_item/fire_to_kitchen payload carries:
@@ -147,7 +153,18 @@ export async function syncPendingQueue(
   }
   tenantsSyncing.add(tenantId);
   try {
-    return await runSyncPass(tenantId, callers, emptySummary());
+    const summary = await runSyncPass(tenantId, callers, emptySummary());
+    // P10 Phase 19 "prevent unbounded queue growth": a device that stays
+    // online for months would otherwise accumulate a SYNCED row per
+    // operation forever. Bounded cleanup runs as part of every sync pass
+    // rather than existing only as a callable-but-uninvoked function —
+    // best-effort: a failure here must never fail the sync itself.
+    try {
+      await pruneSynced(tenantId);
+    } catch {
+      // Cleanup is not safety-critical; the next successful sync retries it.
+    }
+    return summary;
   } finally {
     tenantsSyncing.delete(tenantId);
   }
