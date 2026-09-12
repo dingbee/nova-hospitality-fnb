@@ -93,7 +93,33 @@ export async function getDb(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
-/** Test-only: force a fresh connection on the next getDb() call. */
+/**
+ * Closes the shared connection, if one is open, and clears the cache.
+ * IndexedDB's own `deleteDatabase`/version-upgrade operations block
+ * indefinitely while any connection to that database remains open (this is
+ * a genuine defect this pass found via its own test suite hanging, not a
+ * theoretical concern) — anything that needs the database to actually be
+ * deletable or upgradable (tests between cases, a future schema migration
+ * that needs to force a clean reopen) must call this first, not just drop
+ * references and hope garbage collection closes it.
+ */
+export async function closeDb(): Promise<void> {
+  if (!dbPromise) return;
+  try {
+    const db = await dbPromise;
+    db.close();
+  } catch {
+    // Already failed to open — nothing to close.
+  } finally {
+    dbPromise = null;
+  }
+}
+
+/** Test-only: force a fresh connection on the next getDb() call. Prefer
+ * `closeDb()` when an existing connection may be open (e.g. between test
+ * cases that need `indexedDB.deleteDatabase` to actually complete) — this
+ * function only clears the cached reference, it does not close the
+ * underlying connection. */
 export function resetDbConnectionForTests() {
   dbPromise = null;
 }

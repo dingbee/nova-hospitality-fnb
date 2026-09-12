@@ -39,11 +39,10 @@ export class DuplicateClientRequestIdError extends Error {
  * legitimate retry (a legitimate retry re-enqueues the SAME operationId via
  * `markAttempt`, it never calls `enqueue` twice). */
 export async function enqueue(input: EnqueueInput): Promise<QueuedOperation> {
-  const existing = await getAllByIndex<QueuedOperation>(
-    STORES.queue,
-    "by_tenant_clientRequestId",
-    [input.tenantId, input.clientRequestId],
-  );
+  const existing = await getAllByIndex<QueuedOperation>(STORES.queue, "by_tenant_clientRequestId", [
+    input.tenantId,
+    input.clientRequestId,
+  ]);
   if (existing.length > 0) throw new DuplicateClientRequestIdError(input.clientRequestId);
 
   const op: QueuedOperation = {

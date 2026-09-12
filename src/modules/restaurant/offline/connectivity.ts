@@ -17,12 +17,7 @@
  */
 
 export type ConnectivityState =
-  | "ONLINE"
-  | "OFFLINE"
-  | "SYNCING"
-  | "SYNCED"
-  | "SYNC_ERROR"
-  | "STALE";
+  "ONLINE" | "OFFLINE" | "SYNCING" | "SYNCED" | "SYNC_ERROR" | "STALE";
 
 type Listener = (browserOnline: boolean) => void;
 

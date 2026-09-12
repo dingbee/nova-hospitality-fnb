@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- test-only mock payloads/results are untyped at this boundary. */
 /**
  * Real IndexedDB semantics via fake-indexeddb (a spec-accurate
  * implementation, not a hand-rolled mock) — proves durability, versioned
@@ -7,6 +8,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  closeDb,
   del,
   DB_NAME,
   get,
@@ -19,7 +21,12 @@ import {
 } from "./db";
 
 beforeEach(async () => {
-  resetDbConnectionForTests();
+  // Closing first is load-bearing: IndexedDB's deleteDatabase blocks
+  // indefinitely while any connection to that database is still open
+  // (verified — omitting this hung every test after the first with no
+  // onblocked/onerror ever firing, a real defect in the original version
+  // of this file, not a hypothetical).
+  await closeDb();
   await new Promise<void>((resolve, reject) => {
     const req = indexedDB.deleteDatabase(DB_NAME);
     req.onsuccess = () => resolve();
@@ -28,14 +35,22 @@ beforeEach(async () => {
   });
 });
 
-afterEach(() => {
-  resetDbConnectionForTests();
+afterEach(async () => {
+  await closeDb();
 });
 
 describe("IndexedDB durable storage", () => {
   it("persists a value across a simulated connection reopen (refresh)", async () => {
     await put(STORES.device, { id: "device", deviceId: "d-1" });
-    resetDbConnectionForTests(); // simulates a fresh page load re-opening the same on-disk DB
+    // A real browser refresh closes every connection the old page held as
+    // part of tearing down its realm — there is no code path in the app
+    // that runs after that closes it explicitly. closeDb() here models
+    // that browser-driven close; only the JS-side cache is what a
+    // synthetic "reopen" needs to drop; resetDbConnectionForTests() alone
+    // would leak the real connection (Node/fake-indexeddb has no
+    // page-lifecycle GC to close it for us), which is exactly the bug that
+    // made every test after this one hang until this was fixed.
+    await closeDb();
     const value = await get<{ id: string; deviceId: string }>(STORES.device, "device");
     expect(value?.deviceId).toBe("d-1");
   });
@@ -45,9 +60,7 @@ describe("IndexedDB durable storage", () => {
     // If any store from the upgrade handler were missing, this would throw
     // "object store not found" rather than resolve.
     await Promise.all(
-      Object.values(STORES).map((store) =>
-        expect(getAll(store)).resolves.toBeDefined(),
-      ),
+      Object.values(STORES).map((store) => expect(getAll(store)).resolves.toBeDefined()),
     );
   });
 
@@ -89,7 +102,6 @@ describe("IndexedDB durable storage", () => {
   it("isStorageAvailable reports false (never throws) when the environment has no indexedDB", async () => {
     const real = (globalThis as any).indexedDB;
     resetDbConnectionForTests();
-    // @ts-expect-error simulating a locked-down / no-IndexedDB runtime
     delete (globalThis as any).indexedDB;
     try {
       expect(await isStorageAvailable()).toBe(false);

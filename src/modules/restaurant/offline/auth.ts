@@ -16,11 +16,7 @@
  */
 import { supabase } from "@/integrations/supabase/client";
 
-export type OfflineSessionStatus =
-  | "unauthenticated"
-  | "valid"
-  | "expiring_soon"
-  | "expired";
+export type OfflineSessionStatus = "unauthenticated" | "valid" | "expiring_soon" | "expired";
 
 export interface OfflineSessionState {
   status: OfflineSessionStatus;

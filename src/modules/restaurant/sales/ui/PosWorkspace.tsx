@@ -57,6 +57,8 @@ import {
   resolveServiceRequestFn,
 } from "@/modules/restaurant/service-requests/service-requests.functions";
 import { useNewlyActiveKeys, useStaffAttentionSignal } from "@/hooks/use-attention-signal";
+import { useOfflineSync } from "@/modules/restaurant/offline/useOfflineSync";
+import { ConnectivityIndicator } from "@/modules/restaurant/offline/ui/ConnectivityIndicator";
 import type { BillSplitMode } from "../bill.contracts";
 import { PosItemDialog } from "./PosItemDialog";
 import { PosBillDialog } from "./PosBillDialog";
@@ -125,9 +127,20 @@ export function PosWorkspace({
   const canReopen = hasRestaurantCapability(roles, "sales.reopen", platformAdmin);
   const canRoomCharge = hasRestaurantCapability(roles, "sales.room_charge", platformAdmin);
   const currency = ws.data?.properties?.[0]?.currency ?? "TZS";
+  const workspacePropertyId = ws.data?.properties?.[0]?.id ?? null;
   const qc = useQueryClient();
 
   const [orderId, setOrderId] = useState<string | null>(null);
+  // P10: a queued (not-yet-server-confirmed) order is tracked separately
+  // from a real orderId — the board/order/bill queries below must never
+  // fire against a locally-generated id, and the UI must never claim
+  // "server confirmed" for one. See the openBill mutationFn's offline
+  // branch.
+  const [queuedOrder, setQueuedOrder] = useState<{
+    operationId: string;
+    guestCount: number;
+    tableId?: string;
+  } | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   // Below lg, Bill and Menu can't both get enough height to stay usable (see
   // the tab switcher below) — this picks which one is currently shown there.
@@ -254,9 +267,39 @@ export function PosWorkspace({
     void qc.invalidateQueries({ queryKey: ["restaurant.orders"] });
   };
 
+  // P10 — offline operations capability. isOffline reflects real browser
+  // connectivity (see connectivity.ts); the queue*/status below are backed
+  // by IndexedDB, not memory, and replay through the exact same
+  // openPosOrderFn/addPosLinesFn/fireRestaurantOrderFn this component
+  // already calls when online (see offline/adapters.ts) — there is no
+  // second transactional path.
+  const offlineSync = useOfflineSync({
+    tenantId,
+    propertyId: workspacePropertyId,
+    outletId: currentLocationId ?? null,
+  });
+
   const openBill = useAdminMutation({
-    mutationFn: (vars: { tableId?: string; guestCount: number }) =>
-      openFn({
+    mutationFn: async (vars: { tableId?: string; guestCount: number }) => {
+      if (offlineSync.isOffline) {
+        const op = await offlineSync.queueOpenOrder({
+          tenantId: tenantId!,
+          propertyId: workspacePropertyId,
+          locationId: vars.tableId ?? null,
+          tableId: vars.tableId,
+          orderType: vars.tableId ? "dine_in" : "bar",
+          guestCount: vars.guestCount,
+          currency,
+          lines: [],
+        });
+        return {
+          queued: true as const,
+          operationId: op.operationId,
+          guestCount: vars.guestCount,
+          tableId: vars.tableId,
+        };
+      }
+      const result = await openFn({
         data: {
           tenantId: tenantId!,
           tableId: vars.tableId,
@@ -267,45 +310,78 @@ export function PosWorkspace({
           clientRequestId: openKey.current,
           lines: [],
         },
-      }),
-    successMessage: "Bill opened",
+      });
+      return { queued: false as const, ...(result as any) };
+    },
+    onSuccessToast: (data: any) =>
+      data.queued ? "Bill queued — will sync when reconnected" : "Bill opened",
     onSuccess: (data: any) => {
-      openKey.current = newRequestId();
-      setOrderId(data.id);
+      if (data.queued) {
+        setQueuedOrder({
+          operationId: data.operationId,
+          guestCount: data.guestCount,
+          tableId: data.tableId,
+        });
+        setOrderId(null);
+      } else {
+        openKey.current = newRequestId();
+        setQueuedOrder(null);
+        setOrderId(data.id);
+      }
       setCart([]);
       refresh();
     },
   });
 
   const sendLines = useAdminMutation({
-    mutationFn: (vars: { fire: boolean }) =>
-      addFn({
-        data: {
-          tenantId: tenantId!,
-          orderId: orderId!,
-          lines: cart.map((l) => ({
-            menuItemId: l.menuItemId,
-            variantId: l.variantId,
-            stationId: l.stationId,
-            description: l.description,
-            quantity: l.quantity,
-            unitPrice: l.unitPrice,
-            discount: 0,
-            seatNumber: l.seatNumber,
-            course: l.course,
-            notes: l.notes,
-            guestNotes: l.guestNotes,
-            modifiers: l.modifiers,
-          })),
-        },
-      }).then(async (res: any) => {
-        if (vars.fire)
-          await fireFn({
-            data: { tenantId: tenantId!, orderId: orderId!, orderItemIds: [], priority: 0 },
-          });
-        return res;
-      }),
-    successMessage: "Sent",
+    mutationFn: async (vars: { fire: boolean }) => {
+      const lines = cart.map((l) => ({
+        menuItemId: l.menuItemId,
+        variantId: l.variantId,
+        stationId: l.stationId,
+        description: l.description,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        discount: 0,
+        seatNumber: l.seatNumber,
+        course: l.course,
+        notes: l.notes,
+        guestNotes: l.guestNotes,
+        modifiers: l.modifiers,
+      }));
+
+      // Offline, or targeting an order that itself is still only queued
+      // (opened offline, not yet synced): queue add_item — and
+      // fire_to_kitchen, if requested — as dependent operations against
+      // the same OrderRef, rather than calling the server functions
+      // directly. Online against an already-server-confirmed order is
+      // completely unchanged from before this pass.
+      if (offlineSync.isOffline || queuedOrder) {
+        const orderRef = queuedOrder
+          ? ({ kind: "local", operationId: queuedOrder.operationId } as const)
+          : ({ kind: "server", orderId: orderId! } as const);
+        const addOp = await offlineSync.queueAddItems(
+          orderRef,
+          lines,
+          queuedOrder?.operationId ?? null,
+        );
+        if (vars.fire) {
+          await offlineSync.queueFireToKitchen(orderRef, addOp.operationId);
+        }
+        return { queued: true as const };
+      }
+
+      const res = await addFn({
+        data: { tenantId: tenantId!, orderId: orderId!, lines },
+      });
+      if (vars.fire) {
+        await fireFn({
+          data: { tenantId: tenantId!, orderId: orderId!, orderItemIds: [], priority: 0 },
+        });
+      }
+      return { queued: false as const, ...(res as any) };
+    },
+    onSuccessToast: (data: any) => (data.queued ? "Queued — will send when reconnected" : "Sent"),
     onSuccess: () => {
       setCart([]);
       refresh();
@@ -659,7 +735,19 @@ export function PosWorkspace({
             {muted ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
             {muted ? "Muted" : "Alerts"}
           </button>
+          <ConnectivityIndicator status={offlineSync.status} />
         </div>
+
+        {queuedOrder && (
+          <div
+            className="mx-4 mt-2 rounded-lg border border-dashed px-3 py-2 text-xs text-[color:var(--os-warn)]"
+            data-testid="queued-order-banner"
+          >
+            Bill queued locally for {queuedOrder.guestCount} guest
+            {queuedOrder.guestCount === 1 ? "" : "s"} — not yet confirmed by the server. It will
+            sync automatically once this device reconnects.
+          </div>
+        )}
 
         {orderId && <GuestContextBanner tenantId={tenantId} orderId={orderId} />}
       </div>
@@ -882,7 +970,11 @@ export function PosWorkspace({
                       key={i.id}
                       item={i}
                       currency={currency}
-                      disabled={!orderId || i.available === false || i.priceConfigured === false}
+                      disabled={
+                        (!orderId && !queuedOrder) ||
+                        i.available === false ||
+                        i.priceConfigured === false
+                      }
                       onSelect={() => setPickerItem(i)}
                     />
                   ))}
@@ -909,7 +1001,52 @@ export function PosWorkspace({
               "h-full min-h-0 flex-1 flex-col overflow-hidden p-4 lg:flex",
             )}
           >
-            {!orderId ? (
+            {!orderId && queuedOrder ? (
+              // P10: a queued order has no server row to render the normal
+              // orderRow-based bill from — this is a deliberately minimal,
+              // additive view (cart contents + client-computed total only),
+              // not a duplicate of the online bill UI below. Payment,
+              // receipt and void are all correctly unavailable here (they
+              // require a real, server-confirmed order) — only adding more
+              // items and sending to the kitchen are offered.
+              <div className="flex h-full min-h-0 flex-col" data-testid="queued-bill-panel">
+                <div className="flex-1 space-y-2 overflow-y-auto">
+                  {cart.length === 0 ? (
+                    <EmptyState title="No items yet" description="Add items from the menu." />
+                  ) : (
+                    cart.map((l, idx) => (
+                      <div key={idx} className="flex justify-between text-sm">
+                        <span>
+                          {l.quantity} × {l.description}
+                        </span>
+                        <span className="tabular-nums">{money(lineTotal(l), currency)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="mt-2 flex items-center justify-between border-t pt-2 text-sm font-semibold">
+                  <span>Total (queued)</span>
+                  <span className="tabular-nums">{money(billTotal, currency)}</span>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    disabled={cart.length === 0 || sendLines.isPending}
+                    onClick={() => sendLines.mutate({ fire: false })}
+                  >
+                    Queue items
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    disabled={cart.length === 0 || sendLines.isPending}
+                    onClick={() => sendLines.mutate({ fire: true })}
+                  >
+                    <Send className="mr-1.5 size-4" /> Queue &amp; send to kitchen
+                  </Button>
+                </div>
+              </div>
+            ) : !orderId ? (
               <EmptyState
                 title="No bill selected"
                 description="Tap a table or start a walk-in tab."

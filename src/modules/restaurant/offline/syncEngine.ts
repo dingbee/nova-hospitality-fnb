@@ -21,24 +21,14 @@
  * id once that dependency has synced (see contracts.ts's OrderRef).
  */
 import { classifyOutcome } from "./conflict";
-import type {
-  ConflictRecord,
-  QueuedOperation,
-} from "./contracts";
-import {
-  getQueueEntry,
-  listQueueByState,
-  listQueueForTenant,
-  transitionQueueEntry,
-} from "./queue";
+import type { ConflictRecord, QueuedOperation } from "./contracts";
+import { getQueueEntry, listQueueByState, listQueueForTenant, transitionQueueEntry } from "./queue";
 import { put, STORES } from "./db";
 
 /** An order reference a queued add_item/fire_to_kitchen payload carries:
  * either a real, already-known server order id, or a pointer to the local
  * open_order operation that will produce one once it syncs. */
-export type OrderRef =
-  | { kind: "server"; orderId: string }
-  | { kind: "local"; operationId: string };
+export type OrderRef = { kind: "server"; orderId: string } | { kind: "local"; operationId: string };
 
 export interface OpenOrderPayload {
   tenantId: string;
@@ -89,12 +79,16 @@ async function resolveOrderRef(ref: OrderRef): Promise<string | null> {
   return id ?? null;
 }
 
-async function recordConflict(op: QueuedOperation, kind: string, detail: string): Promise<void> {
+async function recordConflict(
+  op: QueuedOperation,
+  outcome: ConflictRecord["outcome"],
+  detail: string,
+): Promise<void> {
   const record: ConflictRecord = {
     conflictId: crypto.randomUUID(),
     operationId: op.operationId,
-    kind,
-    outcome: "REQUIRES_OPERATOR",
+    kind: outcome,
+    outcome,
     detail,
     detectedAt: new Date().toISOString(),
     resolvedAt: null,
@@ -109,7 +103,22 @@ export interface SyncSummary {
   deadLettered: number;
   conflicts: number;
   skippedWaitingOnDependency: number;
+  /** True when this call was a no-op because a sync for this tenant was
+   * already in flight (see the module-level lock below), not because
+   * there was nothing to do. */
+  alreadyInProgress: boolean;
 }
+
+/** P10 Phase 9/18 "concurrency protection" / "concurrent sync invocation":
+ * a UI can legitimately fire a sync both from a connectivity-restored event
+ * and a periodic timer at the same moment. Without this, two concurrent
+ * calls both read the queue's PENDING list before either has transitioned
+ * an entry to PROCESSING, and both attempt the same operation — a real,
+ * test-proven race (syncEngine.test.ts's re-entrancy suite), not a
+ * theoretical one. This runs in exactly one browser tab's JS thread, so an
+ * in-memory lock is sufficient; it is not a distributed lock and does not
+ * need to be. */
+const tenantsSyncing = new Set<string>();
 
 /**
  * Processes every PENDING/RETRYABLE_FAILURE entry for one tenant, once,
@@ -123,19 +132,36 @@ export async function syncPendingQueue(
   tenantId: string,
   callers: SyncCallers,
 ): Promise<SyncSummary> {
-  const pending = [
-    ...(await listQueueByState(tenantId, "PENDING")),
-    ...(await listQueueByState(tenantId, "RETRYABLE_FAILURE")),
-  ].sort((a, b) => a.sequence - b.sequence);
-
-  const summary: SyncSummary = {
+  const emptySummary = (): SyncSummary => ({
     attempted: 0,
     synced: 0,
     retried: 0,
     deadLettered: 0,
     conflicts: 0,
     skippedWaitingOnDependency: 0,
-  };
+    alreadyInProgress: false,
+  });
+
+  if (tenantsSyncing.has(tenantId)) {
+    return { ...emptySummary(), alreadyInProgress: true };
+  }
+  tenantsSyncing.add(tenantId);
+  try {
+    return await runSyncPass(tenantId, callers, emptySummary());
+  } finally {
+    tenantsSyncing.delete(tenantId);
+  }
+}
+
+async function runSyncPass(
+  tenantId: string,
+  callers: SyncCallers,
+  summary: SyncSummary,
+): Promise<SyncSummary> {
+  const pending = [
+    ...(await listQueueByState(tenantId, "PENDING")),
+    ...(await listQueueByState(tenantId, "RETRYABLE_FAILURE")),
+  ].sort((a, b) => a.sequence - b.sequence);
 
   for (const op of pending) {
     if (op.dependsOnOperationId) {

@@ -34,6 +34,12 @@ const CLOSED_ORDER_PATTERNS = [
 ];
 const NOT_FOUND_PATTERNS = [/Order not found/i];
 const FORBIDDEN_PATTERNS = [/^Forbidden/i];
+// requireSupabaseAuth (src/integrations/supabase/auth-middleware.ts) throws
+// exactly these "Unauthorized: ..." messages for every expired/invalid/
+// missing-token case — the real "session expired offline" /
+// "authorization revoked while offline" boundary. Same treatment as
+// Forbidden: never auto-retried, always surfaced to an operator.
+const UNAUTHORIZED_PATTERNS = [/^Unauthorized/i];
 
 /**
  * Classifies the result of one sync attempt. `error` is the caught
@@ -71,18 +77,25 @@ export function classifyOutcome(
       return {
         success: false,
         outcome: "SERVER_WINS",
-        reason: "This order was closed or already progressed on another device before this operation reached the server.",
+        reason:
+          "This order was closed or already progressed on another device before this operation reached the server.",
         retryable: false,
       };
     }
 
-    if (FORBIDDEN_PATTERNS.some((p) => p.test(message))) {
-      // "authorization changed while offline" — the device's cached
-      // context said this user/device could act here; the server, which
-      // re-checks on every single call (never trusting anything queued
-      // locally), disagrees. Never retried automatically: retrying an
-      // authorization failure without a human noticing is exactly the kind
-      // of silent-escalation-adjacent behavior P10 Phase 17 tests against.
+    if (
+      FORBIDDEN_PATTERNS.some((p) => p.test(message)) ||
+      UNAUTHORIZED_PATTERNS.some((p) => p.test(message))
+    ) {
+      // "authorization changed while offline" / "session expired offline" —
+      // the device's cached context said this user/device could act here;
+      // the server, which re-checks on every single call (never trusting
+      // anything queued locally), disagrees — either the capability isn't
+      // granted (Forbidden, from this app's own code) or the bearer token
+      // itself is no longer valid (Unauthorized, from requireSupabaseAuth).
+      // Never retried automatically: retrying either without a human
+      // noticing is exactly the kind of silent-escalation-adjacent behavior
+      // P10 Phase 17 tests against.
       return {
         success: false,
         outcome: "REQUIRES_OPERATOR",
@@ -107,7 +120,10 @@ export function classifyOutcome(
     return {
       success: true,
       outcome: fired > 0 ? "AUTO_RESOLVE" : "AUTO_RESOLVE",
-      reason: fired > 0 ? null : "Nothing left to fire — already fired by another device or this exact replay.",
+      reason:
+        fired > 0
+          ? null
+          : "Nothing left to fire — already fired by another device or this exact replay.",
       retryable: false,
     };
   }

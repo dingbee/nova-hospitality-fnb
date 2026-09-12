@@ -75,17 +75,20 @@ export const CLASSIFICATION_RATIONALE: Record<OfflineOperationKey, string> = {
     "Queueable: idempotent via restaurant_order_items.client_request_id (extended this pass — see migration 0056).",
   change_quantity:
     "Not shipped this pass: mutates an existing line by id; a safe conflict rule for a since-fired/voided/paid line was not specified. ONLINE_REQUIRED.",
-  remove_item:
-    "Not shipped this pass: same reasoning as change_quantity. ONLINE_REQUIRED.",
+  remove_item: "Not shipped this pass: same reasoning as change_quantity. ONLINE_REQUIRED.",
   fire_to_kitchen:
     "Queueable: naturally idempotent — operates on the set of un-fired ('ordered') lines; a replay with nothing left to fire is a correct no-op.",
-  order_status_progress: "Reflects live kitchen/service state; must not be replayed from a stale local view.",
+  order_status_progress:
+    "Reflects live kitchen/service state; must not be replayed from a stale local view.",
   close_order: "Financial close; requires live payment/fiscal reconciliation.",
-  payment: "Financial; requires live external confirmation for card/mobile-money/gateway methods and must never be represented as confirmed before the server confirms it.",
+  payment:
+    "Financial; requires live external confirmation for card/mobile-money/gateway methods and must never be represented as confirmed before the server confirms it.",
   receipt: "Depends on a closed, paid order.",
-  inventory_movement: "High-risk; deferred/offline stock movement generation is out of scope this pass (see docs/p10-offline-operations.md).",
+  inventory_movement:
+    "High-risk; deferred/offline stock movement generation is out of scope this pass (see docs/p10-offline-operations.md).",
   fiscalisation: "Regulatory; requires live TRA/EFD submission.",
-  guest_ordering: "No device identity, no staff principal — offline writes from a guest device are unauthenticated by construction.",
+  guest_ordering:
+    "No device identity, no staff principal — offline writes from a guest device are unauthenticated by construction.",
   staff_operations_admin: "Not part of the continuity-of-service boundary this pass targets.",
   reservation_checkin: "Not part of the continuity-of-service boundary this pass targets.",
   configuration_admin: "Must never be based on a stale local snapshot.",

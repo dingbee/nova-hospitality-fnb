@@ -1,5 +1,14 @@
 {
-  "include": ["src/**/*.ts", "src/**/*.tsx", "api/**/*.ts", "vite.config.ts", "eslint.config.js"],
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "api/**/*.ts",
+    "vite.config.ts",
+    "eslint.config.js",
+    "e2e/**/*.ts",
+    "playwright.config.ts"
+  ],
+  "exclude": ["e2e/.generated"],
   "compilerOptions": {
     "target": "ES2022",
     "jsx": "react-jsx",
