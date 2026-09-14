@@ -158,7 +158,13 @@ function makeFakeSupabase(
 
 function baseFixture() {
   return [
-    { id: "m-gm-a1", tenant_id: TENANT_A, user_id: USER_GM_A1, role: "general_manager", property_id: PROPERTY_A1 },
+    {
+      id: "m-gm-a1",
+      tenant_id: TENANT_A,
+      user_id: USER_GM_A1,
+      role: "general_manager",
+      property_id: PROPERTY_A1,
+    },
     {
       id: "m-owner-tw",
       tenant_id: TENANT_A,
@@ -166,8 +172,20 @@ function baseFixture() {
       role: "owner",
       property_id: null,
     },
-    { id: "m-viewer-a1", tenant_id: TENANT_A, user_id: USER_VIEWER_A1, role: "viewer", property_id: PROPERTY_A1 },
-    { id: "m-owner-b", tenant_id: TENANT_B, user_id: USER_OWNER_TENANT_B, role: "owner", property_id: null },
+    {
+      id: "m-viewer-a1",
+      tenant_id: TENANT_A,
+      user_id: USER_VIEWER_A1,
+      role: "viewer",
+      property_id: PROPERTY_A1,
+    },
+    {
+      id: "m-owner-b",
+      tenant_id: TENANT_B,
+      user_id: USER_OWNER_TENANT_B,
+      role: "owner",
+      property_id: null,
+    },
   ];
 }
 
@@ -268,7 +286,10 @@ describe("upsertMember — property-scope escalation is blocked", () => {
 describe("removeMember — property-scope escalation is blocked", () => {
   it("a property-scoped general_manager CAN remove a member at their own property", async () => {
     const sb = makeFakeSupabase(baseFixture());
-    const result = await removeMember(sb, USER_GM_A1, { tenantId: TENANT_A, memberId: "m-viewer-a1" });
+    const result = await removeMember(sb, USER_GM_A1, {
+      tenantId: TENANT_A,
+      memberId: "m-viewer-a1",
+    });
     expect(result.ok).toBe(true);
     const remaining = await listMembers(sb, USER_GM_A1, { tenantId: TENANT_A });
     expect(remaining.find((m: any) => m.id === "m-viewer-a1")).toBeUndefined();
@@ -284,7 +305,13 @@ describe("removeMember — property-scope escalation is blocked", () => {
   it("a property-scoped general_manager CANNOT remove a member at a sibling property", async () => {
     const sb = makeFakeSupabase([
       ...baseFixture(),
-      { id: "m-a2-member", tenant_id: TENANT_A, user_id: TARGET_STAFF_USER, role: "chef", property_id: PROPERTY_A2 },
+      {
+        id: "m-a2-member",
+        tenant_id: TENANT_A,
+        user_id: TARGET_STAFF_USER,
+        role: "chef",
+        property_id: PROPERTY_A2,
+      },
     ]);
     await expect(
       removeMember(sb, USER_GM_A1, { tenantId: TENANT_A, memberId: "m-a2-member" }),
@@ -302,7 +329,10 @@ describe("removeMember — property-scope escalation is blocked", () => {
 
   it("removing an already-gone member is idempotent, not an error", async () => {
     const sb = makeFakeSupabase(baseFixture());
-    const result = await removeMember(sb, USER_GM_A1, { tenantId: TENANT_A, memberId: "no-such-id" });
+    const result = await removeMember(sb, USER_GM_A1, {
+      tenantId: TENANT_A,
+      memberId: "no-such-id",
+    });
     expect(result.ok).toBe(true);
   });
 });
@@ -340,7 +370,13 @@ describe("updateMemberRole — in-place role change replaces the grant instead o
   it("a property-scoped general_manager CANNOT move a member FROM a sibling property they don't control, even TO their own", async () => {
     const sb = makeFakeSupabase([
       ...baseFixture(),
-      { id: "m-a2-member", tenant_id: TENANT_A, user_id: TARGET_STAFF_USER, role: "chef", property_id: PROPERTY_A2 },
+      {
+        id: "m-a2-member",
+        tenant_id: TENANT_A,
+        user_id: TARGET_STAFF_USER,
+        role: "chef",
+        property_id: PROPERTY_A2,
+      },
     ]);
     await expect(
       updateMemberRole(sb, USER_GM_A1, {

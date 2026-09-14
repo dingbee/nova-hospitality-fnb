@@ -8,7 +8,13 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { assertPermission, ForbiddenError } from "@/lib/rbac/rbac.server";
-import { ROLES, ROLE_LABELS, roleHasPermission, type Permission, type Role } from "@/lib/rbac/permissions";
+import {
+  ROLES,
+  ROLE_LABELS,
+  roleHasPermission,
+  type Permission,
+  type Role,
+} from "@/lib/rbac/permissions";
 import { logActivity } from "@/lib/activity-log.server";
 
 /**
@@ -42,7 +48,8 @@ async function assertCanManageRbacRole(
     property_id: string | null;
     outlet_id: string | null;
   }[];
-  const covers = (level: "tenant_id" | "property_id" | "outlet_id", targetVal: string | null) =>
+  const covers =
+    (level: "tenant_id" | "property_id" | "outlet_id", targetVal: string | null) =>
     (g: (typeof grants)[number]) =>
       targetVal === null ? g[level] === null : g[level] === null || g[level] === targetVal;
   const authorized = grants.some(
@@ -194,7 +201,6 @@ const rbacRoleTargetSchema = z.object({
  * `provisionInvitedStaffUser` is separated from `inviteStaffUser` above.
  */
 export async function grantRbacRole(
-  /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client is untyped at this seam. */
   supabase: any,
   callerId: string,
   input: RbacRoleTarget,
@@ -230,7 +236,6 @@ export async function grantRbacRole(
  * sibling property's grant as collateral damage for the same role.
  */
 export async function revokeRbacRole(
-  /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client is untyped at this seam. */
   supabase: any,
   callerId: string,
   input: RbacRoleTarget,
@@ -241,11 +246,19 @@ export async function revokeRbacRole(
     outletId: input.outletId ?? null,
   };
   await assertCanManageRbacRole(supabase, callerId, "ADMINISTRATION:ADMIN", target);
-  let query = supabase.from("rbac_user_roles").delete().eq("user_id", input.userId).eq("role_code", input.role);
-  query = target.tenantId === null ? query.is("tenant_id", null) : query.eq("tenant_id", target.tenantId);
+  let query = supabase
+    .from("rbac_user_roles")
+    .delete()
+    .eq("user_id", input.userId)
+    .eq("role_code", input.role);
   query =
-    target.propertyId === null ? query.is("property_id", null) : query.eq("property_id", target.propertyId);
-  query = target.outletId === null ? query.is("outlet_id", null) : query.eq("outlet_id", target.outletId);
+    target.tenantId === null ? query.is("tenant_id", null) : query.eq("tenant_id", target.tenantId);
+  query =
+    target.propertyId === null
+      ? query.is("property_id", null)
+      : query.eq("property_id", target.propertyId);
+  query =
+    target.outletId === null ? query.is("outlet_id", null) : query.eq("outlet_id", target.outletId);
   const { error } = await query;
   if (error) throw new Error(error.message);
   await logActivity(supabase, {

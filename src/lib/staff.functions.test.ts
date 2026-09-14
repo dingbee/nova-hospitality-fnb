@@ -196,7 +196,13 @@ describe("grantRbacRole / revokeRbacRole — cross-tenant escalation is blocked"
 
   function baseFixture() {
     return [
-      { user_id: CALLER_OWNER_TENANT_A, role_code: "OWNER", tenant_id: TENANT_A, property_id: null, outlet_id: null },
+      {
+        user_id: CALLER_OWNER_TENANT_A,
+        role_code: "OWNER",
+        tenant_id: TENANT_A,
+        property_id: null,
+        outlet_id: null,
+      },
       {
         user_id: CALLER_OWNER_PROPERTY_A1,
         role_code: "OWNER",
@@ -204,7 +210,13 @@ describe("grantRbacRole / revokeRbacRole — cross-tenant escalation is blocked"
         property_id: PROPERTY_A1,
         outlet_id: null,
       },
-      { user_id: CALLER_OWNER_PLATFORM, role_code: "OWNER", tenant_id: null, property_id: null, outlet_id: null },
+      {
+        user_id: CALLER_OWNER_PLATFORM,
+        role_code: "OWNER",
+        tenant_id: null,
+        property_id: null,
+        outlet_id: null,
+      },
       {
         user_id: CALLER_GM_TENANT_A,
         role_code: "GENERAL_MANAGER",
@@ -223,20 +235,30 @@ describe("grantRbacRole / revokeRbacRole — cross-tenant escalation is blocked"
       tenantId: TENANT_A,
     });
     expect(result.ok).toBe(true);
-    expect(sb.grants.some((g: any) => g.user_id === TARGET_USER && g.tenant_id === TENANT_A)).toBe(true);
+    expect(
+      sb.grants.some((g: any) => g.user_id === TARGET_USER && g.tenant_id === TENANT_A),
+    ).toBe(true);
   });
 
   it("a tenant-scoped OWNER CANNOT grant a role in a different tenant — the core cross-tenant escalation this closes", async () => {
     const sb = makeFakeSupabase(baseFixture());
     await expect(
-      grantRbacRole(sb, CALLER_OWNER_TENANT_A, { userId: TARGET_USER, role: "OWNER", tenantId: TENANT_B }),
+      grantRbacRole(sb, CALLER_OWNER_TENANT_A, {
+        userId: TARGET_USER,
+        role: "OWNER",
+        tenantId: TENANT_B,
+      }),
     ).rejects.toThrow(/Forbidden/i);
   });
 
   it("a tenant-scoped OWNER CANNOT grant a platform-wide (tenant_id: null) role", async () => {
     const sb = makeFakeSupabase(baseFixture());
     await expect(
-      grantRbacRole(sb, CALLER_OWNER_TENANT_A, { userId: TARGET_USER, role: "OWNER", tenantId: null }),
+      grantRbacRole(sb, CALLER_OWNER_TENANT_A, {
+        userId: TARGET_USER,
+        role: "OWNER",
+        tenantId: null,
+      }),
     ).rejects.toThrow(/Forbidden/i);
   });
 
@@ -276,15 +298,31 @@ describe("grantRbacRole / revokeRbacRole — cross-tenant escalation is blocked"
   it("a GENERAL_MANAGER (no ADMINISTRATION:ADMIN at all) cannot grant any role", async () => {
     const sb = makeFakeSupabase(baseFixture());
     await expect(
-      grantRbacRole(sb, CALLER_GM_TENANT_A, { userId: TARGET_USER, role: "WAITER", tenantId: TENANT_A }),
+      grantRbacRole(sb, CALLER_GM_TENANT_A, {
+        userId: TARGET_USER,
+        role: "WAITER",
+        tenantId: TENANT_A,
+      }),
     ).rejects.toThrow(/Forbidden/i);
   });
 
   it("revokeRbacRole deletes exactly the scoped grant, not a sibling-scope grant for the same (user, role)", async () => {
     const sb = makeFakeSupabase([
       ...baseFixture(),
-      { user_id: TARGET_USER, role_code: "WAITER", tenant_id: TENANT_A, property_id: PROPERTY_A1, outlet_id: null },
-      { user_id: TARGET_USER, role_code: "WAITER", tenant_id: TENANT_A, property_id: "property-a2", outlet_id: null },
+      {
+        user_id: TARGET_USER,
+        role_code: "WAITER",
+        tenant_id: TENANT_A,
+        property_id: PROPERTY_A1,
+        outlet_id: null,
+      },
+      {
+        user_id: TARGET_USER,
+        role_code: "WAITER",
+        tenant_id: TENANT_A,
+        property_id: "property-a2",
+        outlet_id: null,
+      },
     ]);
     const result = await revokeRbacRole(sb, CALLER_OWNER_TENANT_A, {
       userId: TARGET_USER,
@@ -293,7 +331,9 @@ describe("grantRbacRole / revokeRbacRole — cross-tenant escalation is blocked"
       propertyId: PROPERTY_A1,
     });
     expect(result.ok).toBe(true);
-    const remaining = sb.grants.filter((g: any) => g.user_id === TARGET_USER && g.role_code === "WAITER");
+    const remaining = sb.grants.filter(
+      (g: any) => g.user_id === TARGET_USER && g.role_code === "WAITER",
+    );
     expect(remaining).toHaveLength(1);
     expect(remaining[0].property_id).toBe("property-a2");
   });
@@ -301,11 +341,23 @@ describe("grantRbacRole / revokeRbacRole — cross-tenant escalation is blocked"
   it("a tenant-scoped OWNER CANNOT revoke a grant in a different tenant", async () => {
     const sb = makeFakeSupabase([
       ...baseFixture(),
-      { user_id: TARGET_USER, role_code: "OWNER", tenant_id: TENANT_B, property_id: null, outlet_id: null },
+      {
+        user_id: TARGET_USER,
+        role_code: "OWNER",
+        tenant_id: TENANT_B,
+        property_id: null,
+        outlet_id: null,
+      },
     ]);
     await expect(
-      revokeRbacRole(sb, CALLER_OWNER_TENANT_A, { userId: TARGET_USER, role: "OWNER", tenantId: TENANT_B }),
+      revokeRbacRole(sb, CALLER_OWNER_TENANT_A, {
+        userId: TARGET_USER,
+        role: "OWNER",
+        tenantId: TENANT_B,
+      }),
     ).rejects.toThrow(/Forbidden/i);
-    expect(sb.grants.some((g: any) => g.user_id === TARGET_USER && g.tenant_id === TENANT_B)).toBe(true);
+    expect(
+      sb.grants.some((g: any) => g.user_id === TARGET_USER && g.tenant_id === TENANT_B),
+    ).toBe(true);
   });
 });
