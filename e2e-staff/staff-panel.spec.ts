@@ -13,6 +13,12 @@ import { test, expect, type Page } from "@playwright/test";
  */
 
 async function signIn(page: Page, email: string, password: string) {
+  page.on("console", (msg) => console.log(`[browser:${msg.type()}]`, msg.text()));
+  page.on("pageerror", (err) => console.log("[pageerror]", err.message));
+  page.on("requestfailed", (req) => console.log("[requestfailed]", req.method(), req.url(), req.failure()?.errorText));
+  page.on("response", (res) => {
+    if (!res.ok()) console.log("[response]", res.status(), res.request().method(), res.url());
+  });
   await page.goto("/auth");
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
