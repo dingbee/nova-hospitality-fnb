@@ -43,7 +43,7 @@ async function signIn(page: Page, email: string, password: string) {
 }
 
 for (const [label, email, password] of [
-  ["a property-scoped restaurant_manager (Property A1)", "manager-a1@p09-cert.test", "p09-cert-manager-a1"],
+  ["a property-scoped general_manager (Property A1)", "manager-a1@p09-cert.test", "p09-cert-manager-a1"],
   ["the tenant-wide owner", "owner@p09-cert.test", "p09-cert-owner"],
 ] as const) {
   test(`${label} sees both properties' dishes on the real Menu screen (tenant-wide read, correctly unrestricted)`, async ({
@@ -54,7 +54,11 @@ for (const [label, email, password] of [
     await expect(page.getByRole("heading", { name: "Menu Management" })).toBeVisible({
       timeout: 15_000,
     });
-    await expect(page.getByText("P09 Cert Dish A1")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("P09 Cert Dish A2")).toBeVisible();
+    // exact: true — the dish name also appears inside a menu-item button
+    // whose accessible text concatenates the dish name with its menu
+    // name (e.g. "P09 Cert Dish A1A1 Lunch Menu"), which a non-exact
+    // match would also resolve to (Playwright strict-mode violation).
+    await expect(page.getByText("P09 Cert Dish A1", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("P09 Cert Dish A2", { exact: true })).toBeVisible();
   });
 }

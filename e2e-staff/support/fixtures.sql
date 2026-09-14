@@ -3,7 +3,10 @@
 -- and destroys; never touches production data or a real Supabase project.
 --
 -- Two users, two properties, one tenant:
---   manager-a1  restaurant_manager scoped to Property A1 only
+--   manager-a1  general_manager scoped to Property A1 only (restaurant_manager
+--               was tried first and doesn't carry tenant.manage — staff role
+--               changes require it, per assertCanManageMembership in
+--               members.server.ts; only owner/general_manager have it)
 --   owner       owner, tenant-wide
 -- proving positive (own-property allowed) and negative (sibling-property
 -- denied / invisible) property-scope behaviour across Staff Panel,
@@ -30,7 +33,7 @@ INSERT INTO public.restaurant_locations (id, tenant_id, property_id, slug, name)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.restaurant_members (tenant_id, property_id, user_id, role) VALUES
-  ('66c71366-59e9-445f-85e1-682abaca7524', '47e89537-4708-4e82-85f5-7c08b76739c1', '24ac1cc3-ac6b-402f-bd5b-87830636a644', 'restaurant_manager'),
+  ('66c71366-59e9-445f-85e1-682abaca7524', '47e89537-4708-4e82-85f5-7c08b76739c1', '24ac1cc3-ac6b-402f-bd5b-87830636a644', 'general_manager'),
   ('66c71366-59e9-445f-85e1-682abaca7524', NULL, '7e498502-fcdc-4da7-b1a0-5b3dabdd3dd4', 'owner'),
   -- Same-property colleague of manager-a1 — lets the browser certification
   -- prove a POSITIVE own-property role change (manager-a1 CAN change this

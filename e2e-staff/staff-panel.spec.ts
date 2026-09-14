@@ -8,8 +8,11 @@ import { test, expect, type Page } from "@playwright/test";
  * Proves the actual property-scope defect this closure fixed (§3.1):
  * changing a member's role requires the actor to be scoped to that
  * member's own property (or hold a tenant-wide grant if the target row
- * is itself tenant-wide). manager-a1 is restaurant_manager scoped to
- * Property A1 only.
+ * is itself tenant-wide). manager-a1 is general_manager scoped to
+ * Property A1 only — restaurant_manager was tried first and doesn't carry
+ * tenant.manage at all (only owner/general_manager do, per
+ * members.server.ts's assertCanManageMembership), so it could never
+ * manage any member's role, positive or negative case alike.
  */
 
 async function signIn(page: Page, email: string, password: string) {
