@@ -101,7 +101,10 @@ async function nextInventorySku(sb: Sb, tenantId: string): Promise<string> {
 }
 
 export async function upsertInventoryItem(sb: Sb, userId: string, input: UpsertInventoryItemInput) {
-  await assertCapability(sb, userId, input.tenantId, "inventory.manage");
+  await assertCapability(sb, userId, input.tenantId, "inventory.manage", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   // Defense in depth: the zod schema already requires packSize for callers
   // that go through a server function's inputValidator, but this service is
   // also called directly (import.server.ts's commit path) with no zod layer
