@@ -44,14 +44,17 @@ test("manager-a1 (Property A1) sees only their own outlet — negative property-
   await signIn(page, "manager-a1@p09-cert.test", "p09-cert-manager-a1");
   await expandMultiLocationCommand(page);
 
-  await expect(page.getByText("P09 CERT Outlet A1")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText("P09 CERT Outlet A2")).not.toBeVisible();
+  // exact: true — the outlet name also appears inside TopBar's location
+  // breadcrumb (e.g. "· P09 CERT Outlet A1"), which a non-exact match
+  // would also resolve to (Playwright strict-mode violation).
+  await expect(page.getByText("P09 CERT Outlet A1", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("P09 CERT Outlet A2", { exact: true })).not.toBeVisible();
 });
 
 test("the tenant-wide owner sees every outlet across both properties — positive proof", async ({ page }) => {
   await signIn(page, "owner@p09-cert.test", "p09-cert-owner");
   await expandMultiLocationCommand(page);
 
-  await expect(page.getByText("P09 CERT Outlet A1")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText("P09 CERT Outlet A2")).toBeVisible();
+  await expect(page.getByText("P09 CERT Outlet A1", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("P09 CERT Outlet A2", { exact: true })).toBeVisible();
 });
