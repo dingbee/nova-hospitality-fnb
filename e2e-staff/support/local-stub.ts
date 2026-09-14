@@ -99,6 +99,7 @@ Bun.serve({
   port: PORT,
   async fetch(request) {
     const url = new URL(request.url);
+    console.log(`[p09-cert-stub] ${request.method} ${url.pathname}${url.search}`);
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });

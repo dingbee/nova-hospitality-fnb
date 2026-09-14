@@ -13,6 +13,15 @@ import { test, expect, type Page } from "@playwright/test";
  */
 
 async function signIn(page: Page, email: string, password: string) {
+  page.on("response", (res) => {
+    if (res.url().includes("/auth/v1/")) console.log("[auth-response]", res.status(), res.request().method(), res.url());
+  });
+  page.on("requestfailed", (req) => {
+    if (req.url().includes("/auth/v1/")) console.log("[auth-requestfailed]", req.url(), req.failure()?.errorText);
+  });
+  page.on("console", (msg) => {
+    if (msg.type() === "error") console.log("[browser:error]", msg.text());
+  });
   await page.goto("/auth");
   // TanStack Start hydrates client-side after an initial module-loading
   // cascade; filling the controlled email/password inputs before that
@@ -29,6 +38,8 @@ async function signIn(page: Page, email: string, password: string) {
   await expect(emailInput).toHaveValue(email);
   await expect(passwordInput).toHaveValue(password);
   await page.getByRole("button", { name: "Sign in" }).click();
+  await page.waitForTimeout(2000);
+  console.log("[after-click] url =", page.url());
   await page.waitForURL("**/admin/restaurant**", { timeout: 15_000 });
 }
 
