@@ -44,7 +44,10 @@ export async function upsertStation(
   userId: string,
   input: z.infer<typeof upsertStationSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "kitchen.manage");
+  await assertCapability(sb, userId, input.tenantId, "kitchen.manage", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   const row = {
     tenant_id: input.tenantId,
     property_id: input.propertyId ?? null,
