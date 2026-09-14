@@ -50,6 +50,22 @@ revoke all on public.nova_user_roles_view from anon;
 revoke all on public.nova_user_roles_view from authenticated;
 grant select on public.nova_user_roles_view to authenticated;
 
+-- migration_transfer_audit predates this migration history (created
+-- directly against production during a one-time internal migration, not
+-- through any migration file), so a from-scratch database never has it.
+-- IF NOT EXISTS makes this a no-op against the real production table
+-- (already present there) while making the migration history actually
+-- reproducible from a clean database. Columns per the 5 historical
+-- production rows: table_name, source_count, target_count, status, notes.
+create table if not exists public.migration_transfer_audit (
+  id bigserial primary key,
+  table_name text,
+  source_count bigint,
+  target_count bigint,
+  status text,
+  notes text
+);
+
 alter table public.migration_transfer_audit enable row level security;
 revoke all on public.migration_transfer_audit from anon;
 revoke all on public.migration_transfer_audit from authenticated;
