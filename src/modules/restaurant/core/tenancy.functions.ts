@@ -1,6 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { listMembersSchema, removeMemberSchema, upsertMemberSchema, workspaceSchema } from "./contracts";
+import {
+  listMembersSchema,
+  removeMemberSchema,
+  upsertMemberSchema,
+  updateMemberRoleSchema,
+  workspaceSchema,
+} from "./contracts";
 
 export const getRestaurantWorkspaceFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -31,4 +37,12 @@ export const removeRestaurantMemberFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./members.server");
     return mod.removeMember(context.supabase, context.userId, data);
+  });
+
+export const updateRestaurantMemberRoleFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => updateMemberRoleSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./members.server");
+    return mod.updateMemberRole(context.supabase, context.userId, data);
   });

@@ -512,15 +512,31 @@ describe("direct server-function bypass", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the administered staff API checks ADMINISTRATION:ADMIN before every grant or revoke", () => {
+  it("assignRole/revokeRole delegate to the scope-checked grant/revoke core, not a bare permission check", () => {
     const s = read(join(ROOT, "src/lib/staff.functions.ts"));
+    // P09: a plain assertPermission(..., "ADMINISTRATION:ADMIN") with no
+    // scope is exactly the cross-tenant escalation this closes — a
+    // caller's grant at ANY tenant/property/outlet would pass. assignRole/
+    // revokeRole must delegate to grantRbacRole/revokeRbacRole, which go
+    // through assertCanManageRbacRole instead — requiring the target's own
+    // (tenant, property, outlet), including a NULL/broader level, to be
+    // covered by the caller's own grant, not merely "checked somewhere".
     for (const fn of ["assignRole", "revokeRole"]) {
       const seg = s.slice(s.indexOf(`export const ${fn}`));
       const body = seg.slice(
         0,
         seg.indexOf("export const", 10) === -1 ? seg.length : seg.indexOf("export const", 10),
       );
-      expect(body).toMatch(/assertPermission\([^)]*"ADMINISTRATION:ADMIN"\)/);
+      expect(body).toMatch(fn === "assignRole" ? /grantRbacRole\(/ : /revokeRbacRole\(/);
+      expect(body).not.toMatch(/assertPermission\([^)]*"ADMINISTRATION:ADMIN"\)/);
+    }
+    for (const fn of ["grantRbacRole", "revokeRbacRole"]) {
+      const seg = s.slice(s.indexOf(`export async function ${fn}`));
+      const body = seg.slice(
+        0,
+        seg.indexOf("export ", 10) === -1 ? seg.length : seg.indexOf("export ", 10),
+      );
+      expect(body).toMatch(/assertCanManageRbacRole\([^)]*"ADMINISTRATION:ADMIN"[^)]*\)/);
       expect(body).toMatch(/rbac_user_roles/);
     }
   });

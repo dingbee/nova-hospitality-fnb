@@ -619,3 +619,17 @@ export const upsertMemberSchema = z.object({
 });
 
 export const removeMemberSchema = z.object({ tenantId: uuid, memberId: uuid });
+
+/**
+ * Change an existing member's role and/or property scope in place. Distinct
+ * from `upsertMemberSchema` (which always creates a new grant row): this
+ * targets one specific `restaurant_members.id` and replaces it, so a caller
+ * changing "owner, tenant-wide" to "viewer, one property" actually revokes
+ * the old grant instead of leaving it active alongside the new one.
+ */
+export const updateMemberRoleSchema = z.object({
+  tenantId: uuid,
+  memberId: uuid,
+  role: z.enum(RESTAURANT_ROLES),
+  propertyId: uuid.nullish(),
+});

@@ -217,7 +217,10 @@ export async function upsertPrice(
   userId: string,
   input: z.infer<typeof upsertPriceSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "pricing.manage");
+  await assertCapability(sb, userId, input.tenantId, "pricing.manage", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   if (!input.productId && !input.menuItemId)
     throw new Error("A price needs a product or a menu item.");
 
@@ -444,7 +447,10 @@ export async function upsertTaxRule(
   userId: string,
   input: z.infer<typeof upsertTaxRuleSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "tax.manage");
+  await assertCapability(sb, userId, input.tenantId, "tax.manage", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   const row = {
     tenant_id: input.tenantId,
     property_id: input.propertyId ?? null,
@@ -515,7 +521,10 @@ export async function upsertServiceCharge(
   userId: string,
   input: z.infer<typeof upsertServiceChargeSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "tax.manage");
+  await assertCapability(sb, userId, input.tenantId, "tax.manage", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   const row = {
     tenant_id: input.tenantId,
     property_id: input.propertyId ?? null,
@@ -578,7 +587,10 @@ export async function upsertDiscountRule(
   userId: string,
   input: z.infer<typeof upsertDiscountRuleSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "discount.manage");
+  await assertCapability(sb, userId, input.tenantId, "discount.manage", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   const row = {
     tenant_id: input.tenantId,
     property_id: input.propertyId ?? null,

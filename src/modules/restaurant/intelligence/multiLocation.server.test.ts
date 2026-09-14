@@ -190,6 +190,51 @@ describe("getMultiLocationIntelligence — P09 property rollups", () => {
   });
 });
 
+describe("getMultiLocationIntelligence — P09 bounded N+1 fix", () => {
+  it("passes a pre-resolved scope and pre-fetched, per-location-grouped items/moves/refData into getInventoryIntelligence instead of letting it re-fetch", async () => {
+    const sb = createP05FakeSupabase({
+      restaurant_members: [OWNER_MEMBER],
+      restaurant_locations: [
+        { id: "loc-a", tenant_id: TENANT_A, name: "Downtown", property_id: null },
+        { id: "loc-b", tenant_id: TENANT_A, name: "Uptown", property_id: null },
+      ],
+      restaurant_orders: [],
+      restaurant_suppliers: [{ id: "sup-1", tenant_id: TENANT_A, name: "Fresh Foods" }],
+      restaurant_supplier_products: [
+        { tenant_id: TENANT_A, supplier_id: "sup-1", inventory_item_id: "item-a", unit_price: 100 },
+      ],
+      restaurant_inventory_items: [
+        { id: "item-a", tenant_id: TENANT_A, location_id: "loc-a", name: "Flour" },
+        { id: "item-b", tenant_id: TENANT_A, location_id: "loc-b", name: "Sugar" },
+      ],
+      restaurant_stock_movements: [
+        {
+          tenant_id: TENANT_A,
+          location_id: "loc-a",
+          inventory_item_id: "item-a",
+          movement_type: "wastage",
+          occurred_at: iso(1),
+        },
+      ],
+    });
+    await getMultiLocationIntelligence(sb, OWNER, { tenantId: TENANT_A, windowDays: 30 });
+
+    expect(getInventoryIntelligenceMock).toHaveBeenCalledTimes(2);
+    const callsByLocation = new Map(
+      getInventoryIntelligenceMock.mock.calls.map((c: any) => [c[2].locationId, c[2]]),
+    );
+    const callA = callsByLocation.get("loc-a");
+    const callB = callsByLocation.get("loc-b");
+    expect(callA.scope).toBeTruthy();
+    expect(callA.refData.suppliers).toEqual([{ id: "sup-1", tenant_id: TENANT_A, name: "Fresh Foods" }]);
+    // Batched and grouped per-location — loc-a's item/move never leaks into loc-b's call.
+    expect(callA.itemsData.map((i: any) => i.id)).toEqual(["item-a"]);
+    expect(callA.movesData).toHaveLength(1);
+    expect(callB.itemsData.map((i: any) => i.id)).toEqual(["item-b"]);
+    expect(callB.movesData).toEqual([]);
+  });
+});
+
 describe("getMultiLocationIntelligence — entitlement & isolation", () => {
   it("hard-denies a caller not entitled to multi_location_command (no narrowed fallback)", async () => {
     const { CommercialEntitlementError } = await import("@/modules/commercial/resolver.server");

@@ -34,7 +34,26 @@ export async function upsertRecipeComponent(
   userId: string,
   input: z.infer<typeof upsertRecipeComponentSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "costing.manage");
+  // restaurant_recipe_components has no property/location column of its
+  // own — it inherits scope from its menu item's menu (same fix as
+  // upsertMenuItem in menu.server.ts).
+  const { data: menuItem } = await sb
+    .from("restaurant_menu_items")
+    .select("menu_id")
+    .eq("id", input.menuItemId)
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+  if (!menuItem) throw new Error("Menu item not found in this tenant.");
+  const { data: menu } = await sb
+    .from("restaurant_menus")
+    .select("property_id, location_id")
+    .eq("id", menuItem.menu_id)
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+  await assertCapability(sb, userId, input.tenantId, "costing.manage", {
+    propertyId: menu?.property_id ?? null,
+    locationId: menu?.location_id ?? null,
+  });
   const row = {
     tenant_id: input.tenantId,
     menu_item_id: input.menuItemId,
@@ -71,12 +90,10 @@ export async function upsertRecipeComponent(
  * ingredient cost = Σ (quantity ÷ yield) × average unit cost.
  */
 export async function computeRecipeCost(sb: Sb, userId: string, input: ComputeRecipeCostInput) {
-  await assertCapability(sb, userId, input.tenantId, "costing.manage");
-
   const [{ data: item }, { data: components }] = await Promise.all([
     sb
       .from("restaurant_menu_items")
-      .select("id, name, price, currency")
+      .select("id, name, price, currency, menu_id")
       .eq("tenant_id", input.tenantId)
       .eq("id", input.menuItemId)
       .single(),
@@ -87,6 +104,17 @@ export async function computeRecipeCost(sb: Sb, userId: string, input: ComputeRe
       .eq("menu_item_id", input.menuItemId),
   ]);
   if (!item) throw new Error("Menu item not found.");
+
+  const { data: menu } = await sb
+    .from("restaurant_menus")
+    .select("property_id, location_id")
+    .eq("id", item.menu_id)
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+  await assertCapability(sb, userId, input.tenantId, "costing.manage", {
+    propertyId: menu?.property_id ?? null,
+    locationId: menu?.location_id ?? null,
+  });
 
   const ids = (components ?? []).map((c: any) => c.inventory_item_id).filter(Boolean);
   const costs = new Map<string, { cost: number; name: string; unit_id: string | null }>();

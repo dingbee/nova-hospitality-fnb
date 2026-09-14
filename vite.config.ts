@@ -13,11 +13,11 @@ import "vitest/config";
  */
 export default defineConfig({
   test: {
-    // e2e/ holds Playwright specs (run via `npx playwright test`), not
-    // vitest tests — without this, vitest's default *.spec.ts glob picks
-    // them up too and fails, since they use @playwright/test's `test`,
-    // not vitest's.
-    exclude: ["**/node_modules/**", "e2e/**"],
+    // e2e/, e2e-auth/ and e2e-staff/ hold Playwright specs (run via `npx
+    // playwright test`), not vitest tests — without this, vitest's
+    // default *.spec.ts glob picks them up too and fails, since they use
+    // @playwright/test's `test`, not vitest's.
+    exclude: ["**/node_modules/**", "e2e/**", "e2e-auth/**", "e2e-staff/**"],
   },
   plugins: [
     VitePWA({

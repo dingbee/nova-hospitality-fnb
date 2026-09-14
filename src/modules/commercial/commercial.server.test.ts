@@ -335,6 +335,45 @@ function makeFixture() {
           );
           return { data: isAdmin, error: null };
         }
+        if (fn === "restaurant_increment_quota_usage") {
+          // Mirrors 0061_p09_quota_usage_ledger.sql's
+          // restaurant_increment_quota_usage: finds-or-creates the row and
+          // ADDS the delta — never sets an absolute value — against the
+          // same usageCounters array commercial_usage_counters reads from,
+          // so incrementUsage's cumulative-total behavior across repeated
+          // calls is exercised for real, not short-circuited by a stub.
+          const existing = usageCounters.find(
+            (r) =>
+              r.tenant_id === params._tenant_id &&
+              r.quota_definition_id === params._quota_definition_id &&
+              r.period_start === params._period_start &&
+              (r.property_id ?? null) === (params._property_id ?? null),
+          );
+          const delta = Math.max(Number(params._delta) || 0, 0);
+          if (existing) {
+            existing.used_value = Number(existing.used_value) + delta;
+            existing.state = params._state;
+          } else {
+            usageCounters.push({
+              id: `usage-${usageCounters.length + 1}`,
+              tenant_id: params._tenant_id,
+              property_id: params._property_id ?? null,
+              quota_definition_id: params._quota_definition_id,
+              period_start: params._period_start,
+              period_end: params._period_end,
+              used_value: delta,
+              state: params._state,
+            });
+          }
+          const row = usageCounters.find(
+            (r) =>
+              r.tenant_id === params._tenant_id &&
+              r.quota_definition_id === params._quota_definition_id &&
+              r.period_start === params._period_start &&
+              (r.property_id ?? null) === (params._property_id ?? null),
+          )!;
+          return { data: [{ used_value: row.used_value, state: row.state }], error: null };
+        }
         return { data: null, error: null };
       },
     },
