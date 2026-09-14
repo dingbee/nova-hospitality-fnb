@@ -590,9 +590,16 @@ describe("RBAC identity-check functions refuse to answer for another user", () =
   // only ever passes its own auth.uid(). Without a self-check, any signed-in
   // user could pass a *different* user's id directly over the RPC endpoint
   // and read that user's roles/permissions/staff/commercial-admin status.
+  //
+  // `is_staff_of_tenant` (0057) is a second, independent instance of this
+  // exact bug class: introduced after 0050 closed the first five, it was
+  // live-reproduced (P11 closure pass, 2026-09-14) letting an unprivileged
+  // caller learn an arbitrary other user's tenant-staff status, and fixed
+  // the same way.
   const SELF_ONLY = [
     "has_any_role",
     "is_any_staff",
+    "is_staff_of_tenant",
     "nova_has_permission",
     "nova_permissions_for",
     "restaurant_is_commercial_admin",

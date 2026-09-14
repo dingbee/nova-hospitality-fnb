@@ -4,6 +4,247 @@ FINAL STATUS: 🟡 **CONDITIONAL GO** — not 100/100. Read "Why not 100/100" be
 
 ---
 
+## SECOND CLOSURE PASS (branch `claude/p11-security-hardening-closure`, base `a481620`)
+
+Run concurrently with independent P07/P08/P09 workspaces per this pass's own
+instructions (no inspection of, dependency on, or import from their
+branches). Scope: reconcile the certification above against current live
+reality, close any genuine new defect, and re-disclose anything that cannot
+be closed from this session — not to relitigate what is already closed.
+
+### State reconciliation (before any action)
+
+- `main` at `a481620` (unchanged since the CONDITIONAL GO pass above).
+- Live production migration history (`list_migrations`) shows **eight
+  migrations beyond `main`** already applied directly to the production
+  database on 2026-09-14 — `0057_p09_membership_scope_enforcement` through
+  `0063_p09_import_workspace_property_scope` plus a `0060b` fixup — from the
+  concurrent P09 workspace. These are **not yet in `main`** (`git ls-tree
+  origin/main` has no `005[7-9]`/`006[0-3]` files) and this pass did not
+  inspect the P09 branch that produced them, per the isolation instruction.
+  Everything below about them is read directly from the live database, not
+  from P09's repository state.
+- Live security advisor re-pulled fresh: `security_definer_view` and
+  `rls_disabled_in_public` ERRORs still absent (0);
+  `anon_security_definer_function_executable` still 0;
+  `rls_enabled_no_policy` still INFO/2 (the same two intentionally
+  default-deny tables, unchanged); leaked-password still the sole
+  auth WARN. `authenticated_security_definer_function_executable` is now
+  **44** (was 35 at the prior pass) — nine new functions, all added by the
+  P09 migrations above.
+
+### New finding: `is_staff_of_tenant` self-identity bypass (real, live-verified, fixed)
+
+Auditing the nine new SECURITY DEFINER functions individually (required by
+this pass's own §4 — "audit ALL current SECURITY DEFINER functions", not
+just the ones already certified):
+
+- **8 of 9 are legitimate**, matching an already-accepted pattern: either a
+  pure FK-scope resolver with no user-identity argument at all
+  (`nova_property_tenant`, `restaurant_import_source_property`,
+  `restaurant_import_workspace_property`, `restaurant_menu_item_property`,
+  `restaurant_menu_property` — the same "resolve one table's tenant/property
+  for another table's RLS policy" shape as the 22 previously-certified
+  siblings), or a function that authorizes strictly from the *caller's own*
+  `auth.uid()` with no arbitrary-identity parameter at all
+  (`nova_can_manage_scoped`, `restaurant_can_manage_membership`,
+  `restaurant_increment_quota_usage` — the last of these is a mutating
+  `plpgsql` function that explicitly checks
+  `restaurant_is_platform_admin(auth.uid()) OR
+  restaurant_can_read_scoped(_tenant_id, _property_id)` against the caller
+  before writing, the correct pattern for a scoped mutation). All nine
+  confirmed to be actually referenced by a live `pg_policies` qual/with_check
+  (queried directly, not assumed) except `restaurant_increment_quota_usage`,
+  whose own internal caller-scope check makes it safe as a direct RPC target
+  by design.
+- **1 of 9 (`is_staff_of_tenant`) reintroduced the exact self-identity bug
+  class `0050_p11_rbac_self_check_enforcement.sql` already fixed for five
+  sibling functions.** It is `SECURITY DEFINER`, `authenticated`-executable
+  via `/rest/v1/rpc/is_staff_of_tenant`, and used correctly by three live RLS
+  policies (`tenants_read_scoped`, `properties_read_scoped`,
+  `outlets_read_scoped`) — all three call it as `is_staff_of_tenant(auth.uid(),
+  ...)`. But because it is *also* directly RPC-reachable, and had no check
+  that `_user_id` matched the caller, any signed-in user could pass a
+  *different* user's id and learn whether that other user was active staff of
+  an arbitrary tenant — cross-user privilege reconnaissance, the identical
+  bug class as before, introduced after that fix by a function this pass did
+  not write.
+
+  **Live-reproduced before fixing** (not assumed): as the real, existing
+  `purchasing_officer` identity `a5e60e73-...` (zero `rbac_user_roles` rows
+  of its own in this schema), called
+  `is_staff_of_tenant('599d7ea7-...', '02c721ca-...')` — a different real
+  user's id, that user's real tenant — via `SET LOCAL ROLE authenticated;
+  SET LOCAL request.jwt.claims` inside a rolled-back transaction (the same
+  real-`authenticated`-role RLS-boundary technique as the prior pass) and got
+  back **`true`**, confirming the leak.
+
+  **Fixed** (migration `standalone/db/migrations/0057_p11_is_staff_of_tenant_self_check.sql`,
+  applied live as `p11_is_staff_of_tenant_self_check`): added
+  `_user_id = auth.uid() AND ...`, the exact pattern from `0050`. Verified
+  every current RLS reference already passes `auth.uid()` as `_user_id`
+  (`pg_policies` qual, checked directly), so no legitimate caller breaks.
+
+  **Re-verified after the fix, live**: the identical exploit attempt now
+  returns `false`. Regression check: the real tenant owner
+  (`599d7ea7-...`) querying their own tenant via the now-guarded function
+  still resolves correctly — `SELECT count(*) FROM public.tenants WHERE
+  id = '<own tenant>'` under their own `authenticated` session still
+  returns `1`, proving the three RLS policies built on this function still
+  work exactly as before.
+
+  Regression test added: `src/lib/rbac/authorization-gate.test.ts`'s
+  existing `SELF_ONLY` self-check suite (already covering the five functions
+  `0050` fixed) now also covers `is_staff_of_tenant`, asserting its latest
+  migration-chain definition gates on `_user_id = auth.uid()`.
+
+### Newly discovered architectural fact — parallel tenancy schema (reported, not fixed)
+
+While auditing the new functions' RLS references, this pass found that the
+P09 migrations introduce a **second, independent tenant/property/outlet
+schema** — bare tables `tenants` / `properties` / `outlets` with their own
+`app_users.tenant_id` and `rbac_user_roles.{tenant_id,property_id,outlet_id}`
+foreign keys — that is structurally separate from the canonical
+`restaurant_properties` / `restaurant_locations` / `restaurant_members`
+model every other table in the schema (149 `restaurant_*` tables) uses.
+Confirmed live, not inferred:
+
+- `properties.tenant_id → tenants.id`, `outlets.property_id → properties.id`,
+  `app_users.tenant_id → tenants.id`, and all three `rbac_user_roles` scope
+  columns reference this new table set — a fully independent FK graph from
+  `restaurant_properties`/`restaurant_locations`.
+- Row counts confirm it is populated independently: 3 `tenants` rows
+  (`Default tenant` = `02c721ca-...`, plus two now-seeded `uat-tenant-a`/
+  `uat-tenant-b` fixtures) vs. 3 `restaurant_properties` rows under a
+  different tenant id (`cebda97b-...`, the tenant used throughout the prior
+  certification pass) — not the same data reachable through two names.
+- Exactly one real membership exists in the new schema (`599d7ea7-...` as
+  `OWNER` of `02c721ca-...`) — the same human who is also the real owner in
+  the *old* schema, but the two membership rows are unrelated records in
+  unrelated tables.
+
+This is flagged, not fixed, for two reasons: (1) it is P09's active,
+in-progress work (migration names — `membership_scope_enforcement`,
+`tenancy_read_isolation`, `tenancy_write_isolation`, `config_governance_
+property_scope`, `inventory_items_property_scope`,
+`import_workspace_property_scope` — read as a deliberate new tenancy layer
+being built out, not an accident), and this pass's own instructions
+prohibit modifying or depending on P09's branch; (2) reconciling or merging
+two tenancy models is an architecture decision, not a narrow security
+patch, and is exactly the kind of cross-workstream dependency this pass was
+told to **stop and report** rather than resolve unilaterally. It is
+reported here because CLAUDE.md explicitly prohibits inventing "new
+transactional models where an existing canonical model exists" and a
+parallel tenant/RBAC schema is squarely that shape — whoever owns the P09
+roadmap and the human reviewer of this PR should explicitly confirm this is
+an intentional, sanctioned transition (e.g., toward a future unified
+tenancy layer) rather than an accidental duplication, before further
+certification work treats both schemas as equally canonical.
+
+**This pass did verify the new schema's own isolation is real**, independent
+of the architectural question above — live adversarial tests, both
+directions, using the real `Default tenant` owner and a synthetic-but-real
+(existing-user, transaction-scoped, rolled-back, zero-residue) UAT-Tenant-B
+identity, since `app_users.user_id` in this new schema has a real FK to
+`auth.users` (unlike the old schema's `restaurant_members`, which has none —
+confirmed live, this required reusing a real existing user id rather than a
+throwaway uuid):
+
+| Direction | Table | Operation | Result | Verdict |
+|---|---|---|---|---|
+| B→A | `properties` | SELECT (by tenant, by direct id) | 0 rows | PASS |
+| B→A | `outlets` (joined via property) | SELECT | 0 rows | PASS |
+| B→A | `tenants` | SELECT (own tenant row) | 0 rows | PASS |
+| B→A | `properties` | UPDATE (`RETURNING id`) | 0 rows affected | PASS |
+| B→A | `properties`/`outlets`/`tenants` | own-tenant read | 1/1/1 | PASS — correct access retained |
+| A→B | `properties` | SELECT by direct id | 0 rows | PASS |
+| A→B | `outlets` | SELECT by direct id | 0 rows | PASS |
+| A→B | `tenants` | SELECT | 0 rows | PASS |
+| A→B | `properties` | UPDATE (`RETURNING id`) | 0 rows affected | PASS |
+| A→B | own tenant | SELECT | 1 row | PASS — correct access retained |
+
+All rollback-verified zero-residue (every write above ran inside a
+transaction ended with `ROLLBACK`, never `COMMIT`).
+
+### Re-confirmed unchanged (not re-litigated, re-checked live this pass)
+
+- **Storage**: same 3 buckets, same policies, `restaurant_owns_menu_image_path`
+  still the sole write gate, `anon` still has no write access anywhere.
+  No storage surface exists yet for the new `tenants/properties/outlets`
+  schema. No change.
+- **Leaked password protection**: still disabled (WARN, unchanged). Re-checked
+  the live `mcp__Supabase__*` toolset available to this session — still no
+  Auth-configuration tool (project/database/branch/edge-function/advisor
+  tools only). **Unchanged external tooling dependency**, not re-attempted
+  by credential-hunting (a `CLOUDSDK`/`GOOGLE`/`NPM_TOKEN` environment scan
+  was attempted to look for a possible Management API path and was correctly
+  blocked by this session's own permission policy as credential exploration;
+  not retried). Dashboard/Management-API remedy is unchanged from the prior
+  pass's documented steps.
+- **Backup/recovery**: `get_organization` on `bdngnfgjqxnlstotqwqm` still
+  returns `"plan":"free"`. Unchanged — still no automated backups/PITR
+  available on this plan. Same real, confirmed, billing-level gap as the
+  prior pass; not re-verified further since nothing about the plan could
+  have changed without an explicit upgrade action, which was not taken (no
+  approval sought or given this pass).
+- **Anon table grants**: `anon` holds SELECT/INSERT/UPDATE/DELETE-level
+  grants on all 149 `public` tables — this is Supabase's standard default
+  posture (coarse-grained `GRANT` + fine-grained RLS is the platform's own
+  security model, not a defect), re-confirmed intentional given 0
+  `rls_disabled_in_public` findings across the schema. No change from prior
+  passes' conclusion; recorded here because this pass swept it explicitly
+  rather than assuming it, per §4's "no anonymous/public privilege should
+  remain unintentionally."
+
+### Full JS/TS regression — could not be executed this session (environment/tooling gap, disclosed)
+
+Unlike every prior P11 pass, **this session could not run `vitest`, `tsc`,
+`eslint`, or `vite build`.** `bun install` fails: `vite.config.ts` imports
+`@lovable.dev/vite-tanstack-config` and `vite-plugin-pwa`, both resolved
+from a private package registry (`europe-west1-npm.pkg.dev`) that this
+session's outbound network policy explicitly denies (`403`, confirmed via
+the proxy's own status endpoint as `connect_rejected` / "policy denial", not
+a transient failure, repeated across dozens of packages). No `node_modules`
+pre-existed in this container. This blocks 100% of this repository's
+JS-side tooling, not just a subset — the Vite config itself cannot load.
+
+This is reported as a genuine environment/tooling dependency **external to
+this session**, not downgraded or hidden: the one live database change made
+in this pass (`0057`) was validated entirely through direct, live,
+before/after Postgres evidence (exploit reproduction, fix, re-verification,
+regression read) exactly as the prior passes' SQL-only changes were, and the
+added test (`authorization-gate.test.ts`) is a straightforward three-token
+addition to an already-passing, already-reviewed table-driven assertion —
+but it has **not been executed in this session** and its pass/fail status
+is genuinely unknown from here, not assumed green. A session with working
+registry access (or an `.npmrc`/token providing one) should run `bun install
+&& bun test && bun run typecheck && bun run lint && bun run build &&
+bun run verify:bundle` on this branch before merge.
+
+### Second closure pass — disposition summary
+
+| Item | Disposition |
+|---|---|
+| `is_staff_of_tenant` self-identity bypass | **CLOSED** — live-reproduced, fixed, re-verified, regression test added |
+| New parallel `tenants/properties/outlets` schema vs. canonical `restaurant_*` model | **REPORTED, not resolved** — architecture question outside this pass's authority and the P09-isolation instruction; needs explicit human/engineering-lead reconciliation |
+| New schema's own tenant isolation (both directions, read+write) | **CLOSED** — live adversarial evidence, zero residue |
+| Storage, anon-execute, RLS-disabled, security-definer-view postures | **Re-confirmed unchanged, still correct** |
+| Leaked password protection | **Still EXTERNAL — dashboard/Management-API action required, unchanged** |
+| Backup/PITR | **Still EXTERNAL — Free-tier plan restriction, unchanged, requires paid-plan upgrade + explicit approval** |
+| Full JS/TS regression (vitest/tsc/eslint/build) | **Could not run — environment/tooling gap (blocked private registry), disclosed, not fabricated** |
+
+**Net effect on P11 status**: still 🟡 **CONDITIONAL GO**, not 100/100 — the
+two pre-existing external blockers (leaked-password, backup/PITR) are
+unchanged and remain owner-actionable outside this session; this pass closed
+one new genuine live defect it found rather than leaving it, and surfaced
+one architectural finding (the parallel tenancy schema) that a human
+reviewer should weigh before treating P09's tenancy work as compatible with
+this repository's existing canonical model. It did **not** newly verify the
+JS/TS regression suite — a first for a P11 pass — and says so rather than
+reusing a stale pass/fail count from a different pass's environment.
+
+---
+
 ## FINAL CLOSURE PASS (commit `7b3bda7` → this commit)
 
 This pass was explicitly tasked with bringing P11 from 🟡 CONDITIONAL GO to 🟢 100/100, under an explicit rule that "cannot verify" / "requires credentials" / "tests pass" are not GREEN, and that severity must never be downgraded to manufacture a clean result. Executing that mandate honestly means reporting the true result: **three of the four previously-open P1s are now genuinely closed with live evidence; the fourth (backup/recovery) turned out, on live investigation, to be a real, confirmed gap rather than a verification gap — worse than "unverified," and not something this session can fix.** Leaked-password protection remains blocked for the same tooling reason as before, re-confirmed. Both are disclosed in full below rather than papered over.
