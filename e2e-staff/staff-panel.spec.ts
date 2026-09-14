@@ -13,28 +13,22 @@ import { test, expect, type Page } from "@playwright/test";
  */
 
 async function signIn(page: Page, email: string, password: string) {
-  page.on("console", (msg) => console.log(`[browser:${msg.type()}]`, msg.text()));
-  page.on("pageerror", (err) => console.log("[pageerror]", err.message));
-  page.on("request", (req) => console.log("[request]", req.method(), req.url()));
-  page.on("requestfailed", (req) => console.log("[requestfailed]", req.method(), req.url(), req.failure()?.errorText));
-  page.on("response", (res) => console.log("[response]", res.status(), res.request().method(), res.url()));
   await page.goto("/auth");
+  // TanStack Start hydrates client-side after an initial module-loading
+  // cascade; filling the controlled email/password inputs before that
+  // settles lets hydration reset them back to their pre-hydration (empty)
+  // state, silently discarding what was typed. Waiting for the network to
+  // go idle lets hydration complete first (confirmed via real-browser
+  // diagnostics: inputValue() read back empty immediately after fill()
+  // when this wait was absent).
+  await page.waitForLoadState("networkidle");
   const emailInput = page.getByLabel("Email", { exact: true });
   const passwordInput = page.getByLabel("Password", { exact: true });
   await emailInput.fill(email);
   await passwordInput.fill(password);
-  console.log("[pre-click] email value =", JSON.stringify(await emailInput.inputValue()));
-  console.log("[pre-click] password value =", JSON.stringify(await passwordInput.inputValue()));
-  console.log(
-    "[pre-click] form checkValidity =",
-    await page.evaluate(() => document.querySelector("form")?.checkValidity()),
-  );
-  const buttonHandle = page.getByRole("button", { name: "Sign in" });
-  console.log("[pre-click] button disabled =", await buttonHandle.isDisabled());
-  await buttonHandle.click();
-  await page.waitForTimeout(3000);
-  console.log("[after-click] url =", page.url());
-  console.log("[after-click] body text =", (await page.locator("body").innerText()).slice(0, 500));
+  await expect(emailInput).toHaveValue(email);
+  await expect(passwordInput).toHaveValue(password);
+  await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL("**/admin/restaurant**", { timeout: 15_000 });
 }
 
