@@ -1,6 +1,23 @@
 # P11 — Production & Security Hardening Certification
 
-FINAL STATUS: 🟡 **CONDITIONAL GO** — not 100/100. Read "Why not 100/100" below before anything else in this document; every closeable item genuinely was closed, and the two that remain open are disclosed with hard evidence, not hidden.
+FINAL STATUS (as of the second closure pass, branch
+`claude/p11-security-hardening-closure`): three separate classifications,
+deliberately not collapsed into one —
+
+- 🟢 **P11 APPLICATION SECURITY ENGINEERING: GREEN** — every
+  engineering-controlled security defect found across all P11 passes is
+  closed and live-verified.
+- 🟡 **P11 PRODUCTION CERTIFICATION: CONDITIONAL** — not 100/100: leaked
+  password protection and backup/PITR are external infrastructure/billing
+  dependencies, and the JS/TS regression suite is `ENVIRONMENT BLOCKED`
+  this session (not verified, not fabricated).
+- 🟡 **P09 ARCHITECTURAL RECONCILIATION: OPEN** — a parallel tenancy schema
+  was found; reported in `docs/p09-tenancy-architecture-reconciliation.md`,
+  not resolved here (not P11's to resolve).
+
+See "SECOND CLOSURE PASS" below for the full evidence trail behind this
+status. The original CONDITIONAL GO status and its own "Why not 100/100"
+section, immediately below, are preserved as the prior pass's own record.
 
 ---
 
@@ -98,7 +115,35 @@ just the ones already certified):
   `0050` fixed) now also covers `is_staff_of_tenant`, asserting its latest
   migration-chain definition gates on `_user_id = auth.uid()`.
 
-### Newly discovered architectural fact — parallel tenancy schema (reported, not fixed)
+### CORRECTION (same pass, before PR review): parallel tenancy schema does not originate with P09
+
+The section immediately below, written earlier in this pass, characterized
+the `tenants`/`properties`/`outlets` schema as something the P09 workstream
+"introduced." Further investigation (reading `0003_tenancy_rbac.sql`
+directly) found that characterization is wrong on the origin point: those
+tables, their RLS policies, and `nova_has_permission`/`nova_permissions_for`/
+`has_any_role`/`is_any_staff` were all created in
+`standalone/db/migrations/0003_tenancy_rbac.sql`, dated 2026-08-24 —
+the same day as, and independently of, the canonical `restaurant_*` model's
+own foundational migration, and weeks before any P09 work existed. P09's
+migrations are the first to meaningfully build new tenant/property-scoped
+RLS on top of that pre-existing schema, not the schema's origin.
+
+This correction, the full evidence trail (FK graph, table inventory,
+application-code grep showing which model actually gates production
+authorization today, and the exact conflict with CLAUDE.md), and a
+recommendation are now maintained in their own document rather than here,
+per this pass's instruction to treat this as a **P09 architectural
+reconciliation, not a P11 implementation task**:
+
+**→ see `docs/p09-tenancy-architecture-reconciliation.md`**
+
+The live adversarial isolation evidence for this schema (table below) was
+gathered correctly regardless of the origin correction and is unaffected by
+it — it remains accurate, live evidence that Model B's own tenant isolation
+holds, independent of which workstream built it.
+
+### Newly discovered architectural fact — parallel tenancy schema (reported, not fixed) — SUPERSEDED, see correction above
 
 While auditing the new functions' RLS references, this pass found that the
 P09 migrations introduce a **second, independent tenant/property/outlet
@@ -216,32 +261,141 @@ regression read) exactly as the prior passes' SQL-only changes were, and the
 added test (`authorization-gate.test.ts`) is a straightforward three-token
 addition to an already-passing, already-reviewed table-driven assertion —
 but it has **not been executed in this session** and its pass/fail status
-is genuinely unknown from here, not assumed green. A session with working
-registry access (or an `.npmrc`/token providing one) should run `bun install
-&& bun test && bun run typecheck && bun run lint && bun run build &&
-bun run verify:bundle` on this branch before merge.
+is genuinely unknown from here, not assumed green.
+
+**No CI can be substituted for this from within P11's scope.** This
+repository has no `.github/workflows` directory on `main` (`git log
+origin/main -- .github/workflows` returns nothing) — there is no existing
+GitHub Actions pipeline to invoke. A workflow directory does exist on the
+concurrent `claude/p09-enterprise-closure-f1peif` branch (visible only via
+`git branch -a --contains`, never inspected in content) — per this pass's
+isolation instructions, it was not read, used, or depended on, and it is
+not part of `main` regardless, so it is not "available" to P11 in any
+sense that matters here.
+
+**Exact commands required** (to be run in an environment with access to the
+private package registry `europe-west1-npm.pkg.dev`, or an `.npmrc`/token
+providing equivalent access):
+
+```
+bun install
+bun test              # vitest — expect all files/tests passing, 0 failures
+bun run typecheck      # tsc --noEmit — expect only the 3 pre-existing baseline
+                        # errors (menuReasoning.server.test.ts, router.tsx,
+                        # _authenticated.admin.tsx), 0 new
+bun run lint            # eslint . — expect the pre-existing baseline count
+                        # (1348 errors/26 warnings as of the last pass that
+                        # could run it), 0 new, and specifically 0 in
+                        # authorization-gate.test.ts or the 0057 migration
+bun run build            # NODE_OPTIONS=--max-old-space-size=8192 vite build
+                        # — expect success, .output/ produced
+bun run verify:bundle     # scripts/verify-bundle-origin.ts .output — expect
+                        # clean, no foreign backend origin or product reference
+```
+
+**Expected certification evidence**, once run: paste the raw pass/fail
+counts for each command (test file/test counts, typecheck error count and
+file list, lint error/warning counts, build success/failure, bundle
+verification result) into this document, diffed explicitly against the
+baseline counts recorded in the CONDITIONAL GO pass above (155 files/2015
+tests, 3 pre-existing tsc errors, 1348/26 eslint). A bare "tests pass" is
+not sufficient evidence per this repository's own testing discipline —
+the actual counts are the evidence.
+
+**Current state: `P11 JS/TS regression = ENVIRONMENT BLOCKED`.** Not
+run, not assumed, not fabricated.
+
+### Security regression evidence chain — `is_staff_of_tenant` (concise)
+
+```
+UNAUTHORIZED USER A (a5e60e73-..., purchasing_officer, zero rbac_user_roles
+rows of their own) impersonates / probes USER B (599d7ea7-..., real tenant
+OWNER of tenants.id=02c721ca-...)
+
+  BEFORE FIX (migration 0057 not yet applied):
+    SET LOCAL ROLE authenticated;
+    SET LOCAL request.jwt.claims = '{"sub":"<A>", ...}';
+    SELECT is_staff_of_tenant('<B>', '<B's tenant>');
+    → true                                   ┃ LEAK: A learns B's staff status
+
+  MIGRATION 0057 applied live (production `lusiqcmxfxhnehxmwihs`):
+    is_staff_of_tenant now requires _user_id = auth.uid()
+
+  AFTER FIX, same exploit attempt repeated:
+    → false                                  ┃ DENIED
+
+  LEGITIMATE SELF-QUERY (A queries A's own status, or B queries B's own):
+    SET LOCAL request.jwt.claims = '{"sub":"<B>", ...}';
+    SELECT is_staff_of_tenant('<B>', '<B's tenant>');
+    → true (unchanged)                       ┃ SUCCEEDS, correctly
+
+  TENANT ISOLATION PRESERVED (the 3 live RLS policies built on this
+  function — tenants_read_scoped, properties_read_scoped,
+  outlets_read_scoped — all call it as is_staff_of_tenant(auth.uid(), ...)):
+    B's own-tenant row read via RLS, post-fix:
+    SELECT count(*) FROM public.tenants WHERE id = '<B's tenant>';
+    → 1                                      ┃ UNCHANGED — no regression
+```
+
+**Migration additive/idempotent, no weakened path**: `0057` is a single
+`CREATE OR REPLACE FUNCTION` — no `DROP`, no data mutation, no grant
+change (the function keeps the same `authenticated` EXECUTE grant it had
+before, required because the 3 RLS policies above call it). `CREATE OR
+REPLACE FUNCTION` is inherently idempotent — re-running the migration
+produces the same function body, not an error or a duplicate. No existing
+authorized path was narrowed: every current caller (the 3 RLS policies)
+already passed `auth.uid()` as `_user_id`, confirmed by direct
+`pg_policies` inspection before the fix was written, so the added
+`_user_id = auth.uid()` check is unreachable-false for every legitimate
+caller and only removes the previously-unauthorized arbitrary-id path.
 
 ### Second closure pass — disposition summary
 
 | Item | Disposition |
 |---|---|
-| `is_staff_of_tenant` self-identity bypass | **CLOSED** — live-reproduced, fixed, re-verified, regression test added |
-| New parallel `tenants/properties/outlets` schema vs. canonical `restaurant_*` model | **REPORTED, not resolved** — architecture question outside this pass's authority and the P09-isolation instruction; needs explicit human/engineering-lead reconciliation |
-| New schema's own tenant isolation (both directions, read+write) | **CLOSED** — live adversarial evidence, zero residue |
+| `is_staff_of_tenant` self-identity bypass | **CLOSED** — live-reproduced, fixed, re-verified, regression test added, additive/idempotent migration confirmed |
+| Parallel `tenants/properties/outlets` schema vs. canonical `restaurant_*` model | **REPORTED, not resolved, not P09's origin corrected** — see `docs/p09-tenancy-architecture-reconciliation.md`; explicitly classified as P09 architectural reconciliation, not P11 scope |
+| That schema's own tenant isolation (both directions, read+write) | **CLOSED** — live adversarial evidence, zero residue |
 | Storage, anon-execute, RLS-disabled, security-definer-view postures | **Re-confirmed unchanged, still correct** |
-| Leaked password protection | **Still EXTERNAL — dashboard/Management-API action required, unchanged** |
-| Backup/PITR | **Still EXTERNAL — Free-tier plan restriction, unchanged, requires paid-plan upgrade + explicit approval** |
-| Full JS/TS regression (vitest/tsc/eslint/build) | **Could not run — environment/tooling gap (blocked private registry), disclosed, not fabricated** |
+| Leaked password protection | **EXTERNAL — engineering status: externally configurable; requires Supabase Auth configuration action; not changed without explicit authorization** |
+| Backup/PITR | **EXTERNAL — engineering status: unavailable on current Free plan; requires plan/recovery-architecture change; production-readiness dependency, not a code defect** |
+| Full JS/TS regression (vitest/tsc/eslint/build) | **`ENVIRONMENT BLOCKED`** — exact commands and expected evidence documented above; no substitute CI available to P11; not fabricated |
 
-**Net effect on P11 status**: still 🟡 **CONDITIONAL GO**, not 100/100 — the
-two pre-existing external blockers (leaked-password, backup/PITR) are
-unchanged and remain owner-actionable outside this session; this pass closed
-one new genuine live defect it found rather than leaving it, and surfaced
-one architectural finding (the parallel tenancy schema) that a human
-reviewer should weigh before treating P09's tenancy work as compatible with
-this repository's existing canonical model. It did **not** newly verify the
-JS/TS regression suite — a first for a P11 pass — and says so rather than
-reusing a stale pass/fail count from a different pass's environment.
+### Final status — three separate classifications (not collapsed into one)
+
+**🟢 P11 APPLICATION SECURITY ENGINEERING: GREEN**
+Every engineering-controlled security defect found in this pass and all
+prior P11 passes is closed and live-verified: the original 5-function RBAC
+self-identity bypass (`0050`), `nova_user_roles_view` cross-tenant leak,
+`migration_transfer_audit` exposure, anon-execute revocation, the
+`restaurant_properties`/`restaurant_locations` property-scope gap, hot-path
+indexing/RLS-init-plan, and this pass's `is_staff_of_tenant` bypass. No
+open engineering-fixable security defect remains in the SQL/RLS/grants
+layer as of this pass.
+
+**🟡 P11 PRODUCTION CERTIFICATION: CONDITIONAL**
+Not 100/100, because three things outside application-security engineering
+remain unsatisfied:
+- Leaked password protection: disabled, requires a Supabase Auth
+  configuration action this session's tooling cannot perform.
+- Backup/PITR: unavailable on the org's current Free plan; requires a
+  plan/infrastructure decision, not a code change.
+- JS/TS regression suite: `ENVIRONMENT BLOCKED` this session, not verified
+  green, not fabricated.
+
+**🟡 P09 ARCHITECTURAL RECONCILIATION: OPEN**
+The parallel `tenants/properties/outlets` schema question is unresolved,
+tracked in `docs/p09-tenancy-architecture-reconciliation.md`, and requires
+a human/engineering-lead decision. It is not a P11 blocker in the sense of
+"P11 must fix this" — P11 verified the schema's own isolation holds and
+found no active cross-tenant data leak from it — but it is a real,
+disclosed architectural conflict with CLAUDE.md's canonical-model rule that
+should not be silently carried forward uninvestigated.
+
+These three statuses are reported separately and deliberately not
+collapsed into a single GREEN — a green application-security result does
+not mean the platform is production-certified, and an open architecture
+question does not mean the security engineering work is incomplete.
 
 ---
 
