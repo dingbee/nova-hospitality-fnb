@@ -15,14 +15,16 @@ import { test, expect, type Page } from "@playwright/test";
 async function signIn(page: Page, email: string, password: string) {
   page.on("console", (msg) => console.log(`[browser:${msg.type()}]`, msg.text()));
   page.on("pageerror", (err) => console.log("[pageerror]", err.message));
+  page.on("request", (req) => console.log("[request]", req.method(), req.url()));
   page.on("requestfailed", (req) => console.log("[requestfailed]", req.method(), req.url(), req.failure()?.errorText));
-  page.on("response", (res) => {
-    if (!res.ok()) console.log("[response]", res.status(), res.request().method(), res.url());
-  });
+  page.on("response", (res) => console.log("[response]", res.status(), res.request().method(), res.url()));
   await page.goto("/auth");
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
+  await page.waitForTimeout(3000);
+  console.log("[after-click] url =", page.url());
+  console.log("[after-click] body text =", (await page.locator("body").innerText()).slice(0, 500));
   await page.waitForURL("**/admin/restaurant**", { timeout: 15_000 });
 }
 
