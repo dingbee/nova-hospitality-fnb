@@ -25,6 +25,15 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Build
+        # Runs before typecheck: the TanStack Router Vite plugin generates
+        # src/routeTree.gen.ts (gitignored, build-time only) as a side
+        # effect of this step, which every route file's createFileRoute()
+        # call needs to typecheck. Without it every route fails typecheck
+        # with "not assignable to parameter of type 'undefined'" — a CI
+        # ordering issue, not a real type error.
+        run: bun run build
+
       - name: Typecheck
         run: bun run typecheck
 
@@ -33,6 +42,3 @@ jobs:
 
       - name: Test
         run: bun run test
-
-      - name: Build
-        run: bun run build
