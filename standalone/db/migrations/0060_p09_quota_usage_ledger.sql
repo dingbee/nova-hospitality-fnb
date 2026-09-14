@@ -102,14 +102,14 @@ BEGIN
         )
       FOR UPDATE;
       UPDATE public.commercial_usage_counters
-      SET used_value = used_value + _safe_delta, state = _state, updated_at = now()
+      SET used_value = commercial_usage_counters.used_value + _safe_delta, state = _state, updated_at = now()
       WHERE id = _existing_id
       RETURNING commercial_usage_counters.used_value, commercial_usage_counters.state
       INTO _result_used, _result_state;
     END;
   ELSE
     UPDATE public.commercial_usage_counters
-    SET used_value = used_value + _safe_delta, state = _state, updated_at = now()
+    SET used_value = commercial_usage_counters.used_value + _safe_delta, state = _state, updated_at = now()
     WHERE id = _existing_id
     RETURNING commercial_usage_counters.used_value, commercial_usage_counters.state
     INTO _result_used, _result_state;
