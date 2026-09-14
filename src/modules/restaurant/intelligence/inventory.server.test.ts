@@ -68,6 +68,7 @@ describe("getInventoryIntelligence — default path is unchanged (no scope/pre-f
       restaurant_inventory_items: [
         {
           id: "item-1",
+          tenant_id: TENANT,
           name: "Flour",
           current_quantity: 0,
           reorder_point: 5,

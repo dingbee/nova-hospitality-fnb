@@ -77,24 +77,30 @@ export async function getInventoryIntelligence(
   const weekStart = new Date(now - 7 * DAY).toISOString();
   const prevWeekStart = new Date(now - 14 * DAY).toISOString();
 
-  let itemsQuery = sb
-    .from("restaurant_inventory_items")
-    .select("id, name, current_quantity, reorder_point, average_cost, currency, status")
-    .eq("tenant_id", tenantId);
-  if (input.propertyId) itemsQuery = itemsQuery.eq("property_id", input.propertyId);
-  if (input.locationId) itemsQuery = itemsQuery.eq("location_id", input.locationId);
+  function buildItemsQuery() {
+    let q = sb
+      .from("restaurant_inventory_items")
+      .select("id, name, current_quantity, reorder_point, average_cost, currency, status")
+      .eq("tenant_id", tenantId);
+    if (input.propertyId) q = q.eq("property_id", input.propertyId);
+    if (input.locationId) q = q.eq("location_id", input.locationId);
+    return q;
+  }
 
-  let movesQuery = sb
-    .from("restaurant_stock_movements")
-    .select("inventory_item_id, movement_type, quantity, total_cost, occurred_at")
-    .eq("tenant_id", tenantId)
-    .gte("occurred_at", new Date(now - Math.max(windowDays, 14) * DAY).toISOString());
-  if (input.propertyId) movesQuery = movesQuery.eq("property_id", input.propertyId);
-  if (input.locationId) movesQuery = movesQuery.eq("location_id", input.locationId);
+  function buildMovesQuery() {
+    let q = sb
+      .from("restaurant_stock_movements")
+      .select("inventory_item_id, movement_type, quantity, total_cost, occurred_at")
+      .eq("tenant_id", tenantId)
+      .gte("occurred_at", new Date(now - Math.max(windowDays, 14) * DAY).toISOString());
+    if (input.propertyId) q = q.eq("property_id", input.propertyId);
+    if (input.locationId) q = q.eq("location_id", input.locationId);
+    return q;
+  }
 
   const [itemsRes, movesRes, supplierProductsRes, suppliersRes] = await Promise.all([
-    input.itemsData ? Promise.resolve({ data: input.itemsData, error: null }) : itemsQuery,
-    input.movesData ? Promise.resolve({ data: input.movesData, error: null }) : movesQuery,
+    input.itemsData ? Promise.resolve({ data: input.itemsData, error: null }) : buildItemsQuery(),
+    input.movesData ? Promise.resolve({ data: input.movesData, error: null }) : buildMovesQuery(),
     input.refData
       ? Promise.resolve({ data: input.refData.supplierProducts, error: null })
       : sb
