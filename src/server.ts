@@ -1,5 +1,5 @@
 /**
- * P08-A — the application's server entry point.
+ * P08-A / P08 — the application's server entry point.
  *
  * TanStack Start auto-generates a default server entry (a virtual module)
  * when no `src/server.{ts,tsx}` exists — that default entry ONLY dispatches
@@ -13,14 +13,16 @@
  * the deployed runtime (Nitro/Cloudflare Worker, confirmed via the existing
  * build output) calls for every incoming request. Wrapping — not replacing —
  * the framework's own `createStartHandler` means every existing page route
- * and server function keeps working exactly as before; this only adds one
- * new branch, checked first, for genuine external HTTP endpoints.
+ * and server function keeps working exactly as before; this only adds new
+ * branches, checked first, for genuine external HTTP endpoints.
  *
- * `/api/v1/health` is the sole endpoint added in this spike. It proves the
- * mechanism: no auth, no tenant data, no secrets, no domain logic — a
- * future P08 would add real API routes as additional branches here (or via
- * a small router of their own), each still delegating to the existing
- * authoritative domain services rather than reimplementing them.
+ * `/api/v1/health` (P08-A) proved the mechanism: no auth, no tenant data,
+ * no secrets, no domain logic. P08 adds the real, authenticated, tenant-
+ * scoped surface on top of it — `src/modules/api-platform/router.server.ts`
+ * owns everything past this point (auth, entitlement, rate/quota, request
+ * validation, idempotency, dispatch to the existing domain server modules);
+ * this file only routes by path prefix and stays free of business logic
+ * itself, exactly as the ADR anticipated.
  */
 import { createStartHandler, defaultStreamHandler } from "@tanstack/react-start/server";
 
@@ -54,6 +56,20 @@ export default {
         });
       }
       return healthResponse();
+    }
+
+    // Internal, non-public route (webhook retry / idempotency-cleanup
+    // dispatch) — checked before the general /api/v1/ branch since it is
+    // not part of the customer-facing credentialed surface.
+    if (url.pathname === "/api/v1/_internal/dispatch") {
+      const { handleInternalDispatchRequest } =
+        await import("@/modules/api-platform/router.server");
+      return handleInternalDispatchRequest(request);
+    }
+
+    if (url.pathname.startsWith("/api/v1/")) {
+      const { handleApiV1Request } = await import("@/modules/api-platform/router.server");
+      return handleApiV1Request(request);
     }
 
     return startHandler(request);

@@ -15,8 +15,33 @@ export const RESTAURANT_ROLES = [
   "purchasing_officer",
   "accountant",
   "viewer",
+  // P08 — machine principal for a write-scoped external API credential
+  // (src/modules/api-platform/credentials.server.ts). Never assignable to a
+  // human staff member — see ASSIGNABLE_RESTAURANT_ROLES below.
+  "api_service",
 ] as const;
 export type RestaurantRole = (typeof RESTAURANT_ROLES)[number];
+
+/**
+ * RESTAURANT_ROLES minus "api_service" — every role a human staff member may
+ * hold. Use this (never RESTAURANT_ROLES directly) for a staff role picker
+ * or for validating a human-facing membership-assignment request: the
+ * server-side upsertMemberSchema below enforces this, not just the UI, so a
+ * direct call to upsertRestaurantMemberFn can't grant a human the
+ * machine-only "api_service" role either.
+ */
+export const ASSIGNABLE_RESTAURANT_ROLES = [
+  "owner",
+  "general_manager",
+  "restaurant_manager",
+  "chef",
+  "kitchen_manager",
+  "bartender",
+  "inventory_manager",
+  "purchasing_officer",
+  "accountant",
+  "viewer",
+] as const satisfies readonly RestaurantRole[];
 
 export const RESTAURANT_LOCATION_TYPES = [
   "restaurant",
@@ -608,7 +633,7 @@ export const listMembersSchema = z.object({ tenantId: uuid });
 export const upsertMemberSchema = z.object({
   tenantId: uuid,
   userId: uuid,
-  role: z.enum(RESTAURANT_ROLES),
+  role: z.enum(ASSIGNABLE_RESTAURANT_ROLES),
   /**
    * Which property this role applies to. Omitted/null = tenant-wide — the
    * role applies at every property in the tenant (the correct choice for

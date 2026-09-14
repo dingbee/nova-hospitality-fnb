@@ -23,7 +23,7 @@ import {
   removeRestaurantMemberFn,
   upsertRestaurantMemberFn,
 } from "../tenancy.functions";
-import { RESTAURANT_ROLES } from "../contracts";
+import { ASSIGNABLE_RESTAURANT_ROLES } from "../contracts";
 import { RESTAURANT_ROLE_LABELS } from "../permissions";
 
 export function StaffPanel() {
@@ -141,7 +141,7 @@ export function StaffPanel() {
                         }
                         className="min-h-11 rounded-md border bg-background px-2 py-1 text-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
                       >
-                        {RESTAURANT_ROLES.map((r) => (
+                        {ASSIGNABLE_RESTAURANT_ROLES.map((r) => (
                           <option key={r} value={r}>
                             {RESTAURANT_ROLE_LABELS[r]}
                           </option>
