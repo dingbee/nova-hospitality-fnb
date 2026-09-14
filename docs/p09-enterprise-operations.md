@@ -736,24 +736,30 @@ zero mocking of authorization:**
 | `menu-pricing.spec.ts` | Property-scoped actor sees both properties' dishes on the Menu screen (tenant-wide read, correctly unrestricted by design) | **PASS** |
 | `menu-pricing.spec.ts` | Tenant-wide owner sees the same tenant-wide menu data | **PASS** |
 
-**7 of 7 tests pass**, on the actual final head (commit `374c001`), polled
+**7 of 7 tests pass**, on the actual final head (commit `2cea1d3`), polled
 to completion via the Actions API — not asserted from an earlier or
-partial run. Two genuine test-authoring bugs were found and fixed while
-reaching this result (not silently worked around): a hydration race
-(TanStack Start hydrates the `/auth` page client-side after an initial
-module-loading cascade; filling the controlled email/password inputs
-before that settled let hydration reset them to empty, discarding what
-was typed — fixed by waiting for the network to go idle before
-interacting with the form) and a CORS preflight rejection in the stub
-(`x-supabase-api-version`, a header the real `supabase-js` client sends
-that a fixed allowlist didn't include — fixed by reflecting whatever
-headers the browser's own preflight requests, rather than maintaining a
-list that silently falls behind the real client). A third finding was a
-flaw in the test fixture itself, not the product: `manager-a1`'s fixture
-role (`restaurant_manager`) doesn't carry the `tenant.manage` capability
-at all (only `owner`/`general_manager` do — `core/permissions.ts`), so it
-could never manage any member's role, positive or negative case alike;
-corrected to `general_manager`, still scoped to Property A1 only.
+partial run. Four genuine test-authoring bugs were found and fixed while
+reaching this result (not silently worked around, each confirmed by a
+subsequent clean CI run before being written up here as passing):
+a hydration race (TanStack Start hydrates the `/auth` page client-side
+after an initial module-loading cascade; filling the controlled
+email/password inputs before that settled let hydration reset them to
+empty, discarding what was typed — fixed by waiting for the network to
+go idle before interacting with the form); a CORS preflight rejection in
+the stub (`x-supabase-api-version`, a header the real `supabase-js`
+client sends that a fixed allowlist didn't include — fixed by reflecting
+whatever headers the browser's own preflight requests, rather than
+maintaining a list that silently falls behind the real client); a flaw
+in the test fixture itself, not the product (`manager-a1`'s fixture role,
+`restaurant_manager`, doesn't carry the `tenant.manage` capability at all
+— only `owner`/`general_manager` do, `core/permissions.ts` — so it could
+never manage any member's role, positive or negative case alike;
+corrected to `general_manager`, still scoped to Property A1 only); and
+two Playwright strict-mode violations (`getByText` matching both the
+intended element and unrelated UI chrome that happens to contain the same
+text — a menu-item button's concatenated accessible text in
+`menu-pricing.spec.ts`, and `TopBar`'s location breadcrumb in
+`multi-location.spec.ts` — both fixed with `{ exact: true }`).
 
 ## 11. Certification
 
@@ -780,7 +786,7 @@ This final cycle closed both gaps the prior pass named as blocking GREEN:
   modules (menus, pricing, kitchen, costing, inventory) now have dedicated
   adversarial unit coverage, not just one representative table.
 
-**Final regression, on the actual final head (commit `374c001`), polled
+**Final regression, on the actual final head (commit `2cea1d3`), polled
 to completion via the Actions API — not asserted from an earlier or
 partial run:**
 
