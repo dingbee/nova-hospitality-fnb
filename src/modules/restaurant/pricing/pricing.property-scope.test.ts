@@ -3,7 +3,7 @@
  * P09 enterprise closure — configuration governance, expanded coverage.
  *
  * `menu.property-scope.test.ts` proved the config-governance fix
- * (0061_p09_config_governance_property_scope.sql) for one representative
+ * (0062_p09_config_governance_property_scope.sql) for one representative
  * table (menus). This file proves the identical fix for pricing:
  * upsertPrice/upsertTaxRule/upsertServiceCharge/upsertDiscountRule all
  * call `assertCapability(sb, userId, tenantId, "<capability>", {

@@ -3,7 +3,7 @@
  * P09 enterprise closure — configuration governance, expanded coverage.
  *
  * `menu.property-scope.test.ts` proved the config-governance fix
- * (0061_p09_config_governance_property_scope.sql) for one representative
+ * (0062_p09_config_governance_property_scope.sql) for one representative
  * table (menus). This file proves the identical fix for recipe costing:
  * restaurant_recipe_components/_costs have no property_id column of
  * their own — upsertRecipeComponent and computeRecipeCost both resolve

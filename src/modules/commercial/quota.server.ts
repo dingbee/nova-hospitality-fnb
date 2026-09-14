@@ -232,7 +232,7 @@ export async function incrementUsage(
 
   // P09: goes through a SECURITY DEFINER RPC, not a direct insert/update —
   // RLS on commercial_usage_counters restricts direct writes to commercial
-  // admins only (0060_p09_quota_usage_ledger.sql) precisely because a raw
+  // admins only (0061_p09_quota_usage_ledger.sql) precisely because a raw
   // UPDATE lets any tenant member with read scope set used_value to
   // whatever they like, evading a quota block. The RPC only ever ADDS a
   // (non-negative) delta to the existing value under a row lock — it never

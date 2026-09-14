@@ -98,7 +98,7 @@ before authorizing the delete). New `updateMemberRole` function replaces a
 member's role/scope in place instead of inserting a second row, checked
 against **both** the row's current scope and its new scope; `StaffPanel.tsx`
 now calls it instead of the insert-only `upsertMember`.
-`0057_p09_membership_scope_enforcement.sql`: new
+`0058_p09_membership_scope_enforcement.sql`: new
 `restaurant_can_manage_membership(tenant_id, roles, target_property_id)` SQL
 function (cannot reuse `restaurant_can_write_scoped` — that function treats
 a NULL resource `property_id` as unscoped-allowed, correct elsewhere but
@@ -138,7 +138,7 @@ row in `rbac_user_roles`, in *any* tenant" — no tenant filter at all.
 name/status/settings and every property/outlet under it, platform-wide, via
 a direct Supabase/PostgREST query.
 
-**Fix.** `0058_p09_tenancy_read_isolation.sql`: new `is_staff_of_tenant`
+**Fix.** `0059_p09_tenancy_read_isolation.sql`: new `is_staff_of_tenant`
 function and tenant-scoped replacements for all three read policies.
 
 **Live verification.** Non-destructive read-only check against real
@@ -165,7 +165,7 @@ input.
 **Fix.** Mirrors this codebase's own precedent for the identical problem
 class — a ledger safely writable by ordinary users but never directly
 settable (`restaurant_apply_stock_movement`, `0001_fnb_core.sql`).
-`0060_p09_quota_usage_ledger.sql` adds `restaurant_increment_quota_usage`, a
+`0061_p09_quota_usage_ledger.sql` adds `restaurant_increment_quota_usage`, a
 `SECURITY DEFINER` RPC that only ever **adds** a non-negative delta under a
 row lock — never accepts or trusts an absolute value — and self-checks the
 caller's own tenant/property scope. Direct table writes are now restricted
@@ -228,7 +228,7 @@ refactored to delegate to new `grantRbacRole`/`revokeRbacRole` (pulled out
 for direct testability, matching how `provisionInvitedStaffUser` is already
 separated from `inviteStaffUser` in the same file); `revokeRbacRole` now
 takes and filters by scope, deleting exactly the targeted grant.
-`0059_p09_tenancy_write_isolation.sql`: `nova_can_manage_scoped` + rescoped
+`0060_p09_tenancy_write_isolation.sql`: `nova_can_manage_scoped` + rescoped
 all five admin RLS policies. `inviteStaffUser`'s write path uses the
 service-role client (bypasses RLS, unaffected by this change);
 `setStaffUserDisabled` is confirmed unreachable from any UI and is now
@@ -277,8 +277,8 @@ single-class defect found in this closure.
 items, recipe components/costs), scope is resolved via the parent
 menu/menu item (one extra lookup query, same pattern `upsertMember` already
 used for validating a property belongs to a tenant).
-`0061_p09_config_governance_property_scope.sql` and
-`0062_p09_inventory_items_property_scope.sql` re-point ten tables' write
+`0062_p09_config_governance_property_scope.sql` and
+`0063_p09_inventory_items_property_scope.sql` re-point ten tables' write
 policies to `restaurant_can_write_scoped` — no new SQL function needed for
 tables with a direct `property_id` column (`0027` already built it); two
 small helper functions (`restaurant_menu_property`,
@@ -388,7 +388,7 @@ scope before checking capability: directly from its own `property_id`/
 `location_id` (create/upload/bulk-decide/commit), or via its
 source/staged-record's own `workspace_id` (parse/confirm-mapping/decide) —
 the same lookup-then-scope pattern §3.5 already established for
-`restaurant_menu_items`. Migration `0063_p09_import_workspace_property_scope.sql`
+`restaurant_menu_items`. Migration `0064_p09_import_workspace_property_scope.sql`
 closes the same gap at the RLS layer: two new property-derivation helper
 functions (`restaurant_import_workspace_property`,
 `restaurant_import_source_property`) and all four staging-table write
@@ -830,3 +830,56 @@ screens (§9, §10) — is closed, evidenced with real execution (not
 final head. Do not merge until a human has reviewed this record; per the
 explicit governing instruction for this cycle, GREEN is a certification
 that the defined gates pass, not an instruction to merge on its own.
+
+## 12. Post-certification integration onto `main` (P07 reconciliation)
+
+P09 was certified GREEN at commit `e50b9a3` while `main` had already
+advanced with P07's merge (`purchasing`/`kitchen`/`inventory-menu`
+intelligence property-scope fixes, plus a new index migration). This is
+a pure integration pass — no P09 re-audit, no new engineering, no
+weakening of any P09 fix.
+
+**Migration numbering collision, resolved.** Both P07 and P09 had
+independently claimed migration number `0057` (`0057_p07_purchasing_
+kitchen_scope_indexes.sql` on `main`; P09's own `0057_p09_membership_
+scope_enforcement.sql` through `0063_p09_import_workspace_property_
+scope.sql`, seven files). Verified first, not assumed: P07's `0057` is
+two `CREATE INDEX IF NOT EXISTS` statements on `restaurant_purchase_
+orders`/`restaurant_kitchen_tickets`, touching neither `restaurant_
+members` nor anything else P09's migrations touch — no real ordering
+dependency either direction. Resolved by keeping P07's `0057` as-is
+(already on `main`, not overwritten) and renumbering P09's seven files
+to `0058`–`0064` (highest-numbered file moved first, so no filename was
+ever overwritten mid-rename) — content byte-identical, only filenames
+changed. The total migration set is now 64 files (was 63 at P09's own
+certification), sequential and collision-free. Comments elsewhere in the
+codebase that cited the old P09 numbers by name (`quota.server.ts`,
+`commercial.server.test.ts`, and the four `*.property-scope.test.ts`
+files) were updated to match — cosmetic accuracy only, zero behavior
+change.
+
+**Code-level collision, resolved.** `src/modules/restaurant/intelligence/
+inventory.server.ts` was modified by P09 only (adding the optional
+`scope`/`itemsData`/`movesData`/`refData` inputs for the N+1 fix, §7);
+P07 never touched this file, confirmed by diff against `main`. Its test
+file, `inventory.server.test.ts`, was independently *added* by both
+branches (an add/add conflict) with fully complementary, non-overlapping
+suites — P07's covers baseline correctness/tenant/property isolation
+using the shared `p05.test-helpers` fixture; P09's covers the new
+scope/pre-fetched-data fast path. Resolved by union: both suites now
+live in the one file, with P09's local constants renamed (`TENANT`→
+`P09_TENANT`, etc.) to avoid shadowing P07's imported fixture names in
+the shared file scope. No test from either side was dropped.
+
+**Everything else** (`documents/core/*`, `documents/exports/*`,
+`intelligence/inventory-menu.server.*`, `intelligence/kitchen.server.*`,
+`intelligence/purchasing.server.*`) merged cleanly with no conflict —
+disjoint from every file P09 touched.
+
+Full verification (vitest, typecheck, production build, and the
+authenticated-screens real-browser certification, since the merge added
+a new file to the migration set that job applies) was re-run on the
+resulting merge commit before updating PR #15 — see the PR itself and
+the session's final report for the exact final SHA and results. This
+does not change P09's certification: every P09 fix, test, and migration
+is present, unmodified in substance, on `main`.

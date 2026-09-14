@@ -336,7 +336,7 @@ function makeFixture() {
           return { data: isAdmin, error: null };
         }
         if (fn === "restaurant_increment_quota_usage") {
-          // Mirrors 0060_p09_quota_usage_ledger.sql's
+          // Mirrors 0061_p09_quota_usage_ledger.sql's
           // restaurant_increment_quota_usage: finds-or-creates the row and
           // ADDS the delta — never sets an absolute value — against the
           // same usageCounters array commercial_usage_counters reads from,

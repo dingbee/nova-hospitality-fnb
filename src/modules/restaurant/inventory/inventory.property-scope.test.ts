@@ -3,7 +3,7 @@
  * P09 enterprise closure — configuration governance, expanded coverage.
  *
  * `menu.property-scope.test.ts` proved the config-governance fix
- * (0061/0062_p09_*_property_scope.sql) for one representative table
+ * (0062/0063_p09_*_property_scope.sql) for one representative table
  * (menus). This file proves the identical fix for inventory items:
  * upsertInventoryItem calls `assertCapability(sb, userId, tenantId,
  * "inventory.manage", { propertyId, locationId })` —

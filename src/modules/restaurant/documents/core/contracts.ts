@@ -2,7 +2,7 @@
  * RPC contracts for the document layer. Browser-safe.
  */
 import { z } from "zod";
-import { DOCUMENT_TYPE_IDS } from "./registry";
+import { DOCUMENT_GROUPS, DOCUMENT_TYPE_IDS } from "./registry";
 
 const uuid = z.string().uuid();
 
@@ -23,6 +23,9 @@ export const buildDatasetSchema = z.object({
   locationId: uuid.optional(),
   from: z.string().optional(),
   to: z.string().optional(),
+  /** Intelligence exports only — mirrors p05WindowSchema/p05ForecastWindowSchema so the export reads the exact same window the Pro Intelligence screen computed. */
+  windowDays: z.number().int().min(7).max(120).optional(),
+  horizonDays: z.number().int().min(1).max(60).optional(),
   limit: z.number().int().min(1).max(5000).default(2000),
 });
 export type BuildDatasetInput = z.infer<typeof buildDatasetSchema>;
@@ -49,6 +52,6 @@ export const listDocumentEventsSchema = z.object({
 export const searchDocumentsSchema = z.object({
   tenantId: uuid,
   query: z.string().max(80).default(""),
-  group: z.enum(["procurement", "inventory", "products", "sales", "operations"]).optional(),
+  group: z.enum(DOCUMENT_GROUPS).optional(),
   limit: z.number().int().min(1).max(100).default(40),
 });
