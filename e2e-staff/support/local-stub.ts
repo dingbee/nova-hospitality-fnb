@@ -68,8 +68,23 @@ function verifyJwt(token: string): Record<string, unknown> | null {
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
-  "access-control-allow-headers": "authorization, apikey, content-type, x-client-info, prefer, range",
 };
+
+/**
+ * Reflects whatever headers the browser's own preflight asked for, rather
+ * than maintaining a hardcoded allowlist that silently falls behind
+ * whatever headers the real supabase-js client adds across versions (this
+ * is exactly what broke: a newer client sends `x-supabase-api-version`,
+ * which a fixed allowlist didn't have — confirmed via the browser's own
+ * CORS-rejection console error naming that exact header).
+ */
+function corsHeadersFor(request: Request): Record<string, string> {
+  const requested = request.headers.get("access-control-request-headers");
+  return {
+    ...CORS_HEADERS,
+    "access-control-allow-headers": requested ?? "authorization, apikey, content-type",
+  };
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -99,10 +114,9 @@ Bun.serve({
   port: PORT,
   async fetch(request) {
     const url = new URL(request.url);
-    console.log(`[p09-cert-stub] ${request.method} ${url.pathname}${url.search}`);
 
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: CORS_HEADERS });
+      return new Response(null, { status: 204, headers: corsHeadersFor(request) });
     }
 
     if (url.pathname === "/auth/v1/token" && request.method === "POST") {

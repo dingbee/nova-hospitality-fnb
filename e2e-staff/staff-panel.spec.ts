@@ -13,23 +13,12 @@ import { test, expect, type Page } from "@playwright/test";
  */
 
 async function signIn(page: Page, email: string, password: string) {
-  page.on("response", (res) => {
-    if (res.url().includes("/auth/v1/")) console.log("[auth-response]", res.status(), res.request().method(), res.url());
-  });
-  page.on("requestfailed", (req) => {
-    if (req.url().includes("/auth/v1/")) console.log("[auth-requestfailed]", req.url(), req.failure()?.errorText);
-  });
-  page.on("console", (msg) => {
-    if (msg.type() === "error") console.log("[browser:error]", msg.text());
-  });
   await page.goto("/auth");
   // TanStack Start hydrates client-side after an initial module-loading
   // cascade; filling the controlled email/password inputs before that
   // settles lets hydration reset them back to their pre-hydration (empty)
   // state, silently discarding what was typed. Waiting for the network to
-  // go idle lets hydration complete first (confirmed via real-browser
-  // diagnostics: inputValue() read back empty immediately after fill()
-  // when this wait was absent).
+  // go idle lets hydration complete first.
   await page.waitForLoadState("networkidle");
   const emailInput = page.getByLabel("Email", { exact: true });
   const passwordInput = page.getByLabel("Password", { exact: true });
@@ -38,8 +27,6 @@ async function signIn(page: Page, email: string, password: string) {
   await expect(emailInput).toHaveValue(email);
   await expect(passwordInput).toHaveValue(password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForTimeout(2000);
-  console.log("[after-click] url =", page.url());
   await page.waitForURL("**/admin/restaurant**", { timeout: 15_000 });
 }
 
