@@ -11,6 +11,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:auth": "playwright test --config=playwright.auth.config.ts",
     "typecheck": "tsc --noEmit",
     "build:local": "bash local/scripts/build-ui.sh",
     "nova": "./nova",

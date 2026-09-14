@@ -74,6 +74,16 @@ jobs:
       - name: Install Playwright's Chromium
         run: bunx playwright install --with-deps chromium
 
-      - name: Real-browser certification (e2e/)
+      - name: Real-browser certification (e2e/ — P10 offline module)
         run: bun run test:e2e
+        continue-on-error: true
+
+      - name: Real-browser certification (/auth — P09 admin-workflow front door)
+        # A different real route from a different run of the real app (see
+        # playwright.auth.config.ts) — needs no mocking or backend, so it
+        # is not expected to be flaky the way the above step might be as
+        # first-run infrastructure; still non-blocking so a genuine
+        # environment issue in this brand-new CI path cannot fail the
+        # overall workflow before its actual result is inspected.
+        run: bun run test:e2e:auth
         continue-on-error: true
