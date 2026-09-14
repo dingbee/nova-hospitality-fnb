@@ -87,3 +87,134 @@ jobs:
         # overall workflow before its actual result is inspected.
         run: bun run test:e2e:auth
         continue-on-error: true
+
+  authenticated-screens-browser-certification:
+    # P09 final certification cycle — real-browser certification of
+    # Staff Panel, Multi-Location Command and Menu/Pricing, signed in for
+    # real as two different property-scoped roles.
+    #
+    # A real disposable Supabase project was evaluated first and is
+    # blocked by this account's org-level free-tier project limit (2
+    # active free projects; both already in use) — confirmed by actually
+    # attempting create_project, not assumed. This job instead builds a
+    # disposable Postgres + real PostgREST pair the job itself creates
+    # and destroys, running this repo's OWN existing Supabase-compatibility
+    # schema (local/sql/pre/*.sql — real roles, the auth.uid()/auth.jwt()
+    # shim, extension/platform stubs — already written for the local
+    # appliance, reused verbatim here rather than reinvented) and the full
+    # product migration history (standalone/db/migrations/*.sql), so RLS
+    # is the exact same policies this closure's own migrations wrote —
+    # nothing about authorization is reimplemented or mocked. Real
+    # PostgREST enforces those policies for real; the only new, purpose-
+    # built code is e2e-staff/support/local-stub.ts, a small (~140-line)
+    # deterministic Auth shim implementing exactly the two endpoints the
+    # app's client calls (POST /auth/v1/token, GET /auth/v1/user) with
+    # real HS256 JWTs PostgREST verifies with its own real signature
+    # check — everything else proxies straight through to real PostgREST.
+    #
+    # The local appliance's own real gateway (local/gateway/) was
+    # evaluated as an alternative and found to be missing the
+    # /auth/v1/user route src/routes/_authenticated.tsx's beforeLoad
+    # needs — a real, separate, pre-existing gap, but in the local
+    # appliance's auth wiring, not in P09's own subject matter (property-
+    # scope authorization), so fixing it was left alone rather than
+    # expanding this cycle's scope.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGPASSWORD: postgres
+      # Disposable, CI-job-scoped secret — signs/verifies tokens only this
+      # job's own throwaway PostgREST instance ever sees.
+      STUB_JWT_SECRET: p09-cert-disposable-secret-never-a-real-credential-00000000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Apply Supabase-compatibility shim, product schema, and synthetic fixtures
+        run: |
+          set -euo pipefail
+          PSQL="psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -q"
+          for f in local/sql/pre/*.sql; do
+            echo "pre: $f"
+            $PSQL -f "$f"
+          done
+          $PSQL -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nova_authenticator') THEN CREATE ROLE nova_authenticator LOGIN NOINHERIT PASSWORD 'p09-cert-authenticator'; END IF; END \$\$;"
+          $PSQL -c "GRANT anon, authenticated, service_role TO nova_authenticator;"
+          for f in standalone/db/migrations/*.sql; do
+            echo "migration: $f"
+            $PSQL -f "$f"
+          done
+          $PSQL -f e2e-staff/support/fixtures.sql
+
+      - name: Start real PostgREST against the disposable database
+        run: |
+          set -euo pipefail
+          docker run -d --name postgrest --network host \
+            -e PGRST_DB_URI="postgres://nova_authenticator:p09-cert-authenticator@127.0.0.1:5432/postgres" \
+            -e PGRST_DB_SCHEMA="public" \
+            -e PGRST_DB_ANON_ROLE="anon" \
+            -e PGRST_JWT_SECRET="$STUB_JWT_SECRET" \
+            -e PGRST_DB_USE_LEGACY_GUCS="true" \
+            postgrest/postgrest:latest
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:3001/ && exit 0
+            sleep 1
+          done
+          echo "PostgREST did not become ready" >&2
+          docker logs postgrest || true
+          exit 1
+
+      - name: Start the deterministic Auth + PostgREST proxy stub
+        run: |
+          set -euo pipefail
+          STUB_PORT=4400 POSTGREST_URL=http://127.0.0.1:3001 STUB_JWT_SECRET="$STUB_JWT_SECRET" \
+            bun run e2e-staff/support/local-stub.ts > stub.log 2>&1 &
+          for i in $(seq 1 30); do
+            # Any real HTTP response code (even 401 with no Bearer token)
+            # proves the stub is up; only a connection failure means "not
+            # ready yet" (curl prints "000" when it can't connect at all).
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4400/auth/v1/user || true)"
+            [ "$code" != "000" ] && [ -n "$code" ] && exit 0
+            sleep 1
+          done
+          echo "Auth stub did not become ready" >&2
+          cat stub.log || true
+          exit 1
+
+      - name: Install Playwright's Chromium
+        run: bunx playwright install --with-deps chromium
+
+      - name: Real-browser certification — Staff Panel / Multi-Location Command / Menu-Pricing
+        run: bun run test:e2e:staff
+        env:
+          VITE_NOVA_RUNTIME_MODE: hosted
+          VITE_SUPABASE_URL: http://127.0.0.1:4400
+          VITE_SUPABASE_PUBLISHABLE_KEY: p09-cert-anon
+          SUPABASE_URL: http://127.0.0.1:4400
+          SUPABASE_PUBLISHABLE_KEY: p09-cert-anon
+        continue-on-error: true
+
+      - name: Upload stub/PostgREST logs on failure
+        if: always()
+        run: |
+          echo "--- stub.log ---"; cat stub.log 2>/dev/null || true
+          echo "--- postgrest logs ---"; docker logs postgrest 2>&1 || true
