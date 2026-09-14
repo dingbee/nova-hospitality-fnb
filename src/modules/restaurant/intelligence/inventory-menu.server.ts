@@ -25,15 +25,43 @@ export interface OpportunityInput {
   targetCoverDays: number;
 }
 
-export async function getInventoryMenuOpportunities(sb: Sb, userId: string, input: OpportunityInput) {
+export async function getInventoryMenuOpportunities(
+  sb: Sb,
+  userId: string,
+  input: OpportunityInput,
+) {
   const { tenantId, windowDays, targetCoverDays } = input;
-  await assertTenantRead(sb, userId, tenantId);
+  await assertTenantRead(sb, userId, tenantId, { locationId: input.locationId ?? null });
   const since = new Date(Date.now() - windowDays * DAY).toISOString();
+
+  // restaurant_order_items carries no location_id of its own (see
+  // restaurant_orders migration 0027) — a location-scoped request must
+  // resolve the scoped order ids first, or a tenant-wide caller asking for
+  // one location's opportunities would have other locations' sales folded
+  // into the margin-opportunity aggregation below.
+  let orderIdsForLocation: string[] | null = null;
+  if (input.locationId) {
+    const ordersRes = await sb
+      .from("restaurant_orders")
+      .select("id")
+      .eq("tenant_id", tenantId)
+      .eq("location_id", input.locationId);
+    orderIdsForLocation = ((ordersRes.data ?? []) as any[]).map((o) => o.id);
+  }
+
+  let orderItemsQuery = sb
+    .from("restaurant_order_items")
+    .select("menu_item_id, quantity, line_total, line_cost, status, created_at, order_id")
+    .eq("tenant_id", tenantId)
+    .gte("created_at", since);
+  if (orderIdsForLocation) orderItemsQuery = orderItemsQuery.in("order_id", orderIdsForLocation);
 
   const [invRes, batchRes, movRes, itemsRes, orderRes, recipeRes, lineRes] = await Promise.all([
     sb
       .from("restaurant_inventory_items")
-      .select("id, name, current_quantity, par_level, reorder_point, average_cost, currency, status, location_id")
+      .select(
+        "id, name, current_quantity, par_level, reorder_point, average_cost, currency, status, location_id",
+      )
       .eq("tenant_id", tenantId),
     sb
       .from("restaurant_inventory_batches")
@@ -49,11 +77,7 @@ export async function getInventoryMenuOpportunities(sb: Sb, userId: string, inpu
       .from("restaurant_menu_items")
       .select("id, name, price, currency, lifecycle_status")
       .eq("tenant_id", tenantId),
-    sb
-      .from("restaurant_order_items")
-      .select("menu_item_id, quantity, line_total, line_cost, status, created_at")
-      .eq("tenant_id", tenantId)
-      .gte("created_at", since),
+    orderItemsQuery,
     sb.from("restaurant_recipes").select("id, name, status, updated_at").eq("tenant_id", tenantId),
     sb
       .from("restaurant_recipe_lines")
@@ -81,7 +105,10 @@ export async function getInventoryMenuOpportunities(sb: Sb, userId: string, inpu
     if (Number(b.quantity ?? 0) <= 0) continue;
     const prev = earliestExpiry.get(b.inventory_item_id);
     if (!prev || b.expiry_date < prev.date) {
-      earliestExpiry.set(b.inventory_item_id, { date: b.expiry_date, quantity: Number(b.quantity) });
+      earliestExpiry.set(b.inventory_item_id, {
+        date: b.expiry_date,
+        quantity: Number(b.quantity),
+      });
     }
   }
 
@@ -125,7 +152,10 @@ export async function getInventoryMenuOpportunities(sb: Sb, userId: string, inpu
       },
       {
         label: "Stock value",
-        value: Number(item.average_cost ?? 0) > 0 ? `${currency} ${Math.round(value).toLocaleString()}` : "no cost on file",
+        value:
+          Number(item.average_cost ?? 0) > 0
+            ? `${currency} ${Math.round(value).toLocaleString()}`
+            : "no cost on file",
         strength: Number(item.average_cost ?? 0) > 0 ? "hard" : "missing",
         weight: 2,
       },
@@ -162,7 +192,12 @@ export async function getInventoryMenuOpportunities(sb: Sb, userId: string, inpu
     if (cover != null && cover >= 2) {
       const evidence: Evidence[] = [
         ...baseEvidence,
-        { label: "Cover", value: `${cover}× the ${targetCoverDays}-day target`, strength: "hard", weight: 4 },
+        {
+          label: "Cover",
+          value: `${cover}× the ${targetCoverDays}-day target`,
+          strength: "hard",
+          weight: 4,
+        },
       ];
       const blockers = linkedRecipes === 0 ? ["No recipe uses this ingredient yet"] : [];
       const confidence = deriveConfidence(evidence);
@@ -209,12 +244,19 @@ export async function getInventoryMenuOpportunities(sb: Sb, userId: string, inpu
     if (r.status !== "active") continue;
     const used = (lineRes.data ?? []).some((l: any) => l.recipe_id === r.id);
     if (!used) continue;
-    const anySales = menuItems.some((mi) => (soldByMenuItem.get(mi.id)?.qty ?? 0) > 0 && mi.name === r.name);
+    const anySales = menuItems.some(
+      (mi) => (soldByMenuItem.get(mi.id)?.qty ?? 0) > 0 && mi.name === r.name,
+    );
     if (anySales) continue;
     const evidence: Evidence[] = [
       { label: "Recipe status", value: "active", strength: "hard", weight: 2 },
       { label: "Sales in window", value: "none recorded", strength: "hard", weight: 3 },
-      { label: "Menu placement", value: "not matched to a selling menu item", strength: "soft", weight: 2 },
+      {
+        label: "Menu placement",
+        value: "not matched to a selling menu item",
+        strength: "soft",
+        weight: 2,
+      },
     ];
     const confidence = deriveConfidence(evidence);
     opportunities.push({
@@ -240,7 +282,12 @@ export async function getInventoryMenuOpportunities(sb: Sb, userId: string, inpu
     const evidence: Evidence[] = [
       { label: "Units sold", value: `${agg.qty}`, strength: "hard", weight: 3 },
       { label: "Margin", value: `${margin.toFixed(1)}%`, strength: "hard", weight: 4 },
-      { label: "Recorded cost", value: `${currency} ${Math.round(agg.cost).toLocaleString()}`, strength: "hard", weight: 2 },
+      {
+        label: "Recorded cost",
+        value: `${currency} ${Math.round(agg.cost).toLocaleString()}`,
+        strength: "hard",
+        weight: 2,
+      },
     ];
     const confidence = deriveConfidence(evidence);
     opportunities.push({
@@ -273,7 +320,9 @@ export async function getInventoryMenuOpportunities(sb: Sb, userId: string, inpu
 export async function publishOpportunityEvents(sb: Sb, userId: string, input: OpportunityInput) {
   const result = await getInventoryMenuOpportunities(sb, userId, input);
   const day = new Date().toISOString().slice(0, 10);
-  const strong = result.opportunities.filter((o) => o.confidence != null && o.priority >= 60).slice(0, 10);
+  const strong = result.opportunities
+    .filter((o) => o.confidence != null && o.priority >= 60)
+    .slice(0, 10);
   for (const o of strong) {
     await emitRestaurantEvent(sb, userId, {
       type: "restaurant.menu.opportunity.detected",
