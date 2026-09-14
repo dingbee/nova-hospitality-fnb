@@ -65,10 +65,16 @@ function verifyJwt(token: string): Record<string, unknown> | null {
   }
 }
 
+const CORS_HEADERS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
+  "access-control-allow-headers": "authorization, apikey, content-type, x-client-info, prefer, range",
+};
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...CORS_HEADERS },
   });
 }
 
@@ -93,6 +99,10 @@ Bun.serve({
   port: PORT,
   async fetch(request) {
     const url = new URL(request.url);
+
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
 
     if (url.pathname === "/auth/v1/token" && request.method === "POST") {
       const body = (await request.json().catch(() => ({}))) as { email?: string; password?: string };
@@ -138,7 +148,9 @@ Bun.serve({
         headers,
         body: ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer(),
       });
-      return new Response(response.body, { status: response.status, headers: response.headers });
+      const responseHeaders = new Headers(response.headers);
+      for (const [key, value] of Object.entries(CORS_HEADERS)) responseHeaders.set(key, value);
+      return new Response(response.body, { status: response.status, headers: responseHeaders });
     }
 
     return json({ error: "not_found" }, 404);
