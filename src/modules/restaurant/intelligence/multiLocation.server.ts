@@ -88,14 +88,51 @@ export async function getMultiLocationIntelligence(
   const start = new Date(now - windowDays * DAY).toISOString();
   const locationIds = locations.map((l) => l.id);
 
-  const { data: orderRows } = await sb
-    .from("restaurant_orders")
-    .select("location_id, total, currency")
-    .eq("tenant_id", tenantId)
-    .eq("status", "closed")
-    .neq("payment_state", "refunded")
-    .gte("opened_at", start)
-    .in("location_id", locationIds);
+  // P09 — the per-location inventory fan-out below used to call
+  // getInventoryIntelligence once per location (up to MAX_LOCATIONS), each
+  // call independently re-running assertTenantRead's own membership query
+  // and re-fetching the entire tenant's supplier/supplier-product tables
+  // (neither of which is location-scoped, so every location got the exact
+  // same rows) plus its own single-location items/moves query. `scope` is
+  // already resolved above; suppliers/supplier-products are tenant-wide, so
+  // fetched once here; items/moves are fetched once across every accessible
+  // location via a single `.in(...)` query each, then grouped in memory —
+  // matching the batching orderRows already used for revenue.
+  const movesWindowStart = new Date(now - Math.max(windowDays, 14) * DAY).toISOString();
+  const [
+    { data: orderRows },
+    { data: allSuppliers },
+    { data: allSupplierProducts },
+    { data: allItems },
+    { data: allMoves },
+  ] = await Promise.all([
+    sb
+      .from("restaurant_orders")
+      .select("location_id, total, currency")
+      .eq("tenant_id", tenantId)
+      .eq("status", "closed")
+      .neq("payment_state", "refunded")
+      .gte("opened_at", start)
+      .in("location_id", locationIds),
+    sb.from("restaurant_suppliers").select("id, name").eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_supplier_products")
+      .select("supplier_id, inventory_item_id, name, unit_price, active")
+      .eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_inventory_items")
+      .select(
+        "id, name, current_quantity, reorder_point, average_cost, currency, status, location_id",
+      )
+      .eq("tenant_id", tenantId)
+      .in("location_id", locationIds),
+    sb
+      .from("restaurant_stock_movements")
+      .select("inventory_item_id, movement_type, quantity, total_cost, occurred_at, location_id")
+      .eq("tenant_id", tenantId)
+      .gte("occurred_at", movesWindowStart)
+      .in("location_id", locationIds),
+  ]);
 
   const orders = (orderRows ?? []) as any[];
   const currency = orders[0]?.currency ?? "TZS";
@@ -107,6 +144,23 @@ export async function getMultiLocationIntelligence(
     revenueByLocation.set(o.location_id, cur);
   }
 
+  const itemsByLocation = new Map<string, any[]>();
+  for (const item of (allItems ?? []) as any[]) {
+    const list = itemsByLocation.get(item.location_id) ?? [];
+    list.push(item);
+    itemsByLocation.set(item.location_id, list);
+  }
+  const movesByLocation = new Map<string, any[]>();
+  for (const move of (allMoves ?? []) as any[]) {
+    const list = movesByLocation.get(move.location_id) ?? [];
+    list.push(move);
+    movesByLocation.set(move.location_id, list);
+  }
+  const refData = {
+    suppliers: (allSuppliers ?? []) as any[],
+    supplierProducts: (allSupplierProducts ?? []) as any[],
+  };
+
   const summaries: LocationSummary[] = await Promise.all(
     locations.map(async (loc) => {
       const agg = revenueByLocation.get(loc.id) ?? { revenue: 0, orders: 0 };
@@ -116,7 +170,12 @@ export async function getMultiLocationIntelligence(
         const inv = await getInventoryIntelligence(sb, userId, {
           tenantId,
           windowDays,
+          propertyId: loc.property_id ?? null,
           locationId: loc.id,
+          scope,
+          itemsData: itemsByLocation.get(loc.id) ?? [],
+          movesData: movesByLocation.get(loc.id) ?? [],
+          refData,
         });
         atRiskInventoryCount = inv.atRisk.length;
         topInsight = inv.insights[0] ?? null;

@@ -83,6 +83,52 @@ function slugify(value: string): string {
   );
 }
 
+/**
+ * Every import write (upload a source, confirm a mapping, decide a staged
+ * record, commit) reaches its actual canonical writes through this
+ * module's own commitX helpers, each of which already calls the same
+ * property-scoped upsertX service manual entry uses — but the workspace
+ * *orchestration* actions here (create/upload/parse/confirm/decide/commit)
+ * had no scope of their own: `assertCapability(..., "import.manage")` with
+ * no third argument means tenant-wide, so a property-scoped
+ * restaurant_manager/chef could drive an entire import workspace —
+ * upload a source, approve staged rows, commit — against a SIBLING
+ * property's workspace, using only their own property's grant. This
+ * mirrors the same class of gap already closed for restaurant_members
+ * (0057/0058) and configuration governance (0061/0062): the resource
+ * (restaurant_import_workspaces) has a real property_id/location_id, the
+ * app layer just never scoped the capability check to it.
+ */
+async function getImportWorkspaceScope(
+  sb: Sb,
+  tenantId: string,
+  workspaceId: string,
+): Promise<{ propertyId: string | null; locationId: string | null }> {
+  const { data, error } = await sb
+    .from("restaurant_import_workspaces")
+    .select("property_id, location_id")
+    .eq("tenant_id", tenantId)
+    .eq("id", workspaceId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Import workspace not found.");
+  return {
+    propertyId: (data as any).property_id ?? null,
+    locationId: (data as any).location_id ?? null,
+  };
+}
+
+/** For actions keyed on workspaceId directly. */
+async function assertCanManageImportWorkspace(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  workspaceId: string,
+): Promise<void> {
+  const scope = await getImportWorkspaceScope(sb, tenantId, workspaceId);
+  await assertCapability(sb, userId, tenantId, "import.manage", scope);
+}
+
 /* ================= Workspace ================= */
 
 export async function createImportWorkspace(
@@ -90,7 +136,12 @@ export async function createImportWorkspace(
   userId: string,
   input: CreateImportWorkspaceInput,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
+  // The workspace doesn't exist yet — its own input carries the scope a
+  // sibling-property write would otherwise escape.
+  await assertCapability(sb, userId, input.tenantId, "import.manage", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   const workspaceNumber = await nextWorkspaceNumber(sb, input.tenantId);
   const { data, error } = await sb
     .from("restaurant_import_workspaces")
@@ -338,14 +389,17 @@ async function parseSourceContent(sb: Sb, source: any): Promise<ParsedSource> {
 }
 
 export async function uploadImportSource(sb: Sb, userId: string, input: UploadImportSourceInput) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
   const { data: ws } = await sb
     .from("restaurant_import_workspaces")
-    .select("id, status")
+    .select("id, status, property_id, location_id")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.workspaceId)
     .maybeSingle();
   if (!ws) throw new Error("Import workspace not found.");
+  await assertCapability(sb, userId, input.tenantId, "import.manage", {
+    propertyId: ws.property_id ?? null,
+    locationId: ws.location_id ?? null,
+  });
   // "committed" isn't terminal — a migration often lands in phases (inventory
   // today, recipes next once it exists to reference); only a cancelled
   // workspace refuses more sources.
@@ -406,8 +460,11 @@ export async function parseImportSource(
   userId: string,
   input: { tenantId: string; sourceId: string },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
   const source = await loadSourceRow(sb, input.tenantId, input.sourceId);
+  // restaurant_import_sources has no property/location column of its own —
+  // it inherits scope from its parent workspace, the same way
+  // restaurant_menu_items inherits scope from its parent menu.
+  await assertCanManageImportWorkspace(sb, userId, input.tenantId, source.workspace_id);
 
   try {
     const parsed = await parseSourceContent(sb, source);
@@ -641,8 +698,8 @@ export async function confirmImportMapping(
   userId: string,
   input: ConfirmImportMappingInput,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
   const source = await loadSourceRow(sb, input.tenantId, input.sourceId);
+  await assertCanManageImportWorkspace(sb, userId, input.tenantId, source.workspace_id);
 
   const { error: mapErr } = await sb.from("restaurant_import_field_mappings").upsert(
     {
@@ -783,15 +840,17 @@ export async function listStagedRecords(
 }
 
 export async function decideStagedRecord(sb: Sb, userId: string, input: DecideStagedRecordInput) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
   const { data: existing, error: readErr } = await sb
     .from("restaurant_import_staged_records")
-    .select("id, committed_at, mapped_data, matched_entity_table")
+    .select("id, committed_at, mapped_data, matched_entity_table, workspace_id")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.recordId)
     .maybeSingle();
   if (readErr) throw new Error(readErr.message);
   if (!existing) throw new Error("Staged record not found.");
+  // restaurant_import_staged_records has no property/location column of its
+  // own — same inheritance-via-parent pattern as the source lookup above.
+  await assertCanManageImportWorkspace(sb, userId, input.tenantId, existing.workspace_id);
   if (existing.committed_at)
     throw new Error("This record has already been committed and can no longer be changed.");
 
@@ -830,7 +889,7 @@ export async function bulkDecideStagedRecords(
     decision: "approved" | "rejected" | "skipped";
   },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
+  await assertCanManageImportWorkspace(sb, userId, input.tenantId, input.workspaceId);
   let q = sb
     .from("restaurant_import_staged_records")
     .update({
@@ -1326,7 +1385,6 @@ export async function commitImportWorkspace(
   userId: string,
   input: CommitImportWorkspaceInput,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
   const { data: workspace, error: wErr } = await sb
     .from("restaurant_import_workspaces")
     .select("*")
@@ -1335,6 +1393,10 @@ export async function commitImportWorkspace(
     .maybeSingle();
   if (wErr) throw new Error(wErr.message);
   if (!workspace) throw new Error("Import workspace not found.");
+  await assertCapability(sb, userId, input.tenantId, "import.manage", {
+    propertyId: workspace.property_id ?? null,
+    locationId: workspace.location_id ?? null,
+  });
   if (workspace.status === "cancelled")
     throw new Error("This workspace was cancelled and cannot be committed.");
   // Not "already committed": a workspace stays open to a follow-up commit —

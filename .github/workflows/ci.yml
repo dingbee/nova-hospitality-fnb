@@ -50,3 +50,30 @@ jobs:
         # while still reporting its own real pass/fail in the Actions UI.
         run: bun run lint
         continue-on-error: true
+
+  browser-certification:
+    # P09 — this repo's real-browser Playwright suite (e2e/, added in an
+    # earlier P10 pass) existed but had never actually been run in this
+    # repo's own CI before this job: nothing had verified it still worked
+    # end to end. A separate, non-blocking job (not a step in `verify`)
+    # because it exercises genuinely new CI surface — a Playwright browser
+    # download from playwright.dev's CDN, a dependency this workflow has
+    # never made before and that GitHub's runner (unlike this repo's own
+    # sandbox, which has Chromium pre-installed) needs fetched fresh.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Install Playwright's Chromium
+        run: bunx playwright install --with-deps chromium
+
+      - name: Real-browser certification (e2e/)
+        run: bun run test:e2e
+        continue-on-error: true
