@@ -25,7 +25,13 @@ const chromiumExecutablePath = existsSync(PINNED_CHROMIUM) ? PINNED_CHROMIUM : u
 const PORT = Number(process.env.APP_HARNESS_PORT ?? 4320);
 
 export default defineConfig({
-  testDir: "./e2e/app",
+  // Deliberately NOT under e2e/ — playwright.config.ts's own testDir
+  // ("./e2e") matches recursively, so a spec placed at e2e/app/ would be
+  // picked up by BOTH configs: once here (correctly, against the real
+  // vite dev server) and once by the P10 config (incorrectly, against its
+  // static offline harness, where "/auth" doesn't exist) — exactly the
+  // failure this comment exists to prevent a future regression of.
+  testDir: "./e2e-auth",
   fullyParallel: true,
   reporter: [["list"]],
   use: {
