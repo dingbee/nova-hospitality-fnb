@@ -434,10 +434,26 @@ Iterated through several real, caught-and-fixed CI issues:
   in `menuReasoning.server.test.ts`, predating this branch per `git blame`)
   was fixed — one line, test file only, no runtime change — flagged as
   pre-existing rather than folded silently into a P09 commit.
+- CI caught a real regression from the config-governance fix (§3.5) within
+  minutes of it landing: `computeRecipeCost`'s new menu-property lookup
+  called `.maybeSingle()`, which the pre-existing
+  `costing.server.test.ts` fake Supabase mock didn't implement (only
+  `.single()`/`.then()`), crashing 2 of 2145 tests. Fixed by aliasing
+  `maybeSingle` to the same resolver `single` already used — one line, test
+  file only. Every other pre-existing test file touched by the same
+  config-governance change (`menu-lifecycle.test.ts`,
+  `pricing.server.bulk.test.ts`, and 164 others) needed no changes. This is
+  the CI setup in this pass earning its keep exactly as intended: a real
+  defect caught and fixed within one iteration, not asserted safe by
+  inspection alone.
 
-**Current CI status on this branch: build ✅, typecheck ✅, test ✅ (all green);
-lint 🔴 pre-existing, unrelated, non-blocking.** See the branch's Actions
-runs for exact per-commit results.
+**Current CI status on this branch (commit `ea11acb`, the last one that
+included a full test run before the certification-doc rewrite commit):
+build ✅, typecheck ✅, test ✅ — 167 test files, 2145 tests, all passing;
+lint 🔴 pre-existing, unrelated, non-blocking (~1348 errors, none in files
+this branch touched).** See the branch's Actions runs for exact per-commit
+results; the certification-doc commit itself only changes a markdown file
+and was not expected to affect test/build outcomes.
 
 **Live verification against the real Supabase project
 (`nova-hospitality-fnb`, confirmed to be the same project the original P09
