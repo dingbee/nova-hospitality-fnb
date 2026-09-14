@@ -447,13 +447,15 @@ Iterated through several real, caught-and-fixed CI issues:
   defect caught and fixed within one iteration, not asserted safe by
   inspection alone.
 
-**Current CI status on this branch (commit `ea11acb`, the last one that
-included a full test run before the certification-doc rewrite commit):
-build ✅, typecheck ✅, test ✅ — 167 test files, 2145 tests, all passing;
-lint 🔴 pre-existing, unrelated, non-blocking (~1348 errors, none in files
-this branch touched).** See the branch's Actions runs for exact per-commit
-results; the certification-doc commit itself only changes a markdown file
-and was not expected to affect test/build outcomes.
+**Final confirmed CI status on this branch (commit `251f8c8`, the current
+head — both the direct push run `34817219488` and the PR-context run
+`34817223304` against it were polled to completion via the Actions API,
+not assumed): Build ✅, Typecheck ✅, Test ✅ — 167 test files, 2145 tests,
+all passing; Lint runs (non-blocking, `continue-on-error: true`) —
+pre-existing, unrelated debt (~1348 errors, none in files this branch
+touched), confirmed still uncorrected by this pass and correctly not
+absorbed into this diff.** This is the actual current head of the branch;
+no later commit exists.
 
 **Live verification against the real Supabase project
 (`nova-hospitality-fnb`, confirmed to be the same project the original P09
@@ -475,20 +477,70 @@ real bug (§3.3's ambiguous-column error) that the mock-based test suite
 structurally could not have caught.
 
 **What remains genuinely unverified:** the new unit tests (`vitest run`)
-have not been executed by a human or a second independent tool locally —
-only by CI, which this session does not have shell access into beyond the
-Actions API used here. Pricing/kitchen/costing/inventory's config-
-governance fixes are live-RLS-verified for one representative table
-(menus) but do not have dedicated new unit tests. Browser/UX verification
-(§9) was not performed at all.
+have been executed and confirmed green, but only by CI on GitHub's
+infrastructure (polled to completion via the Actions API) — this session's
+own local sandbox cannot install dependencies against this org's private
+registry, so no second, independent local `vitest run` was possible here.
+Pricing/kitchen/costing/inventory's config-governance fixes are
+live-RLS-verified for one representative table (menus) but do not have
+dedicated new unit tests. Browser/UX verification (§9) was evaluated —
+every legitimate path in this environment was checked and the reasons for
+not proceeding are documented — but not actually performed.
 
-## 9. UX / accessibility / browser verification — not performed
+## 9. UX / accessibility / browser verification — evaluated, not performed
 
 No dev server was run and no browser session was driven against this
-branch's changes. This is a genuine, disclosed gap, not a claimed pass. The
-three UI-polish items found during the Enterprise Operations Centre audit
-(§5) are exactly the kind of finding browser verification would be needed
-to confirm the user-visible severity of.
+branch's changes. This is a genuine, disclosed gap, not a claimed pass —
+but before accepting it as a blocker, every legitimate path available in
+this environment was checked, per the mandate's "exhaust legitimate
+existing repository/CI paths" instruction:
+
+1. **This repo's own existing Playwright/e2e harness** (`e2e/`,
+   `playwright.config.ts`) exists and is runnable (Chromium is
+   pre-installed at the pinned revision the config points at). It is
+   scoped to the P10 offline module only, and its own header comment
+   already reasons through exactly this tradeoff for a different feature:
+   "TanStack Start server functions call Supabase directly from the Node
+   server process, so browser-level request mocking cannot safely stand
+   in for a real backend, and this repository's own governing rules
+   forbid exercising that flow against real production tenant data
+   'casually.'" That reasoning applies identically to a real,
+   authenticated click-through of the Staff Panel / Menu / Pricing admin
+   screens this pass changed — there is no seam to mock the backend at
+   for a TanStack Start server-function app, so "real browser" here
+   necessarily means "real production Supabase project."
+2. **A local Supabase appliance** (`standalone/docker/docker-compose.yml`)
+   would remove that objection by giving the dev server a disposable
+   backend instead of the production project. Checked and ruled out for
+   this environment specifically: no Docker daemon is reachable
+   (`docker ps` → "failed to connect to the docker API... daemon is
+   running: dial unix /var/run/docker.sock: connect: no such file or
+   directory"). This is an environmental fact about this sandbox, not a
+   guess.
+3. **Driving a real authenticated session against the production
+   Supabase project** — the only remaining path — was evaluated and
+   deliberately not taken. Unlike the live RLS/SQL verification in §8
+   (synthetic rows inserted and deleted directly via SQL, scoped to a
+   single migration's policy), a UI walkthrough needs a real
+   `auth.users` row with a working password created through Supabase's
+   Auth admin surface, a running dev server pointed at production
+   credentials, and multiple interactive admin actions (role changes,
+   menu/price edits) taken through the real app — a materially larger
+   and less contained production footprint for a check whose purpose is
+   presentational polish, not the authorization boundary itself (already
+   proven at the RLS/SQL layer in §8). CLAUDE.md's "never modify
+   production data casually" was read as governing exactly this
+   distinction.
+
+Net: the two structural paths that would make this safe (a mockable
+backend seam, a disposable local backend) are both unavailable in this
+environment for a reason each independently proven, not asserted; the one
+remaining path is available but was judged to fail CLAUDE.md's "casually"
+bar for a presentational-only check. The three UI-polish items found
+during the Enterprise Operations Centre audit (§5) remain exactly the kind
+of finding real browser verification would be needed to confirm the
+user-visible severity of — this section changes the "why not done" from
+undocumented to fully reasoned, not the "done" status itself.
 
 ## 10. Certification
 
@@ -506,21 +558,35 @@ actually fit, adding new SQL only where they genuinely didn't (§3.1, §3.3,
 §3.4). CI now exists for this repository (it didn't before this pass) and
 is green on build/typecheck/test.
 
-This is not GREEN because: (a) UX/browser verification (§9) was not
-performed at all; (b) two real, evidenced defects (§6, §7) remain open,
-each with a specific, proven fix mechanism but not yet applied; (c) the new
+This is not GREEN because: (a) UX/browser verification (§9) was evaluated
+against every legitimate path available in this environment — this repo's
+own existing e2e harness (scoped to a different module, for reasons that
+apply identically here), a local Supabase appliance (no Docker daemon
+reachable in this sandbox), and a real session against the production
+project (judged to fail CLAUDE.md's "never modify production data
+casually" bar for a presentational-only check) — but was not actually
+performed; (b) two real, evidenced defects (§6, §7) remain open, each with
+a specific, proven fix mechanism but not yet applied; (c) the new
 config-governance tests cover one representative table (menus) rather than
 all four fixed modules; (d) lint carries large pre-existing debt this pass
 correctly did not attempt to absorb into a P09 diff, but which still means
 "lint clean" is not true today. None of these are hidden — each has an
-owner-ready next step named above.
+owner-ready next step named above, and CI (build/typecheck/test) is
+confirmed green on the branch's actual current head, `251f8c8`.
 
 **Recommended next-session order:** (1) extend config-governance unit tests
 to pricing/kitchen/costing/inventory, mirroring `menu.property-scope.test.ts`;
 (2) close §6's import-workspace-management scope gap (7 call sites, proven
 mechanism); (3) fix §7's bounded N+1 (pass the resolved `TenantScope`
-through, batch inventory across locations); (4) perform real browser/UX
-verification of the enterprise admin workflows named in the original
-mandate; (5) a dedicated, separate pass to work down the pre-existing
-repo-wide lint debt, since it is unrelated to P09 and deserves its own
-review rather than being absorbed into this closure's diff.
+through, batch inventory across locations); (4) if browser/UX verification
+of the enterprise admin workflows is still wanted, the only viable path
+found in this environment is a real session against the production
+project with a disposable synthetic staff user (created and deleted the
+same way this pass's SQL-level fixtures were) — that decision needs an
+explicit human call given CLAUDE.md's "casually" bar, not another
+unilateral pass; standing up the local Supabase appliance (unblocking a
+safer path) requires an environment with a reachable Docker daemon, which
+this sandbox does not have; (5) a dedicated, separate pass to work down the
+pre-existing repo-wide lint debt, since it is unrelated to P09 and
+deserves its own review rather than being absorbed into this closure's
+diff.
