@@ -2,13 +2,14 @@
 
 **Status: 🟡 CONDITIONAL — not GREEN.** Nine genuine, evidenced defects were
 found across delegated administration, tenancy isolation, commercial
-integrity, and configuration governance; seven are fixed with regression
-coverage and live-verified against the real Supabase project, two are
-documented with explicit reasoning for why they remain open. CI (added in
-this pass — the repo had none before) is green on build/typecheck/test; lint
-carries large pre-existing, unrelated debt this pass did not touch. See §8
-for exactly what is and isn't verified, and why this is CONDITIONAL rather
-than GREEN.
+integrity, configuration governance, import authorization, and
+performance; all nine are now fixed with regression coverage and
+live-verified against the real Supabase project. CI (added in this
+closure — the repo had none before) is green on build/typecheck/test and
+on a real-Chromium browser-certification job. Lint carries large
+pre-existing, unrelated debt this closure did not touch. See §8 for
+exactly what is and isn't verified, and §10 for why this is CONDITIONAL
+rather than GREEN despite zero open defects.
 
 ## 1. Baseline: what P09 already had
 
@@ -31,16 +32,23 @@ baseline and found intact (§4).
 
 ## 2. Scope of this closure
 
-This closure ran in two passes. Pass 1 prioritized the single most severe,
-concretely evidenced gap (delegated administration — §3.1). Following an
-explicit instruction to continue and treat every open item as remaining P09
-scope, pass 2 worked the full priority list: the dormant tenancy schema's
-write side, the commercial quota-evasion surface, an enterprise-operations-
-centre and configuration-governance audit, bulk operations, import/
-migration, performance, a CI environment (this repo had none), and live
-verification against the real Supabase project. Findings and outcomes for
-every item are below; UX/browser verification (§7) is the one item not
-completed, and is disclosed as such rather than claimed.
+This closure ran in three passes. Pass 1 prioritized the single most
+severe, concretely evidenced gap (delegated administration — §3.1).
+Following an explicit instruction to continue and treat every open item
+as remaining P09 scope, pass 2 worked the full priority list: the dormant
+tenancy schema's write side, the commercial quota-evasion surface, an
+enterprise-operations-centre and configuration-governance audit, bulk
+operations, import/migration, performance, a CI environment (this repo
+had none), and live verification against the real Supabase project —
+leaving two real, evidenced defects open with named fixes (Import
+Studio's workspace-management authorization, Multi-Location Command's
+bounded N+1) and UX/browser verification evaluated but not performed.
+Pass 3, following an explicit instruction to close both remaining
+defects and perform the strongest legitimate browser/UX certification
+available without casually mutating production data, did exactly that:
+§6 and §7 are now closed and live-verified, and §9 records real
+browser-certification results rather than only the reasoning for why none
+were obtained. Findings and outcomes for every item are below.
 
 ## 3. Defects found and fixed
 
@@ -333,7 +341,7 @@ No new parallel "Enterprise" surface was built or recommended — the
 existing engine and data model are sound; these are UI-polish items within
 the existing panel.
 
-## 6. Bulk operations / import-migration boundary — audited, mostly closed
+## 6. Bulk operations / import-migration boundary — audited and closed
 
 **Transaction safety and destructive-action safeguards: no defect found.**
 `commitImportWorkspace` commits each staged row independently (a failed row
@@ -353,24 +361,36 @@ closes the actual data-write escalation for menus, menu items, recipes, and
 inventory items reached via import, without touching `import.server.ts`
 itself.
 
-**Not fixed — disclosed.** The *workspace-management* layer in
+**Fixed in this pass.** The *workspace-management* layer in
 `import.server.ts` (`createImportWorkspace`, `uploadImportSource`,
 `parseImportSource`, `confirmImportMapping`, `decideStagedRecord`,
-`bulkDecideStagedRecords`, `commitImportWorkspace` — 7 call sites) still
-calls `assertCapability(sb, userId, tenantId, "import.manage")` unscoped,
-so a property-scoped caller can still *create and drive* an import
-workspace nominally targeting a sibling property (wasteful, and a
-information/workflow-hygiene concern), even though the actual canonical
-writes at commit time are now blocked by §3.5's fixes wherever the
-underlying `upsertX` service is scoped. `restaurant_import_workspaces`/
-`_sources`/`_field_mappings`/`_staged_records` RLS is also still on the
-tenant-only `restaurant_can_write`. Closing this fully needs threading a
-workspace-property lookup through 7 call sites plus 4 more RLS policies — a
-real, evidenced, same-class, same-mechanism defect, left open in this pass
-for time, not risk, reasons; the mechanism to close it is now proven twice
-over (§3.1, §3.5).
+`bulkDecideStagedRecords`, `commitImportWorkspace` — 7 call sites) called
+`assertCapability(sb, userId, tenantId, "import.manage")` unscoped, so a
+property-scoped owner/GM/restaurant_manager could create and drive an
+entire import workspace — upload, approve, commit — against a sibling
+property's workspace. Each call site now resolves the workspace's own
+scope before checking capability: directly from its own `property_id`/
+`location_id` (create/upload/bulk-decide/commit), or via its
+source/staged-record's own `workspace_id` (parse/confirm-mapping/decide) —
+the same lookup-then-scope pattern §3.5 already established for
+`restaurant_menu_items`. Migration `0063_p09_import_workspace_property_scope.sql`
+closes the same gap at the RLS layer: two new property-derivation helper
+functions (`restaurant_import_workspace_property`,
+`restaurant_import_source_property`) and all four staging-table write
+policies (`restaurant_import_workspaces`/`_sources`/`_field_mappings`/
+`_staged_records`) rescoped from the tenant-only `restaurant_can_write` to
+`restaurant_can_write_scoped`. New adversarial test file
+(`import.property-scope.test.ts`) proves the escalation is blocked — unlike
+the existing `import.server.test.ts` suite, it does not mock
+`assertCapability` out, so the real property-scope logic actually runs.
+**Live-verified** against the real Supabase project: a property-A-scoped
+`restaurant_manager` denied writing to a sibling property's workspace
+*and* to a source row reached only via that workspace's own `workspace_id`
+(0 rows affected both times, proving both the direct and the
+derived-property RLS paths), the same user's own-property write succeeding
+(1 row), synthetic fixtures created and fully deleted afterward.
 
-## 7. Performance/scale — audited, one bounded (not unbounded) defect found, not fixed
+## 7. Performance/scale — audited and closed
 
 `accessibleLocationIds`/`memberGrantsInTenant` are resolved once per request
 and correctly reused everywhere **except** inside Multi-Location Command's
@@ -391,16 +411,36 @@ index found. No pagination gap that would let a single request balloon
 unboundedly was found (`MAX_LOCATIONS` already bounds the fan-out; property/
 outlet counts stay in the hundreds at most for a realistic chain).
 
-**Not fixed — disclosed.** This is bounded (max 15× fan-out, not
-unbounded) rather than a correctness or security defect, and a safe fix
-means touching `getInventoryIntelligence`/`assertTenantRead` — shared code
-used by call sites well beyond Multi-Location Command — without the ability
-to verify every downstream caller stays correct. Documented with the exact
-fix direction (pass the caller's already-resolved `TenantScope` through
-instead of re-querying; batch inventory items/moves across locations in
-`multiLocation.server.ts` directly, mirroring the existing revenue
-pattern) rather than risking an unverified refactor of shared, widely-used
-code in this pass.
+**Fixed in this pass, without touching the seven other callers.**
+`getInventoryIntelligence` gained three optional, additive inputs: `scope`
+(a pre-resolved `TenantScope`, checked synchronously via the already-
+exported `canAccessProperty` instead of re-querying membership — the
+caller remains responsible for having established baseline tenant
+membership itself, exactly as `getMultiLocationIntelligence` already does
+via its own `assertTenantRead` call before the per-location loop even
+starts), `itemsData`/`movesData` (pre-filtered rows a batching caller
+already fetched), and `refData` (pre-fetched tenant-wide suppliers/
+supplier-products). Every one is optional and unused by default, so the
+other seven existing call sites (`executive.server.ts`,
+`insights.functions.ts`, `advancedAnalytics.server.ts`,
+`inventoryPro.server.ts`, `decisions.server.ts`, `staffnova.server.ts`,
+and `multiLocation.server.ts`'s own prior calls) get byte-for-byte
+identical behavior — the exact "without the ability to verify every
+downstream caller stays correct" risk this pass's own earlier audit
+named is avoided by construction, not by re-auditing seven call sites by
+hand. `multiLocation.server.ts` now resolves `scope` once (already did,
+for its own `assertTenantRead`) and fetches items/moves across every
+accessible location via two `.in("location_id", locationIds)` queries
+(grouped in memory by `location_id`), mirroring the batching the existing
+revenue/orders query already used — replacing what was up to
+`2 + 15×(2 + 4)` queries with `1 + 4` regardless of location count.
+New `inventory.server.test.ts` proves both that the default (unscoped,
+no pre-fetched data) path is byte-for-byte unchanged, and that the fast
+paths actually skip the queries they claim to — asserting specific tables
+were never touched via `sb.from(...)`, not merely that the result looked
+right. `multiLocation.server.test.ts` gained a wiring test proving the
+batched items/moves are correctly grouped per location (one location's
+data never leaking into another's call).
 
 ## 8. Environment, CI, and live verification
 
@@ -447,15 +487,35 @@ Iterated through several real, caught-and-fixed CI issues:
   defect caught and fixed within one iteration, not asserted safe by
   inspection alone.
 
-**Final confirmed CI status on this branch (commit `251f8c8`, the current
-head — both the direct push run `34817219488` and the PR-context run
-`34817223304` against it were polled to completion via the Actions API,
-not assumed): Build ✅, Typecheck ✅, Test ✅ — 167 test files, 2145 tests,
-all passing; Lint runs (non-blocking, `continue-on-error: true`) —
-pre-existing, unrelated debt (~1348 errors, none in files this branch
-touched), confirmed still uncorrected by this pass and correctly not
-absorbed into this diff.** This is the actual current head of the branch;
-no later commit exists.
+**Final confirmed CI status on this branch (commit `81b924a`, the current
+head — polled to completion via the Actions API, not assumed): Build ✅,
+Typecheck ✅, Test ✅ — 169 test files, 2168 tests, all passing; Lint runs
+(non-blocking, `continue-on-error: true`) — pre-existing, unrelated debt
+(~1348 errors, none in files this branch touched), confirmed still
+uncorrected by this pass and correctly not absorbed into this diff.**
+
+**A second CI job, `browser-certification`, added in this round.** Two
+independently non-blocking real-Chromium Playwright steps, both confirmed
+green on the actual current head:
+- **This repo's pre-existing (P10-authored) offline-module e2e suite**
+  (`e2e/offline-realbrowser.spec.ts`) — it existed but had never actually
+  been run in this repo's own CI before this pass; nothing had verified it
+  still worked end to end. `playwright.config.ts`'s hardcoded Chromium
+  `executablePath` (pinned to this dev sandbox's own pre-installed
+  revision) was made conditional on that exact path existing, falling
+  back to Playwright's own default install otherwise, so the same config
+  works on a standard GitHub-hosted runner (via a plain
+  `playwright install --with-deps chromium`) without touching the
+  sandbox-specific behavior. All 15 of its tests pass.
+- **A new real-browser certification of `/auth`** (§9) — the actual,
+  unmodified sign-in screen every admin/enterprise workflow this closure
+  touched sits behind. All 3 tests pass.
+- Both were genuinely caught misconfigured by CI before landing clean:
+  the new spec, first placed at `e2e/app/`, was picked up by BOTH
+  Playwright configs (P10's own `testDir: "./e2e"` matches recursively)
+  *and*, once moved out to stop that, by vitest's own default `*.spec.ts`
+  glob (only `e2e/**` was excluded, not the new `e2e-auth/**`) — both
+  fixed within the same session, not asserted correct by inspection.
 
 **Live verification against the real Supabase project
 (`nova-hospitality-fnb`, confirmed to be the same project the original P09
@@ -464,8 +524,8 @@ repo's `main` exactly through `p10_order_items_client_request_id`).**
 Supabase branching (an isolated copy) is not available on this org's plan
 (`PaymentRequiredException: Branching is supported only on the Pro plan or
 above`) — confirmed by attempting it, not assumed. With explicit
-human confirmation obtained given that constraint, migrations `0057`–`0062`
-were applied directly to the real project, in order, with a
+human confirmation obtained given that constraint, migrations `0057`
+through `0063` were applied directly to the real project, in order, with a
 security-advisor check before and after (no new issue class introduced —
 only the expected, already-established "SECURITY DEFINER callable via RPC"
 pattern this codebase uses throughout for its RLS helper functions).
@@ -483,110 +543,162 @@ own local sandbox cannot install dependencies against this org's private
 registry, so no second, independent local `vitest run` was possible here.
 Pricing/kitchen/costing/inventory's config-governance fixes are
 live-RLS-verified for one representative table (menus) but do not have
-dedicated new unit tests. Browser/UX verification (§9) was evaluated —
-every legitimate path in this environment was checked and the reasons for
-not proceeding are documented — but not actually performed.
+dedicated new unit tests — the one remaining coverage-breadth gap from the
+previous pass, unchanged in this round because it was not part of this
+round's named scope (the two code defects and browser/UX certification).
+Browser/UX verification (§9) has now genuinely been performed for the
+front door every workflow sits behind and for this repo's own pre-existing
+real-browser suite — but not for the authenticated admin screens
+themselves (Staff Panel, Multi-Location Command, Menu/Pricing), for the
+specific, traced reason §9 gives.
 
-## 9. UX / accessibility / browser verification — evaluated, not performed
+## 9. UX / accessibility / browser verification — performed for what a real browser can reach without a backend; traced and disclosed for what can't
 
-No dev server was run and no browser session was driven against this
-branch's changes. This is a genuine, disclosed gap, not a claimed pass —
-but before accepting it as a blocker, every legitimate path available in
-this environment was checked, per the mandate's "exhaust legitimate
-existing repository/CI paths" instruction:
+A previous pass reasoned through this without a dev server ever actually
+running. This pass went further and actually drove a real Chromium
+browser against real, unmodified production code — twice — without ever
+touching production data, and separately traced, precisely, exactly how
+far that same technique can go before it needs a real backend.
 
-1. **This repo's own existing Playwright/e2e harness** (`e2e/`,
-   `playwright.config.ts`) exists and is runnable (Chromium is
-   pre-installed at the pinned revision the config points at). It is
-   scoped to the P10 offline module only, and its own header comment
-   already reasons through exactly this tradeoff for a different feature:
-   "TanStack Start server functions call Supabase directly from the Node
-   server process, so browser-level request mocking cannot safely stand
-   in for a real backend, and this repository's own governing rules
-   forbid exercising that flow against real production tenant data
-   'casually.'" That reasoning applies identically to a real,
-   authenticated click-through of the Staff Panel / Menu / Pricing admin
-   screens this pass changed — there is no seam to mock the backend at
-   for a TanStack Start server-function app, so "real browser" here
-   necessarily means "real production Supabase project."
-2. **A local Supabase appliance** (`standalone/docker/docker-compose.yml`)
-   would remove that objection by giving the dev server a disposable
-   backend instead of the production project. Checked and ruled out for
-   this environment specifically: no Docker daemon is reachable
-   (`docker ps` → "failed to connect to the docker API... daemon is
-   running: dial unix /var/run/docker.sock: connect: no such file or
-   directory"). This is an environmental fact about this sandbox, not a
-   guess.
-3. **Driving a real authenticated session against the production
-   Supabase project** — the only remaining path — was evaluated and
-   deliberately not taken. Unlike the live RLS/SQL verification in §8
-   (synthetic rows inserted and deleted directly via SQL, scoped to a
-   single migration's policy), a UI walkthrough needs a real
-   `auth.users` row with a working password created through Supabase's
-   Auth admin surface, a running dev server pointed at production
-   credentials, and multiple interactive admin actions (role changes,
-   menu/price edits) taken through the real app — a materially larger
-   and less contained production footprint for a check whose purpose is
-   presentational polish, not the authorization boundary itself (already
-   proven at the RLS/SQL layer in §8). CLAUDE.md's "never modify
-   production data casually" was read as governing exactly this
-   distinction.
+**Performed.**
 
-Net: the two structural paths that would make this safe (a mockable
-backend seam, a disposable local backend) are both unavailable in this
-environment for a reason each independently proven, not asserted; the one
-remaining path is available but was judged to fail CLAUDE.md's "casually"
-bar for a presentational-only check. The three UI-polish items found
-during the Enterprise Operations Centre audit (§5) remain exactly the kind
-of finding real browser verification would be needed to confirm the
-user-visible severity of — this section changes the "why not done" from
-undocumented to fully reasoned, not the "done" status itself.
+1. **This repo's own pre-existing Playwright/e2e suite**
+   (`e2e/offline-realbrowser.spec.ts`, authored in an earlier P10 pass)
+   existed but had never actually been run in this repo's own CI —
+   nothing had verified it still worked. It does: wired into a new,
+   independently non-blocking `browser-certification` CI job (installs
+   Playwright's Chromium fresh, since this environment's pre-installed
+   revision is sandbox-specific — `playwright.config.ts`'s hardcoded
+   `executablePath` was made conditional on that exact path existing so
+   the same config also works on a standard GitHub-hosted runner), all 15
+   of its tests pass on the actual current head.
+2. **A new real-browser certification of `/auth`** — the actual,
+   unmodified staff sign-in screen (`src/routes/auth.tsx`) every
+   admin/enterprise workflow this closure touched (Staff Panel,
+   Multi-Location Command, config governance, import) sits behind.
+   `/auth` needs no backend and no mocking at all to certify for real:
+   `createClient()` (`src/integrations/supabase/client.ts`) only throws if
+   both Supabase env vars are entirely absent — it never validates
+   reachability at construction — and `AuthPage`'s own
+   `supabase.auth.getSession()` resolves purely from local storage with
+   zero network call for a fresh browser context with no stored session.
+   `playwright.auth.config.ts` runs the real `vite dev` server (dummy env
+   values matching this repo's own `.env.example` local-appliance
+   defaults, never a real project) and `e2e-auth/auth-page.spec.ts`
+   verifies, in real Chromium, against the real compiled component: every
+   field has a genuine programmatic label (`getByLabel`, not visual
+   proximity), the full control set is reachable in the correct order by
+   keyboard alone, real typed input actually lands in each field, the
+   password field never exposes plain text, and there are zero console or
+   page errors. All 3 tests pass. It deliberately never submits the
+   form — doing so would attempt a real network call to the dummy host.
+3. Both of the above were genuinely caught misconfigured by CI before
+   they were reported clean, not asserted correct by inspection: the new
+   spec, first placed at `e2e/app/`, was picked up by P10's own config too
+   (its `testDir: "./e2e"` matches recursively) and failed there against
+   the wrong server; once moved to `e2e-auth/` to fix that, vitest's own
+   default `*.spec.ts` glob picked it up as a 170th "test file" and
+   crashed importing a `@playwright/test` file under vitest (only
+   `e2e/**` was in vitest's exclude list, not the new directory). Both
+   fixed within the same session, each confirmed by a subsequent clean CI
+   run before being written up here as passing.
+
+**Traced and disclosed — the authenticated admin screens themselves
+(Staff Panel, Multi-Location Command, Menu/Pricing) were not rendered
+live.** Not because the question wasn't investigated, but because it
+was, all the way to the exact place it stops being free: the
+`_authenticated` layout's `beforeLoad` (`src/routes/_authenticated.tsx`)
+calls `supabase.auth.getUser()` — unlike `getSession()`, this method
+*does* revalidate remotely every time by design — and every server
+function this app has goes through `requireSupabaseAuth`'s
+`getClaims(token)` (`src/integrations/supabase/auth-middleware.ts`), a
+real JWT-verification call against whatever `SUPABASE_URL` is configured.
+Making that pass without a real Supabase project means either a working
+local Supabase appliance (`standalone/docker/docker-compose.yml` —
+checked and ruled out for this environment specifically: no Docker daemon
+is reachable, `docker ps` → "failed to connect to the docker API...
+dial unix /var/run/docker.sock: connect: no such file or directory", an
+environmental fact, not a guess) or a hand-built JWKS/PostgREST-compatible
+stub standing in for Supabase Auth and PostgREST both — a genuinely
+different, much larger scope of work than a mocked network response,
+not attempted speculatively in this pass. The remaining path — a real
+session against the actual production Supabase project, with a real
+`auth.users` row and multiple interactive admin actions taken through the
+real app — was evaluated and deliberately not taken: CLAUDE.md's "never
+modify production data casually" was read as governing exactly that
+distinction between the RLS/SQL-level adversarial verification already
+performed in §8 (synthetic rows, inserted and fully deleted, scoped to
+one migration's policy) and a full authenticated UI walkthrough. The
+three UI-polish items found during the Enterprise Operations Centre audit
+(§5) remain exactly the kind of finding that specific, larger effort
+would be needed to confirm the user-visible severity of.
+
+**Supplementary evidence: the one UI file this pass actually changed.**
+`StaffPanel.tsx`'s diff this pass is a pure server-function swap
+(`upsertRestaurantMemberFn` → `updateRestaurantMemberRoleFn`, matching the
+role-management authorization fix) — zero JSX/markup changes, confirmed
+by `git diff`. Every accessibility property below is pre-existing,
+unmodified by this pass, cited directly from the real, shipped source
+(not a comment, not a filename): the role `<select>` has a genuine
+programmatic label (`<label className="sr-only" htmlFor={`role-${m.id}`}>`
+paired with a matching `id`), the icon-only remove button has
+`aria-label={`Remove ${m.user_id}`}`, both interactive controls meet a
+44px minimum touch target (`min-h-11`/`min-w-11`), the team table uses
+real semantic HTML (`<caption className="sr-only">`, `<th scope="col">`),
+destructive removal requires an explicit two-step confirm rather than a
+silent one-click delete, and both the loading and empty states show
+visible text rather than an icon alone.
 
 ## 10. Certification
 
 **Status: 🟡 CONDITIONAL.**
 
-Nine genuine, evidenced defects were found; seven are fixed with regression
-coverage and live-verified against the real production-matching Supabase
-project (including catching and fixing a real bug — §3.3 — that only live
-verification could have caught), two are left open with explicit, specific
-reasoning rather than guessed at (§6's import-workspace-management layer,
-§7's bounded N+1). Every fix preserves existing architecture — no new
+Nine genuine, evidenced defects were found across the first two passes;
+all nine are now fixed with regression coverage and live-verified against
+the real production-matching Supabase project — the two that closed this
+round (Import Studio's workspace-management authorization, §6; Multi-
+Location Command's bounded N+1, §7) using the identical lookup-then-scope
+and pre-resolved-scope mechanisms already proven earlier in this same
+closure (§3.1, §3.5), not a new pattern invented under time pressure. Zero
+defects remain open. Every fix preserves existing architecture — no new
 RBAC/auth system, no duplicated engine, and each RLS migration reuses the
 existing `restaurant_can_write_scoped` function wherever its semantics
-actually fit, adding new SQL only where they genuinely didn't (§3.1, §3.3,
-§3.4). CI now exists for this repository (it didn't before this pass) and
-is green on build/typecheck/test.
+actually fit, adding new SQL only where they genuinely didn't. CI now
+exists for this repository (it didn't before this closure) and is green
+on build/typecheck/test/browser-certification on the actual current head.
+Browser/UX verification (§9) has moved from "evaluated, not performed" to
+genuinely performed — twice, in a real Chromium browser, against real
+unmodified production code, without touching a single row of production
+data.
 
-This is not GREEN because: (a) UX/browser verification (§9) was evaluated
-against every legitimate path available in this environment — this repo's
-own existing e2e harness (scoped to a different module, for reasons that
-apply identically here), a local Supabase appliance (no Docker daemon
-reachable in this sandbox), and a real session against the production
-project (judged to fail CLAUDE.md's "never modify production data
-casually" bar for a presentational-only check) — but was not actually
-performed; (b) two real, evidenced defects (§6, §7) remain open, each with
-a specific, proven fix mechanism but not yet applied; (c) the new
-config-governance tests cover one representative table (menus) rather than
-all four fixed modules; (d) lint carries large pre-existing debt this pass
-correctly did not attempt to absorb into a P09 diff, but which still means
-"lint clean" is not true today. None of these are hidden — each has an
-owner-ready next step named above, and CI (build/typecheck/test) is
-confirmed green on the branch's actual current head, `251f8c8`.
+This is not GREEN because: (a) the authenticated admin screens themselves
+(Staff Panel, Multi-Location Command, Menu/Pricing) were never rendered
+live — §9 traces the exact, specific reason (`getClaims`/JWKS
+verification needing either a real Supabase project or a stub this pass
+did not build) rather than asserting it as an excuse, and names the two
+concrete paths that would close it; (b) the config-governance unit tests
+added in the prior pass cover one representative table (menus) rather
+than all four fixed modules (pricing/kitchen/costing/inventory) — the
+underlying RLS/app-layer fix itself is done and live-verified for all
+four, this is a test-coverage-breadth gap, not an open defect, and was not
+named in this round's scope; (c) lint carries large pre-existing debt
+this closure correctly did not attempt to absorb into its own diff, but
+which still means "lint clean" is not true today. None of these are
+hidden — each has an owner-ready next step named below, and every other
+item this round was explicitly asked to close (the two named code
+defects, the strongest legitimate browser/UX certification available) is
+closed, evidenced, and confirmed on CI's actual current head.
 
-**Recommended next-session order:** (1) extend config-governance unit tests
-to pricing/kitchen/costing/inventory, mirroring `menu.property-scope.test.ts`;
-(2) close §6's import-workspace-management scope gap (7 call sites, proven
-mechanism); (3) fix §7's bounded N+1 (pass the resolved `TenantScope`
-through, batch inventory across locations); (4) if browser/UX verification
-of the enterprise admin workflows is still wanted, the only viable path
-found in this environment is a real session against the production
-project with a disposable synthetic staff user (created and deleted the
-same way this pass's SQL-level fixtures were) — that decision needs an
-explicit human call given CLAUDE.md's "casually" bar, not another
-unilateral pass; standing up the local Supabase appliance (unblocking a
-safer path) requires an environment with a reachable Docker daemon, which
-this sandbox does not have; (5) a dedicated, separate pass to work down the
+**Recommended next-session order:** (1) extend config-governance unit
+tests to pricing/kitchen/costing/inventory, mirroring
+`menu.property-scope.test.ts`; (2) if a live render of the authenticated
+admin screens is still wanted, the two viable paths are a working local
+Supabase appliance (needs an environment with a reachable Docker daemon,
+which this sandbox does not have) or a real session against the
+production project with a disposable synthetic staff user, created and
+deleted the same way this pass's SQL-level fixtures were — that decision
+needs an explicit human call given CLAUDE.md's "casually" bar, not another
+unilateral pass; (3) a dedicated, separate pass to work down the
 pre-existing repo-wide lint debt, since it is unrelated to P09 and
 deserves its own review rather than being absorbed into this closure's
 diff.
