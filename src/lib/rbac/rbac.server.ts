@@ -51,6 +51,30 @@ export async function assertPermission(
   if (!(await hasPermission(supabase, userId, perm, scope))) throw new ForbiddenError(perm);
 }
 
+/**
+ * Guard for rbac_user_roles writes (grant/revoke a platform-tier role on
+ * another user). Delegates to the database's own
+ * nova_can_manage_scoped(permission, tenant, property, outlet) — the exact
+ * predicate migration 0059_p09_tenancy_write_isolation.sql put behind the
+ * "rbac_user_roles_admin_scoped" RLS policy — rather than assertPermission's
+ * unscoped nova_has_permission check: passing no scope treats a NULL grant
+ * level as "don't check this level" for the *caller's own* grant too, so a
+ * caller holding ADMINISTRATION:ADMIN in one tenant passes the same check
+ * as a platform-wide grant and can request a write for an unrelated tenant.
+ * RLS already refuses that write (fail-closed) — this makes the refusal a
+ * clean, pre-round-trip error instead of a raw database one.
+ */
+export async function assertCanManageRbacRole(supabase: any, scope: ScopeRef): Promise<void> {
+  const { data, error } = await supabase.rpc("nova_can_manage_scoped", {
+    _permission: "ADMINISTRATION:ADMIN",
+    _tenant_id: scope.tenantId ?? null,
+    _property_id: scope.propertyId ?? null,
+    _outlet_id: scope.outletId ?? null,
+  });
+  if (error) throw new Error(error.message);
+  if (!data) throw new ForbiddenError("ADMINISTRATION:ADMIN" as Permission);
+}
+
 export async function listPermissions(supabase: any, userId: string): Promise<Permission[]> {
   const { data, error } = await supabase.rpc("nova_permissions_for", { _user_id: userId });
   if (error) throw new Error(error.message);
