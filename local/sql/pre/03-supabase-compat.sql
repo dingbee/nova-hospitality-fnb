@@ -20,8 +20,12 @@ CREATE TABLE IF NOT EXISTS storage.buckets (
   id text PRIMARY KEY,
   name text NOT NULL,
   public boolean NOT NULL DEFAULT false,
+  file_size_limit bigint,
+  allowed_mime_types text[],
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE storage.buckets ADD COLUMN IF NOT EXISTS file_size_limit bigint;
+ALTER TABLE storage.buckets ADD COLUMN IF NOT EXISTS allowed_mime_types text[];
 
 CREATE TABLE IF NOT EXISTS storage.objects (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -224,3 +228,31 @@ BEGIN
   END IF;
 END
 $$;
+
+-- ---------------------------------------------------------------------------
+-- migration_transfer_audit.
+--
+-- Per migration 0048's own comment, this is a one-time internal migration
+-- bookkeeping table created directly on the hosted project during a prior
+-- platform transfer (5 historical rows, zero application-code references) —
+-- it was never created by a versioned migration, so it does not exist on a
+-- fresh local install. Migration 0048 (correctly) tightens RLS/grants on it.
+-- Stubbed here, inert and empty, purely so that migration applies cleanly;
+-- no application code reads or writes this table.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.migration_transfer_audit (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Cash payout / daily close / tender declaration / giveaway workflow
+-- functions: ME-03 found these revoked/granted by migration 0048 but
+-- defined by no migration in Git (see docs/me-03). This corrective
+-- integration pass reconstructed all 19 verbatim from the live production
+-- database (pg_get_functiondef) and added them as
+-- standalone/db/migrations/0076_me02_me03_financial_functions_reconstruction.sql,
+-- which also creates the three backing tables this local-compat file used
+-- to have no knowledge of. No stub is needed here any more; 0076 runs as
+-- part of the normal migration sequence on a fresh local install same as
+-- any other migration.

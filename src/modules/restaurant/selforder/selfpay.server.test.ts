@@ -66,6 +66,47 @@ function fakeDb(seed: {
       },
       insert(row: Record<string, unknown> | Record<string, unknown>[]) {
         const arr = Array.isArray(row) ? row : [row];
+        // ME-03: recordGuestPayment/takePosPayment insert unconditionally and
+        // recover on a real (tenant_id, client_request_id) unique-index
+        // conflict rather than pre-checking then racing on the write —
+        // simulate that same constraint here so tests that exercise the
+        // recovery path see the same 23505 a real Postgres unique index
+        // would raise, instead of silently accepting a duplicate row.
+        if (table === "restaurant_payments" && arr.length === 1) {
+          const [r] = arr;
+          if (
+            r.client_request_id != null &&
+            rows[table]!.some(
+              (existing) =>
+                existing.tenant_id === r.tenant_id &&
+                existing.client_request_id === r.client_request_id,
+            )
+          ) {
+            return {
+              then: (
+                resolve: (v: { data: null; error: { code: string; message: string } }) => unknown,
+              ) =>
+                resolve({
+                  data: null,
+                  error: {
+                    code: "23505",
+                    message:
+                      'duplicate key value violates unique constraint "restaurant_payments_client_request_idx"',
+                  },
+                }),
+              select: () => ({
+                single: async () => ({
+                  data: null,
+                  error: {
+                    code: "23505",
+                    message:
+                      'duplicate key value violates unique constraint "restaurant_payments_client_request_idx"',
+                  },
+                }),
+              }),
+            };
+          }
+        }
         for (const r of arr) rows[table]!.push({ id: `gen-${rows[table]!.length}`, ...r });
         return {
           then: (resolve: (v: { data: any; error: null }) => unknown) =>

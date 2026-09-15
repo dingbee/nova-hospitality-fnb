@@ -6,7 +6,7 @@
  * admins; these guards fail fast with a readable error before the round trip.
  */
 import type { z } from "zod";
-import { assertCapability, assertTenantRead } from "./access.server";
+import { assertCanManageMembership, assertTenantRead } from "./access.server";
 import type { removeMemberSchema, upsertMemberSchema, listMembersSchema } from "./contracts";
 
 type Sb = any;
@@ -31,7 +31,6 @@ export async function upsertMember(
   userId: string,
   input: z.infer<typeof upsertMemberSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "tenant.manage");
   const propertyId = input.propertyId ?? null;
   if (propertyId) {
     // A property id must actually belong to this tenant — otherwise a typo
@@ -45,6 +44,7 @@ export async function upsertMember(
       .maybeSingle();
     if (!property) throw new Error("That property does not belong to this tenant.");
   }
+  await assertCanManageMembership(sb, input.tenantId, propertyId);
   const { data, error } = await sb
     .from("restaurant_members")
     .insert({
@@ -73,7 +73,15 @@ export async function removeMember(
   userId: string,
   input: z.infer<typeof removeMemberSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "tenant.manage");
+  const { data: target, error: findError } = await sb
+    .from("restaurant_members")
+    .select("property_id")
+    .eq("id", input.memberId)
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+  if (findError) throw new Error(findError.message);
+  if (!target) throw new Error("That member was not found in this tenant.");
+  await assertCanManageMembership(sb, input.tenantId, target.property_id ?? null);
   const { error } = await sb
     .from("restaurant_members")
     .delete()
