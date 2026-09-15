@@ -479,6 +479,11 @@ export const createOrderSchema = tenantScopeSchema.extend({
   externalRef: z.string().max(120).optional(),
   notes: z.string().max(2000).optional(),
   lines: z.array(orderLineSchema).default([]),
+  // ME-03: set directly on the insert (like createGuestOrder already does)
+  // so a retried/double-tapped open claims the same order atomically via
+  // the (tenant_id, client_request_id) unique index, instead of creating a
+  // brand-new order first and only trying to claim the id afterwards.
+  clientRequestId: z.string().max(120).optional(),
 });
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 
@@ -508,6 +513,13 @@ export const recordPaymentSchema = z.object({
   reference: z.string().max(120).optional(),
   bookingId: uuid.optional(),
   state: z.enum(PAYMENT_STATES).default("paid"),
+  // ME-03: this path had no idempotency guard at all — a client retry
+  // (timeout, double form-submit) unconditionally inserted a second
+  // payment row. Optional to stay backward-compatible with existing
+  // callers; when supplied it is enforced the same way every other
+  // payment surface in this codebase enforces it (restaurant_payments'
+  // (tenant_id, client_request_id) partial unique index).
+  clientRequestId: z.string().max(120).optional(),
 });
 export type RecordPaymentInput = z.infer<typeof recordPaymentSchema>;
 

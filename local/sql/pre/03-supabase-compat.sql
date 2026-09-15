@@ -20,8 +20,12 @@ CREATE TABLE IF NOT EXISTS storage.buckets (
   id text PRIMARY KEY,
   name text NOT NULL,
   public boolean NOT NULL DEFAULT false,
+  file_size_limit bigint,
+  allowed_mime_types text[],
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE storage.buckets ADD COLUMN IF NOT EXISTS file_size_limit bigint;
+ALTER TABLE storage.buckets ADD COLUMN IF NOT EXISTS allowed_mime_types text[];
 
 CREATE TABLE IF NOT EXISTS storage.objects (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -221,6 +225,112 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
     CREATE PUBLICATION supabase_realtime;
+  END IF;
+END
+$$;
+
+-- ---------------------------------------------------------------------------
+-- migration_transfer_audit.
+--
+-- Per migration 0048's own comment, this is a one-time internal migration
+-- bookkeeping table created directly on the hosted project during a prior
+-- platform transfer (5 historical rows, zero application-code references) —
+-- it was never created by a versioned migration, so it does not exist on a
+-- fresh local install. Migration 0048 (correctly) tightens RLS/grants on it.
+-- Stubbed here, inert and empty, purely so that migration applies cleanly;
+-- no application code reads or writes this table.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.migration_transfer_audit (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------------
+-- Cash payout / daily close / tender declaration / giveaway workflow
+-- functions.
+--
+-- ME-03 discovery: migration 0048_p11_security_hardening.sql revokes/grants
+-- EXECUTE on 18 functions (restaurant_apply_giveaway, restaurant_cash_payout_*,
+-- restaurant_daily_close_*, restaurant_day_is_locked, restaurant_decide_giveaway,
+-- restaurant_declaration_revisions_immutable, restaurant_giveaway_*,
+-- restaurant_request_giveaway, restaurant_reverse_giveaway,
+-- restaurant_tender_declaration_*) that are DEFINED BY NO MIGRATION anywhere
+-- in this repository (confirmed by grep across standalone/db/migrations/ —
+-- zero CREATE FUNCTION for any of them outside 0048's own REVOKE/GRANT
+-- lines). These clearly implement a real subsystem (cash payout control,
+-- daily close, tender declarations, giveaway approval) that exists in
+-- production but was never captured by a versioned migration — the same
+-- class of drift ME-00-D(ii) found and reconciled for 10 other objects, not
+-- yet reconciled for this set. This is recorded as an ME-03 finding (see the
+-- ME-03 evidence document); it is NOT reconstructed here, because this
+-- session has no access to production's migration ledger to recover the
+-- real implementation, and fabricating financial-control logic (payout
+-- approval, giveaway authorization) from guesswork is exactly what CLAUDE.md
+-- prohibits ("NO GUESSING").
+--
+-- These are inert local-only stubs whose only purpose is to let migration
+-- 0048's REVOKE/GRANT statements resolve against a real function signature
+-- so the rest of the migration sequence can be applied and tested locally.
+-- They are deliberately NOT behaviorally equivalent to whatever production
+-- runs, must never be treated as evidence of correct cash-payout/giveaway
+-- behaviour, and are out of ME-03's certified scope for that reason.
+-- ---------------------------------------------------------------------------
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_cash_payout_control' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_cash_payout_control() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN NEW; END; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_cash_payout_events_immutable' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_cash_payout_events_immutable() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN NEW; END; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_cash_payout_no_delete' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_cash_payout_no_delete() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN OLD; END; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_cash_payout_trail' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_cash_payout_trail() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN NEW; END; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_daily_close_control' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_daily_close_control() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN NEW; END; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_daily_close_payout_sync' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_daily_close_payout_sync() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN NEW; END; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_declaration_revisions_immutable' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_declaration_revisions_immutable() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN NEW; END; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_giveaway_guard' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_giveaway_guard() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN NEW; END; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_giveaway_no_delete' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_giveaway_no_delete() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN OLD; END; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_giveaway_period_lock' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_giveaway_period_lock() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN NEW; END; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_tender_declaration_archive' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_tender_declaration_archive() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN NEW; END; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_tender_declaration_control' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_tender_declaration_control() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN NEW; END; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_cash_payout_total' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_cash_payout_total(uuid, uuid, date) RETURNS numeric LANGUAGE sql AS $f$ SELECT 0::numeric; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_day_is_locked' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_day_is_locked(uuid, uuid, date) RETURNS boolean LANGUAGE sql AS $f$ SELECT false; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_apply_giveaway' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_apply_giveaway(uuid) RETURNS void LANGUAGE sql AS $f$ SELECT NULL::void; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_decide_giveaway' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_decide_giveaway(uuid, uuid, boolean, text) RETURNS void LANGUAGE sql AS $f$ SELECT NULL::void; $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_request_giveaway' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_request_giveaway(uuid, uuid, uuid, text, uuid, text, numeric, text, text) RETURNS uuid LANGUAGE sql AS $f$ SELECT gen_random_uuid(); $f$;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'restaurant_reverse_giveaway' AND pronamespace = 'public'::regnamespace) THEN
+    CREATE FUNCTION public.restaurant_reverse_giveaway(uuid, uuid, text, text) RETURNS void LANGUAGE sql AS $f$ SELECT NULL::void; $f$;
   END IF;
 END
 $$;
