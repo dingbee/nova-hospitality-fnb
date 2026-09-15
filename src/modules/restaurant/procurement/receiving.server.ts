@@ -328,7 +328,7 @@ export async function postGoodsReceipt(
   const { data: lines } = await sb
     .from("restaurant_goods_receipt_items")
     .select(
-      "id, purchase_order_item_id, inventory_item_id, unit_id, storage_location_id, description, ordered_quantity, received_quantity, accepted_quantity, rejected_quantity, damaged_quantity, ordered_unit_cost, unit_cost, batch_code, expiry_date, batch_id",
+      "id, purchase_order_item_id, inventory_item_id, unit_id, storage_location_id, description, ordered_quantity, received_quantity, accepted_quantity, rejected_quantity, damaged_quantity, ordered_unit_cost, unit_cost, batch_code, expiry_date, batch_id, stock_movement_id",
     )
     .eq("tenant_id", tenantId)
     .eq("receipt_id", receipt.id);
@@ -410,6 +410,17 @@ export async function postGoodsReceipt(
     acceptedValue += accepted * unitCost;
     const stockQuantity = converted.get(l.id) ?? { quantity: accepted, unitCost };
 
+    // ME-03: whether this line's fulfilment was already posted by an
+    // earlier attempt at this exact receipt. `moved` (below) is the
+    // authoritative signal for the common case — insertMovement's
+    // dedupe_key (`receipt:<receiptId>:<lineId>`) makes it null exactly
+    // when this line's stock has already been received, e.g. a retried
+    // request or a concurrent double-post of the same receipt. A line with
+    // no stock impact (nothing accepted, or no inventory item) has no
+    // ledger row to key off; the receipt_item's own stock_movement_id
+    // already being set is the fallback signal for "this line, specifically,
+    // was already processed by a prior successful post."
+    let alreadyPosted = Boolean(l.stock_movement_id);
     if (accepted > 0 && l.inventory_item_id) {
       const moved = await insertMovement(sb, userId, {
         tenantId,
@@ -433,20 +444,27 @@ export async function postGoodsReceipt(
           .update({ stock_movement_id: moved.id })
           .eq("tenant_id", tenantId)
           .eq("id", l.id);
-      }
 
-      // Lot traceability: the batch code and expiry captured at the door are
-      // only useful if they survive into stock. Without this, a recall or an
-      // expiry sweep has nothing to work from. Recorded in stock units, same
-      // as the ledger movement it traces, so FIFO/expiry consumption later
-      // reconciles against the same quantity the ledger holds.
-      await persistReceiptBatch(sb, userId, {
-        tenantId,
-        receipt,
-        line: l,
-        accepted: stockQuantity.quantity,
-        unitCost: stockQuantity.unitCost,
-      });
+        // Lot traceability: the batch code and expiry captured at the door
+        // are only useful if they survive into stock. Without this, a
+        // recall or an expiry sweep has nothing to work from. Recorded in
+        // stock units, same as the ledger movement it traces, so
+        // FIFO/expiry consumption later reconciles against the same
+        // quantity the ledger holds.
+        await persistReceiptBatch(sb, userId, {
+          tenantId,
+          receipt,
+          line: l,
+          accepted: stockQuantity.quantity,
+          unitCost: stockQuantity.unitCost,
+        });
+      } else {
+        // insertMovement returned null: this line's stock was already
+        // received by an earlier attempt at this receipt (dedupe_key
+        // conflict). Nothing below in this iteration — variances, price
+        // history, cumulative PO fulfilment — must run again either.
+        alreadyPosted = true;
+      }
     }
 
     // ---- variance detection (recorded, never auto-approved) ----
@@ -525,8 +543,14 @@ export async function postGoodsReceipt(
       dedupeSuffix: l.id,
     });
 
-    // Cumulative fulfilment on the order line.
-    if (l.purchase_order_item_id) {
+    // Cumulative fulfilment on the order line. ME-03: gated on
+    // !alreadyPosted — this is a read-then-write accumulator with no
+    // unique-constraint backstop of its own (unlike the ledger insert
+    // above), so without this guard a retried or concurrently-duplicated
+    // post of the same receipt double-counts received/accepted/rejected
+    // quantities on the PO line even though the stock ledger itself stayed
+    // correct.
+    if (l.purchase_order_item_id && !alreadyPosted) {
       const { data: poi } = await sb
         .from("restaurant_purchase_order_items")
         .select("id, received_quantity, accepted_quantity, rejected_quantity")
