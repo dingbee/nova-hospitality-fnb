@@ -7,7 +7,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { assertPermission } from "@/lib/rbac/rbac.server";
+import { assertPermission, assertCanManageRbacRole, ForbiddenError } from "@/lib/rbac/rbac.server";
 import { ROLES, ROLE_LABELS, type Role } from "@/lib/rbac/permissions";
 import { logActivity } from "@/lib/activity-log.server";
 
@@ -150,7 +150,11 @@ export const assignRole = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context as { supabase: any; userId: string };
-    await assertPermission(supabase, userId, "ADMINISTRATION:ADMIN");
+    await assertCanManageRbacRole(supabase, {
+      tenantId: data.tenantId ?? null,
+      propertyId: data.propertyId ?? null,
+      outletId: data.outletId ?? null,
+    });
     const { error } = await supabase.from("rbac_user_roles").insert({
       user_id: data.userId,
       role_code: data.role,
@@ -177,7 +181,22 @@ export const revokeRole = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context as { supabase: any; userId: string };
-    await assertPermission(supabase, userId, "ADMINISTRATION:ADMIN");
+    const { data: targets, error: findError } = await supabase
+      .from("rbac_user_roles")
+      .select("tenant_id, property_id, outlet_id")
+      .eq("user_id", data.userId)
+      .eq("role_code", data.role);
+    if (findError) throw new Error(findError.message);
+    if (!targets || targets.length === 0) {
+      throw new ForbiddenError("ADMINISTRATION:ADMIN");
+    }
+    for (const target of targets as { tenant_id: string | null; property_id: string | null; outlet_id: string | null }[]) {
+      await assertCanManageRbacRole(supabase, {
+        tenantId: target.tenant_id,
+        propertyId: target.property_id,
+        outletId: target.outlet_id,
+      });
+    }
     const { error } = await supabase
       .from("rbac_user_roles")
       .delete()

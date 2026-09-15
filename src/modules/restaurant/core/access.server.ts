@@ -297,6 +297,43 @@ export async function assertTenantRead(
 }
 
 /**
+ * Membership-management guard for restaurant_members writes (grant/revoke a
+ * role on another user). Delegates to the database's own
+ * restaurant_can_manage_membership(tenant, roles, target_property) — the
+ * exact predicate migration 0057_p09_membership_scope_enforcement.sql put
+ * behind the "members write scoped" RLS policy — rather than re-deriving an
+ * equivalent check in TypeScript: `assertCapability(..., "tenant.manage")`
+ * alone (this repo's pre-ME-02 state) checks that the caller is owner/GM
+ * *somewhere* in the tenant but not that their grant covers
+ * `targetPropertyId`, so a property-scoped owner/GM could ask the RLS layer
+ * to grant or revoke a role at a property (or tenant-wide) they don't
+ * control — RLS already refuses that write (fail-closed), but with a raw
+ * database error instead of this clean one. `targetPropertyId: null` means
+ * the membership row itself is tenant-wide (the broadest grant a row can
+ * hold), which the database function treats as requiring the caller's own
+ * grant to also be tenant-wide — never "nothing to check".
+ */
+export async function assertCanManageMembership(
+  supabase: Sb,
+  tenantId: string,
+  targetPropertyId: string | null,
+): Promise<void> {
+  const { data, error } = await supabase.rpc("restaurant_can_manage_membership", {
+    _tenant_id: tenantId,
+    _roles: ["owner", "general_manager"],
+    _target_property_id: targetPropertyId,
+  });
+  if (error) throw new Error(error.message);
+  if (!data) {
+    throw new Error(
+      targetPropertyId
+        ? "Forbidden — you do not have owner/general manager authority at this property."
+        : "Forbidden — granting or revoking a tenant-wide role requires a tenant-wide owner/general manager grant.",
+    );
+  }
+}
+
+/**
  * Capability + optional resource scope in one call. Omitting `scope` (every
  * existing call site) preserves the exact previous tenant-only behaviour.
  * Passing `scope.propertyId`/`scope.locationId` additionally requires the
