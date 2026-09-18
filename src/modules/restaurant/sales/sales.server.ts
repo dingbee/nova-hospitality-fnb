@@ -539,7 +539,20 @@ export async function insertLines(
     .from("restaurant_order_items")
     .insert(rows)
     .select("id, line_total, line_cost");
-  if (error) throw new Error(error.message);
+  if (error) {
+    // ME-07: an untrusted (guest) caller reaches this via a createServerFn
+    // handler that has no error-sanitization layer of its own — whatever
+    // Error.message this throws is what ends up in the guest's browser. A
+    // trusted (staff/POS) caller keeps the raw message: it's already
+    // authenticated/capability-checked and the detail is useful there.
+    if (!trusted) {
+      console.error("[guest-order] order_items insert failed", error);
+      throw new Error(
+        "We couldn't process your order. Please try again or ask a member of staff for help.",
+      );
+    }
+    throw new Error(error.message);
+  }
   return (data ?? []) as any[];
 }
 
@@ -775,14 +788,25 @@ export async function createGuestOrder(
         .eq("tenant_id", input.tenantId)
         .eq("client_request_id", input.clientRequestId)
         .maybeSingle();
-      if (recoverErr || !winner) throw new Error(error.message);
+      if (recoverErr || !winner) {
+        // ME-07: guest-exclusive path (createGuestOrder has no other
+        // caller) reached through a createServerFn handler with no
+        // sanitization layer — never hand a guest a raw DB error.
+        console.error("[guest-order] order insert conflict recovery failed", error, recoverErr);
+        throw new Error(
+          "We couldn't process your order. Please try again or ask a member of staff for help.",
+        );
+      }
       return {
         ...winner,
         ...(await recalcOrder(sb, input.tenantId, winner.id)),
         idempotent: true,
       };
     }
-    throw new Error(error.message);
+    console.error("[guest-order] order insert failed", error);
+    throw new Error(
+      "We couldn't process your order. Please try again or ask a member of staff for help.",
+    );
   }
 
   const baseCurrency = await tenantBaseCurrency(sb, input.tenantId);
@@ -793,17 +817,32 @@ export async function createGuestOrder(
     .eq("id", order.id)
     .eq("tenant_id", input.tenantId);
 
-  await insertLines(sb, input.tenantId, order.id, input.lines, {
-    currency: input.currency,
-    propertyId: input.propertyId,
-    locationId: input.locationId,
-    orderType: "dine_in",
-    exchangeRate,
-    // This is the guest ordering path: no staff principal authorized these
-    // lines, so their discount and modifier price fields are never
-    // money-authoritative — see insertLines' `trusted` doc comment.
-    trusted: false,
-  });
+  try {
+    await insertLines(sb, input.tenantId, order.id, input.lines, {
+      currency: input.currency,
+      propertyId: input.propertyId,
+      locationId: input.locationId,
+      orderType: "dine_in",
+      exchangeRate,
+      // This is the guest ordering path: no staff principal authorized these
+      // lines, so their discount and modifier price fields are never
+      // money-authoritative — see insertLines' `trusted` doc comment.
+      trusted: false,
+    });
+  } catch (err) {
+    // ME-07: insertLines can throw after this function's own order-header
+    // insert above already committed (e.g. resolveLineModifiersStrict
+    // rejecting a modifier that went stale between menu load and submit).
+    // Left uncaught, the header would persist with zero items — and because
+    // it already carries this clientRequestId, submitGuestOrder's own
+    // idempotency check would then hand back that empty order as a
+    // "successful" retry forever, with no way to add the failed items.
+    // insertLines builds its row array (and can throw) before ever calling
+    // .insert(), so no order_items exist yet — deleting the header is a
+    // complete, safe compensation, not a partial one.
+    await sb.from("restaurant_orders").delete().eq("id", order.id).eq("tenant_id", input.tenantId);
+    throw err;
+  }
 
   await sb
     .from("restaurant_tables")
