@@ -157,6 +157,46 @@ There is no JSON response Nolmark ever sees for this step — the entire
 exchange happens on LexiBite's own origin, which is the point: **no session
 token, tenant id, or credential of any kind ever reaches Nolmark.**
 
+### 5a. Expiry and revocation are enforced, not just recorded (migration `0083`)
+
+The 4-hour `lexibite_demo_sessions.expires_at` and its `status` column are
+not bookkeeping-only: an expired or revoked session actually loses access,
+enforced at the same RLS layer every other table in this product already
+relies on — no new authorization system, no per-table policy changes.
+
+- `restaurant_member_active(_user_id, _tenant_id)` is a new `SECURITY
+  DEFINER` predicate: true unless the caller has a `lexibite_demo_sessions`
+  row for that tenant with `status <> 'active'` or `expires_at <= now()`.
+  For every member who never went through the demo flow (no matching row
+  at all) it is unconditionally true — **zero behavior change for real
+  customers**.
+- That predicate is `AND`-ed into the one membership-`EXISTS` check shared
+  by all five canonical RLS predicate functions
+  (`restaurant_can_read`, `restaurant_can_write`,
+  `restaurant_can_read_scoped`, `restaurant_can_write_scoped`,
+  `restaurant_can_read_scoped_strict`) — the same functions every table's
+  RLS policy in this product already calls. The instant a session expires
+  or is revoked, every read and write on every table that visitor's
+  `restaurant_members` row used to unlock stops working, with no
+  additional code path, cron job, or cleanup step required.
+- `restaurant_revoke_demo_session(_session_id)` (also migration `0083`) is
+  the only path that ever sets a session's status to `'revoked'` —
+  `restaurant_grant_demo_session()` only ever writes `'active'`.
+  Commercial-admin-gated (TS: `revokeDemoSession` in
+  `src/modules/lexibite-demo/reset.server.ts`, exposed as
+  `revokeDemoSessionFn`; SQL: checked again inside the function itself).
+- `getMyDemoSession` (`session.server.ts`) checks `expires_at` in real
+  time rather than trusting the stored `status` column, since nothing
+  flips that column automatically the moment a session lapses — only an
+  admin-run reset does.
+- Proven live against a real Postgres instance (not just asserted): see
+  §11 checks 11–14 in `local/scripts/verify-demo-access.sql` — access
+  works before expiry, is denied the instant a session's `expires_at`
+  passes (with the visitor's `restaurant_members` row never touched, only
+  `expires_at`), is denied the instant an admin revokes a still-unexpired
+  session, and a real tenant member with no demo session row at all is
+  completely unaffected throughout.
+
 ## 6. Nolmark security boundary
 
 - Nolmark is treated as an untrusted public client throughout. It never
@@ -214,6 +254,13 @@ account, and never a new tenant per visitor (per the mandate's explicit
 
 ## 9. Reset strategy
 
+**Reset is a cleanup/housekeeping action, not the access-control
+boundary.** Since migration `0083` (§5a), an expired or revoked session is
+already denied at the RLS layer the moment it lapses — reset's
+`membershipsRevoked` count is about removing the now-inert
+`restaurant_members` row so it stops existing, not about stopping access,
+which RLS already does on its own.
+
 **Never a public or unrestricted-admin action.**
 `resetDemoEnvironmentFn` (`src/modules/lexibite-demo/reset.functions.ts`)
 requires an authenticated caller who passes `assertCommercialAdmin` — the
@@ -265,29 +312,39 @@ Scope, precisely:
 ## 11. Testing evidence
 
 - **Live validation against a real Postgres instance** (the full
-  migration chain, `0000` → `0082`, applied from scratch —
-  `local/scripts/verify-demo-access.sql`): proves `anon` has no execute
-  grant on the function at all; an unauthenticated caller is rejected
-  inside it; an unverified registration is rejected; a verified visitor is
-  granted exactly `viewer` on the exact canonical tenant/property/location
-  (never anything else, since nothing is a parameter); re-activation is
-  idempotent (no duplicate membership/session rows); a demo viewer cannot
-  write a `restaurant_orders` row (RLS denies it); a demo viewer reads zero
-  rows from every tenant except the canonical demo tenant; the reset
-  function is denied for a non-commercial-admin and succeeds (dry run) for
-  a genuine one; and two visitors' session rows are mutually invisible
-  (RLS self-read). All synthetic fixtures this script creates are deleted
-  by its own cleanup section — confirmed zero residual rows afterward.
-- **Unit tests** (`vitest`, 19 new tests across
+  migration chain, `0000` → `0083`, applied from scratch —
+  `local/scripts/verify-demo-access.sql`, 14 checks): proves `anon` has no
+  execute grant on the function at all; an unauthenticated caller is
+  rejected inside it; an unverified registration is rejected; a verified
+  visitor is granted exactly `viewer` on the exact canonical tenant/
+  property/location (never anything else, since nothing is a parameter);
+  re-activation is idempotent (no duplicate membership/session rows); a
+  demo viewer cannot write a `restaurant_orders` row (RLS denies it); a
+  demo viewer reads zero rows from every tenant except the canonical demo
+  tenant; the reset function is denied for a non-commercial-admin and
+  succeeds (dry run) for a genuine one; two visitors' session rows are
+  mutually invisible (RLS self-read); **an unexpired session reads the
+  canonical tenant normally; the identical session denies all read access
+  the instant its `expires_at` passes, with its `restaurant_members` row
+  never touched; a commercial admin revoking a still-unexpired session
+  denies access immediately; and a real member with no demo session row
+  at all reads throughout, completely unaffected** (checks 11–14, added
+  for the expiry/revocation enforcement in migration `0083`). All
+  synthetic fixtures this script creates are deleted by its own cleanup
+  section — confirmed zero residual rows afterward.
+- **Unit tests** (`vitest`, 27 tests across
   `src/modules/lexibite-demo/*.test.ts`): email normalization, IP hashing
   (never stores the raw IP), duplicate-registration handling, forged-field
   rejection, per-IP rate limiting, resend caps/cooldown, verification
   status transition, RPC argument shape (never forwards a client-supplied
-  value), reset-function admin gating, and — reusing the *existing*
-  capability map rather than inventing a new authorization check — a
-  direct proof that the `viewer` role holds none of `RESTAURANT_CAPABILITIES`
-  at all.
-- **Full existing suite**: 2171 tests across 179 files, all passing after
+  value), reset-function admin gating, revoke-function admin gating, a
+  direct proof (reusing the *existing* capability map rather than
+  inventing a new authorization check) that the `viewer` role holds none
+  of `RESTAURANT_CAPABILITIES` at all, and `getMyDemoSession` returning an
+  active session before expiry but `null` the instant `expires_at` passes
+  (even when the stored `status` column still says `'active'`) and for an
+  explicitly `'expired'` or `'revoked'` status.
+- **Full existing suite**: 2179 tests across 179 files, all passing after
   this change (zero regressions).
 - **Typecheck/lint/production build**: all clean (three pre-existing,
   unrelated typecheck errors in files this change never touches are the

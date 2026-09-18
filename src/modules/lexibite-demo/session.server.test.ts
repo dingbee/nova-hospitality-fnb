@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { createDemoFakeSupabase, type FakeTables } from "./test-helpers/fakeSupabase";
-import { activateDemoSession, DemoAccessError } from "./session.server";
+import { activateDemoSession, DemoAccessError, getMyDemoSession } from "./session.server";
 
 const GRANT_ROW = {
   out_session_id: "session-1",
@@ -89,5 +89,68 @@ describe("activateDemoSession", () => {
       },
     );
     await expect(activateDemoSession(sb, admin, "user-1")).rejects.toBeInstanceOf(DemoAccessError);
+  });
+});
+
+describe("getMyDemoSession — access before expiry, denial after expiry/revocation", () => {
+  const baseSession = {
+    id: "session-1",
+    tenant_id: "cebda97b-33b1-43bf-932e-d7fee992a6c3",
+    property_id: "d6674bdc-ebe2-4bb7-801a-54b1b8dfc218",
+    location_id: "fb15e245-b2bf-4d07-abb6-213bbeafa584",
+    role: "viewer",
+  };
+
+  it("reports an active session that has not yet expired", async () => {
+    const inOneHour = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const admin = createDemoFakeSupabase({
+      lexibite_demo_sessions: [
+        { ...baseSession, user_id: "visitor-1", status: "active", expires_at: inOneHour },
+      ],
+    });
+    const result = await getMyDemoSession(admin, "visitor-1");
+    expect(result).not.toBeNull();
+    expect(result?.tenantId).toBe("cebda97b-33b1-43bf-932e-d7fee992a6c3");
+  });
+
+  it("denies a session whose expires_at has passed, even though its stored status still says 'active'", async () => {
+    // Nothing flips the status column automatically — only an admin-run
+    // reset does that. Real-time expiry must not depend on that ever
+    // having run (this is the exact gap restaurant_member_active/migration
+    // 0083 closes at the RLS layer; this proves the TS-side read-back
+    // agrees with it rather than lying about a stale row).
+    const anHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const admin = createDemoFakeSupabase({
+      lexibite_demo_sessions: [
+        { ...baseSession, user_id: "visitor-1", status: "active", expires_at: anHourAgo },
+      ],
+    });
+    const result = await getMyDemoSession(admin, "visitor-1");
+    expect(result).toBeNull();
+  });
+
+  it("denies a session explicitly marked 'expired'", async () => {
+    const inOneHour = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const admin = createDemoFakeSupabase({
+      lexibite_demo_sessions: [
+        { ...baseSession, user_id: "visitor-1", status: "expired", expires_at: inOneHour },
+      ],
+    });
+    expect(await getMyDemoSession(admin, "visitor-1")).toBeNull();
+  });
+
+  it("denies a session explicitly marked 'revoked', even with time left on the clock", async () => {
+    const inOneHour = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const admin = createDemoFakeSupabase({
+      lexibite_demo_sessions: [
+        { ...baseSession, user_id: "visitor-1", status: "revoked", expires_at: inOneHour },
+      ],
+    });
+    expect(await getMyDemoSession(admin, "visitor-1")).toBeNull();
+  });
+
+  it("returns null for a visitor with no session row at all", async () => {
+    const admin = createDemoFakeSupabase({ lexibite_demo_sessions: [] });
+    expect(await getMyDemoSession(admin, "nobody")).toBeNull();
   });
 });

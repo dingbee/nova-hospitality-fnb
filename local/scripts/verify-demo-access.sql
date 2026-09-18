@@ -182,6 +182,106 @@ END $$;
 RESET ROLE;
 RESET request.jwt.claims;
 
+\echo '--- 11. access BEFORE expiry: the RLS predicate change (migration 0083) has not broken a live, unexpired demo session ---'
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'visitor1', 'role', 'authenticated')::text, false);
+DO $$
+DECLARE cnt int; can_read boolean;
+BEGIN
+  can_read := public.restaurant_can_read('cebda97b-33b1-43bf-932e-d7fee992a6c3');
+  SELECT count(*) INTO cnt FROM public.restaurant_tenants WHERE id = 'cebda97b-33b1-43bf-932e-d7fee992a6c3';
+  IF NOT can_read OR cnt <> 1 THEN
+    RAISE EXCEPTION 'FAIL: unexpired visitor1 lost read access (can_read=%, tenant rows visible=%)', can_read, cnt;
+  END IF;
+  RAISE NOTICE 'PASS: visitor1 still reads the canonical demo tenant before expiry (restaurant_can_read=true, 1 tenant row visible)';
+END $$;
+RESET ROLE;
+RESET request.jwt.claims;
+
+\echo '--- 12. denial AFTER expiry: expiring the session (without touching restaurant_members at all) must deny access ---'
+UPDATE public.lexibite_demo_sessions SET expires_at = now() - interval '1 hour'
+  WHERE user_id = :'visitor1';
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'visitor1', 'role', 'authenticated')::text, false);
+DO $$
+DECLARE cnt int; can_read boolean;
+BEGIN
+  can_read := public.restaurant_can_read('cebda97b-33b1-43bf-932e-d7fee992a6c3');
+  SELECT count(*) INTO cnt FROM public.restaurant_tenants WHERE id = 'cebda97b-33b1-43bf-932e-d7fee992a6c3';
+  IF can_read OR cnt <> 0 THEN
+    RAISE EXCEPTION 'FAIL: expired visitor1 still has read access (can_read=%, tenant rows visible=%)', can_read, cnt;
+  END IF;
+  RAISE NOTICE 'PASS: expired visitor1 denied read access (restaurant_can_read=false, 0 tenant rows visible) — their restaurant_members row was never touched, only expires_at';
+END $$;
+RESET ROLE;
+RESET request.jwt.claims;
+
+\echo '--- 13. denial AFTER revocation: an admin revoking a still-unexpired session must deny access immediately ---'
+SELECT id AS visitor2_session FROM public.lexibite_demo_sessions WHERE user_id = :'visitor2' \gset
+SELECT set_config('nova_test.visitor2_session', :'visitor2_session', false);
+
+-- Baseline: visitor2's session still has hours left on the clock — prove
+-- access works BEFORE revocation, so the denial below is attributable to
+-- the revoke call itself, not to some other cause.
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'visitor2', 'role', 'authenticated')::text, false);
+DO $$
+DECLARE can_read boolean;
+BEGIN
+  can_read := public.restaurant_can_read('cebda97b-33b1-43bf-932e-d7fee992a6c3');
+  IF NOT can_read THEN
+    RAISE EXCEPTION 'FAIL: visitor2 already denied before revocation — test setup is wrong';
+  END IF;
+END $$;
+RESET ROLE;
+RESET request.jwt.claims;
+
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_user', 'role', 'authenticated')::text, false);
+DO $$ BEGIN
+  IF NOT public.restaurant_revoke_demo_session(current_setting('nova_test.visitor2_session')::uuid) THEN
+    RAISE EXCEPTION 'FAIL: restaurant_revoke_demo_session reported no row revoked';
+  END IF;
+  RAISE NOTICE 'PASS: restaurant_revoke_demo_session (as commercial admin) revoked visitor2''s session';
+END $$;
+RESET ROLE;
+RESET request.jwt.claims;
+
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'visitor2', 'role', 'authenticated')::text, false);
+DO $$
+DECLARE cnt int; can_read boolean;
+BEGIN
+  can_read := public.restaurant_can_read('cebda97b-33b1-43bf-932e-d7fee992a6c3');
+  SELECT count(*) INTO cnt FROM public.restaurant_tenants WHERE id = 'cebda97b-33b1-43bf-932e-d7fee992a6c3';
+  IF can_read OR cnt <> 0 THEN
+    RAISE EXCEPTION 'FAIL: revoked visitor2 still has read access (can_read=%, tenant rows visible=%)', can_read, cnt;
+  END IF;
+  RAISE NOTICE 'PASS: revoked visitor2 denied read access immediately, with hours still left on expires_at';
+END $$;
+RESET ROLE;
+RESET request.jwt.claims;
+
+\echo '--- 14. a REAL member (no demo session row at all) is completely unaffected by any of the above ---'
+INSERT INTO auth.users (email) VALUES ('real.member.verify-fixture@example.test') RETURNING id AS real_member \gset
+INSERT INTO public.restaurant_members (tenant_id, user_id, role)
+VALUES ('cebda97b-33b1-43bf-932e-d7fee992a6c3', :'real_member', 'owner');
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'real_member', 'role', 'authenticated')::text, false);
+DO $$
+DECLARE can_read boolean;
+BEGIN
+  can_read := public.restaurant_can_read('cebda97b-33b1-43bf-932e-d7fee992a6c3');
+  IF NOT can_read THEN
+    RAISE EXCEPTION 'FAIL: a real member with no demo session row was denied — restaurant_member_active regressed a real customer';
+  END IF;
+  RAISE NOTICE 'PASS: a real member (never through the demo flow) reads normally throughout — zero regression';
+END $$;
+RESET ROLE;
+RESET request.jwt.claims;
+DELETE FROM public.restaurant_members WHERE user_id = :'real_member';
+DELETE FROM auth.users WHERE id = :'real_member';
+
 \echo '--- cleanup: remove every synthetic fixture this script created ---'
 DELETE FROM public.lexibite_demo_sessions WHERE user_id IN (:'visitor1', :'visitor2');
 DELETE FROM public.restaurant_members WHERE user_id IN (:'visitor1', :'visitor2');

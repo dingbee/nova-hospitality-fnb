@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { createDemoFakeSupabase } from "./test-helpers/fakeSupabase";
-import { resetDemoEnvironment } from "./reset.server";
+import { resetDemoEnvironment, revokeDemoSession } from "./reset.server";
 import { CommercialForbiddenError } from "@/modules/commercial/access.server";
 
 describe("resetDemoEnvironment", () => {
@@ -56,5 +56,53 @@ describe("resetDemoEnvironment", () => {
       membershipsRevoked: 1,
       dryRun: true,
     });
+  });
+});
+
+describe("revokeDemoSession", () => {
+  it("refuses a non-commercial-admin caller without ever calling the revoke RPC", async () => {
+    let rpcCalled = false;
+    const sb = createDemoFakeSupabase(
+      {},
+      {
+        restaurant_is_commercial_admin: () => false,
+        restaurant_revoke_demo_session: () => {
+          rpcCalled = true;
+          return true;
+        },
+      },
+    );
+    await expect(revokeDemoSession(sb, "demo-viewer", "session-1")).rejects.toBeInstanceOf(
+      CommercialForbiddenError,
+    );
+    expect(rpcCalled).toBe(false);
+  });
+
+  it("calls the revoke RPC with exactly the given session id for a genuine commercial admin", async () => {
+    let receivedArgs: unknown;
+    const sb = createDemoFakeSupabase(
+      {},
+      {
+        restaurant_is_commercial_admin: () => true,
+        restaurant_revoke_demo_session: (args: unknown) => {
+          receivedArgs = args;
+          return true;
+        },
+      },
+    );
+    const revoked = await revokeDemoSession(sb, "admin-1", "session-1");
+    expect(revoked).toBe(true);
+    expect(receivedArgs).toEqual({ _session_id: "session-1" });
+  });
+
+  it("returns false when the RPC reports nothing was revoked", async () => {
+    const sb = createDemoFakeSupabase(
+      {},
+      {
+        restaurant_is_commercial_admin: () => true,
+        restaurant_revoke_demo_session: () => false,
+      },
+    );
+    expect(await revokeDemoSession(sb, "admin-1", "already-revoked-session")).toBe(false);
   });
 });

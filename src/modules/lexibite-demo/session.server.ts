@@ -98,7 +98,12 @@ export async function getMyDemoSession(
     .select("id, tenant_id, property_id, location_id, role, status, expires_at")
     .eq("user_id", userId)
     .maybeSingle();
-  if (!data || data.status !== "active") return null;
+  // Real-time expiry, not just the stored status: nothing flips 'active' to
+  // 'expired' automatically (that column update only ever happens as a side
+  // effect of an admin running resetDemoEnvironment), so a session past its
+  // expires_at is already denied by RLS (restaurant_member_active, migration
+  // 0083) but would otherwise still read back as "active" here.
+  if (!data || data.status !== "active" || new Date(data.expires_at) <= new Date()) return null;
   return {
     sessionId: data.id,
     tenantId: data.tenant_id,

@@ -57,3 +57,28 @@ export async function resetDemoEnvironment(
     dryRun: row.dry_run,
   };
 }
+
+/**
+ * Immediately revokes one visitor's demo session (e.g. abuse, an early
+ * "end my demo" request). This is the only path that ever sets a session's
+ * status to 'revoked' — restaurant_grant_demo_session() (migration 0082)
+ * only ever writes 'active'. A revoked (or simply expired) session is
+ * enforced at the RLS layer itself: restaurant_member_active() (migration
+ * 0083), ANDed into every canonical read/write predicate, denies the
+ * visitor's underlying restaurant_members row the moment this call
+ * succeeds — no separate "log the user out" step is needed because nothing
+ * downstream of RLS can read or write demo tenant data for them anymore.
+ * Gated the same way as resetDemoEnvironment (TS + SQL defense in depth).
+ */
+export async function revokeDemoSession(
+  sb: Sb,
+  userId: string,
+  sessionId: string,
+): Promise<boolean> {
+  await assertCommercialAdmin(sb, userId);
+  const { data, error } = await sb.rpc("restaurant_revoke_demo_session", {
+    _session_id: sessionId,
+  });
+  if (error) throw new Error(error.message);
+  return data === true;
+}
