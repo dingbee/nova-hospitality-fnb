@@ -7,8 +7,9 @@
   GitHub API before any change was made (matched this session's actual
   git HEAD exactly).
 - **Branch:** `claude/me-09-offline-certification`
-- **PR:** opened as a draft against `claude/me-00-baseline-lock`, not
-  merged by this session.
+- **PR:** [#31](https://github.com/dingbee/nova-hospitality-fnb/pull/31),
+  open as a draft against `claude/me-00-baseline-lock`, not merged by
+  this session.
 - **Scope:** ME-09 corresponds to P10 (Offline Operations Capability),
   already substantially implemented and documented in
   [`docs/p10-offline-operations.md`](../p10-offline-operations.md). This
@@ -18,6 +19,13 @@
 - **Final status:** see §M. One real, evidenced defect found and fixed
   with regression tests. No other invariant violation was found in the
   existing implementation across the full reconnaissance in §B.
+- **Corrective-integration update (§N):** ME-07 (PR #29) and ME-08
+  (PR #30) have since been merged into `claude/me-00-baseline-lock`
+  (merge commits `d175929`, `e895983`). This branch was merged forward
+  onto that updated baseline and re-validated against the actual
+  integrated code (not assumed from the pre-merge branch diffs in §E
+  below). Result: **no genuine integration defect found** — see §N for
+  the executed proof.
 
 ## B. Reconnaissance — what was actually inspected
 
@@ -170,6 +178,76 @@ disclosure) touch, and why it does or doesn't matter for offline replay.
   module this pass certified. No migration number collision: this pass
   added no migration.
 
+## N. Corrective integration with ME-07/ME-08 (post-merge)
+
+ME-07 (PR #29) and ME-08 (PR #30) have since been merged into
+`claude/me-00-baseline-lock` (merge commits `d175929`, `e895983`, both
+independently verified via the GitHub API — `state: closed,
+merged: false` on the PR objects themselves, but their commits are
+confirmed ancestors of the current `claude/me-00-baseline-lock` tip via
+`git log 28f660b..origin/claude/me-00-baseline-lock`). This branch was
+merged forward onto that tip (`git merge origin/claude/me-00-baseline-lock`,
+clean, no conflicts) and the exact interaction §E flagged as
+"plausible, not yet tested" was investigated against the actual,
+integrated code — not assumed from the pre-merge diffs.
+
+**What was checked, against the real merged source:**
+
+1. **`fireOrderItemsCore` (`kitchen.server.ts`) vs. ME-08's
+   `cancelKitchenTicketItemsForOrderItems`.** Read in full. The offline
+   module's `fire_to_kitchen` replay calls `fireOrder` →
+   `fireOrderItemsCore`, whose entire idempotency/safety gate is
+   `restaurant_order_items.status === "ordered"` — it never reads
+   `restaurant_kitchen_ticket_items` (ME-08's table) at all, on any code
+   path. ME-08's `cancelKitchenTicketItemsForOrderItems` (called from
+   `voidPosLine`/`cancelOrder`) always runs *after* the same call sets
+   `restaurant_order_items.status = "voided"` first. So a line voided by
+   a different, online device while this device was offline is excluded
+   from `fireOrderItemsCore`'s replay by the same, unmodified
+   `status === "ordered"` filter that already existed pre-ME-08 — the
+   two features never need to know about each other for this to be
+   safe. **Proven, not just reasoned**, by two new tests added to
+   `kitchen.server.test.ts` (§G) exercising exactly this scenario
+   through `fireOrder` — the real function the offline adapter calls:
+   - a sibling line voided while offline → only the still-`ordered` line
+     fires, the voided line's ticket item is never resurrected.
+   - every line voided while offline → `fireOrder` returns
+     `{ tickets: [], fired: 0 }` with **no error thrown** — the exact
+     shape `conflict.ts`'s `classifyOutcome` already treats as a
+     successful `AUTO_RESOLVE`, never `CONFLICT`/`DEAD_LETTER`.
+2. **`add_item`/`open_order` replay vs. ME-07's `insertLines`/
+   `createGuestOrder` changes.** Read in full. ME-07's error-sanitization
+   and orphan-header-compensation changes in `sales.server.ts` are
+   gated entirely behind `trusted === false`. `insertLines`'s own
+   default (`ctx.trusted !== false`) means `true` unless explicitly
+   overridden, and `pos.server.ts`'s `addPosLines` — what the offline
+   module's `add_item` replay actually calls via `adapters.ts` — never
+   passes `trusted` at all. Confirmed by reading `addPosLines` end to
+   end: the staff/offline-replay path is untouched by ME-07's changes,
+   which only affect the separate, `FORBIDDEN_OFFLINE`-classified guest
+   path. `conflict.ts`'s pattern matching against raw (unsanitized)
+   error strings remains valid for every message this replay path can
+   actually produce.
+3. **`advanceTicket`'s new legal-transition table + compare-and-swap
+   (ME-08).** `order_status_progress` (what `advanceTicket` implements)
+   is, and remains, classified `ONLINE_REQUIRED` in `contracts.ts` — the
+   offline sync engine never calls `advanceTicket`, so its new error
+   messages (`"A ticket cannot move from ... to ..."`,
+   `"This ticket changed to ... before this update reached it"`) are
+   structurally unreachable from any replayed offline operation. No
+   pattern needs to be, or was, added to `conflict.ts` for these.
+4. **Migration numbers.** ME-07/ME-08 added no migrations. No collision
+   with this pass's own (none added).
+
+**Result: no genuine integration defect found.** The full validation
+suite was re-run against the actual merged code (§H, updated numbers
+below) — all green, no regression, no new failure.
+
+**Regression tests added for this integration review:**
+`kitchen.server.test.ts`, describe block "ME-09/ME-08 integration —
+offline fire_to_kitchen replay after a line was voided while offline"
+(2 tests, both passing).
+
 ## F. Files changed
 
 - `src/modules/restaurant/offline/syncEngine.ts` — the fix (§C).
@@ -178,13 +256,20 @@ disclosure) touch, and why it does or doesn't matter for offline replay.
   grandchild cascade, CANCELLED-parent cascade).
 - `src/modules/restaurant/offline/chaos.test.ts` — 2 new queue/storage
   load tests (§D).
+- `src/modules/restaurant/kitchen/kitchen.server.test.ts` — 2 new
+  corrective-integration tests (§N), proving the `fire_to_kitchen`
+  replay / ME-08 void-sync interaction is safe. No non-test file needed
+  a code change for the integration review — no genuine integration
+  defect was found (§N).
 - `docs/me-09/ME-09-offline-certification.md` — this report.
+- Merge commit bringing `origin/claude/me-00-baseline-lock` (with ME-07/
+  ME-08 merged in) into this branch — clean, no conflicts.
 
 No database, migration, or production change of any kind.
 
 ## G. Tests added
 
-5 new tests, all passing:
+7 new tests total, all passing:
 
 - `syncEngine.test.ts`: "a child whose parent open_order DEAD_LETTERs is
   cascaded to CONFLICT...", "a grandchild ... cascades transitively in
@@ -193,13 +278,25 @@ No database, migration, or production change of any kind.
 - `chaos.test.ts`: "a device that queued 500 operations ... replays every
   one correctly ...", "pruning at scale removes only aged SYNCED
   entries ...".
+- `kitchen.server.test.ts` (§N, added during corrective integration):
+  "fires only the still-ordered line when a sibling line was voided by
+  another device while this one was offline", "a queued fire_to_kitchen
+  replaying after EVERY line on the order was voided offline-elsewhere
+  is a clean no-op, not an error ...".
 
 ## H. Validation executed
 
+Executed twice: once pre-integration (against baseline `28f660b`), and
+again after merging ME-07/ME-08 forward into this branch (§N). Numbers
+below are the **post-integration** (current) results.
+
 - `npx vitest run src/modules/restaurant/offline` — **10 files / 100
-  tests passing** (95 pre-existing + 5 new).
-- `npx vitest run` (full project suite) — **181 files / 2193 tests
-  passing**, no regressions.
+  tests passing** (95 pre-existing + 5 new from §C/§D).
+- `npx vitest run src/modules/restaurant/kitchen/kitchen.server.test.ts`
+  — **14 tests passing** (12 pre-existing/ME-08 + 2 new from §N).
+- `npx vitest run` (full project suite) — **183 files / 2207 tests
+  passing**, no regressions (up from 181/2193 pre-integration; the
+  difference is ME-07/ME-08's own new test files plus this pass's 7).
 - `npx tsc --noEmit` — **0 new errors.** The same 3 pre-existing baseline
   errors documented in `docs/p10-offline-operations.md` §16
   (`menuReasoning.server.test.ts`, `router.tsx`,
@@ -258,12 +355,11 @@ and this repository's own "never modify production data casually" rule.
 
 ## L. Remaining certification limitations
 
-- The interaction between ME-08's ticket-cancellation sync and this
-  module's `fire_to_kitchen` replay (§E) is a plausible, undiscovered
-  interaction this pass could not test without importing ME-08's own
-  unmerged branch, which the operating instructions for this pass
-  explicitly forbid. It should be added as an integration test during
-  the human corrective-integration pass across ME-07/ME-08/ME-09.
+- ~~The interaction between ME-08's ticket-cancellation sync and this
+  module's `fire_to_kitchen` replay~~ — **closed by §N.** This was
+  investigated against the actual merged code once ME-07/ME-08 landed
+  on `claude/me-00-baseline-lock`, proven safe with two new regression
+  tests, and required no code fix. No open item remains here.
 - `docs/p10-offline-operations.md` §15's own disclosed limitation
   stands unchanged: full live-auth, live-data Playwright certification
   of the authenticated UI flow (open order → offline → sync → server
@@ -276,17 +372,39 @@ and this repository's own "never modify production data casually" rule.
 - The pre-existing `@zxing/library` dependency-manifest gap (§I) is
   disclosed but not fixed, as it is out of this pass's scope.
 
-## M. Final ME-09 status: **GREEN** (for the Offline Certification scope actually in this mandate)
+## M. Final ME-09 status: **GREEN / CLOSED** — survives integration with ME-07 and ME-08
 
 One real defect was found through genuine reconnaissance (not assumed
 from documentation), fixed with the smallest correct change, covered by
-5 new regression tests, and validated against the full test suite,
-typecheck, lint, production build, bundle-provenance check, and the
-existing real-Chromium offline certification — all green, with every
-pre-existing gap (3 typecheck errors, the `@zxing/library` manifest gap,
-the disclosed live-auth E2E limitation) evidenced as pre-existing and
-unrelated, not newly introduced or silently absorbed into this pass's own
-result. The one item explicitly left open (§L's ME-08 interaction) is a
-forward-looking recommendation for the human-run corrective-integration
-pass across ME-07/ME-08/ME-09, not a gap in ME-09's own, narrower,
-mandated scope.
+5 new regression tests. ME-07 and ME-08 were then merged into the
+canonical baseline; this branch was merged forward onto that integrated
+state and independently re-investigated against the real, integrated
+code (§N) — not assumed compatible from the pre-merge branch diffs. The
+one interaction flagged as "plausible, not yet tested" in the original
+pass was proven safe by two new tests exercising the actual function the
+offline module calls (`fireOrder`), with **zero code change required**:
+`fireOrderItemsCore`'s pre-existing `status === "ordered"` gate and
+ME-08's `cancelKitchenTicketItemsForOrderItems` compose correctly
+because they never need to know about each other — the order-item
+status column is the single source of truth both already agree on.
+`add_item`/`open_order` replay is likewise unaffected by ME-07's
+changes, which are gated entirely behind the guest-only `trusted: false`
+path the offline module's staff/POS replay never takes.
+
+**Kitchen/offline interaction: no defect found.** Replay/idempotency,
+conflict propagation, and kitchen/bar operational state all hold under
+the actual integrated code — verified by test, not by inspection alone.
+
+Full validation was re-run against the integrated code and is entirely
+green (§H): 183 files / 2207 tests, 0 new typecheck errors, 0 lint
+problems, production build green, bundle provenance clean, 15/15
+real-Chromium offline e2e. Every pre-existing gap (3 typecheck errors,
+the `@zxing/library` manifest gap, the disclosed live-auth E2E
+limitation) remains evidenced as pre-existing and unrelated.
+
+**ME-09 is formally GREEN/CLOSED.** PR #31 has been updated (merge
+commit bringing in `claude/me-00-baseline-lock`'s current tip, plus the
+§N integration tests and this report's updates) and is ready for human
+review and merge. This session has not merged it and will not — per
+this repository's process rules, merging PR #31 into
+`claude/me-00-baseline-lock` remains a decision for the human operator.
