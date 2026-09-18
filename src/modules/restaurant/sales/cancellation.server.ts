@@ -9,6 +9,7 @@
  */
 import { assertCapability } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
+import { cancelKitchenTicketItemsForOrderItems } from "../kitchen/kitchen.server";
 import { REASON_CODES } from "../inventory/policy";
 import { reverseMovementsForOrder } from "../inventory/reversal.server";
 import { closeActiveGuestSession } from "../selforder/selforder.server";
@@ -32,7 +33,11 @@ export async function cancelOrder(sb: Sb, userId: string, input: CancelOrderInpu
   if (!order) throw new Error("Order not found.");
 
   const [{ data: payments }, { data: items }, { data: movements }] = await Promise.all([
-    sb.from("restaurant_payments").select("amount, state").eq("tenant_id", input.tenantId).eq("order_id", input.orderId),
+    sb
+      .from("restaurant_payments")
+      .select("amount, state")
+      .eq("tenant_id", input.tenantId)
+      .eq("order_id", input.orderId),
     sb
       .from("restaurant_order_items")
       .select("id, status")
@@ -47,14 +52,19 @@ export async function cancelOrder(sb: Sb, userId: string, input: CancelOrderInpu
       .in("movement_type", ["consumption", "production"]),
   ]);
 
-  const outstandingPaid = ((payments ?? []) as any[]).reduce((s, p) => s + Number(p.amount ?? 0), 0);
+  const outstandingPaid = ((payments ?? []) as any[]).reduce(
+    (s, p) => s + Number(p.amount ?? 0),
+    0,
+  );
   const lines = (items ?? []) as any[];
 
   const decision = evaluateCancellation({
     status: String(order.status),
     paymentState: String(order.payment_state),
     outstandingPaid,
-    preparedLines: lines.filter((l) => ["sent", "preparing", "ready", "served"].includes(String(l.status))).length,
+    preparedLines: lines.filter((l) =>
+      ["sent", "preparing", "ready", "served"].includes(String(l.status)),
+    ).length,
     consumedMovements: ((movements ?? []) as any[]).length,
   });
 
@@ -80,9 +90,18 @@ export async function cancelOrder(sb: Sb, userId: string, input: CancelOrderInpu
   if (liveLineIds.length > 0) {
     await sb
       .from("restaurant_order_items")
-      .update({ status: "voided", void_reason: `Order cancelled: ${input.reason}`, voided_by: userId, voided_at: now })
+      .update({
+        status: "voided",
+        void_reason: `Order cancelled: ${input.reason}`,
+        voided_by: userId,
+        voided_at: now,
+      })
       .eq("tenant_id", input.tenantId)
       .in("id", liveLineIds);
+    // Same gap as voidPosLine: a whole-order cancellation must not leave any
+    // already-fired line's kitchen/bar ticket item behind as phantom
+    // production. See cancelKitchenTicketItemsForOrderItems's doc comment.
+    await cancelKitchenTicketItemsForOrderItems(sb, input.tenantId, liveLineIds);
   }
 
   const { error } = await sb
@@ -99,7 +118,11 @@ export async function cancelOrder(sb: Sb, userId: string, input: CancelOrderInpu
   if (error) throw new Error(error.message);
 
   if (order.table_id) {
-    await sb.from("restaurant_tables").update({ status: "available" }).eq("id", order.table_id).eq("tenant_id", input.tenantId);
+    await sb
+      .from("restaurant_tables")
+      .update({ status: "available" })
+      .eq("id", order.table_id)
+      .eq("tenant_id", input.tenantId);
     // O12: cancellation hands the table back exactly like a settled bill
     // does — the dining session that placed this order is over.
     await closeActiveGuestSession(sb, order.table_id, "order_cancelled");

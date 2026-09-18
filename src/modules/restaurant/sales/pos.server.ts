@@ -22,6 +22,7 @@ import {
   NO_MATCH_ID,
 } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
+import { cancelKitchenTicketItemsForOrderItems } from "../kitchen/kitchen.server";
 import { reverseMovementsForOrderItem } from "../inventory/reversal.server";
 import { REASON_CODES } from "../inventory/policy";
 import {
@@ -580,6 +581,11 @@ export async function voidPosLine(sb: Sb, userId: string, input: VoidPosLineInpu
     .eq("tenant_id", input.tenantId)
     .eq("id", input.orderItemId);
   if (error) throw new Error(error.message);
+
+  // The line may already have been fired to the kitchen/bar — a voided line
+  // must not leave a phantom ticket item behind for production to keep
+  // acting on. See cancelKitchenTicketItemsForOrderItems's own doc comment.
+  await cancelKitchenTicketItemsForOrderItems(sb, input.tenantId, [item.id]);
 
   const totals = await recalcOrder(sb, input.tenantId, input.orderId);
 
