@@ -44,6 +44,28 @@
 --    (used in RLS policies or called via `.rpc()` from app code) have
 --    EXECUTE re-granted to `authenticated` explicitly so their access no
 --    longer depends on the PUBLIC default.
+--
+-- ME-04 correction (this block only, everything else in this file
+-- unchanged): this migration was written when the 18 cash-payout/daily-
+-- close/tender-declaration/giveaway functions it revokes/grants EXECUTE on
+-- already existed live in production (they predate this repository's
+-- earliest captured baseline). They were not CREATEd by any Git migration
+-- until 0076_me02_me03_financial_functions_reconstruction.sql, 28
+-- migrations later. Replaying 0000-0078 against a fresh database --
+-- exactly what a new install or a CI database test does -- therefore
+-- failed here with "function ... does not exist", proven by a from-scratch
+-- local replay. Production is unaffected (the functions already existed
+-- when this ran there; re-running this migration is a no-op regardless
+-- since Supabase's migration ledger never replays an applied migration),
+-- so guarding these specific statements on the function already existing
+-- changes no live behavior anywhere -- it only makes a from-scratch
+-- replay succeed, deferring to 0076's own (identical) grant state for a
+-- fresh install. The other 8 functions this migration touches
+-- (nova_user_roles_view, migration_transfer_audit,
+-- has_any_role/has_role/is_any_staff/nova_has_permission/
+-- nova_permissions_for, restaurant_apply_stock_movement,
+-- restaurant_can_read/restaurant_can_write) are all defined by migrations
+-- 0001-0004, well before this one, and are left as plain statements.
 
 alter view public.nova_user_roles_view set (security_invoker = true);
 revoke all on public.nova_user_roles_view from anon;
@@ -59,45 +81,54 @@ revoke execute on function public.has_role(uuid, public.app_role) from anon;
 revoke execute on function public.is_any_staff(uuid) from anon;
 revoke execute on function public.nova_has_permission(uuid, text, uuid, uuid, uuid) from anon;
 revoke execute on function public.nova_permissions_for(uuid) from anon;
-revoke execute on function public.restaurant_apply_giveaway(uuid) from anon;
 revoke execute on function public.restaurant_apply_stock_movement() from anon;
 revoke execute on function public.restaurant_can_read(uuid) from anon;
 revoke execute on function public.restaurant_can_write(uuid, public.restaurant_role[]) from anon;
-revoke execute on function public.restaurant_cash_payout_control() from anon;
-revoke execute on function public.restaurant_cash_payout_events_immutable() from anon;
-revoke execute on function public.restaurant_cash_payout_no_delete() from anon;
-revoke execute on function public.restaurant_cash_payout_total(uuid, uuid, date) from anon;
-revoke execute on function public.restaurant_cash_payout_trail() from anon;
-revoke execute on function public.restaurant_daily_close_control() from anon;
-revoke execute on function public.restaurant_daily_close_payout_sync() from anon;
-revoke execute on function public.restaurant_day_is_locked(uuid, uuid, date) from anon;
-revoke execute on function public.restaurant_decide_giveaway(uuid, uuid, boolean, text) from anon;
-revoke execute on function public.restaurant_declaration_revisions_immutable() from anon;
-revoke execute on function public.restaurant_giveaway_guard() from anon;
-revoke execute on function public.restaurant_giveaway_no_delete() from anon;
-revoke execute on function public.restaurant_giveaway_period_lock() from anon;
-revoke execute on function public.restaurant_request_giveaway(uuid, uuid, uuid, text, uuid, text, numeric, text, text) from anon;
-revoke execute on function public.restaurant_reverse_giveaway(uuid, uuid, text, text) from anon;
-revoke execute on function public.restaurant_tender_declaration_archive() from anon;
-revoke execute on function public.restaurant_tender_declaration_control() from anon;
 
-revoke execute on function public.restaurant_apply_giveaway(uuid) from authenticated;
+-- ME-04: guarded on existence -- see the correction note above this block.
+-- These 18 functions are not CREATEd until 0076; on a fresh install they
+-- do not exist yet when this migration runs.
+do $$
+declare
+  sig text;
+  targets text[] := array[
+    'public.restaurant_apply_giveaway(uuid)',
+    'public.restaurant_cash_payout_control()',
+    'public.restaurant_cash_payout_events_immutable()',
+    'public.restaurant_cash_payout_no_delete()',
+    'public.restaurant_cash_payout_total(uuid, uuid, date)',
+    'public.restaurant_cash_payout_trail()',
+    'public.restaurant_daily_close_control()',
+    'public.restaurant_daily_close_payout_sync()',
+    'public.restaurant_day_is_locked(uuid, uuid, date)',
+    'public.restaurant_decide_giveaway(uuid, uuid, boolean, text)',
+    'public.restaurant_declaration_revisions_immutable()',
+    'public.restaurant_giveaway_guard()',
+    'public.restaurant_giveaway_no_delete()',
+    'public.restaurant_giveaway_period_lock()',
+    'public.restaurant_request_giveaway(uuid, uuid, uuid, text, uuid, text, numeric, text, text)',
+    'public.restaurant_reverse_giveaway(uuid, uuid, text, text)',
+    'public.restaurant_tender_declaration_archive()',
+    'public.restaurant_tender_declaration_control()'
+  ];
+begin
+  foreach sig in array targets loop
+    if to_regprocedure(sig) is not null then
+      execute format('revoke execute on function %s from anon', sig);
+      execute format('revoke execute on function %s from authenticated', sig);
+      execute format('revoke execute on function %s from public', sig);
+    end if;
+  end loop;
+  -- restaurant_cash_payout_total is one of the six read-only lookups this
+  -- migration re-grants to authenticated (see note above); the rest stay
+  -- revoked from authenticated (re-granted, where still needed, only by
+  -- 0076 once they exist).
+  if to_regprocedure('public.restaurant_cash_payout_total(uuid, uuid, date)') is not null then
+    execute 'grant execute on function public.restaurant_cash_payout_total(uuid, uuid, date) to authenticated';
+  end if;
+end $$;
+
 revoke execute on function public.restaurant_apply_stock_movement() from authenticated;
-revoke execute on function public.restaurant_cash_payout_control() from authenticated;
-revoke execute on function public.restaurant_cash_payout_events_immutable() from authenticated;
-revoke execute on function public.restaurant_cash_payout_no_delete() from authenticated;
-revoke execute on function public.restaurant_cash_payout_trail() from authenticated;
-revoke execute on function public.restaurant_daily_close_control() from authenticated;
-revoke execute on function public.restaurant_daily_close_payout_sync() from authenticated;
-revoke execute on function public.restaurant_decide_giveaway(uuid, uuid, boolean, text) from authenticated;
-revoke execute on function public.restaurant_declaration_revisions_immutable() from authenticated;
-revoke execute on function public.restaurant_giveaway_guard() from authenticated;
-revoke execute on function public.restaurant_giveaway_no_delete() from authenticated;
-revoke execute on function public.restaurant_giveaway_period_lock() from authenticated;
-revoke execute on function public.restaurant_request_giveaway(uuid, uuid, uuid, text, uuid, text, numeric, text, text) from authenticated;
-revoke execute on function public.restaurant_reverse_giveaway(uuid, uuid, text, text) from authenticated;
-revoke execute on function public.restaurant_tender_declaration_archive() from authenticated;
-revoke execute on function public.restaurant_tender_declaration_control() from authenticated;
 
 revoke execute on function public.has_any_role(uuid, public.app_role[], uuid, uuid, uuid) from public;
 grant execute on function public.has_any_role(uuid, public.app_role[], uuid, uuid, uuid) to authenticated;
@@ -114,23 +145,4 @@ grant execute on function public.nova_has_permission(uuid, text, uuid, uuid, uui
 revoke execute on function public.nova_permissions_for(uuid) from public;
 grant execute on function public.nova_permissions_for(uuid) to authenticated;
 
-revoke execute on function public.restaurant_cash_payout_total(uuid, uuid, date) from public;
-grant execute on function public.restaurant_cash_payout_total(uuid, uuid, date) to authenticated;
-
-revoke execute on function public.restaurant_apply_giveaway(uuid) from public;
 revoke execute on function public.restaurant_apply_stock_movement() from public;
-revoke execute on function public.restaurant_cash_payout_control() from public;
-revoke execute on function public.restaurant_cash_payout_events_immutable() from public;
-revoke execute on function public.restaurant_cash_payout_no_delete() from public;
-revoke execute on function public.restaurant_cash_payout_trail() from public;
-revoke execute on function public.restaurant_daily_close_control() from public;
-revoke execute on function public.restaurant_daily_close_payout_sync() from public;
-revoke execute on function public.restaurant_decide_giveaway(uuid, uuid, boolean, text) from public;
-revoke execute on function public.restaurant_declaration_revisions_immutable() from public;
-revoke execute on function public.restaurant_giveaway_guard() from public;
-revoke execute on function public.restaurant_giveaway_no_delete() from public;
-revoke execute on function public.restaurant_giveaway_period_lock() from public;
-revoke execute on function public.restaurant_request_giveaway(uuid, uuid, uuid, text, uuid, text, numeric, text, text) from public;
-revoke execute on function public.restaurant_reverse_giveaway(uuid, uuid, text, text) from public;
-revoke execute on function public.restaurant_tender_declaration_archive() from public;
-revoke execute on function public.restaurant_tender_declaration_control() from public;

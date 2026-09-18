@@ -21,10 +21,16 @@
  * time, whether the winner beat it by a millisecond or by a full
  * round-trip) is sufficient to prove the recovery path, not just the
  * happy path.
+ *
+ * ME-04 found the identical pre-check-then-insert shape, unfixed by ME-03,
+ * in refundPayment (bill.server.ts) — same table, same
+ * (tenant_id, client_request_id) unique index, same race. Fixed the same
+ * way and covered below.
  */
 import { describe, expect, it, vi } from "vitest";
 import { recordPayment } from "./sales.server";
 import { takePosPayment, recordGuestPayment } from "./pos.server";
+import { refundPayment } from "./bill.server";
 
 vi.mock("../core/access.server", () => ({
   assertCapability: vi.fn(async () => true),
@@ -226,5 +232,41 @@ describe("recordGuestPayment — double submission (ME-03)", () => {
 
     const second = await recordGuestPayment(sb, input);
     expect(second.duplicate).toBe(true);
+  });
+});
+
+describe("refundPayment — double submission (ME-04)", () => {
+  it("a retried refund with the same clientRequestId resolves idempotently instead of throwing a raw duplicate-key error", async () => {
+    const original = {
+      id: "payment-original",
+      tenant_id: TENANT,
+      order_id: ORDER,
+      amount: 40,
+      method: "cash",
+      state: "paid",
+    };
+    const sb = fakeDb({ orders: [baseOrder()], orderItems: [], payments: [original] });
+    const input = {
+      tenantId: TENANT,
+      orderId: ORDER,
+      paymentId: original.id,
+      amount: 40,
+      reason: "guest complaint",
+      clientRequestId: "refund-retry-1",
+    } as any;
+
+    const first = await refundPayment(sb, USER, input);
+    expect(first.duplicate).toBe(false);
+
+    // Previously: the pre-check-then-insert shape meant a second call whose
+    // insert lost the race threw the raw Postgres unique-violation error
+    // instead of returning gracefully. It must now resolve without throwing.
+    const second = await refundPayment(sb, USER, input);
+    expect(second.duplicate).toBe(true);
+
+    const refundRows = (sb as any).tables.restaurant_payments.filter(
+      (r: any) => r.client_request_id === "refund-retry-1",
+    );
+    expect(refundRows).toHaveLength(1);
   });
 });
