@@ -159,8 +159,51 @@ export type InitiateGuestPaymentResult =
   | { ok: true; status: "redirect"; redirectUrl: string }
   | { ok: false; reason: "already_paid" }
   | { ok: false; reason: "not_payable"; orderStatus: string }
-  | { ok: false; reason: "provider_not_configured" };
+  | { ok: false; reason: "provider_not_configured" }
+  | { ok: false; reason: "initiation_in_progress" };
 
+/** Placeholder claim value while a call to the provider is in flight — never a real provider reference. */
+const GUEST_PAYMENT_INITIATING = "__initiating__";
+/**
+ * How long an "actively calling the provider" claim is honoured before
+ * another caller may retry — generous over any realistic SubmitOrderRequest
+ * round trip, but never held for anywhere near the guest's whole time on
+ * the hosted checkout page.
+ */
+const GUEST_PAYMENT_CLAIM_TTL_MS = 30_000;
+/** How long a completed session's own redirect is handed back to a duplicate initiate call instead of starting a second Pesapal session. */
+const GUEST_PAYMENT_SESSION_TTL_MS = 30 * 60_000;
+
+type PendingSession = {
+  guest_payment_session_reference: string | null;
+  guest_payment_session_redirect_url: string | null;
+  guest_payment_session_expires_at: string | null;
+} | null;
+
+function isLiveSession(session: PendingSession): boolean {
+  if (!session?.guest_payment_session_expires_at) return false;
+  return new Date(session.guest_payment_session_expires_at).getTime() > Date.now();
+}
+
+/**
+ * Concurrency claim: two concurrent initiateGuestPayment calls for the
+ * same order — a double-tapped "Pay" button, two open
+ * browser tabs, a client retry — must not each independently call the
+ * Pesapal adapter, since that would create two real, independent hosted
+ * checkout sessions with two different provider references. recordGuest
+ * Payment's existing idempotency dedupes a repeated confirmation of the
+ * *same* provider reference; it never protected against two genuinely
+ * different sessions for the same order both completing and both being
+ * recorded, which would overpay the order.
+ *
+ * This is a single compare-and-swap UPDATE on the order row — evaluated by
+ * Postgres against the current committed row, not against a value either
+ * caller read earlier — so at most one caller can ever hold the claim at a
+ * time. Every other concurrent caller is handed back the winner's own live
+ * session (same redirect, no second Pesapal call) or, in the rare
+ * sub-second window where the winner is still mid-flight to the provider,
+ * told to retry shortly.
+ */
 export async function initiateGuestPayment(
   sb: Sb,
   input: InitiateGuestPaymentInput,
@@ -181,15 +224,84 @@ export async function initiateGuestPayment(
     return { ok: false, reason: "provider_not_configured" };
   }
 
+  const nowIso = new Date().toISOString();
+  const { data: claimed } = await sb
+    .from("restaurant_orders")
+    .update({
+      guest_payment_session_reference: GUEST_PAYMENT_INITIATING,
+      guest_payment_session_redirect_url: null,
+      guest_payment_session_expires_at: new Date(
+        Date.now() + GUEST_PAYMENT_CLAIM_TTL_MS,
+      ).toISOString(),
+    })
+    .eq("tenant_id", table.tenantId)
+    .eq("id", order.id)
+    .or(`guest_payment_session_expires_at.is.null,guest_payment_session_expires_at.lt.${nowIso}`)
+    .select("id")
+    .maybeSingle();
+
+  if (!claimed) {
+    // Lost the race: another caller already holds a live claim or session.
+    const { data: existing } = await sb
+      .from("restaurant_orders")
+      .select(
+        "guest_payment_session_reference, guest_payment_session_redirect_url, guest_payment_session_expires_at",
+      )
+      .eq("tenant_id", table.tenantId)
+      .eq("id", order.id)
+      .maybeSingle();
+    if (
+      isLiveSession(existing) &&
+      existing?.guest_payment_session_reference !== GUEST_PAYMENT_INITIATING &&
+      existing?.guest_payment_session_redirect_url
+    ) {
+      return {
+        ok: true,
+        status: "redirect",
+        redirectUrl: existing.guest_payment_session_redirect_url,
+      };
+    }
+    return { ok: false, reason: "initiation_in_progress" };
+  }
+
   // Server-derived amount/currency/reference only — input carries nothing but tableId/orderId/method.
-  const { redirectUrl } = await provider.initiate({
-    amount: amountDue,
-    currency: order.currency,
-    merchantReference: order.id,
-    description: `Order ${order.order_number}`,
-    returnUrl,
-  });
-  return { ok: true, status: "redirect", redirectUrl };
+  let initiated: { providerReference: string; redirectUrl: string };
+  try {
+    initiated = await provider.initiate({
+      amount: amountDue,
+      currency: order.currency,
+      merchantReference: order.id,
+      description: `Order ${order.order_number}`,
+      returnUrl,
+    });
+  } catch (err) {
+    // Release the claim — a provider failure must never permanently block a
+    // genuine retry on this order.
+    await sb
+      .from("restaurant_orders")
+      .update({
+        guest_payment_session_reference: null,
+        guest_payment_session_redirect_url: null,
+        guest_payment_session_expires_at: null,
+      })
+      .eq("tenant_id", table.tenantId)
+      .eq("id", order.id);
+    throw err;
+  }
+
+  await sb
+    .from("restaurant_orders")
+    .update({
+      guest_payment_session_reference: initiated.providerReference,
+      guest_payment_session_redirect_url: initiated.redirectUrl,
+      guest_payment_session_expires_at: new Date(
+        Date.now() + GUEST_PAYMENT_SESSION_TTL_MS,
+      ).toISOString(),
+    })
+    .eq("tenant_id", table.tenantId)
+    .eq("id", order.id);
+
+  return { ok: true, status: "redirect", redirectUrl: initiated.redirectUrl };
 }
 
 export type ConfirmGuestPaymentResult =
