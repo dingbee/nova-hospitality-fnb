@@ -372,35 +372,87 @@ export async function declareTenders(
     Number(close.opening_float ?? 0),
   );
 
+  // ME-04: restaurant_tender_declaration_control (DB trigger) requires a
+  // corrected declaration (declared_amount changing on an existing row) to
+  // set revision = previous revision + 1 plus a revision_reason of at
+  // least 5 characters, or it rejects the write outright. The previous
+  // implementation used a single .upsert(..., {onConflict}) call, which
+  // never set either column -- and, worse, an INSERT ... ON CONFLICT DO
+  // UPDATE cannot fix that by supplying revision in the payload either:
+  // Postgres fires the BEFORE INSERT trigger (TG_OP='INSERT') on the
+  // tentative row before the conflict is known, and that trigger branch
+  // unconditionally sets NEW.revision:=1, which is what EXCLUDED.revision
+  // then evaluates to in the DO UPDATE SET clause -- so the subsequent
+  // BEFORE UPDATE firing always sees revision go from the old value to 1,
+  // never old+1, and rejects it. Reproduced against a local replica both
+  // ways before landing on this fix: every correction failed in production
+  // with "A corrected declaration must be recorded as revision N." Fixed
+  // by using a genuine UPDATE for an existing row (proven to respect the
+  // trigger correctly) and a plain INSERT for a new one, instead of upsert.
+  const { data: existingRows } = await sb
+    .from("restaurant_tender_declarations")
+    .select("method, declared_amount, revision")
+    .eq("close_id", close.id);
+  const existingByMethod = new Map<string, { declared_amount: number; revision: number }>(
+    (existingRows ?? []).map((r: any) => [r.method, r]),
+  );
+
   const payload = input.declarations.map((d) => {
     const line = lines.find((l) => l.method === d.method)!;
+    const existing = existingByMethod.get(d.method);
+    const isCorrection =
+      Boolean(existing) && Number(existing!.declared_amount) !== d.declaredAmount;
+    if (isCorrection && (d.notes ?? "").trim().length < 5) {
+      throw new Error(
+        `Correcting the declared ${d.method} amount from ${existing!.declared_amount} to ${d.declaredAmount} requires a reason (at least 5 characters).`,
+      );
+    }
     return {
-      tenant_id: input.tenantId,
-      close_id: close.id,
-      method: d.method,
-      system_amount: line.systemAmount,
-      declared_amount: d.declaredAmount,
-      variance: line.variance,
-      currency: close.currency,
-      notes: d.notes ?? null,
-      declared_by: userId,
-      updated_at: new Date().toISOString(),
+      existing,
+      isCorrection,
+      row: {
+        tenant_id: input.tenantId,
+        close_id: close.id,
+        method: d.method,
+        system_amount: line.systemAmount,
+        declared_amount: d.declaredAmount,
+        variance: line.variance,
+        currency: close.currency,
+        notes: d.notes ?? null,
+        declared_by: userId,
+        updated_at: new Date().toISOString(),
+      },
     };
   });
 
-  const { error } = await sb
-    .from("restaurant_tender_declarations")
-    .upsert(payload, { onConflict: "close_id,method" });
-  if (error) throw new Error(error.message);
+  for (const { existing, isCorrection, row } of payload) {
+    if (!existing) {
+      const { error } = await sb.from("restaurant_tender_declarations").insert(row);
+      if (error) throw new Error(error.message);
+      continue;
+    }
+    const { error } = await sb
+      .from("restaurant_tender_declarations")
+      .update({
+        ...row,
+        revision: isCorrection ? existing.revision + 1 : existing.revision,
+        revision_reason: isCorrection ? (row.notes as string).trim() : null,
+      })
+      .eq("close_id", close.id)
+      .eq("method", row.method);
+    if (error) throw new Error(error.message);
+  }
 
   const declaredVariance = Number(
-    payload.reduce((s, p) => s + Number(p.variance ?? 0), 0).toFixed(2),
+    payload.reduce((s, p) => s + Number(p.row.variance ?? 0), 0).toFixed(2),
   );
   await sb
     .from("restaurant_daily_closes")
     .update({
       status: close.status === "draft" || close.status === "reopened" ? "declared" : close.status,
-      declared_totals: Object.fromEntries(payload.map((p) => [p.method, p.declared_amount])),
+      declared_totals: Object.fromEntries(
+        payload.map((p) => [p.row.method, p.row.declared_amount]),
+      ),
       system_totals: totals as unknown as Record<string, unknown>,
       declared_variance: declaredVariance,
       declared_by: userId,
@@ -420,9 +472,9 @@ export async function declareTenders(
     newState: "declared",
     metadata: {
       declarations: payload.map((p) => ({
-        method: p.method,
-        declared: p.declared_amount,
-        variance: p.variance,
+        method: p.row.method,
+        declared: p.row.declared_amount,
+        variance: p.row.variance,
       })),
     },
   });

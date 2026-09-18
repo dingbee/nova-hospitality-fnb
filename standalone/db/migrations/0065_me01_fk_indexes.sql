@@ -68,24 +68,57 @@ CREATE INDEX IF NOT EXISTS idx_restaurant_approval_rules_tenant_id ON public.res
 -- restaurant_bundle_components
 CREATE INDEX IF NOT EXISTS idx_restaurant_bundle_components_component_product_id ON public.restaurant_bundle_components(component_product_id);
 CREATE INDEX IF NOT EXISTS idx_restaurant_bundle_components_tenant_id ON public.restaurant_bundle_components(tenant_id);
--- restaurant_cash_payout_events
-CREATE INDEX IF NOT EXISTS idx_restaurant_cash_payout_events_tenant_id ON public.restaurant_cash_payout_events(tenant_id);
--- restaurant_cash_payouts
-CREATE INDEX IF NOT EXISTS idx_restaurant_cash_payouts_location_id ON public.restaurant_cash_payouts(location_id);
-CREATE INDEX IF NOT EXISTS idx_restaurant_cash_payouts_property_id ON public.restaurant_cash_payouts(property_id);
+-- restaurant_cash_payout_events / restaurant_cash_payouts: ME-04 guarded on
+-- existence. These tables are not CREATEd until 0076, 11 migrations later
+-- (they, like the functions 0048 revokes/grants, predate this repo's
+-- captured baseline and already existed in production when this migration
+-- ran there); a from-scratch replay reaches this file before 0076 and
+-- would otherwise fail with "relation ... does not exist". No production
+-- impact: these indexes already exist there, and 0076 creates them fresh
+-- (as an index-only IF NOT EXISTS, unaffected by this guard) on a new install.
+do $$
+begin
+  if to_regclass('public.restaurant_cash_payout_events') is not null then
+    execute 'CREATE INDEX IF NOT EXISTS idx_restaurant_cash_payout_events_tenant_id ON public.restaurant_cash_payout_events(tenant_id)';
+  end if;
+  if to_regclass('public.restaurant_cash_payouts') is not null then
+    execute 'CREATE INDEX IF NOT EXISTS idx_restaurant_cash_payouts_location_id ON public.restaurant_cash_payouts(location_id)';
+    execute 'CREATE INDEX IF NOT EXISTS idx_restaurant_cash_payouts_property_id ON public.restaurant_cash_payouts(property_id)';
+  end if;
+end $$;
 -- restaurant_categories
 CREATE INDEX IF NOT EXISTS idx_restaurant_categories_parent_id ON public.restaurant_categories(parent_id);
 CREATE INDEX IF NOT EXISTS idx_restaurant_categories_property_id ON public.restaurant_categories(property_id);
 -- restaurant_daily_closes
 CREATE INDEX IF NOT EXISTS idx_restaurant_daily_closes_location_id ON public.restaurant_daily_closes(location_id);
 CREATE INDEX IF NOT EXISTS idx_restaurant_daily_closes_property_id ON public.restaurant_daily_closes(property_id);
--- restaurant_declaration_revisions
-CREATE INDEX IF NOT EXISTS idx_restaurant_declaration_revisions_tenant_id ON public.restaurant_declaration_revisions(tenant_id);
+-- restaurant_declaration_revisions: ME-04 guarded on existence, same reason
+-- as restaurant_cash_payouts above (not CREATEd until 0076).
+do $$
+begin
+  if to_regclass('public.restaurant_declaration_revisions') is not null then
+    execute 'CREATE INDEX IF NOT EXISTS idx_restaurant_declaration_revisions_tenant_id ON public.restaurant_declaration_revisions(tenant_id)';
+  end if;
+end $$;
 -- restaurant_discount_applications
 CREATE INDEX IF NOT EXISTS idx_restaurant_discount_applications_discount_rule_id ON public.restaurant_discount_applications(discount_rule_id);
 CREATE INDEX IF NOT EXISTS idx_restaurant_discount_applications_order_id ON public.restaurant_discount_applications(order_id);
 CREATE INDEX IF NOT EXISTS idx_restaurant_discount_applications_order_item_id ON public.restaurant_discount_applications(order_item_id);
-CREATE INDEX IF NOT EXISTS idx_restaurant_discount_applications_reverses_id ON public.restaurant_discount_applications(reverses_id);
+-- reverses_id: ME-04 guarded on existence. The restaurant_discount_
+-- applications table itself exists since 0001, but this column is not
+-- ADDed until 0076 (same reason as the guards above).
+do $$
+begin
+  if to_regclass('public.restaurant_discount_applications') is not null
+     and exists (
+       select 1 from information_schema.columns
+       where table_schema = 'public' and table_name = 'restaurant_discount_applications'
+         and column_name = 'reverses_id'
+     )
+  then
+    execute 'CREATE INDEX IF NOT EXISTS idx_restaurant_discount_applications_reverses_id ON public.restaurant_discount_applications(reverses_id)';
+  end if;
+end $$;
 -- restaurant_discount_rules
 CREATE INDEX IF NOT EXISTS idx_restaurant_discount_rules_location_id ON public.restaurant_discount_rules(location_id);
 CREATE INDEX IF NOT EXISTS idx_restaurant_discount_rules_property_id ON public.restaurant_discount_rules(property_id);
