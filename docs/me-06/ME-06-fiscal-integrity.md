@@ -2,7 +2,7 @@
 
 ## A. Executive certification
 
-- **Baseline**: `claude/me-00-baseline-lock` @ `07b052aa62cfe047ba04264e464ef158b4ecd94a` (ME-01/02/03 corrective integration + ME-04 Financial Integrity Certification, both merged).
+- **Baseline**: `claude/me-00-baseline-lock` @ `892b257292ea2f9725131f38be39287ad0a29009` (ME-05 Inventory Integrity Certification, PR #24, merged).
 - **Branch**: `claude/me-06-fiscal-integrity`.
 - **Production**: Supabase project `nova-hospitality-fnb` (`lusiqcmxfxhnehxmwihs`). Two migrations were applied directly to production this pass (`me06_payment_refund_integrity_reconstruction`, a no-op reconciliation, and `me06_refund_retry_idempotency`, a real behavioral fix — both verified live; see section E). Everything else lives in this branch's PR (draft, **not merged** — a human authorizes any merge, per this programme's standing rule).
 - **Method**: matching ME-04's own precedent, a genuine local Postgres 16 replica was built by replaying the full migration chain (`local/scripts/init-db.sh`) against a clean database, seeded with synthetic multi-tenant fixtures, and driven with real concurrent `psql` background transactions synchronized on `pg_sleep(1)` so both sides of a race genuinely overlap before either commits. Every concurrency claim below is backed by that replica, not by reading SQL and reasoning about it.
