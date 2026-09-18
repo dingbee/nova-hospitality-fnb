@@ -32,6 +32,18 @@ async function explode(
   multiplier: number,
   path: string[],
   out: ExplodedLine[],
+  // Dedupe-key lineage — distinct from `path` (which tracks bare recipe ids
+  // for cycle detection only). When a childless sub-recipe is exploded, its
+  // own lines' `line.id`s are identical regardless of which parent line
+  // referenced it; keying purely on `${recipeId}:${line.id}` then collides
+  // if the SAME sub-recipe is referenced by two different lines of the same
+  // parent, silently dropping the second reference's ledger writes (23505
+  // treated as "already applied"). Threading the calling line's id into the
+  // prefix on every recursive step keeps each distinct reference path's keys
+  // unique. Defaults to `recipeId` so a non-recursive (top-level) line's key
+  // is unchanged from before this fix — no dedupe-key churn for the common
+  // case or for already-posted orders.
+  keyPrefix: string = recipeId,
 ): Promise<void> {
   if (path.includes(recipeId)) throw new CircularRecipeError([...path, recipeId]);
 
@@ -69,11 +81,19 @@ async function explode(
           inventoryItemId: sub.produces_inventory_item_id,
           unitId: line.unit_id ?? null,
           quantity: effective,
-          key: `${recipeId}:${line.id}`,
+          key: `${keyPrefix}:${line.id}`,
         });
       } else if (sub) {
         const yieldQty = Number(sub.yield_quantity ?? 1) || 1;
-        await explode(sb, tenantId, sub.id, effective / yieldQty, [...path, recipeId], out);
+        await explode(
+          sb,
+          tenantId,
+          sub.id,
+          effective / yieldQty,
+          [...path, recipeId],
+          out,
+          `${keyPrefix}:${line.id}:${sub.id}`,
+        );
       }
       continue;
     }
@@ -82,7 +102,7 @@ async function explode(
         inventoryItemId: line.inventory_item_id,
         unitId: line.unit_id ?? null,
         quantity: effective,
-        key: `${recipeId}:${line.id}`,
+        key: `${keyPrefix}:${line.id}`,
       });
     }
   }

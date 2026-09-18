@@ -596,6 +596,7 @@ export const transferStockSchema = tenantScopeSchema.extend({
   quantity: z.number().min(0.0001),
   unitId: uuid.optional(),
   reason: z.string().max(200).optional(),
+  dedupeKey: z.string().max(200).optional(),
 });
 export type TransferStockInput = z.infer<typeof transferStockSchema>;
 
