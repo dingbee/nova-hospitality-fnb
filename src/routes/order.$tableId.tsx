@@ -1739,6 +1739,8 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
               {initiateResult.reason === "not_payable" &&
                 "This order can no longer be paid online."}
               {initiateResult.reason === "already_paid" && "This order is already settled."}
+              {initiateResult.reason === "initiation_in_progress" &&
+                "A payment is already being started for this order — please wait a moment and try again."}
             </p>
           )}
           {(initiate.isError || confirm.isError) && (
