@@ -23,6 +23,7 @@ import { assertTenantRead } from "../core/access.server";
 import { round } from "./analysis";
 import { fillDailySeries, forecastFromDailySeries } from "./forecast";
 import { getPurchasingIntelligence } from "./purchasing.server";
+import { fetchFullyRefundedOrderIds } from "./revenueRecognition.server";
 import { assessDataSufficiency } from "./sufficiency";
 import type { RestaurantInsight } from "./types";
 import type { ForecastingIntelligence, P05ForecastWindowInput } from "./p05.types";
@@ -48,10 +49,9 @@ export async function getForecastingIntelligence(
 
   let ordersQuery = sb
     .from("restaurant_orders")
-    .select("opened_at, total, currency, payment_state")
+    .select("id, opened_at, total, paid_total, currency, payment_state")
     .eq("tenant_id", tenantId)
     .eq("status", "closed")
-    .neq("payment_state", "refunded")
     .gte("opened_at", start);
   if (input.propertyId) ordersQuery = ordersQuery.eq("property_id", input.propertyId);
   if (input.locationId) ordersQuery = ordersQuery.eq("location_id", input.locationId);
@@ -66,7 +66,8 @@ export async function getForecastingIntelligence(
     }),
   ]);
 
-  const orders = (orderRows ?? []) as any[];
+  const fullyRefundedIds = await fetchFullyRefundedOrderIds(sb, tenantId, (orderRows ?? []) as any[]);
+  const orders = ((orderRows ?? []) as any[]).filter((o) => !fullyRefundedIds.has(o.id));
   const currency = orders[0]?.currency ?? purchasing.currency ?? "TZS";
 
   const orderCountByDay = new Map<string, number>();

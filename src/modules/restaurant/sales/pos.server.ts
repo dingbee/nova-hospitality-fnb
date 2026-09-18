@@ -826,6 +826,18 @@ export async function reopenPosOrder(sb: Sb, userId: string, input: ReopenPosOrd
   });
   if (order.status !== "closed") throw new Error("Only a closed bill can be reopened.");
 
+  const { data: fiscalReceipt } = await sb
+    .from("restaurant_fiscal_receipts")
+    .select("state")
+    .eq("tenant_id", input.tenantId)
+    .eq("order_id", input.orderId)
+    .maybeSingle();
+  if (fiscalReceipt?.state === "fiscalized") {
+    throw new Error(
+      "This bill has already been fiscalized and reported to the tax authority. It cannot be reopened or edited — the reported totals must stay traceable to what was submitted.",
+    );
+  }
+
   const { data: updated, error } = await sb
     .from("restaurant_orders")
     .update({
