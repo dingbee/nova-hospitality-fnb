@@ -56,6 +56,15 @@ export default {
       return healthResponse();
     }
 
+    // P02 — LexiBite Demo Access public API for Nolmark/Lovable. See
+    // src/modules/lexibite-demo/http.server.ts and
+    // docs/p02/README-nolmark-integration.md for the full contract.
+    if (url.pathname.startsWith("/api/public/demo/")) {
+      const { handleDemoPublicApi } = await import("./modules/lexibite-demo/http.server");
+      const response = await handleDemoPublicApi(request);
+      if (response) return response;
+    }
+
     return startHandler(request);
   },
 };
