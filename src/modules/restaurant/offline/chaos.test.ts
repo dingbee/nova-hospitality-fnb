@@ -15,8 +15,15 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDb, DB_NAME, isStorageAvailable, resetDbConnectionForTests } from "./db";
-import { enqueue, listQueueForTenant, transitionQueueEntry } from "./queue";
-import { syncPendingQueue, type SyncCallers } from "./syncEngine";
+import {
+  enqueue,
+  getQueueEntry,
+  listQueueForTenant,
+  pruneSynced,
+  totalQueueDepth,
+  transitionQueueEntry,
+} from "./queue";
+import { syncPendingQueue, syncStatusFor, type SyncCallers } from "./syncEngine";
 
 beforeEach(async () => {
   await closeDb();
@@ -203,6 +210,110 @@ describe("Chaos — device restart (full cold start)", () => {
     const summary = await syncPendingQueue(TENANT, makeCallers());
     expect(summary.synced).toBe(1);
   });
+});
+
+describe("ME-09 — realistic queue size / storage-load behavior", () => {
+  it("a device that queued 500 operations across a busy offline shift replays every one correctly, in order, with no loss and a consistent final state breakdown", async () => {
+    const COUNT = 500;
+    const clientRequestIds = Array.from({ length: COUNT }, (_, i) => `bulk-${i}`);
+    const indexByClientRequestId = new Map(clientRequestIds.map((id, i) => [id, i]));
+    for (const clientRequestId of clientRequestIds) {
+      await enqueue({
+        clientRequestId,
+        deviceId: "device-1",
+        tenantId: TENANT,
+        propertyId: null,
+        outletId: null,
+        operationType: "open_order",
+        payload: { clientRequestId },
+      });
+    }
+    expect(await totalQueueDepth()).toBe(COUNT);
+
+    // Fail every 10th deterministically to prove partial failure at scale
+    // doesn't corrupt or lose sibling entries (P10/ME-09 invariant G).
+    const openOrder = vi.fn(async (p: any) => {
+      const index = indexByClientRequestId.get(p.clientRequestId)!;
+      if (index % 10 === 0) throw new Error("persistent 500");
+      return { id: `server-${p.clientRequestId}` };
+    });
+    const callers = makeCallers({ openOrder });
+
+    // Enough passes to drive the failing 10% to DEAD_LETTER
+    // (MAX_ATTEMPTS_BEFORE_DEAD_LETTER = 5) without looping unboundedly.
+    for (let i = 0; i < 5; i += 1) await syncPendingQueue(TENANT, callers);
+
+    const all = await listQueueForTenant(TENANT);
+    expect(all).toHaveLength(COUNT);
+    // Local sequence order is preserved regardless of batch size.
+    expect(all.map((o) => o.sequence)).toEqual(
+      [...all].sort((a, b) => a.sequence - b.sequence).map((o) => o.sequence),
+    );
+
+    const synced = all.filter((o) => o.state === "SYNCED");
+    const deadLettered = all.filter((o) => o.state === "DEAD_LETTER");
+    expect(synced).toHaveLength(COUNT - COUNT / 10);
+    expect(deadLettered).toHaveLength(COUNT / 10);
+
+    const status = await syncStatusFor(TENANT);
+    expect(status.synced).toBe(COUNT - COUNT / 10);
+    expect(status.deadLettered).toBe(COUNT / 10);
+    expect(status.pending).toBe(0);
+  }, 20_000); // 500 ops x 5 sync passes over fake-indexeddb genuinely takes longer than the 5s default under full-suite parallel load; this is bulk I/O, not a hang.
+
+  it("pruning at scale removes only aged SYNCED entries and leaves every non-terminal/recent entry intact, without pathological slowdown or partial application", async () => {
+    const OLD_SYNCED = 300;
+    const RECENT_SYNCED = 50;
+    const STILL_PENDING = 20;
+    const { put: dbPut, STORES: dbStores } = await import("./db");
+
+    for (let i = 0; i < OLD_SYNCED; i += 1) {
+      const op = await enqueue({
+        clientRequestId: `old-${i}`,
+        deviceId: "device-1",
+        tenantId: TENANT,
+        propertyId: null,
+        outletId: null,
+        operationType: "open_order",
+        payload: {},
+      });
+      await transitionQueueEntry(op.operationId, { state: "SYNCED" });
+      const raw = await getQueueEntry(op.operationId);
+      await dbPut(dbStores.queue, { ...raw, createdAt: new Date(0).toISOString() });
+    }
+    for (let i = 0; i < RECENT_SYNCED; i += 1) {
+      const op = await enqueue({
+        clientRequestId: `recent-${i}`,
+        deviceId: "device-1",
+        tenantId: TENANT,
+        propertyId: null,
+        outletId: null,
+        operationType: "open_order",
+        payload: {},
+      });
+      await transitionQueueEntry(op.operationId, { state: "SYNCED" });
+    }
+    for (let i = 0; i < STILL_PENDING; i += 1) {
+      await enqueue({
+        clientRequestId: `pending-${i}`,
+        deviceId: "device-1",
+        tenantId: TENANT,
+        propertyId: null,
+        outletId: null,
+        operationType: "open_order",
+        payload: {},
+      });
+    }
+
+    expect(await totalQueueDepth()).toBe(OLD_SYNCED + RECENT_SYNCED + STILL_PENDING);
+    const removed = await pruneSynced(TENANT);
+    expect(removed).toBe(OLD_SYNCED);
+
+    const remaining = await listQueueForTenant(TENANT);
+    expect(remaining).toHaveLength(RECENT_SYNCED + STILL_PENDING);
+    expect(remaining.filter((o) => o.state === "SYNCED")).toHaveLength(RECENT_SYNCED);
+    expect(remaining.filter((o) => o.state === "PENDING")).toHaveLength(STILL_PENDING);
+  }, 20_000); // ~370 sequential IndexedDB round trips genuinely takes longer than the 5s default under full-suite parallel load.
 });
 
 describe("Chaos — storage unavailable at the moment of enqueue", () => {
