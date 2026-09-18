@@ -176,7 +176,7 @@ export async function resolveGuestTableContext(
  *   pre-check here just gives a clean, hospitality-worded refusal instead
  *   of a constraint-violation error in the common case.
  */
-export type ResolvedGuestSession = { token: string; sessionId: string };
+export type ResolvedGuestSession = { token: string; sessionId: string; created: boolean };
 
 export async function resolveOrStartGuestSession(
   sb: Sb,
@@ -210,7 +210,7 @@ export async function resolveOrStartGuestSession(
         .from("restaurant_guest_sessions")
         .update({ last_activity_at: nowIso, expires_at: expiresAt })
         .eq("id", existing.id);
-      return { token: presentedToken, sessionId: existing.id };
+      return { token: presentedToken, sessionId: existing.id, created: false };
     }
   }
 
@@ -246,7 +246,7 @@ export async function resolveOrStartGuestSession(
     // another request just won the same table. Same refusal either way.
     throw new Error(GUEST_SESSION_TABLE_OCCUPIED_MESSAGE);
   }
-  return { token, sessionId: created.id };
+  return { token, sessionId: created.id, created: true };
 }
 
 /**
@@ -410,17 +410,32 @@ export async function submitGuestOrder(
     modifiers: l.modifiers,
   }));
 
-  const order = await createGuestOrder(sb, {
-    tenantId: table.tenantId,
-    propertyId: table.propertyId,
-    locationId: table.locationId,
-    tableId: table.tableId,
-    guestName: input.guestName ?? null,
-    currency: table.currency,
-    lines: salesLines,
-    clientRequestId: input.clientRequestId ?? null,
-    guestSessionId: session.sessionId,
-  });
+  let order;
+  try {
+    order = await createGuestOrder(sb, {
+      tenantId: table.tenantId,
+      propertyId: table.propertyId,
+      locationId: table.locationId,
+      tableId: table.tableId,
+      guestName: input.guestName ?? null,
+      currency: table.currency,
+      lines: salesLines,
+      clientRequestId: input.clientRequestId ?? null,
+      guestSessionId: session.sessionId,
+    });
+  } catch (err) {
+    // ME-07: createGuestOrder failing here (e.g. a stale modifier) never
+    // reaches the response that would hand the guest their session token —
+    // so a session freshly created for *this* attempt would otherwise sit
+    // "active" and block the table (one-active-session-per-table) until its
+    // 3-hour idle window lapses, locking the guest out of their own retry.
+    // A *reused* session is never touched: it's the guest's real, ongoing
+    // session and may already carry other orders.
+    if (session.created) {
+      await closeActiveGuestSession(sb, table.tableId, "order_creation_failed");
+    }
+    throw err;
+  }
 
   // A guest tapping "Send order" IS the send-to-kitchen action — there is no
   // separate staff review step in this flow, and the confirmation screen

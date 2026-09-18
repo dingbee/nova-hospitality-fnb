@@ -45,11 +45,15 @@ function makeFakeSupabase(initial: Record<string, any[]>) {
   for (const [table, rows] of Object.entries(initial)) store[table] = rows.map((r) => ({ ...r }));
   let seq = 0;
   const nextId = (table: string) => `${table}-${++seq}`;
+  // ME-07 — simulates a one-off raw DB failure (e.g. a NOT NULL/CHECK
+  // violation unrelated to the client_request_id conflict path above), to
+  // prove such an error never reaches the guest verbatim. Consumed once.
+  const forcedInsertErrors: Record<string, { code?: string; message: string } | undefined> = {};
 
   function from(table: string) {
     if (!store[table]) store[table] = [];
     const filters: Array<(r: any) => boolean> = [];
-    let op: "select" | "insert" | "update" = "select";
+    let op: "select" | "insert" | "update" | "delete" = "select";
     let payload: any;
     let limitN: number | null = null;
 
@@ -67,6 +71,11 @@ function makeFakeSupabase(initial: Record<string, any[]>) {
         return { data: matched, error: null };
       }
       if (op === "insert") {
+        if (forcedInsertErrors[table]) {
+          const err = forcedInsertErrors[table];
+          forcedInsertErrors[table] = undefined;
+          return { data: null, error: err };
+        }
         const incoming = Array.isArray(payload) ? payload : [payload];
         if (table === "restaurant_orders") {
           for (const row of incoming) {
@@ -108,6 +117,11 @@ function makeFakeSupabase(initial: Record<string, any[]>) {
         if (mode === "maybeSingle") return { data: matched[0] ?? null, error: null };
         return { data: matched, error: null };
       }
+      if (op === "delete") {
+        const matched = rows.filter((r) => filters.every((f) => f(r)));
+        store[table] = rows.filter((r) => !filters.every((f) => f(r)));
+        return { data: matched, error: null };
+      }
       return { data: null, error: null };
     }
 
@@ -145,6 +159,10 @@ function makeFakeSupabase(initial: Record<string, any[]>) {
         payload = patch;
         return api;
       },
+      delete() {
+        op = "delete";
+        return api;
+      },
       maybeSingle: () => Promise.resolve(execute("maybeSingle")),
       single: () => Promise.resolve(execute("single")),
       then(onFulfilled: any, onRejected: any) {
@@ -154,7 +172,13 @@ function makeFakeSupabase(initial: Record<string, any[]>) {
     return api;
   }
 
-  return { from, store } as any;
+  return {
+    from,
+    store,
+    forceInsertError(table: string, error: { code?: string; message: string }) {
+      forcedInsertErrors[table] = error;
+    },
+  } as any;
 }
 
 function baseRows(overrides: Partial<Record<string, any[]>> = {}) {
@@ -630,10 +654,10 @@ describe("submitGuestOrder — guest pricing integrity (P0 remediation)", () => 
         clientRequestId: "req-fake-mod",
       }),
     ).rejects.toThrow(/not available for this item/);
-    // The order header may exist (it's created before lines are priced —
-    // an orphaned open order is a pre-existing atomicity question, not a
-    // pricing one), but no order item — and therefore no money — was ever
-    // recorded for the fabricated/wrong/inactive modifier.
+    // ME-07: the order header is created before lines are priced, but
+    // insertLines throwing is now compensated — no orphaned empty order,
+    // and no order item/money for the fabricated modifier either.
+    expect(sb.store.restaurant_orders).toHaveLength(0);
     expect(sb.store.restaurant_order_items).toHaveLength(0);
   });
 
@@ -658,10 +682,8 @@ describe("submitGuestOrder — guest pricing integrity (P0 remediation)", () => 
         clientRequestId: "req-wrong-item-mod",
       }),
     ).rejects.toThrow(/not available for this item/);
-    // The order header may exist (it's created before lines are priced —
-    // an orphaned open order is a pre-existing atomicity question, not a
-    // pricing one), but no order item — and therefore no money — was ever
-    // recorded for the fabricated/wrong/inactive modifier.
+    // ME-07: no orphaned empty order, and no order item/money either.
+    expect(sb.store.restaurant_orders).toHaveLength(0);
     expect(sb.store.restaurant_order_items).toHaveLength(0);
   });
 
@@ -685,10 +707,8 @@ describe("submitGuestOrder — guest pricing integrity (P0 remediation)", () => 
         clientRequestId: "req-inactive-mod",
       }),
     ).rejects.toThrow(/not available for this item/);
-    // The order header may exist (it's created before lines are priced —
-    // an orphaned open order is a pre-existing atomicity question, not a
-    // pricing one), but no order item — and therefore no money — was ever
-    // recorded for the fabricated/wrong/inactive modifier.
+    // ME-07: no orphaned empty order, and no order item/money either.
+    expect(sb.store.restaurant_orders).toHaveLength(0);
     expect(sb.store.restaurant_order_items).toHaveLength(0);
   });
 
@@ -751,5 +771,115 @@ describe("submitGuestOrder — guest pricing integrity (P0 remediation)", () => 
     // Every cent of the true 2000 price is still charged.
     expect(item.line_total + item.discount).toBe(2000);
     expect(item.discount).toBe(0);
+  });
+});
+
+/**
+ * ME-07 — guest order creation atomicity (mandate Section 8, Failure case A:
+ * "order exists but order items do not").
+ *
+ * createGuestOrder inserts the restaurant_orders header, then calls
+ * insertLines separately. insertLines can throw (e.g. a modifier that went
+ * stale between menu load and submit — resolveLineModifiersStrict). Before
+ * this fix, the header committed regardless, and because it already carried
+ * the guest's clientRequestId, submitGuestOrder's own idempotency check
+ * (selforder.server.ts) would hand that empty order back on every retry as
+ * "idempotent: true" — a permanently broken order the guest could never
+ * complete, silently reported as a success.
+ */
+describe("submitGuestOrder — order creation atomicity (ME-07)", () => {
+  it("insertLines failing after the order header is created does not leave an orphaned empty order", async () => {
+    const sb = makeFakeSupabase(pricingAttackRows());
+    await expect(
+      submitGuestOrder(sb, {
+        tableId: TABLE,
+        lines: [
+          colaLine({
+            modifiers: [
+              { modifierId: "modifier-does-not-exist", name: "FAKE", priceDelta: 0, quantity: 1 },
+            ],
+          }),
+        ],
+        clientRequestId: "req-atomicity",
+      }),
+    ).rejects.toThrow(/not available for this item/);
+    expect(sb.store.restaurant_orders).toHaveLength(0);
+    expect(sb.store.restaurant_order_items).toHaveLength(0);
+  });
+
+  it("retrying the same clientRequestId after that failure places a genuine order, instead of resolving to a poisoned empty one", async () => {
+    const sb = makeFakeSupabase(pricingAttackRows());
+    await expect(
+      submitGuestOrder(sb, {
+        tableId: TABLE,
+        lines: [
+          colaLine({
+            modifiers: [
+              { modifierId: "modifier-does-not-exist", name: "FAKE", priceDelta: 0, quantity: 1 },
+            ],
+          }),
+        ],
+        clientRequestId: "req-atomicity-retry",
+      }),
+    ).rejects.toThrow();
+
+    // Guest fixes their cart (drops the bad modifier) and retries with the
+    // same clientRequestId, as the recovery flow (selforder-recovery.ts)
+    // intends for any retry of "the same confirm attempt".
+    const retry = await submitGuestOrder(sb, {
+      tableId: TABLE,
+      lines: [colaLine()],
+      clientRequestId: "req-atomicity-retry",
+    });
+    expect(retry.idempotent).toBe(false);
+    expect(sb.store.restaurant_orders).toHaveLength(1);
+    expect(sb.store.restaurant_order_items).toHaveLength(1);
+  });
+});
+
+/**
+ * ME-07 — guest-facing error sanitization (mandate Section 20: "Search for
+ * raw Supabase/Postgres error propagation. Replace unsafe internal errors
+ * with appropriate guest-safe responses while preserving server
+ * diagnostics.")
+ *
+ * createGuestOrder/insertLines are reached through a createServerFn handler
+ * (selforder.functions.ts) with no error-sanitization layer of its own —
+ * whatever Error.message a thrown error carries is what reaches the guest's
+ * browser verbatim. A raw Postgres error (constraint/column/table names,
+ * internal detail) must never be one of them for the guest path, while the
+ * trusted staff/POS path (which already authenticates and capability-checks
+ * its caller) keeps the detailed message unchanged.
+ */
+describe("submitGuestOrder — guest-facing error sanitization (ME-07)", () => {
+  it("a raw DB error on the order_items insert reaches the guest as a generic, safe message, not the Postgres internals", async () => {
+    const sb = makeFakeSupabase(baseRows());
+    sb.forceInsertError("restaurant_order_items", {
+      code: "23514",
+      message:
+        'new row for relation "restaurant_order_items" violates check constraint "restaurant_order_items_quantity_check"',
+    });
+    await expect(
+      submitGuestOrder(sb, {
+        tableId: TABLE,
+        lines: [colaLine()],
+        clientRequestId: "req-raw-db-error",
+      }),
+    ).rejects.toThrow(/couldn't process your order/i);
+  });
+
+  it("a raw DB error on the order header insert (not a client_request_id conflict) reaches the guest as a generic, safe message", async () => {
+    const sb = makeFakeSupabase(baseRows());
+    sb.forceInsertError("restaurant_orders", {
+      code: "23502",
+      message: 'null value in column "location_id" violates not-null constraint',
+    });
+    await expect(
+      submitGuestOrder(sb, {
+        tableId: TABLE,
+        lines: [colaLine()],
+        clientRequestId: "req-raw-db-error-header",
+      }),
+    ).rejects.toThrow(/couldn't process your order/i);
   });
 });
