@@ -259,8 +259,34 @@ export async function refundPayment(sb: Sb, userId: string, input: RefundPayment
     .single();
   if (!original) throw new Error("Payment not found.");
   if (original.order_id !== input.orderId) throw new Error("That payment belongs to a different bill.");
-  if (input.amount > num(original.amount) + 0.001) {
-    throw new Error("A refund cannot exceed the payment it reverses.");
+
+  // ME-06: a refund must never be checked against the original payment's
+  // amount alone — that only catches a single refund larger than the whole
+  // payment, not two-or-more partial refunds that individually pass but
+  // together exceed it. Sum what has already been refunded against this
+  // same payment first. Production already enforces this at the database
+  // layer via restaurant_payment_refund_integrity (a trigger that predates
+  // this repository's Git history — reconstructed into migration 0081,
+  // which also locks the original row so concurrent refund attempts
+  // serialize correctly); that same trigger had its own retry-idempotency
+  // bug, fixed in migration 0082. This application-level check exists so a
+  // caller gets a clear message instead of a raw constraint error.
+  const { data: priorRefunds } = await sb
+    .from("restaurant_payments")
+    .select("amount, client_request_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("refund_of", original.id)
+    .eq("state", "refunded");
+  // A retry of this same idempotent request already exists as its own row —
+  // it is this refund, not an additional one; exclude it from the sum (the
+  // insert-then-recover path below returns that existing row unchanged).
+  const alreadyRefunded = ((priorRefunds ?? []) as any[])
+    .filter((p) => !input.clientRequestId || p.client_request_id !== input.clientRequestId)
+    .reduce((s, p) => s + Math.abs(num(p.amount)), 0);
+  if (alreadyRefunded + input.amount > num(original.amount) + 0.001) {
+    throw new Error(
+      `A refund cannot exceed the payment it reverses. ${alreadyRefunded.toFixed(2)} of ${num(original.amount).toFixed(2)} already refunded.`,
+    );
   }
 
   // ME-04: a pre-check-then-insert here left the same race ME-03 already

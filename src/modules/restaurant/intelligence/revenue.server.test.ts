@@ -42,11 +42,17 @@ beforeEach(() => {
 });
 
 describe("getRevenueIntelligence — correctness", () => {
-  it("sums revenue from closed, non-refunded orders and excludes refunded ones", async () => {
+  it("sums revenue from closed, non-refunded orders and excludes fully-refunded ones", async () => {
+    // ME-06: restaurant_orders.payment_state can never actually become
+    // "refunded" in the real application (recalcOrder only ever writes
+    // unpaid/partially_paid/paid) — a fully-refunded closed order instead
+    // settles back to paid_total 0 with payment_state "unpaid", plus a
+    // restaurant_payments row recording the refund. That is the shape this
+    // fixture must exercise to prove the real exclusion path.
     const orders = [
       order(1, 10000, { id: "o1" }),
       order(2, 5000, { id: "o2" }),
-      order(1, 99999, { id: "o-refunded", payment_state: "refunded" }),
+      order(1, 99999, { id: "o-refunded", payment_state: "unpaid", paid_total: 0 }),
       order(1, 99999, { id: "o-open", status: "open" }),
     ];
     const sb = createP05FakeSupabase({
@@ -56,6 +62,24 @@ describe("getRevenueIntelligence — correctness", () => {
       restaurant_service_periods: [{ id: "period-lunch", tenant_id: TENANT_A, name: "Lunch" }],
       restaurant_order_items: [],
       restaurant_profitability_snapshots: [],
+      restaurant_payments: [
+        {
+          id: "pay-orig",
+          tenant_id: TENANT_A,
+          order_id: "o-refunded",
+          state: "refunded",
+          refund_of: null,
+          amount: 99999,
+        },
+        {
+          id: "pay-refund",
+          tenant_id: TENANT_A,
+          order_id: "o-refunded",
+          state: "refunded",
+          refund_of: "pay-orig",
+          amount: -99999,
+        },
+      ],
     });
 
     const result = await getRevenueIntelligence(sb, OWNER, { tenantId: TENANT_A, windowDays: 30 });

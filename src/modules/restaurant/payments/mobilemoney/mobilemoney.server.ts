@@ -754,9 +754,35 @@ export async function reverseMobileMoneyCollection(
     propertyId: collection.property_id,
     locationId: collection.location_id,
   });
-  if (collection.state !== "paid") throw new Error("Only a paid collection can be reversed.");
 
   const amount = input.amount ?? Number(collection.amount);
+  if (amount > Number(collection.amount) + 0.005) {
+    throw new Error("A reversal cannot exceed the amount collected.");
+  }
+
+  // ME-06: the old code read collection.state, checked it !== "paid" in
+  // application code, then only marked the collection "reversed" at the
+  // very end (patchCollection with a plain, unconditional UPDATE). Two
+  // concurrent reversal calls could both read state === "paid" before
+  // either write landed — both would call the provider's reversal API,
+  // both would insert their own restaurant_mobile_money_refunds row
+  // (that table carries no idempotency/uniqueness constraint), and both
+  // would mark restaurant_payments "refunded", double-reversing a single
+  // collection with no error to either caller. Fixed by claiming the
+  // transition atomically first — a conditional UPDATE ... WHERE
+  // state = 'paid' — before any external call or ledger write; a second,
+  // concurrent caller's claim affects zero rows and is rejected before it
+  // ever touches the provider or the refund/payment tables.
+  const { data: claimed } = await sb
+    .from("restaurant_mobile_money_collections")
+    .update({ state: "reversed", updated_at: new Date().toISOString() })
+    .eq("tenant_id", input.tenantId)
+    .eq("id", collection.id)
+    .eq("state", "paid")
+    .select("*")
+    .single();
+  if (!claimed) throw new Error("Only a paid collection can be reversed.");
+
   const adapter = getConfiguredMobileMoneyAdapter(collection.mode, collection.environment);
   const reversal =
     adapter && collection.provider_reference
@@ -794,8 +820,6 @@ export async function reverseMobileMoneyCollection(
     .single();
   if (error) throw new Error(error.message);
 
-  const reversed = await patchCollection(sb, collection.id, input.tenantId, { state: "reversed" });
-
   const { recalcOrder } = await import("../../sales/sales.server");
   await recalcOrder(sb, input.tenantId, collection.order_id);
 
@@ -810,7 +834,7 @@ export async function reverseMobileMoneyCollection(
     payload: { amount, provider_automatic: reversal.outcome === "reversed" },
   });
 
-  return { collection: toStatusView(reversed), refund };
+  return { collection: toStatusView(claimed), refund };
 }
 
 // ---------------------------------------------------------------------------

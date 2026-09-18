@@ -18,6 +18,7 @@
  */
 import { accessibleLocationIds, assertTenantRead, getTenantScope } from "../core/access.server";
 import { getInventoryIntelligence } from "./inventory.server";
+import { fetchFullyRefundedOrderIds } from "./revenueRecognition.server";
 import { round } from "./analysis";
 import type { RestaurantInsight } from "./types";
 import type { LocationSummary, MultiLocationIntelligence, PropertyRollup } from "./p05.types";
@@ -90,14 +91,14 @@ export async function getMultiLocationIntelligence(
 
   const { data: orderRows } = await sb
     .from("restaurant_orders")
-    .select("location_id, total, currency")
+    .select("id, location_id, total, paid_total, currency")
     .eq("tenant_id", tenantId)
     .eq("status", "closed")
-    .neq("payment_state", "refunded")
     .gte("opened_at", start)
     .in("location_id", locationIds);
 
-  const orders = (orderRows ?? []) as any[];
+  const fullyRefundedIds = await fetchFullyRefundedOrderIds(sb, tenantId, (orderRows ?? []) as any[]);
+  const orders = ((orderRows ?? []) as any[]).filter((o) => !fullyRefundedIds.has(o.id));
   const currency = orders[0]?.currency ?? "TZS";
   const revenueByLocation = new Map<string, { revenue: number; orders: number }>();
   for (const o of orders) {

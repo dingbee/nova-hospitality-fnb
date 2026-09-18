@@ -26,6 +26,36 @@
  * in refundPayment (bill.server.ts) — same table, same
  * (tenant_id, client_request_id) unique index, same race. Fixed the same
  * way and covered below.
+ *
+ * ME-06 found a second, more severe defect in the same function: the
+ * overage check compared a new refund's amount only against the ORIGINAL
+ * payment's amount, never against refunds already recorded against that
+ * same payment. Two distinct partial refunds, each individually within the
+ * original amount, together silently exceeded it at the application layer.
+ * (Production, it turned out, already carries a database-level guard for
+ * this — restaurant_payment_refund_integrity, a trigger that predates this
+ * repository's Git history and was reconstructed into migration 0081 — so
+ * this specific overage was never actually reachable in production; the
+ * application-level bug still mattered on its own, since the same
+ * insert would otherwise have surfaced the DB trigger's raw error to the
+ * caller with no clear explanation.) Fixed by summing prior refunds
+ * against the same refund_of id (excluding this exact request's own retry,
+ * so idempotency above is unaffected) and rejecting the insert when the
+ * cumulative total would exceed the original payment — mirroring exactly
+ * what the reconstructed database trigger already enforces.
+ *
+ * Reconstructing that trigger also surfaced a genuine, independent,
+ * currently-live production defect in it: it excluded only the row being
+ * inserted (`id<>NEW.id`) from its "already refunded" sum, not any prior
+ * row sharing the same client_request_id — so a legitimate idempotent
+ * retry of a full-amount refund was incorrectly rejected with "Refund
+ * exceeds original payment" instead of resolving via the
+ * (tenant_id, client_request_id) unique index, because this is a BEFORE
+ * INSERT trigger and fires before that index is ever checked. Fixed in
+ * migration 0082, proven against a local Postgres replica running the
+ * exact reconstructed trigger, including with 10 genuinely concurrent
+ * refund attempts against the same payment (see
+ * docs/me-06/ME-06-fiscal-integrity.md).
  */
 import { describe, expect, it, vi } from "vitest";
 import { recordPayment } from "./sales.server";
@@ -268,5 +298,62 @@ describe("refundPayment — double submission (ME-04)", () => {
       (r: any) => r.client_request_id === "refund-retry-1",
     );
     expect(refundRows).toHaveLength(1);
+  });
+
+  it("a second distinct partial refund cannot push the cumulative total past the original payment (ME-06)", async () => {
+    const original = {
+      id: "payment-original",
+      tenant_id: TENANT,
+      order_id: ORDER,
+      amount: 40,
+      method: "cash",
+      state: "paid",
+    };
+    const sb = fakeDb({ orders: [baseOrder()], orderItems: [], payments: [original] });
+
+    const first = await refundPayment(sb, USER, {
+      tenantId: TENANT,
+      orderId: ORDER,
+      paymentId: original.id,
+      amount: 25,
+      reason: "partial refund 1",
+      clientRequestId: "refund-partial-1",
+    } as any);
+    expect(first.duplicate).toBe(false);
+
+    // 25 already refunded; a second, distinct 25 would total 50 > the
+    // original 40. Must be rejected, not silently allowed through.
+    await expect(
+      refundPayment(sb, USER, {
+        tenantId: TENANT,
+        orderId: ORDER,
+        paymentId: original.id,
+        amount: 25,
+        reason: "partial refund 2",
+        clientRequestId: "refund-partial-2",
+      } as any),
+    ).rejects.toThrow(/cannot exceed the payment it reverses/);
+
+    const refundRows = (sb as any).tables.restaurant_payments.filter(
+      (r: any) => r.refund_of === original.id && r.state === "refunded",
+    );
+    expect(refundRows).toHaveLength(1);
+    expect(refundRows[0].amount).toBe(-25);
+
+    // The remaining balance (15) must still be refundable.
+    const remainder = await refundPayment(sb, USER, {
+      tenantId: TENANT,
+      orderId: ORDER,
+      paymentId: original.id,
+      amount: 15,
+      reason: "remaining balance",
+      clientRequestId: "refund-partial-3",
+    } as any);
+    expect(remainder.duplicate).toBe(false);
+
+    const totalRefunded = (sb as any).tables.restaurant_payments
+      .filter((r: any) => r.refund_of === original.id && r.state === "refunded")
+      .reduce((s: number, r: any) => s + Math.abs(Number(r.amount)), 0);
+    expect(totalRefunded).toBe(40);
   });
 });

@@ -83,6 +83,67 @@ describe("getMultiLocationIntelligence — correctness", () => {
     );
   });
 
+  it("ME-06: a fully-refunded closed order never inflates a location's revenue", async () => {
+    // restaurant_orders.payment_state can never actually be "refunded" in
+    // the real application — a fully-refunded closed order settles back to
+    // paid_total 0 with payment_state "unpaid", evidenced by a
+    // restaurant_payments refund row, not by payment_state itself.
+    const sb = createP05FakeSupabase({
+      restaurant_members: [OWNER_MEMBER],
+      restaurant_locations: [
+        { id: "loc-a", tenant_id: TENANT_A, name: "Downtown", property_id: null },
+      ],
+      restaurant_orders: [
+        {
+          id: "o1",
+          tenant_id: TENANT_A,
+          location_id: "loc-a",
+          total: 50000,
+          paid_total: 50000,
+          currency: "TZS",
+          status: "closed",
+          payment_state: "paid",
+          opened_at: iso(1),
+        },
+        {
+          id: "o-refunded",
+          tenant_id: TENANT_A,
+          location_id: "loc-a",
+          total: 99999,
+          paid_total: 0,
+          currency: "TZS",
+          status: "closed",
+          payment_state: "unpaid",
+          opened_at: iso(1),
+        },
+      ],
+      restaurant_payments: [
+        {
+          id: "pay-orig",
+          tenant_id: TENANT_A,
+          order_id: "o-refunded",
+          state: "refunded",
+          refund_of: null,
+          amount: 99999,
+        },
+        {
+          id: "pay-refund",
+          tenant_id: TENANT_A,
+          order_id: "o-refunded",
+          state: "refunded",
+          refund_of: "pay-orig",
+          amount: -99999,
+        },
+      ],
+    });
+    const result = await getMultiLocationIntelligence(sb, OWNER, {
+      tenantId: TENANT_A,
+      windowDays: 30,
+    });
+    const loc = result.locations.find((l) => l.locationId === "loc-a");
+    expect(loc?.revenue).toBe(50000);
+  });
+
   it("returns an empty comparison rather than fabricating one when no locations are accessible", async () => {
     const sb = createP05FakeSupabase({
       restaurant_members: [OWNER_MEMBER],

@@ -163,7 +163,35 @@ export async function issueReceipt(
     })
     .select("*")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) {
+    // ME-06: restaurant_receipts.order_id carries a unique index
+    // (restaurant_receipts_order_idx, 0001_fnb_core.sql) — the check above
+    // (SELECT existing, then INSERT if none) is a check-then-act race, so
+    // two near-simultaneous issueReceipt calls for the same order (a
+    // double-tap "print receipt", or two staff settling together) can both
+    // see no existing row and both attempt this INSERT. The database
+    // already prevents a duplicate receipt row from ever landing; the
+    // loser of that race must recover the winner's row instead of
+    // surfacing a raw duplicate-key error to the cashier, matching this
+    // codebase's established insert-then-recover pattern
+    // (takePosPayment/recordGuestPayment/refundPayment, ME-03/ME-04).
+    if (String((error as any).code) === "23505") {
+      const { data: winner, error: recoverErr } = await sb
+        .from("restaurant_receipts")
+        .select("*")
+        .eq("tenant_id", input.tenantId)
+        .eq("order_id", input.orderId)
+        .maybeSingle();
+      if (recoverErr || !winner) throw new Error(error.message);
+      const fiscal = await attachFiscalStatus(sb, userId, {
+        tenantId: input.tenantId,
+        orderId: input.orderId,
+        restaurantReceiptId: winner.id,
+      });
+      return { ...winner, fiscal };
+    }
+    throw new Error(error.message);
+  }
 
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.receipt.issued",
