@@ -114,6 +114,8 @@ export async function resolveRecipeCost(
         unitCode,
         yieldPercent,
         effectiveQuantity: Number(effectiveQuantity.toFixed(4)),
+        stockQuantity: Number(effectiveQuantity.toFixed(4)),
+        stockUnitId: null,
         unitCost: Number(unitCost.toFixed(4)),
         lineCost: Number(lineCost.toFixed(4)),
       });
@@ -141,6 +143,10 @@ export async function resolveRecipeCost(
       unitCode,
       yieldPercent,
       effectiveQuantity: Number(effectiveQuantity.toFixed(4)),
+      stockQuantity: Number(
+        (meta && exact!.exact ? exact!.quantity : effectiveQuantity).toFixed(4),
+      ),
+      stockUnitId: meta?.unit_id ?? null,
       unitCost: meta && exact!.exact ? Number(unitCost.toFixed(4)) : 0,
       lineCost: Number(lineCost.toFixed(4)),
       unresolved,

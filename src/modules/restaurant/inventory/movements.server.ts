@@ -189,6 +189,33 @@ export async function insertMovement(
   return data;
 }
 
+/**
+ * Resolves the movement an `insertMovement` dedupe-key collision (a null
+ * return) refers to. Needed by any compensating (out/in pair) write that
+ * must tell "this leg already committed, just finish the pair" apart from
+ * "this leg already committed AND was compensated, this key is dead" — see
+ * `movementHasReversal` and `transferStock`/`issueRequisition`.
+ */
+export async function findMovementByDedupeKey(sb: Sb, tenantId: string, dedupeKey: string) {
+  const { data } = await sb
+    .from("restaurant_stock_movements")
+    .select("id, quantity, location_id, movement_type")
+    .eq("tenant_id", tenantId)
+    .eq("dedupe_key", dedupeKey)
+    .maybeSingle();
+  return data as { id: string; quantity: number; location_id: string | null } | null;
+}
+
+/** Whether `movementId` already has a reversal posted against it. */
+export async function movementHasReversal(sb: Sb, movementId: string): Promise<boolean> {
+  const { data } = await sb
+    .from("restaurant_stock_movements")
+    .select("id")
+    .eq("reversal_of_id", movementId)
+    .maybeSingle();
+  return Boolean(data);
+}
+
 export async function recordMovement(sb: Sb, userId: string, input: RecordMovementInput) {
   const { data: item, error: itemErr } = await sb
     .from("restaurant_inventory_items")
@@ -268,7 +295,34 @@ export async function recordMovement(sb: Sb, userId: string, input: RecordMoveme
   return { duplicate: false as const, movement: moved };
 }
 
-/** A transfer is two ledger entries so both outlets keep an auditable history. */
+/**
+ * A transfer is two ledger entries so both outlets keep an auditable history.
+ *
+ * Both legs must exist together or not at all, and a retried call must never
+ * move the same stock twice:
+ *  - idempotency: each leg gets its own deterministic dedupe key derived from
+ *    the caller's `dedupeKey` (required precisely so a retry can supply the
+ *    same value); a duplicate call resolves to the same pair of movements,
+ *    not a second transfer.
+ *  - atomicity: `insertMovement` calls are separate network round-trips, not
+ *    one database transaction, so a failure between the two legs (a dropped
+ *    connection, a negative-stock refusal on the destination) would
+ *    otherwise leave stock removed from the source with nothing received at
+ *    the destination. If the second leg fails after the first committed, the
+ *    first leg is compensated with an explicit reversal (itself idempotent
+ *    via `reversal:<movementId>`) before the error is re-thrown, so the
+ *    ledger is never left in a state `restaurant_stock_reconciliation_v`
+ *    would have to explain away.
+ *  - retry-after-compensation: a dedupe-key collision on the outbound leg
+ *    does not by itself mean "already fully applied" — it can also mean
+ *    "already applied, then reversed after the inbound leg failed." Those
+ *    are told apart by checking whether the existing outbound movement has
+ *    a reversal before touching the inbound leg; if it does, this
+ *    dedupeKey is dead and the caller must retry with a new one, rather
+ *    than silently attempting a fresh inbound leg against an outbound that
+ *    no longer has any effect (which would create stock at the destination
+ *    with nothing actually leaving the source).
+ */
 export async function transferStock(sb: Sb, userId: string, input: TransferStockInput) {
   const { data: item } = await sb
     .from("restaurant_inventory_items")
@@ -293,6 +347,10 @@ export async function transferStock(sb: Sb, userId: string, input: TransferStock
   });
 
   const unitCost = Number(item.average_cost ?? 0);
+  const dedupeBase =
+    input.dedupeKey ??
+    `transfer-stock:${input.inventoryItemId}:${input.locationId ?? item.location_id}:${input.destinationLocationId}`;
+  const correlationId = crypto.randomUUID();
   const base = {
     tenantId: input.tenantId,
     propertyId: input.propertyId ?? item.property_id,
@@ -302,24 +360,79 @@ export async function transferStock(sb: Sb, userId: string, input: TransferStock
     currency: item.currency ?? "TZS",
     reason: input.reason ?? "Internal transfer",
     referenceType: "restaurant_transfer",
+    correlationId,
   };
   const stamp = new Date().toISOString();
 
-  const out = await insertMovement(sb, userId, {
+  const outAttempt = await insertMovement(sb, userId, {
     ...base,
     locationId: input.locationId ?? item.location_id,
     destinationLocationId: input.destinationLocationId,
     movementType: "transfer_out",
     quantity: -Math.abs(input.quantity),
     occurredAt: stamp,
+    dedupeKey: `${dedupeBase}:out`,
   });
-  const inb = await insertMovement(sb, userId, {
-    ...base,
-    locationId: input.destinationLocationId,
-    movementType: "transfer_in",
-    quantity: Math.abs(input.quantity),
-    occurredAt: stamp,
-  });
+
+  // `outAttempt` is null when this exact dedupeKey's outbound leg was
+  // already recorded by an earlier attempt — either still valid (that
+  // attempt's inbound leg just hasn't run yet) or already compensated (a
+  // prior attempt's inbound leg failed and this outbound was reversed,
+  // below). Those two cases must not be treated the same: resolving the
+  // existing row and checking whether it was reversed is what tells them
+  // apart, and is what stops a retry from silently attempting a fresh
+  // inbound leg against an outbound that no longer has any effect (which
+  // would create stock at the destination with nothing actually leaving
+  // the source).
+  const outRow =
+    outAttempt ?? (await findMovementByDedupeKey(sb, input.tenantId, `${dedupeBase}:out`));
+  if (!outRow) throw new Error("Transfer failed: the source leg could not be recorded or located.");
+  if (!outAttempt) {
+    const alreadyReversed = await movementHasReversal(sb, outRow.id);
+    if (alreadyReversed) {
+      throw new Error(
+        "This transfer previously failed and was rolled back. Retry with a new idempotency key.",
+      );
+    }
+  }
+
+  let inb: Awaited<ReturnType<typeof insertMovement>>;
+  try {
+    inb = await insertMovement(sb, userId, {
+      ...base,
+      locationId: input.destinationLocationId,
+      movementType: "transfer_in",
+      quantity: Math.abs(input.quantity),
+      occurredAt: stamp,
+      dedupeKey: `${dedupeBase}:in`,
+    });
+  } catch (err) {
+    // The outbound leg committed (this attempt or an earlier one) but the
+    // inbound leg just failed — never leave stock stuck in transit.
+    // Compensating is itself idempotent (dedupe_key `reversal:<outRow.id>`),
+    // so if a concurrent attempt already reversed the same outbound leg
+    // this insert simply no-ops via the same 23505 path every other
+    // movement write uses.
+    await insertMovement(sb, userId, {
+      tenantId: input.tenantId,
+      propertyId: base.propertyId,
+      locationId: outRow.location_id,
+      inventoryItemId: input.inventoryItemId,
+      unitId: base.unitId,
+      movementType: "reversal",
+      quantity: -Number(outRow.quantity),
+      unitCost,
+      currency: base.currency,
+      reason: "Transfer reversed — destination leg failed",
+      referenceType: base.referenceType,
+      reversalOfId: outRow.id,
+      correlationId,
+      approvedBy: userId,
+      occurredAt: new Date().toISOString(),
+      dedupeKey: `reversal:${outRow.id}`,
+    });
+    throw err;
+  }
 
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.stock.transferred",
@@ -336,7 +449,7 @@ export async function transferStock(sb: Sb, userId: string, input: TransferStock
       cost: Math.abs(input.quantity) * unitCost,
     },
   });
-  return { out, in: inb };
+  return { out: outAttempt, in: inb };
 }
 
 /**

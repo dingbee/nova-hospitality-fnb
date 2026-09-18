@@ -11,7 +11,11 @@
 import { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
-import { insertMovement } from "../inventory/movements.server";
+import {
+  findMovementByDedupeKey,
+  insertMovement,
+  movementHasReversal,
+} from "../inventory/movements.server";
 import { assertLocationInTenant, locationNameMap } from "../inventory/locations.server";
 import {
   requisitionPrefix,
@@ -455,7 +459,7 @@ export async function issueRequisition(sb: Sb, userId: string, input: IssueRequi
       correlationId: requisition.correlation_id ?? undefined,
       occurredAt: now,
     };
-    const out = await insertMovement(sb, userId, {
+    const outAttempt = await insertMovement(sb, userId, {
       ...base,
       locationId: requisition.source_location_id,
       destinationLocationId: requisition.destination_location_id,
@@ -463,14 +467,65 @@ export async function issueRequisition(sb: Sb, userId: string, input: IssueRequi
       quantity: -Math.abs(req.issueQuantity),
       dedupeKey: `${dedupeKey}:out`,
     });
-    if (!out) continue; // already issued — idempotent no-op
-    await insertMovement(sb, userId, {
-      ...base,
-      locationId: requisition.destination_location_id,
-      movementType: "transfer_in",
-      quantity: Math.abs(req.issueQuantity),
-      dedupeKey: `${dedupeKey}:in`,
-    });
+
+    // A dedupe-key collision on the outbound leg means one of two things,
+    // and they must not be treated the same: this line's outbound leg was
+    // already issued and is still valid (the inbound leg just hasn't run
+    // yet — finish it below), or it was already issued *and then
+    // compensated* because a prior attempt's inbound leg failed (below).
+    // In the second case `issued_quantity` was never advanced, so this
+    // exact dedupeKey is dead: silently "continuing" as the old code did
+    // would leave the line stuck forever (every retry recomputes the same
+    // key, hits the same dead outbound row, and skips straight past both
+    // the inbound leg and the issued_quantity update).
+    const outRow =
+      outAttempt ?? (await findMovementByDedupeKey(sb, input.tenantId, `${dedupeKey}:out`));
+    if (!outRow)
+      throw new Error(
+        `Requisition line ${line.id}: the source leg could not be recorded or located.`,
+      );
+    if (!outAttempt) {
+      if (await movementHasReversal(sb, outRow.id)) {
+        throw new Error(
+          `Requisition line ${line.id}: a previous issue attempt for this quantity failed and was rolled back. Re-issue the line to try again.`,
+        );
+      }
+      // Outbound already valid from an earlier attempt; only the inbound
+      // leg (and the issued_quantity bookkeeping below) remain to do.
+    }
+
+    try {
+      await insertMovement(sb, userId, {
+        ...base,
+        locationId: requisition.destination_location_id,
+        movementType: "transfer_in",
+        quantity: Math.abs(req.issueQuantity),
+        dedupeKey: `${dedupeKey}:in`,
+      });
+    } catch (err) {
+      // Never leave stock removed from source with nothing received at
+      // destination — compensate the outbound leg (itself idempotent via
+      // `reversal:<outRow.id>`) before propagating the failure.
+      await insertMovement(sb, userId, {
+        tenantId: input.tenantId,
+        propertyId: base.propertyId,
+        locationId: outRow.location_id,
+        inventoryItemId: line.inventory_item_id,
+        unitId: base.unitId,
+        movementType: "reversal",
+        quantity: -Number(outRow.quantity),
+        unitCost,
+        currency,
+        reason: "Requisition issue reversed — destination leg failed",
+        referenceType: base.referenceType,
+        reversalOfId: outRow.id,
+        correlationId: base.correlationId,
+        approvedBy: userId,
+        occurredAt: new Date().toISOString(),
+        dedupeKey: `reversal:${outRow.id}`,
+      });
+      throw err;
+    }
 
     const newIssued = Number(line.issued_quantity ?? 0) + req.issueQuantity;
     const { error } = await sb
