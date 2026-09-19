@@ -3,6 +3,7 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, LogOut, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { usePrincipal } from "@/lib/rbac/usePermissions";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import { hasRestaurantCapability } from "@/modules/restaurant/core/permissions";
@@ -20,6 +21,18 @@ export function NovaShell({ children }: { children: ReactNode }) {
   const { data: principal, error: principalError } = usePrincipal();
   const { data: workspace } = useRestaurantWorkspace();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isMobile = useIsMobile();
+  // The restaurant/bar POS routes render their own dedicated full-screen
+  // mobile shell (LexiBiteMobilePos — header, offline banner, bottom nav)
+  // below the mobile breakpoint. Wrapping that in NovaShell's own TopBar +
+  // padded/breadcrumbed main column would stack a second header above it
+  // and eat into the one thing a phone till can't spare: vertical space.
+  // Scoped to these two paths only — every other route keeps the normal
+  // shell at every viewport, and these two keep it too at lg+ (desktop
+  // POS is unaffected; only phone-width POS goes chromeless).
+  const isFullScreenMobilePos =
+    isMobile &&
+    (pathname === "/admin/restaurant/pos" || pathname === "/admin/restaurant/bar/pos");
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -104,6 +117,10 @@ export function NovaShell({ children }: { children: ReactNode }) {
         </div>
       </div>
     );
+  }
+
+  if (isFullScreenMobilePos) {
+    return <div className="nova-os h-[100dvh] min-h-0">{children}</div>;
   }
 
   return (

@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { PosModifierInput } from "../pos.contracts";
 import { money, type CartLine } from "./pos-types";
+import { firstUnmetRequiredGroup, modifierTotalPerUnit, resolveUnitPrice } from "./pos-money";
 import { PosCompositionPanel } from "./PosCompositionPanel";
 
 /**
@@ -54,13 +55,8 @@ export function PosItemDialog({
   if (!item) return null;
 
   const variant = (item.variants ?? []).find((v: any) => v.id === variantId);
-  const basePrice = Number(item.price ?? 0);
-  const unitPrice = variant
-    ? variant.price_is_delta
-      ? basePrice + Number(variant.price ?? 0)
-      : Number(variant.price ?? 0)
-    : basePrice;
-  const modifierPerUnit = chosen.reduce((s, m) => s + m.priceDelta * m.quantity, 0);
+  const unitPrice = resolveUnitPrice(item, variant);
+  const modifierPerUnit = modifierTotalPerUnit(chosen);
 
   const toggle = (group: any, mod: any) => {
     setChosen((prev) => {
@@ -75,9 +71,7 @@ export function PosItemDialog({
     });
   };
 
-  const unmetGroup = itemGroups.find(
-    (g) => g.required && chosen.filter((m) => m.groupId === g.id).length < Math.max(1, Number(g.min_select ?? 1)),
-  );
+  const unmetGroup = firstUnmetRequiredGroup(itemGroups, chosen);
 
   const add = () => {
     onAdd({

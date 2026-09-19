@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Delete } from "lucide-react";
 import { POS_PAYMENT_METHODS, type PosPaymentMethod } from "../pos.contracts";
 import { money } from "./pos-types";
+import { quickTenders } from "./pos-money";
 
 const METHOD_LABELS: Record<PosPaymentMethod, string> = {
   cash: "Cash",
@@ -31,17 +32,6 @@ const PAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "back"]
  * posted to a guest's stay, and it needs its own governed flow.
  */
 const PAD_METHODS = POS_PAYMENT_METHODS.filter((m) => m !== "room_charge");
-
-/** Round-number notes a cashier is actually handed, above the amount due. */
-function quickTenders(balance: number): number[] {
-  const steps = [1_000, 5_000, 10_000, 20_000, 50_000, 100_000];
-  const rounded = new Set<number>();
-  for (const step of steps) {
-    const up = Math.ceil(balance / step) * step;
-    if (up > 0 && up >= balance) rounded.add(up);
-  }
-  return [...rounded].sort((a, b) => a - b).slice(0, 4);
-}
 
 /**
  * The payment pad: large targets, one decision at a time, and an explicit

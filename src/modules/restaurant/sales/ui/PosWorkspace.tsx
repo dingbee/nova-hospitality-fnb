@@ -81,6 +81,8 @@ import { PosMenuItemCard } from "./PosMenuItemCard";
 import { beverageCategories } from "@/modules/restaurant/bar/lens";
 import { BAR_STATION_TYPES } from "@/modules/restaurant/bar/contracts";
 import { sendToStationLabel } from "../stationRouting";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { LexiBiteMobilePos } from "./mobile/LexiBiteMobilePos";
 
 const newRequestId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -113,8 +115,21 @@ export type PosLens = "restaurant" | "bar";
  *
  * All money and stock consequences happen server-side in the sales core; this
  * component only stages what the server has not yet accepted.
+ *
+ * Below the mobile breakpoint, this renders the dedicated LexiBite mobile
+ * POS (mobile/LexiBiteMobilePos.tsx) instead — a purpose-built phone
+ * presentation over the exact same canonical server functions, not a
+ * stacked/squeezed version of this desktop layout. Delegating to a
+ * separate component (rather than branching mid-render) keeps every hook
+ * below scoped to the desktop presentation only, so switching breakpoints
+ * never changes this component's own hook order.
  */
-export function PosWorkspace({
+export function PosWorkspace(props: { lens?: PosLens; className?: string } = {}) {
+  const isMobile = useIsMobile();
+  return isMobile ? <LexiBiteMobilePos {...props} /> : <DesktopPosWorkspace {...props} />;
+}
+
+function DesktopPosWorkspace({
   lens = "restaurant",
   className,
 }: { lens?: PosLens; className?: string } = {}) {

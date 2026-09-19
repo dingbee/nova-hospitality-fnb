@@ -590,6 +590,30 @@
   .kenburns-slow { animation: none; }
 }
 
+/* LexiBite mobile POS — the bitten "e" revolves while genuinely waiting on
+   async work (see LexiBiteLoading); it never spins for a merely-fast fetch,
+   and it stops the instant that work resolves. */
+@keyframes lexibiteSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@utility lexibite-spin {
+  animation: lexibiteSpin 1.3s linear infinite;
+  transform-origin: 50% 50%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lexibite-spin { animation: none; }
+}
+
+/* LexiBite mobile POS brand scope — see mobile/brand.ts, the single source
+   for these hex values. Scoped to .lexibite-mobile-pos only: it never
+   touches the desktop till's --os-* tokens or the wider admin shell. */
+.lexibite-mobile-pos {
+  --lb-green: #2A7C13;
+  --lb-green-dark: #1F5D0E;
+  --lb-gold: #ECB65F;
+}
+
 /* ============================================================
    NOVA F&B OS — Command Centre dark shell
    Restores the production admin theme: warm charcoal/graphite
