@@ -62,17 +62,21 @@ export async function getInventoryOverview(
   if (input.propertyId) locationsQuery = locationsQuery.eq("property_id", input.propertyId);
   if (input.locationId) locationsQuery = locationsQuery.eq("id", input.locationId);
 
+  // ME-13: these three only ever need a row count, not the rows themselves
+  // — `head: true` asks Postgres for the count without transferring or
+  // materializing a single row, instead of fetching every matching row
+  // just to read `.length` off the result.
   const [items, transfers, movements, batches, locations, incoming] = await Promise.all([
     itemsQuery,
     sb
       .from("restaurant_stock_transfers")
-      .select("id, status")
+      .select("id", { count: "exact", head: true })
       .eq("tenant_id", input.tenantId)
       .in("status", ["requested", "approved", "dispatched", "partially_received"]),
     movementsQuery,
     sb
       .from("restaurant_inventory_batches")
-      .select("id")
+      .select("id", { count: "exact", head: true })
       .eq("tenant_id", input.tenantId)
       .gt("quantity", 0)
       .lte("expiry_date", soon),
@@ -90,9 +94,9 @@ export async function getInventoryOverview(
   );
   const critical = rows.filter((i) => Number(i.current_quantity ?? 0) <= 0);
 
-  const { data: variances } = await sb
+  const { count: varianceCount } = await sb
     .from("restaurant_stocktakes")
-    .select("id")
+    .select("id", { count: "exact", head: true })
     .eq("tenant_id", input.tenantId)
     .gt("variance_value", 0)
     .gte("created_at", since);
@@ -103,9 +107,9 @@ export async function getInventoryOverview(
     itemsBelowReorder: below.length,
     criticalItems: critical.length,
     incomingToday: Array.from(incoming.values()).reduce((s, n) => s + n, 0),
-    transfersPending: (transfers.data ?? []).length,
-    stocktakeVariances: (variances ?? []).length,
-    expiringSoon: (batches.data ?? []).length,
+    transfersPending: transfers.count ?? 0,
+    stocktakeVariances: varianceCount ?? 0,
+    expiringSoon: batches.count ?? 0,
     recentWasteValue: Number(
       ((movements.data ?? []) as any[])
         .reduce((s, m) => s + Number(m.total_cost ?? 0), 0)

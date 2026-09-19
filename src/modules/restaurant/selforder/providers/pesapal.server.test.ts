@@ -125,6 +125,38 @@ describe("createPesapalAdapter", () => {
       expect(result).toMatchObject({ amount: 11000, currency: "TZS" });
     });
 
+    it("ME-13: verify() has a hard timeout — a hanging GetTransactionStatus aborts instead of blocking the caller forever", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.stubGlobal(
+          "fetch",
+          vi.fn((url: string, init?: RequestInit) => {
+            if (url.includes("/Auth/RequestToken"))
+              return Promise.resolve(jsonResponse({ token: "tok-1" }));
+            // GetTransactionStatus never responds — only the timeout's own
+            // abort should ever settle this promise.
+            return new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            });
+          }),
+        );
+        const adapter = createPesapalAdapter()!;
+        const verifyPromise = adapter.verify({ providerReference: "track-1" });
+        let settled = false;
+        verifyPromise.catch(() => {});
+        verifyPromise.then(
+          () => (settled = true),
+          () => (settled = true),
+        );
+        await vi.advanceTimersByTimeAsync(19_000);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(settled).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("verify() maps a failed transaction to failed, never paid", async () => {
       vi.stubGlobal(
         "fetch",

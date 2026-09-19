@@ -544,30 +544,23 @@ export async function postGoodsReceipt(
     });
 
     // Cumulative fulfilment on the order line. ME-03: gated on
-    // !alreadyPosted — this is a read-then-write accumulator with no
-    // unique-constraint backstop of its own (unlike the ledger insert
-    // above), so without this guard a retried or concurrently-duplicated
-    // post of the same receipt double-counts received/accepted/rejected
-    // quantities on the PO line even though the stock ledger itself stayed
-    // correct.
+    // !alreadyPosted — without this guard a retried or
+    // concurrently-duplicated post of the same receipt double-counts
+    // received/accepted/rejected quantities on the PO line even though the
+    // stock ledger itself stayed correct. ME-13: the increment itself is a
+    // single atomic UPDATE in the database (restaurant_increment_po_item_fulfilment),
+    // not a read-then-write in application code — two different receipts
+    // posting against the same PO line concurrently would otherwise race:
+    // both read the pre-update row, compute independently, and the second
+    // UPDATE silently overwrites the first's contribution.
     if (l.purchase_order_item_id && !alreadyPosted) {
-      const { data: poi } = await sb
-        .from("restaurant_purchase_order_items")
-        .select("id, received_quantity, accepted_quantity, rejected_quantity")
-        .eq("tenant_id", tenantId)
-        .eq("id", l.purchase_order_item_id)
-        .single();
-      if (poi) {
-        await sb
-          .from("restaurant_purchase_order_items")
-          .update({
-            received_quantity: Number(poi.received_quantity ?? 0) + receivedQty,
-            accepted_quantity: Number(poi.accepted_quantity ?? 0) + accepted,
-            rejected_quantity: Number(poi.rejected_quantity ?? 0) + rejected,
-          })
-          .eq("tenant_id", tenantId)
-          .eq("id", poi.id);
-      }
+      await sb.rpc("restaurant_increment_po_item_fulfilment", {
+        _tenant: tenantId,
+        _po_item_id: l.purchase_order_item_id,
+        _received_delta: receivedQty,
+        _accepted_delta: accepted,
+        _rejected_delta: rejected,
+      });
     }
   }
 

@@ -37,26 +37,46 @@ type TokenCache = { token: string; expiresAt: number } | null;
 let tokenCache: TokenCache = null;
 let ipnIdCache: string | null = null;
 
+// ME-13: every call into Pesapal must have a hard ceiling even when the
+// caller passes no signal of its own (verify() takes none at all — see
+// selfpay.server.ts's PaymentProviderAdapter interface — so before this a
+// hanging GetTransactionStatus response blocked the calling request
+// indefinitely, matching TRA's own 20s ceiling in traClient.server.ts).
+// A caller-supplied signal (e.g. initiate()'s claim-TTL bound) still aborts
+// the request; this only adds a floor under callers that pass none.
+const PESAPAL_REQUEST_TIMEOUT_MS = 20_000;
+
 async function pesapalFetch(path: string, init: RequestInit & { auth?: boolean } = {}) {
   const { auth = true, headers, signal, ...rest } = init;
-  const token = auth ? await getToken(signal) : undefined;
-  const res = await fetch(`${baseUrl()}${path}`, {
-    ...rest,
-    signal,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok || body?.error) {
-    const message =
-      body?.error?.message ?? body?.message ?? `Pesapal request to ${path} failed (${res.status}).`;
-    throw new Error(message);
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => timeoutController.abort(), PESAPAL_REQUEST_TIMEOUT_MS);
+  const onExternalAbort = () => timeoutController.abort();
+  signal?.addEventListener("abort", onExternalAbort);
+  try {
+    const token = auth ? await getToken(timeoutController.signal) : undefined;
+    const res = await fetch(`${baseUrl()}${path}`, {
+      ...rest,
+      signal: timeoutController.signal,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
+      },
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body?.error) {
+      const message =
+        body?.error?.message ??
+        body?.message ??
+        `Pesapal request to ${path} failed (${res.status}).`;
+      throw new Error(message);
+    }
+    return body as any;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onExternalAbort);
   }
-  return body as any;
 }
 
 /** Cached for its ~5 minute lifetime; refreshed a little early to avoid a request racing expiry. */
