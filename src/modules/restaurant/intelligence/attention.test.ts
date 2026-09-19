@@ -147,6 +147,28 @@ describe("rankByAttention / topPriorities — severity ranking reuses Decision.r
     expect(top).toHaveLength(3);
     expect(top[0].key).toBe("d0"); // the one critical item always survives truncation
   });
+
+  it("W: a persisted decision whose reasoning JSONB predates later fields (no whatHappensNext/whyItMatters) never crashes topPriorities — this reproduces a live production failure where an older intelligence_decisions row with a partial `reasoning` blob threw a TypeError deep inside Ask LexiBite's context builder, escaping every guard and degrading the whole request to a generic error", () => {
+    const partiallyShaped = decision({
+      key: "legacy-partial-reasoning",
+      riskLevel: "high",
+      confidence: 0.9,
+      // Cast because this deliberately violates the DecisionReasoning
+      // TypeScript contract — the whole point is that persisted JSONB does
+      // not actually guarantee that contract at read time.
+      reasoning: {
+        whatIsLikely: "Some historical projection",
+        selectedOption: "Some option",
+        whatIsHappening: "Some situation",
+      } as any,
+    });
+
+    expect(() => topPriorities([partiallyShaped], 5)).not.toThrow();
+    const [p] = topPriorities([partiallyShaped], 5);
+    expect(p.recommendedNextStep).toBeNull();
+    expect(p.why).toBe("");
+    expect(p.impact).toBe("Some historical projection");
+  });
 });
 
 describe("detectMaterialChanges — only fires above the documented threshold, only on fields the engines already computed", () => {
