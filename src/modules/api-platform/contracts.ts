@@ -91,7 +91,7 @@ export const rotateWebhookSecretSchema = z.object({ tenantId: uuid, webhookEndpo
 export const listWebhookDeliveriesSchema = z.object({
   tenantId: uuid,
   webhookEndpointId: uuid.optional(),
-  status: z.enum(["pending", "delivered", "failed", "dead_letter"]).optional(),
+  status: z.enum(["pending", "in_flight", "delivered", "failed", "dead_letter"]).optional(),
   limit: z.number().int().min(1).max(200).default(50),
 });
 

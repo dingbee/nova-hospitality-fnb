@@ -289,7 +289,12 @@ CREATE TABLE public.api_webhook_deliveries (
   event_type text NOT NULL,
   event_id uuid NOT NULL DEFAULT gen_random_uuid(),
   payload jsonb NOT NULL,
-  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'delivered', 'failed', 'dead_letter')),
+  -- 'in_flight': claimed by one delivery worker (an atomic conditional
+  -- UPDATE — see deliverWebhookDelivery), so two overlapping invocations of
+  -- the internal dispatch route (there is no in-repo cron scheduler; an
+  -- external one drives it, and can legitimately overlap) never both pick
+  -- up and deliver the same due row.
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_flight', 'delivered', 'failed', 'dead_letter')),
   attempt_count integer NOT NULL DEFAULT 0,
   max_attempts integer NOT NULL DEFAULT 8,
   next_attempt_at timestamptz NOT NULL DEFAULT now(),
@@ -334,6 +339,12 @@ CREATE TABLE public.api_request_log (
 CREATE INDEX api_request_log_tenant_idx ON public.api_request_log (tenant_id, created_at DESC);
 CREATE INDEX api_request_log_credential_idx ON public.api_request_log (credential_id, created_at DESC);
 CREATE INDEX api_request_log_request_id_idx ON public.api_request_log (request_id);
+-- Backs assertIpWithinAuthFailureRateLimit's per-IP sliding window over
+-- requests that never resolved a credential (ME-12 hardening: the
+-- per-credential limiter above only ever sees already-authenticated
+-- traffic, so an unauthenticated flood had nothing bounding it before this).
+CREATE INDEX api_request_log_ip_unauth_idx ON public.api_request_log (ip, created_at)
+  WHERE credential_id IS NULL;
 
 GRANT SELECT ON public.api_request_log TO authenticated;
 GRANT ALL ON public.api_request_log TO service_role;

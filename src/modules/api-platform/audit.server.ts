@@ -71,3 +71,38 @@ export async function assertWithinRateLimit(
     );
   }
 }
+
+// The limiter above only ever runs AFTER a credential has already resolved —
+// a missing/invalid/malformed bearer token never reaches it, so a flood of
+// requests with no valid credential (or none at all) had no throttling at
+// any layer, forcing an unbounded number of full authentication lookups
+// (ME-12 finding). Every request is logged regardless of outcome (see
+// writeApiRequestLog's callers), including a failed one — credential_id is
+// simply null — so the same table/pattern covers this without new
+// infrastructure. Scoped to a request's IP and counts only unauthenticated
+// attempts, so a shared IP (NAT, office network) with normal per-credential
+// traffic is never affected — only a flood of requests that never resolve
+// to a credential from the same address is bounded.
+const AUTH_FAILURE_RATE_LIMIT_WINDOW_MS = 60_000;
+const AUTH_FAILURE_RATE_LIMIT_MAX_REQUESTS = 60;
+
+/** Sliding one-minute window per source IP, counted against requests that never resolved a credential. */
+export async function assertIpWithinAuthFailureRateLimit(
+  supabaseAdmin: Sb,
+  ip: string | null,
+): Promise<void> {
+  if (!ip) return; // Nothing to key the limit on; the per-credential limiter is the real backstop.
+  const since = new Date(Date.now() - AUTH_FAILURE_RATE_LIMIT_WINDOW_MS).toISOString();
+  const { count } = await supabaseAdmin
+    .from("api_request_log")
+    .select("id", { count: "exact", head: true })
+    .eq("ip", ip)
+    .is("credential_id", null)
+    .gte("created_at", since);
+  if ((count ?? 0) >= AUTH_FAILURE_RATE_LIMIT_MAX_REQUESTS) {
+    throw new ApiError(
+      "rate_limited",
+      `Too many requests without a valid API credential from this address (max ${AUTH_FAILURE_RATE_LIMIT_MAX_REQUESTS} per minute).`,
+    );
+  }
+}

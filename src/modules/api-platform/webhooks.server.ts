@@ -318,14 +318,31 @@ function computeNextAttempt(attemptCount: number): string {
   return new Date(Date.now() + delay + jitter).toISOString();
 }
 
-/** Delivers (or re-attempts) exactly one delivery row. Never throws — every outcome is persisted on the row. */
+/**
+ * Delivers (or re-attempts) exactly one delivery row. Never throws — every
+ * outcome is persisted on the row.
+ *
+ * Claims the row with an atomic conditional UPDATE (status IN ('pending',
+ * 'failed') -> 'in_flight') before doing anything else. Without this, two
+ * overlapping invocations of the internal dispatch route — a realistic
+ * scenario since there is no in-repo cron scheduler and an external one
+ * drives retries (see processDueWebhookDeliveries's doc comment) — could
+ * both select the same due row and both deliver it concurrently. A stuck
+ * 'in_flight' row from a genuine mid-delivery crash is recovered the same
+ * way any dead-lettered delivery is: `replayWebhookDelivery` (admin action)
+ * resets it back to 'pending' for one more attempt.
+ */
 export async function deliverWebhookDelivery(supabaseAdmin: Sb, deliveryId: string): Promise<void> {
   const { data: delivery } = await supabaseAdmin
     .from("api_webhook_deliveries")
-    .select("*")
+    .update({ status: "in_flight" })
     .eq("id", deliveryId)
+    .in("status", ["pending", "failed"])
+    .select("*")
     .maybeSingle();
-  if (!delivery || delivery.status === "delivered") return;
+  // No row claimed: already delivered, already in flight (another worker
+  // beat us to it), or dead-lettered. Nothing to do either way.
+  if (!delivery) return;
 
   const { data: endpoint } = await supabaseAdmin
     .from("api_webhook_endpoints")

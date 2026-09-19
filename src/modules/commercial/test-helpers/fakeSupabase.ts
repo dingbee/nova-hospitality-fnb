@@ -32,14 +32,25 @@ export function createFakeSupabase(
       in: [string, any[]][];
       notIn: [string, any[]][];
       notNull: string[];
+      isNull: string[];
       ilike: [string, RegExp][];
+      contains: [string, any[]][];
+      gte: [string, any][];
+      lte: [string, any][];
     },
   ): boolean {
     for (const [col, val] of filters.eq) if (row[col] !== val) return false;
     for (const [col, vals] of filters.in) if (!vals.includes(row[col])) return false;
     for (const [col, vals] of filters.notIn) if (vals.includes(row[col])) return false;
     for (const col of filters.notNull) if (row[col] == null) return false;
+    for (const col of filters.isNull) if (row[col] != null) return false;
     for (const [col, re] of filters.ilike) if (!re.test(String(row[col] ?? ""))) return false;
+    for (const [col, vals] of filters.contains) {
+      const rowVals: any[] = Array.isArray(row[col]) ? row[col] : [];
+      if (!vals.every((v) => rowVals.includes(v))) return false;
+    }
+    for (const [col, val] of filters.gte) if (!(row[col] >= val)) return false;
+    for (const [col, val] of filters.lte) if (!(row[col] <= val)) return false;
     return true;
   }
 
@@ -49,8 +60,22 @@ export function createFakeSupabase(
       in: [string, any[]][];
       notIn: [string, any[]][];
       notNull: string[];
+      isNull: string[];
       ilike: [string, RegExp][];
-    } = { eq: [], in: [], notIn: [], notNull: [], ilike: [] };
+      contains: [string, any[]][];
+      gte: [string, any][];
+      lte: [string, any][];
+    } = {
+      eq: [],
+      in: [],
+      notIn: [],
+      notNull: [],
+      isNull: [],
+      ilike: [],
+      contains: [],
+      gte: [],
+      lte: [],
+    };
     let mode: "select" | "insert" | "update" | "upsert" | "delete" = "select";
     let payload: any = null;
     let upsertConflictCol: string | null = null;
@@ -104,15 +129,22 @@ export function createFakeSupabase(
         filters.ilike.push([col, re]);
         return api;
       },
+      /** Mirrors the one shape this codebase's server modules use: `.is(col, null)`. */
+      is(col: string, value: null) {
+        if (value === null) filters.isNull.push(col);
+        return api;
+      },
       /** P08: `.contains(col, [v1, v2, ...])` — array column contains every named value. */
       contains(col: string, vals: any[]) {
         filters.contains.push([col, vals]);
         return api;
       },
-      lte() {
+      lte(col: string, val: any) {
+        filters.lte.push([col, val]);
         return api;
       },
-      gte() {
+      gte(col: string, val: any) {
+        filters.gte.push([col, val]);
         return api;
       },
       gt() {

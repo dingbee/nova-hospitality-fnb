@@ -91,12 +91,26 @@ export async function apiGetOrder(
   orderId: string,
 ) {
   requireScope(credential, "orders:read");
-  const result = await getOrder(supabaseAdmin, credential.serviceUserId, {
+  // getOrder() throws a plain Error (not ApiError) when the id doesn't
+  // resolve, which the router's catch-all maps to a generic 500 — correct
+  // as a fail-safe for a genuine bug, but wrong for the everyday case of a
+  // missing/cross-tenant id, which a partner integration will hit
+  // routinely and needs to see as a real 404, not "our server is broken".
+  // Checked here, before the full multi-table fetch, using data this
+  // wrapper needs anyway for the property check below.
+  const { data: existing } = await supabaseAdmin
+    .from("restaurant_orders")
+    .select("id, property_id")
+    .eq("tenant_id", credential.tenantId)
+    .eq("id", orderId)
+    .maybeSingle();
+  if (!existing) throw new ApiError("not_found", "Order not found.");
+  assertCredentialCoversProperty(credential, existing.property_id ?? null);
+
+  return getOrder(supabaseAdmin, credential.serviceUserId, {
     tenantId: credential.tenantId,
     orderId,
   });
-  assertCredentialCoversProperty(credential, result.order?.property_id ?? null);
-  return result;
 }
 
 export async function apiListOrders(
@@ -129,6 +143,20 @@ export async function apiTransitionOrderStatus(
     .maybeSingle();
   if (!existing) throw new ApiError("not_found", "Order not found.");
   assertCredentialCoversProperty(credential, existing.property_id ?? null);
+  // transitionOrder() throws a plain Error (-> generic 500 downstream) for
+  // an order already in a terminal state, mirroring the same check it runs
+  // internally — mirrored here (not duplicated business logic, the exact
+  // same condition) so this everyday, expected rejection reaches the
+  // caller as 409 conflict, not "internal_error".
+  if (
+    existing.status !== input.status &&
+    ["closed", "cancelled", "voided"].includes(existing.status)
+  ) {
+    throw new ApiError(
+      "conflict",
+      `Order is already ${existing.status} and cannot be transitioned.`,
+    );
+  }
 
   const result = await transitionOrder(supabaseAdmin, credential.serviceUserId, {
     tenantId: credential.tenantId,

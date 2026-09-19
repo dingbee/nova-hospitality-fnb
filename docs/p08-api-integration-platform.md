@@ -205,8 +205,17 @@ Two independent bounds, both fail closed:
 - **Rate** (`audit.server.ts`'s `assertWithinRateLimit`) — a sliding
   60-second window per credential, counted directly off `api_request_log`
   (no separate counter store): 120 requests/minute.
+- **Rate, unauthenticated** (`audit.server.ts`'s
+  `assertIpWithinAuthFailureRateLimit`, added during ME-12 certification)
+  — the limiter above only ever runs after a credential has already
+  resolved, so a flood of requests with a missing/invalid/malformed bearer
+  token had no throttling at any layer, forcing unbounded authentication-
+  lookup load. This runs BEFORE credential resolution, keyed by source IP,
+  counting only requests that never resolve a credential (`credential_id
+  IS NULL` in `api_request_log`) — a shared IP's genuine authenticated
+  traffic is unaffected: 60 requests/minute per IP.
 
-Both run before request validation and before any domain call.
+All three run before request validation and before any domain call.
 
 ## 8. Idempotency
 
@@ -268,6 +277,15 @@ asserted to be rejected; cross-tenant key reuse is asserted independent.
 - **Delivery records**: one `api_webhook_deliveries` row per (endpoint,
   event) — `event_id` is stable across retries of the SAME logical event
   (idempotent for the recipient's own dedup).
+- **Concurrency-safe claim** (added during ME-12 certification): there is
+  no in-repo cron scheduler, so an external one drives the internal
+  dispatch route and can legitimately fire overlapping invocations.
+  `deliverWebhookDelivery` claims a row with an atomic conditional
+  `UPDATE ... WHERE status IN ('pending','failed')` to `'in_flight'`
+  before doing anything else, so two overlapping invocations can never
+  both pick up and deliver the same due row. A row stuck `in_flight` from
+  a genuine mid-delivery process crash is recovered the same way a
+  `dead_letter` is: `replayWebhookDelivery` resets it to `pending`.
 - **Retry**: exponential backoff, `30s * 2^attempt` capped at 6h, plus
   up-to-1s jitter. `max_attempts` defaults to 8; the attempt after that
   marks the row `dead_letter` instead of retrying forever.
@@ -310,7 +328,14 @@ asserted to be rejected; cross-tenant key reuse is asserted independent.
 - **Cross-property isolation**: `assertCredentialCoversProperty`,
   independently proven in `scope.server.test.ts` and exercised by
   `resources/orders.ts`'s own property check ahead of every order read/
-  status write (§4).
+  status write, and by `resources/menus.ts`'s check of the referenced
+  menu's own property before `GET /menus/:menuId/items` returns anything
+  (§4). The menu check was added during ME-12 certification: the
+  collection endpoint (`GET /menus`) was already property-filtered, but
+  the single-menu-items endpoint accepted a `menuId` directly from the
+  caller with no check that it belonged to the credential's own property
+  — a property-scoped credential could read another property's menu
+  items by ID substitution until fixed.
 - **Privilege escalation**: a read-scoped credential's service-account
   role (`viewer`) carries zero capabilities — `scope.server.test.ts`
   and `api-service-role.test.ts` together prove a write scope can only

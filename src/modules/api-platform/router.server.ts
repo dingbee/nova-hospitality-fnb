@@ -32,7 +32,11 @@ import {
   touchCredentialUsage,
   type ResolvedCredential,
 } from "./credentials.server";
-import { assertWithinRateLimit, writeApiRequestLog } from "./audit.server";
+import {
+  assertIpWithinAuthFailureRateLimit,
+  assertWithinRateLimit,
+  writeApiRequestLog,
+} from "./audit.server";
 import { requestFingerprint, withIdempotency } from "./idempotency.server";
 import { ApiError, jsonResponse, toApiErrorBody } from "./errors";
 import {
@@ -221,6 +225,14 @@ export async function handleApiV1Request(request: Request): Promise<Response> {
   let errorCode: string | null = null;
 
   try {
+    // Runs BEFORE credential resolution: the per-credential limiter below
+    // only ever sees a request that already authenticated, so a flood of
+    // requests with no valid (or no) bearer token had no throttling at any
+    // layer, forcing unbounded authentication-lookup load. Keyed by IP, not
+    // credential, and counts only requests that fail to resolve a
+    // credential — a shared IP's genuine authenticated traffic is unaffected.
+    await assertIpWithinAuthFailureRateLimit(supabaseAdmin, ip);
+
     const authHeader = request.headers.get("authorization");
     const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
     if (!token) throw new ApiError("unauthorized", "Missing bearer credential.");
