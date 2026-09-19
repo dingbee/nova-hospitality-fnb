@@ -21,6 +21,7 @@
  *   PESAPAL_IPN_ID   — a already-registered IPN id, to skip re-registering on every cold start
  */
 import type { PaymentProviderAdapter } from "../selfpay.server";
+import { logServerFailure } from "@/lib/observability/log.server";
 
 const SANDBOX_BASE = "https://cybqa.pesapal.com/pesapalv3";
 const PRODUCTION_BASE = "https://pay.pesapal.com/v3";
@@ -54,22 +55,38 @@ async function pesapalFetch(path: string, init: RequestInit & { auth?: boolean }
   signal?.addEventListener("abort", onExternalAbort);
   try {
     const token = auth ? await getToken(timeoutController.signal) : undefined;
-    const res = await fetch(`${baseUrl()}${path}`, {
-      ...rest,
-      signal: timeoutController.signal,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...headers,
-      },
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${baseUrl()}${path}`, {
+        ...rest,
+        signal: timeoutController.signal,
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...headers,
+        },
+      });
+    } catch (err) {
+      // ME-16 remediation (ME16-07): this is the only function in the
+      // adapter that calls fetch() against Pesapal, so logging here covers
+      // every operation's network/timeout failures unchanged otherwise.
+      const reason = (err as Error)?.name === "AbortError" ? "timeout" : "network";
+      logServerFailure("integration:pesapal", null, { operation: path, reason }, err);
+      throw err;
+    }
     const body = await res.json().catch(() => ({}));
     if (!res.ok || body?.error) {
       const message =
         body?.error?.message ??
         body?.message ??
         `Pesapal request to ${path} failed (${res.status}).`;
+      logServerFailure(
+        "integration:pesapal",
+        null,
+        { operation: path, status: res.status },
+        message,
+      );
       throw new Error(message);
     }
     return body as any;

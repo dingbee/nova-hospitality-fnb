@@ -16,9 +16,14 @@ import {
   type TraZReportAck,
 } from "./traTypes";
 import { extractXmlTags } from "./traXml";
+import { logServerFailure } from "@/lib/observability/log.server";
 
 const REQUEST_TIMEOUT_MS = 20_000;
 
+// ME-16 remediation (ME16-07): this is the one file allowed to call fetch()
+// against TRA, so logging here at the transport layer covers every
+// operation's connectivity/timeout failures without touching any of the
+// protocol classification logic below or in traEfd.server.ts.
 async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -26,12 +31,26 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
     return await fetch(url, { ...init, signal: controller.signal });
   } catch (err) {
     if ((err as Error).name === "AbortError") {
-      throw new TraProtocolError("TRA_TIMEOUT", `TRA request to ${url} timed out.`);
+      const timeoutError = new TraProtocolError("TRA_TIMEOUT", `TRA request to ${url} timed out.`);
+      logServerFailure(
+        "integration:tra-vfd",
+        null,
+        { operation: "fetch", url, reason: "timeout" },
+        timeoutError,
+      );
+      throw timeoutError;
     }
-    throw new TraProtocolError(
+    const networkError = new TraProtocolError(
       "TRA_NETWORK_ERROR",
       `TRA request to ${url} failed: ${(err as Error).message}`,
     );
+    logServerFailure(
+      "integration:tra-vfd",
+      null,
+      { operation: "fetch", url, reason: "network" },
+      err,
+    );
+    throw networkError;
   } finally {
     clearTimeout(timer);
   }

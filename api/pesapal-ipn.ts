@@ -37,7 +37,9 @@
  * path — no second payment-recording mechanism) independently calls
  * Pesapal's own GetTransactionStatus before anything is written.
  */
+import { randomUUID } from "node:crypto";
 import { confirmPesapalCallback } from "../src/modules/restaurant/selforder/selfpay.server";
+import { logServerFailure } from "../src/lib/observability/log.server";
 
 /** The exact envelope Pesapal's IPN caller expects back — see developer.pesapal.com. Getting this wrong makes Pesapal retry indefinitely. */
 function ipnResponse(orderTrackingId: string, orderMerchantReference: string, status: 200 | 500) {
@@ -63,6 +65,12 @@ export default async function handler(request: Request): Promise<Response> {
     return ipnResponse(orderTrackingId, orderMerchantReference, 200);
   }
 
+  // ME-16 remediation (ME16-06/07): a genuine processing exception here
+  // previously produced zero server-side evidence — only the safe 500 the
+  // caller saw. Every failure now logs a correlation ID, the order
+  // reference (not a secret), and the underlying exception, server-side
+  // only — the response envelope Pesapal receives is unchanged.
+  const requestId = randomUUID();
   try {
     const { supabaseAdmin } = await import("../src/integrations/supabase/client.server");
     // Every outcome confirmPesapalCallback can return (paid, declined,
@@ -74,7 +82,13 @@ export default async function handler(request: Request): Promise<Response> {
       providerReference: orderTrackingId,
     });
     return ipnResponse(orderTrackingId, orderMerchantReference, 200);
-  } catch {
+  } catch (error) {
+    logServerFailure(
+      "webhook:pesapal-ipn",
+      requestId,
+      { orderId: orderMerchantReference, providerReference: orderTrackingId },
+      error,
+    );
     // A real processing failure (Pesapal unreachable, a DB error) — worth
     // Pesapal retrying. Never leak the underlying error to a public caller.
     return ipnResponse(orderTrackingId, orderMerchantReference, 500);

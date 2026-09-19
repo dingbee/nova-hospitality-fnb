@@ -163,6 +163,37 @@ describe("submitReceiptXml — category D", () => {
     });
   });
 
+  it("ME-16 remediation: both failure classes above are now logged server-side, without changing the thrown TraProtocolError", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("fetch failed");
+      }),
+    );
+    await expect(submitReceiptXml("<xml/>", "SERIAL", "token")).rejects.toMatchObject({
+      code: "TRA_NETWORK_ERROR",
+    });
+    expect(errorSpy.mock.calls[0]![0]).toBe("[integration:tra-vfd]");
+    expect(JSON.parse(errorSpy.mock.calls[0]![1] as string).reason).toBe("network");
+
+    errorSpy.mockClear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        const err = new Error("aborted");
+        err.name = "AbortError";
+        throw err;
+      }),
+    );
+    await expect(submitReceiptXml("<xml/>", "SERIAL", "token")).rejects.toMatchObject({
+      code: "TRA_TIMEOUT",
+    });
+    expect(errorSpy.mock.calls[0]![0]).toBe("[integration:tra-vfd]");
+    expect(JSON.parse(errorSpy.mock.calls[0]![1] as string).reason).toBe("timeout");
+  });
+
   it("a malformed response body throws TRA_INVALID_XML rather than crashing", async () => {
     mockFetchOnce(async () => ({ ok: true, status: 200, text: async () => "<<<not xml" }));
     await expect(submitReceiptXml("<xml/>", "SERIAL", "token")).rejects.toBeInstanceOf(

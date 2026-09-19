@@ -4,6 +4,7 @@ import { ArrowRight, Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { PRODUCT } from "@/config/product";
+import { presentUserFacingError } from "@/lib/errors/present-error";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
@@ -33,7 +34,7 @@ function AuthPage() {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
     if (error) {
-      toast.error(error.message);
+      toast.error(presentUserFacingError(error, "Sign-in failed.").message);
       return;
     }
     navigate({ to: "/admin/restaurant" });
@@ -62,8 +63,8 @@ function AuthPage() {
               The operating system for modern restaurant & bar operations.
             </h1>
             <p className="mt-6 max-w-md text-sm leading-7 text-white/70">
-              Run service, manage operations, control inventory and keep every
-              part of the restaurant connected from one operational workspace.
+              Run service, manage operations, control inventory and keep every part of the
+              restaurant connected from one operational workspace.
             </p>
           </div>
 

@@ -25,6 +25,7 @@
  * itself, exactly as the ADR anticipated.
  */
 import { createStartHandler, defaultStreamHandler } from "@tanstack/react-start/server";
+import { resolveBuildIdentity } from "./modules/runtime/build-info";
 
 const startHandler = createStartHandler(defaultStreamHandler);
 
@@ -32,15 +33,34 @@ const SERVICE = "lexibite-api";
 const API_VERSION = "v1";
 
 function healthResponse(): Response {
+  const identity = resolveBuildIdentity();
   const body = JSON.stringify({
     ok: true,
     service: SERVICE,
     version: API_VERSION,
+    appVersion: identity.appVersion,
+    buildId: identity.buildId,
     timestamp: new Date().toISOString(),
   });
   return new Response(body, {
     status: 200,
     headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+/**
+ * ME-16 remediation (ME16-09): `/api/v1/health` above answers "is the
+ * process alive" (always 200, no dependency checks, by design — see its
+ * doc comment). This answers "can the application actually operate" —
+ * distinct HTTP semantics (503 when not ready) so a load balancer/operator
+ * can tell the two apart.
+ */
+async function readyResponse(): Promise<Response> {
+  const { checkReadiness } = await import("./modules/runtime/readiness.server");
+  const result = await checkReadiness(SERVICE);
+  return new Response(JSON.stringify({ ok: result.ready, ...result }), {
+    status: result.ready ? 200 : 503,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
   });
 }
 
@@ -56,6 +76,16 @@ export default {
         });
       }
       return healthResponse();
+    }
+
+    if (url.pathname === "/api/v1/ready") {
+      if (request.method !== "GET") {
+        return new Response(JSON.stringify({ ok: false, error: "method_not_allowed" }), {
+          status: 405,
+          headers: { "content-type": "application/json; charset=utf-8", allow: "GET" },
+        });
+      }
+      return readyResponse();
     }
 
     // P02 — LexiBite Demo Access public API for Nolmark/Lovable. See

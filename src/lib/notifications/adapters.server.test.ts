@@ -100,4 +100,52 @@ describe("notification adapters", () => {
       expect(result).toMatchObject({ provider: "twilio_whatsapp", reason: "network" });
     });
   });
+
+  describe("ME-16 remediation: operator-side diagnostic logging", () => {
+    it("logs a rejected email send without changing the returned AdapterResult", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      setEnv({ NOVA_EMAIL_WEBHOOK_URL: "https://relay.example/send" });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => jsonResponse({ message: "invalid recipient" }, false, 422)),
+      );
+      const result = await sendEmail({ to: "bad", subject: "hi", html: "<p>hi</p>" });
+      expect(result).toEqual({
+        ok: false,
+        provider: "email",
+        reason: "rejected",
+        error: "invalid recipient",
+      });
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      const [tag] = errorSpy.mock.calls[0]!;
+      expect(tag).toBe("[integration:email]");
+    });
+
+    it("logs a network failure for WhatsApp without changing the returned AdapterResult", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      setEnv({ TWILIO_ACCOUNT_SID: "sid", TWILIO_AUTH_TOKEN: "tok", WHATSAPP_FROM: "+1555" });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          throw new Error("getaddrinfo ENOTFOUND api.twilio.com");
+        }),
+      );
+      const result = await sendWhatsApp("+1666", "hi");
+      expect(result.ok).toBe(false);
+      expect(result).toMatchObject({ provider: "twilio_whatsapp", reason: "network" });
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      const [tag] = errorSpy.mock.calls[0]!;
+      expect(tag).toBe("[integration:twilio_whatsapp]");
+    });
+
+    it("does NOT log the 'not configured' state — that is a supported deployment state, not a failure", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      setEnv({ NOVA_EMAIL_WEBHOOK_URL: undefined });
+      const result = await sendEmail({ to: "a@b.com", subject: "hi", html: "<p>hi</p>" });
+      expect(result).toEqual({ ok: false, provider: "email", reason: "not_configured" });
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+  });
 });

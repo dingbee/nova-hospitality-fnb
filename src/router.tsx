@@ -1,9 +1,17 @@
 import { createRouter, useRouter } from "@tanstack/react-router";
 import { QueryClient } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
+import { presentUserFacingError } from "@/lib/errors/present-error";
 
 function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   const router = useRouter();
+  // ME-16 remediation (ME16-03): a correlation reference is shown even in
+  // production, without ever showing the raw message/stack there — the
+  // DEV-only panel below still carries the full detail for local debugging.
+  const presented = presentUserFacingError(
+    error,
+    "An unexpected error occurred. Please try again.",
+  );
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -25,9 +33,7 @@ function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => vo
           </svg>
         </div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Something went wrong</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          An unexpected error occurred. Please try again.
-        </p>
+        <p className="mt-2 text-sm text-muted-foreground">{presented.message}</p>
         {import.meta.env.DEV && error.message && (
           <pre className="mt-4 max-h-40 overflow-auto rounded-md bg-muted p-3 text-left font-mono text-xs text-destructive">
             {error.message}
