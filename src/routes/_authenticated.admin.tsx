@@ -16,7 +16,19 @@ export const Route = createFileRoute("/_authenticated/admin")({
   ),
   notFoundComponent: () => (
     <NovaShell>
-      <ComingSoon title="Not found" description="This screen does not exist." />
+      <div className="space-y-6">
+        <div>
+          <h1 className="font-display text-2xl text-foreground">Page not found</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            The requested screen does not exist in this version of LexiBite.
+          </p>
+        </div>
+        <div className="rounded-xl border border-border bg-card/40 p-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            Check the address or use the navigation to continue.
+          </p>
+        </div>
+      </div>
     </NovaShell>
   ),
 });
