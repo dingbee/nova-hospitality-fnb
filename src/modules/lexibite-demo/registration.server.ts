@@ -17,7 +17,7 @@
  * which nothing else in this product uses.
  */
 import type { z } from "zod";
-import { sendEmail, emailConfigured } from "@/lib/notifications/adapters.server";
+import { sendEmail, emailConfigured } from "../../lib/notifications/adapters.server";
 import { DEMO_RATE_LIMITS, DEMO_REGISTRATION_STATUS, DEMO_SOURCE } from "./constants";
 import type { RegisterDemoProspectResult, registerDemoProspectSchema } from "./contracts";
 
