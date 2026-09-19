@@ -20,7 +20,7 @@ import type {
   upsertServicePeriodSchema,
   upsertTableSchema,
 } from "../core/contracts";
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import { assertCapability, assertTenantRead, type TenantScope } from "../core/access.server";
 import { resolveOrderScope } from "./orderScope.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { consumeForOrderItem } from "../inventory/movements.server";
@@ -610,11 +610,16 @@ export async function recalcOrder(sb: Sb, tenantId: string, orderId: string) {
   return data;
 }
 
-export async function createOrder(sb: Sb, userId: string, input: CreateOrderInput) {
+export async function createOrder(
+  sb: Sb,
+  userId: string,
+  input: CreateOrderInput,
+  tenantScope?: TenantScope,
+) {
   // The table (when there is one) is the sole source of truth for property/
   // location — never the caller's own claim. See orderScope.server.ts.
   const scope = await resolveOrderScope(sb, input.tenantId, input);
-  await assertCapability(sb, userId, input.tenantId, "sales.manage", scope);
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", scope, tenantScope);
 
   const { data: order, error } = await sb
     .from("restaurant_orders")
@@ -967,8 +972,13 @@ export async function recordPayment(sb: Sb, userId: string, input: RecordPayment
  * Closing an order is the commercial commit point:
  * consume recipe ingredients → record actual cost → publish sales facts.
  */
-export async function transitionOrder(sb: Sb, userId: string, input: TransitionOrderInput) {
-  await assertCapability(sb, userId, input.tenantId, "sales.manage");
+export async function transitionOrder(
+  sb: Sb,
+  userId: string,
+  input: TransitionOrderInput,
+  tenantScope?: TenantScope,
+) {
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", undefined, tenantScope);
 
   const { data: order } = await sb
     .from("restaurant_orders")
@@ -1137,11 +1147,16 @@ export async function transitionOrder(sb: Sb, userId: string, input: TransitionO
     // Evidence of the sale, frozen at close. Never recomputed.
     try {
       const { issueReceipt } = await import("./receipts.server");
-      await issueReceipt(sb, userId, {
-        tenantId: input.tenantId,
-        orderId: order.id,
-        reprint: false,
-      });
+      await issueReceipt(
+        sb,
+        userId,
+        {
+          tenantId: input.tenantId,
+          orderId: order.id,
+          reprint: false,
+        },
+        tenantScope,
+      );
     } catch (err) {
       console.warn("[restaurant-os] receipt not issued", (err as Error).message);
     }

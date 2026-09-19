@@ -7,7 +7,7 @@
  * can never rewrite a receipt that a guest already holds. Reprints increment a
  * counter instead of producing a second document.
  */
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import { assertCapability, assertTenantRead, type TenantScope } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { operatorMessageForState, type FiscalStatusView } from "../fiscal/contracts";
 
@@ -46,6 +46,7 @@ export async function issueReceipt(
   sb: Sb,
   userId: string,
   input: { tenantId: string; orderId: string; reprint?: boolean },
+  tenantScope?: TenantScope,
 ) {
   // Fiscalization (requestFiscalization, called below via attachFiscalStatus)
   // deliberately never checks capability itself — it trusts that whoever can
@@ -59,10 +60,17 @@ export async function issueReceipt(
     .eq("tenant_id", input.tenantId)
     .eq("id", input.orderId)
     .maybeSingle();
-  await assertCapability(sb, userId, input.tenantId, "sales.manage", {
-    propertyId: orderScope?.property_id ?? null,
-    locationId: orderScope?.location_id ?? null,
-  });
+  await assertCapability(
+    sb,
+    userId,
+    input.tenantId,
+    "sales.manage",
+    {
+      propertyId: orderScope?.property_id ?? null,
+      locationId: orderScope?.location_id ?? null,
+    },
+    tenantScope,
+  );
 
   const { data: existing } = await sb
     .from("restaurant_receipts")
@@ -217,6 +225,7 @@ export async function getReceipt(
   sb: Sb,
   userId: string,
   input: { tenantId: string; orderId: string },
+  tenantScope?: TenantScope,
 ) {
   const { data: orderScope } = await sb
     .from("restaurant_orders")
@@ -224,10 +233,16 @@ export async function getReceipt(
     .eq("tenant_id", input.tenantId)
     .eq("id", input.orderId)
     .maybeSingle();
-  await assertTenantRead(sb, userId, input.tenantId, {
-    propertyId: orderScope?.property_id ?? null,
-    locationId: orderScope?.location_id ?? null,
-  });
+  await assertTenantRead(
+    sb,
+    userId,
+    input.tenantId,
+    {
+      propertyId: orderScope?.property_id ?? null,
+      locationId: orderScope?.location_id ?? null,
+    },
+    tenantScope,
+  );
   const { data } = await sb
     .from("restaurant_receipts")
     .select("*")
@@ -237,9 +252,14 @@ export async function getReceipt(
   if (!data) return null;
 
   const { getFiscalStatusForOrder } = await import("../fiscal/fiscal.server");
-  const fiscal = await getFiscalStatusForOrder(sb, userId, {
-    tenantId: input.tenantId,
-    orderId: input.orderId,
-  }).catch(() => null);
+  const fiscal = await getFiscalStatusForOrder(
+    sb,
+    userId,
+    {
+      tenantId: input.tenantId,
+      orderId: input.orderId,
+    },
+    tenantScope,
+  ).catch(() => null);
   return { ...data, fiscal };
 }

@@ -19,6 +19,7 @@ import {
   assertTenantRead,
   getTenantScope,
   NO_MATCH_ID,
+  type TenantScope,
 } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import type { FiscalProviderAdapter, FiscalSubmissionInput } from "./adapter";
@@ -809,6 +810,7 @@ export async function getFiscalStatusForOrder(
   sb: Sb,
   userId: string,
   input: { tenantId: string; orderId: string },
+  tenantScope?: TenantScope,
 ): Promise<FiscalStatusView> {
   const { data: order } = await sb
     .from("restaurant_orders")
@@ -816,10 +818,16 @@ export async function getFiscalStatusForOrder(
     .eq("tenant_id", input.tenantId)
     .eq("id", input.orderId)
     .maybeSingle();
-  await assertTenantRead(sb, userId, input.tenantId, {
-    propertyId: order?.property_id ?? null,
-    locationId: order?.location_id ?? null,
-  });
+  await assertTenantRead(
+    sb,
+    userId,
+    input.tenantId,
+    {
+      propertyId: order?.property_id ?? null,
+      locationId: order?.location_id ?? null,
+    },
+    tenantScope,
+  );
   const { data } = await sb
     .from("restaurant_fiscal_receipts")
     .select("*")

@@ -20,6 +20,7 @@ import {
   assertTenantRead,
   getTenantScope,
   NO_MATCH_ID,
+  type TenantScope,
 } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { cancelKitchenTicketItemsForOrderItems } from "../kitchen/kitchen.server";
@@ -410,7 +411,13 @@ function toSalesLines(lines: PosLineInput[]): SalesLineInput[] {
 
 /** Opens a bill. The same client request key always resolves to the same order. */
 export async function openPosOrder(sb: Sb, userId: string, input: OpenPosOrderInput) {
-  await assertCapability(sb, userId, input.tenantId, "sales.manage");
+  // ME-13: resolved once and threaded through createOrder/addPosLines below
+  // instead of each re-resolving isPlatformAdmin/memberGrantsInTenant for
+  // the same (userId, tenantId) — this single logical "open a table, maybe
+  // with starting lines" action used to cost 2-3 independent authorization
+  // resolutions (4-6 round trips); now it costs exactly one.
+  const tenantScope = await getTenantScope(sb, userId, input.tenantId);
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", undefined, tenantScope);
 
   // ME-03: client_request_id is now claimed atomically inside createOrder's
   // own insert (see sales.server.ts#createOrder), not via a pre-check
@@ -421,21 +428,26 @@ export async function openPosOrder(sb: Sb, userId: string, input: OpenPosOrderIn
   // collide on the claiming UPDATE — by which point two real orders already
   // existed. createOrder's insert-time recovery means at most one order is
   // ever created for a given (tenant, clientRequestId).
-  const order = await createOrder(sb, userId, {
-    tenantId: input.tenantId,
-    propertyId: input.propertyId,
-    locationId: input.locationId,
-    tableId: input.tableId,
-    servicePeriodId: input.servicePeriodId,
-    orderType: input.orderType,
-    guestCount: input.guestCount,
-    guestName: input.guestName,
-    bookingId: input.bookingId,
-    currency: input.currency,
-    source: "pos",
-    clientRequestId: input.clientRequestId,
-    lines: [],
-  } as any);
+  const order = await createOrder(
+    sb,
+    userId,
+    {
+      tenantId: input.tenantId,
+      propertyId: input.propertyId,
+      locationId: input.locationId,
+      tableId: input.tableId,
+      servicePeriodId: input.servicePeriodId,
+      orderType: input.orderType,
+      guestCount: input.guestCount,
+      guestName: input.guestName,
+      bookingId: input.bookingId,
+      currency: input.currency,
+      source: "pos",
+      clientRequestId: input.clientRequestId,
+      lines: [],
+    } as any,
+    tenantScope,
+  );
 
   if ((order as any).duplicate) {
     return { ...order, idempotent: true };
@@ -450,17 +462,27 @@ export async function openPosOrder(sb: Sb, userId: string, input: OpenPosOrderIn
   }
 
   if (input.lines.length > 0) {
-    await addPosLines(sb, userId, {
-      tenantId: input.tenantId,
-      orderId: order.id,
-      lines: input.lines,
-    });
+    await addPosLines(
+      sb,
+      userId,
+      {
+        tenantId: input.tenantId,
+        orderId: order.id,
+        lines: input.lines,
+      },
+      tenantScope,
+    );
   }
   const totals = await recalcOrder(sb, input.tenantId, order.id);
   return { ...order, ...totals, idempotent: false };
 }
 
-export async function addPosLines(sb: Sb, userId: string, input: AddPosLinesInput) {
+export async function addPosLines(
+  sb: Sb,
+  userId: string,
+  input: AddPosLinesInput,
+  tenantScope?: TenantScope,
+) {
   const { data: order } = await sb
     .from("restaurant_orders")
     .select(
@@ -473,10 +495,17 @@ export async function addPosLines(sb: Sb, userId: string, input: AddPosLinesInpu
   // Property/location scope re-checked against the order's own row, not the
   // caller's claim — a sales.manage grant scoped to Property A must not
   // reach Property B's order just because its id was discoverable.
-  await assertCapability(sb, userId, input.tenantId, "sales.manage", {
-    propertyId: order.property_id,
-    locationId: order.location_id,
-  });
+  await assertCapability(
+    sb,
+    userId,
+    input.tenantId,
+    "sales.manage",
+    {
+      propertyId: order.property_id,
+      locationId: order.location_id,
+    },
+    tenantScope,
+  );
   if (!OPEN_STATES.includes(order.status))
     throw new Error("This bill is closed and can no longer be modified.");
 
@@ -685,10 +714,22 @@ export async function takePosPayment(sb: Sb, userId: string, input: PosPaymentIn
     .eq("id", input.orderId)
     .maybeSingle();
   if (!order) throw new Error("Order not found.");
-  await assertCapability(sb, userId, input.tenantId, "sales.manage", {
-    propertyId: order.property_id,
-    locationId: order.location_id,
-  });
+  // ME-13: resolved once and threaded through transitionOrder→issueReceipt
+  // below when this payment settles and closes the bill — that chain used
+  // to independently re-resolve isPlatformAdmin/memberGrantsInTenant twice
+  // more for the same (userId, tenantId).
+  const tenantScope = await getTenantScope(sb, userId, input.tenantId);
+  await assertCapability(
+    sb,
+    userId,
+    input.tenantId,
+    "sales.manage",
+    {
+      propertyId: order.property_id,
+      locationId: order.location_id,
+    },
+    tenantScope,
+  );
 
   // ME-03: a pre-check-then-insert here left a real race — two concurrent
   // requests carrying the same clientRequestId (a genuine double-tap, or a
@@ -754,13 +795,23 @@ export async function takePosPayment(sb: Sb, userId: string, input: PosPaymentIn
   if (input.closeWhenSettled && settled && totals.status !== "closed") {
     // Closing is the commercial commit point: it consumes stock, posts actual
     // cost and freezes the receipt. It lives in the sales core, not here.
-    await transitionOrder(sb, userId, {
-      tenantId: input.tenantId,
-      orderId: input.orderId,
-      status: "closed",
-    });
+    await transitionOrder(
+      sb,
+      userId,
+      {
+        tenantId: input.tenantId,
+        orderId: input.orderId,
+        status: "closed",
+      },
+      tenantScope,
+    );
     const { getReceipt } = await import("./receipts.server");
-    receipt = await getReceipt(sb, userId, { tenantId: input.tenantId, orderId: input.orderId });
+    receipt = await getReceipt(
+      sb,
+      userId,
+      { tenantId: input.tenantId, orderId: input.orderId },
+      tenantScope,
+    );
     totals = await recalcOrder(sb, input.tenantId, input.orderId);
   }
 

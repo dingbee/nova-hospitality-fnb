@@ -64,6 +64,7 @@ import { refundPayment } from "./bill.server";
 
 vi.mock("../core/access.server", () => ({
   assertCapability: vi.fn(async () => true),
+  getTenantScope: vi.fn(async () => ({ platformAdmin: true, grants: [] })),
 }));
 vi.mock("../events/emit.server", () => ({
   emitRestaurantEvent: vi.fn(async () => ({ delivered: true, duplicate: false })),
