@@ -57,13 +57,36 @@ CommandInput.displayName = CommandPrimitive.Input.displayName;
 const CommandList = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.List>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.List>
->(({ className, ...props }, ref) => (
-  <CommandPrimitive.List
-    ref={ref}
-    className={cn("max-h-[300px] overflow-y-auto overflow-x-hidden", className)}
-    {...props}
-  />
-));
+>(({ className, onWheel, ...props }, ref) => {
+  const handleWheel = React.useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      const element = event.currentTarget;
+      const maxScrollTop = element.scrollHeight - element.clientHeight;
+
+      if (maxScrollTop > 0) {
+        const nextScrollTop = Math.max(0, Math.min(maxScrollTop, element.scrollTop + event.deltaY));
+
+        if (nextScrollTop !== element.scrollTop) {
+          event.preventDefault();
+          event.stopPropagation();
+          element.scrollTop = nextScrollTop;
+        }
+      }
+
+      onWheel?.(event);
+    },
+    [onWheel],
+  );
+
+  return (
+    <CommandPrimitive.List
+      ref={ref}
+      className={cn("max-h-[300px] overflow-y-auto overflow-x-hidden overscroll-contain", className)}
+      onWheel={handleWheel}
+      {...props}
+    />
+  );
+});
 
 CommandList.displayName = CommandPrimitive.List.displayName;
 
