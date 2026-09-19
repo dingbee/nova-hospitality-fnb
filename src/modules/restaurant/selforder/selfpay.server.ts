@@ -162,8 +162,21 @@ export type InitiateGuestPaymentResult =
   | { ok: false; reason: "provider_not_configured" }
   | { ok: false; reason: "initiation_in_progress" };
 
-/** Placeholder claim value while a call to the provider is in flight — never a real provider reference. */
-const GUEST_PAYMENT_INITIATING = "__initiating__";
+/**
+ * Placeholder claim prefix while a call to the provider is in flight — never
+ * a real provider reference. Each attempt gets its own random token after
+ * this prefix (see claimTokenValue), not a single shared constant: the
+ * finalize/release steps below must be able to tell "is the row still under
+ * *my* claim" apart from "someone else's claim has already replaced mine",
+ * which a shared placeholder value can't distinguish.
+ */
+const GUEST_PAYMENT_INITIATING_PREFIX = "__initiating__:";
+function claimTokenValue(): string {
+  return `${GUEST_PAYMENT_INITIATING_PREFIX}${crypto.randomUUID()}`;
+}
+function isPlaceholder(reference: string | null | undefined): boolean {
+  return typeof reference === "string" && reference.startsWith(GUEST_PAYMENT_INITIATING_PREFIX);
+}
 /**
  * How long an "actively calling the provider" claim is honoured before
  * another caller may retry — generous over any realistic SubmitOrderRequest
@@ -203,6 +216,16 @@ function isLiveSession(session: PendingSession): boolean {
  * session (same redirect, no second Pesapal call) or, in the rare
  * sub-second window where the winner is still mid-flight to the provider,
  * told to retry shortly.
+ *
+ * Ownership under a slow provider response: claiming the slot is not enough
+ * on its own — a caller whose own provider.initiate() call outlives its
+ * GUEST_PAYMENT_CLAIM_TTL_MS window must never finalize or release the slot
+ * once someone else has since claimed it too. Each attempt therefore claims
+ * with its own random token (claimTokenValue), and both the success
+ * (finalize) and failure (release) writes are themselves conditioned on
+ * that exact token still being present — an ownership-qualified CAS, not a
+ * blind write — so a late-arriving result from an expired claim can never
+ * overwrite or clear a newer claimant's live session.
  */
 export async function initiateGuestPayment(
   sb: Sb,
@@ -224,11 +247,12 @@ export async function initiateGuestPayment(
     return { ok: false, reason: "provider_not_configured" };
   }
 
+  const myClaimToken = claimTokenValue();
   const nowIso = new Date().toISOString();
   const { data: claimed } = await sb
     .from("restaurant_orders")
     .update({
-      guest_payment_session_reference: GUEST_PAYMENT_INITIATING,
+      guest_payment_session_reference: myClaimToken,
       guest_payment_session_redirect_url: null,
       guest_payment_session_expires_at: new Date(
         Date.now() + GUEST_PAYMENT_CLAIM_TTL_MS,
@@ -252,7 +276,7 @@ export async function initiateGuestPayment(
       .maybeSingle();
     if (
       isLiveSession(existing) &&
-      existing?.guest_payment_session_reference !== GUEST_PAYMENT_INITIATING &&
+      !isPlaceholder(existing?.guest_payment_session_reference) &&
       existing?.guest_payment_session_redirect_url
     ) {
       return {
@@ -275,8 +299,10 @@ export async function initiateGuestPayment(
       returnUrl,
     });
   } catch (err) {
-    // Release the claim — a provider failure must never permanently block a
-    // genuine retry on this order.
+    // Release the claim — but only if it's still ours. If this attempt's
+    // own claim already expired and a newer caller has since claimed (or
+    // completed) a session, that newer state must never be cleared by a
+    // late failure arriving from this one.
     await sb
       .from("restaurant_orders")
       .update({
@@ -285,10 +311,17 @@ export async function initiateGuestPayment(
         guest_payment_session_expires_at: null,
       })
       .eq("tenant_id", table.tenantId)
-      .eq("id", order.id);
+      .eq("id", order.id)
+      .eq("guest_payment_session_reference", myClaimToken);
     throw err;
   }
 
+  // Finalize — again only if this attempt's claim is still the one on the
+  // row. A late success from an expired claim must never overwrite a newer
+  // claimant's already-recorded session; the real checkout session this
+  // call itself created is still returned to its own caller below (it is a
+  // genuine, usable Pesapal session), it is just not the one recorded as
+  // this order's authoritative claim going forward.
   await sb
     .from("restaurant_orders")
     .update({
@@ -299,7 +332,8 @@ export async function initiateGuestPayment(
       ).toISOString(),
     })
     .eq("tenant_id", table.tenantId)
-    .eq("id", order.id);
+    .eq("id", order.id)
+    .eq("guest_payment_session_reference", myClaimToken);
 
   return { ok: true, status: "redirect", redirectUrl: initiated.redirectUrl };
 }

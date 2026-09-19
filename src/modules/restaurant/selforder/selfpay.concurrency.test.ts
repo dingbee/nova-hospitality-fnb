@@ -172,7 +172,7 @@ describe("initiateGuestPayment — concurrency claim", () => {
         // first caller's own claim UPDATE is evaluated: the row now shows a
         // live "in progress" placeholder before the first caller's own
         // conditional filter is applied.
-        (order as any).guest_payment_session_reference = "__initiating__";
+        (order as any).guest_payment_session_reference = "__initiating__:other-caller-token";
         (order as any).guest_payment_session_expires_at = new Date(
           Date.now() + 30_000,
         ).toISOString();
@@ -268,5 +268,128 @@ describe("initiateGuestPayment — concurrency claim", () => {
     );
     expect(retry.ok).toBe(true);
     expect(adapter.calls).toBe(1);
+  });
+});
+
+/**
+ * Ownership-qualified CAS: claiming the slot is not enough on its own — a
+ * caller whose own provider.initiate() call outlives GUEST_PAYMENT_CLAIM_TTL_MS
+ * must never finalize or release the slot once someone else (B) has since
+ * claimed and completed a session. These tests genuinely overlap two
+ * initiateGuestPayment calls (A's provider call is a promise this test
+ * controls and resolves only after B has fully finished), not two
+ * sequential calls — proving the finalize/release writes are themselves
+ * ownership-conditioned, not blind.
+ */
+describe("initiateGuestPayment — ownership survives a slow, late-arriving provider response", () => {
+  /** Flushes every currently-pending microtask chain, however many awaits deep. */
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("claim A expires, claim B completes, then A's late SUCCESS must not overwrite B's live session", async () => {
+    const order = baseOrder();
+    const db = fakeDb(order);
+
+    let resolveA!: (v: { providerReference: string; redirectUrl: string }) => void;
+    const aProviderCall = new Promise<{ providerReference: string; redirectUrl: string }>(
+      (resolve) => {
+        resolveA = resolve;
+      },
+    );
+    const adapterA: PaymentProviderAdapter = {
+      name: "fake",
+      initiate: async () => aProviderCall, // hangs until resolveA is called below
+      verify: async () => ({ status: "paid", amount: 11000, currency: "TZS" }),
+    };
+
+    // Start A: it claims the slot, then blocks awaiting the provider.
+    const aCall = initiateGuestPayment(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, method: "mobile_money" },
+      RETURN_URL,
+      adapterA,
+    );
+    await flush();
+    await flush();
+
+    // A's claim has now "expired" from a slow round trip.
+    (order as any).guest_payment_session_expires_at = new Date(Date.now() - 1000).toISOString();
+
+    // B claims fresh and completes fully before A's provider call returns.
+    const adapterB = countingAdapter();
+    const bResult = await initiateGuestPayment(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, method: "mobile_money" },
+      RETURN_URL,
+      adapterB,
+    );
+    expect(bResult).toEqual({ ok: true, status: "redirect", redirectUrl: expect.any(String) });
+    const bReference = order.guest_payment_session_reference;
+    const bRedirect = order.guest_payment_session_redirect_url;
+    const bExpiry = order.guest_payment_session_expires_at;
+
+    // A's slow provider call finally resolves — a late success.
+    resolveA({
+      providerReference: "track-A-late",
+      redirectUrl: "https://pesapal.test/checkout/track-A-late",
+    });
+    const aResult = await aCall;
+
+    // A still gets back the real session it created — it isn't lied to.
+    expect(aResult).toEqual({
+      ok: true,
+      status: "redirect",
+      redirectUrl: "https://pesapal.test/checkout/track-A-late",
+    });
+    // But B's session remains the order's authoritative one, untouched.
+    expect(order.guest_payment_session_reference).toBe(bReference);
+    expect(order.guest_payment_session_redirect_url).toBe(bRedirect);
+    expect(order.guest_payment_session_expires_at).toBe(bExpiry);
+  });
+
+  it("claim A expires, claim B completes, then A's late FAILURE must not clear B's live session", async () => {
+    const order = baseOrder();
+    const db = fakeDb(order);
+
+    let rejectA!: (err: Error) => void;
+    const aProviderCall = new Promise<never>((_resolve, reject) => {
+      rejectA = reject;
+    });
+    const adapterA: PaymentProviderAdapter = {
+      name: "fake",
+      initiate: async () => aProviderCall,
+      verify: async () => ({ status: "paid", amount: 11000, currency: "TZS" }),
+    };
+
+    const aCall = initiateGuestPayment(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, method: "mobile_money" },
+      RETURN_URL,
+      adapterA,
+    );
+    await flush();
+    await flush();
+
+    (order as any).guest_payment_session_expires_at = new Date(Date.now() - 1000).toISOString();
+
+    const adapterB = countingAdapter();
+    const bResult = await initiateGuestPayment(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, method: "mobile_money" },
+      RETURN_URL,
+      adapterB,
+    );
+    expect(bResult.ok).toBe(true);
+    const bReference = order.guest_payment_session_reference;
+    const bRedirect = order.guest_payment_session_redirect_url;
+    const bExpiry = order.guest_payment_session_expires_at;
+
+    // A's slow provider call finally rejects — a late failure.
+    rejectA(new Error("Pesapal timeout"));
+    await expect(aCall).rejects.toThrow(/pesapal timeout/i);
+
+    // B's live session must survive A's (ownerless) cleanup attempt intact.
+    expect(order.guest_payment_session_reference).toBe(bReference);
+    expect(order.guest_payment_session_redirect_url).toBe(bRedirect);
+    expect(order.guest_payment_session_expires_at).toBe(bExpiry);
   });
 });
