@@ -1,62 +1,30 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import { VitePWA } from "vite-plugin-pwa";
-import { nitro } from "nitro/vite";
-// Side-effect only: augments vite's `UserConfig` type with vitest's `test`
-// option, so the `test` key below typechecks against the wrapped
-// defineConfig's vite-derived UserConfig type.
 import "vitest/config";
 
 /**
  * LexiBite — Restaurant & Bar OS.
  *
- * The same application serves Lovable/Cloudflare and Vercel deployments.
- * The deployment target is selected from the host environment so the
- * Lovable sandbox remains unchanged while Vercel receives Nitro's Vercel
- * build output instead of the default Cloudflare Worker artifact.
+ * Lovable/Cloudflare keeps the wrapper's normal Nitro target. Vercel uses
+ * Nitro's first-party Vercel preset so the same repository emits a native
+ * Vercel deployment artifact.
  */
 const isVercel = Boolean(process.env.VERCEL);
 const publicOutDir = isVercel ? ".vercel/output/static" : ".output/public";
 
 export default defineConfig({
-  // Lovable's wrapper already supplies TanStack Start, React, Tailwind,
-  // path aliases and Nitro. Explicitly pin the Nitro target on Vercel.
-  // Disable the wrapper-provided Nitro instance on Vercel and inject the
-  // first-party Nitro Vite plugin explicitly. This avoids the wrapper's
-  // Cloudflare-targeted build plugin winning in fresh CI installs.
-  nitro: isVercel ? false : true,
-
-  // The wrapper already provides the Cloudflare integration for Lovable.
-  // Vercel must not receive both Cloudflare and Nitro deployment adapters.
-  cloudflare: isVercel ? false : undefined,
+  // The wrapper owns TanStack Start/Nitro integration. Do not disable its
+  // Nitro plugin and replace it with a second Vite plugin: that can leave
+  // Vercel with no valid server output in CI.
+  nitro: isVercel ? { preset: "vercel" } : true,
 
   tanstackStart: {
-    // Keep the canonical server entry used by the application's SSR/error
-    // boundary on every deployment target.
     server: { entry: "server" },
   },
 
   test: {
-    // e2e/ holds Playwright specs (run via `npx playwright test`), not
-    // vitest tests — without this, vitest's default *.spec.ts glob picks
-    // them up too and fails, since they use @playwright/test's `test`,
-    // not vitest's.
     exclude: ["**/node_modules/**", "e2e/**"],
   },
-
-  vite: isVercel
-    ? {
-        plugins: [
-          nitro({
-            preset: "vercel",
-            output: {
-              dir: ".vercel/output",
-              serverDir: ".vercel/output/functions/__server.func",
-              publicDir: ".vercel/output/static",
-            },
-          }),
-        ],
-      }
-    : undefined,
 
   plugins: [
     VitePWA({
@@ -64,9 +32,6 @@ export default defineConfig({
       registerType: "prompt",
       injectRegister: null,
       filename: "sw.js",
-      // Static assets are emitted into the active Nitro public directory.
-      // Lovable/Cloudflare uses .output/public; the Vercel Nitro preset
-      // remaps the production artifact to Vercel's output contract.
       outDir: publicOutDir,
       scope: "/order",
       devOptions: { enabled: false },
@@ -78,7 +43,6 @@ export default defineConfig({
         clientsClaim: false,
         skipWaiting: false,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        // Server functions are transactional and must remain network-only.
         runtimeCaching: [
           {
             urlPattern: ({ request, url }) =>
