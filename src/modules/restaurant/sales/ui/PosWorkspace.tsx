@@ -146,6 +146,7 @@ export function PosWorkspace({
   // the tab switcher below) — this picks which one is currently shown there.
   // Irrelevant at lg+, where both render side by side regardless of this value.
   const [mobileRightTab, setMobileRightTab] = useState<"bill" | "menu">("menu");
+  const [mobileFloorExpanded, setMobileFloorExpanded] = useState(true);
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [catalogSearch, setCatalogSearch] = useState("");
   const [pickerItem, setPickerItem] = useState<any | null>(null);
@@ -160,6 +161,12 @@ export function PosWorkspace({
   const openKey = useRef<string>(newRequestId());
   const payKey = useRef<string>(newRequestId());
   const refundKey = useRef<string>(newRequestId());
+
+  // Selecting a table collapses the mobile floor automatically. The compact
+  // strip remains available for fast table switching or reopening the floor.
+  useEffect(() => {
+    setMobileFloorExpanded(!orderId);
+  }, [orderId]);
 
   const boardFn = useServerFn(posBoardFn);
   const catalogFn = useServerFn(posCatalogFn);
