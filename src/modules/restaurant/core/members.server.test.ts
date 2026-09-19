@@ -43,6 +43,7 @@ function makeFakeSb(opts: {
     { id: PROPERTY_A2, tenantId: TENANT_A },
   ];
   const members = [...(opts.members ?? [])];
+  const activityLogs: any[] = [];
 
   function thenable<T>(compute: () => Promise<T>) {
     return { then: (res: any, rej: any) => compute().then(res, rej) };
@@ -85,7 +86,12 @@ function makeFakeSb(opts: {
               eq: (_c2: string, tenantId: string) => ({
                 maybeSingle: async () => {
                   const found = members.find((m) => m.id === memberId && m.tenant_id === tenantId);
-                  return { data: found ? { property_id: found.property_id } : null, error: null };
+                  return {
+                    data: found
+                      ? { user_id: found.user_id, role: found.role, property_id: found.property_id }
+                      : null,
+                    error: null,
+                  };
                 },
               }),
             }),
@@ -123,9 +129,18 @@ function makeFakeSb(opts: {
           }),
         };
       }
+      if (table === "activity_logs") {
+        return {
+          insert: (row: any) => {
+            activityLogs.push(row);
+            return Promise.resolve({ error: null });
+          },
+        };
+      }
       throw new Error(`Unexpected table ${table}`);
     },
     members,
+    activityLogs,
   };
 }
 
@@ -167,6 +182,17 @@ describe("upsertMember — property-scoped grant cannot reach another property (
       role: "bartender",
       property_id: PROPERTY_A1,
     });
+    // ME-11: a role grant is a sensitive governance action — it must leave
+    // an audit trail (Phase 8), not just succeed silently.
+    expect(sb.activityLogs).toMatchObject([
+      {
+        tenant_id: TENANT_A,
+        actor_id: "caller",
+        action: "restaurant.member.granted",
+        entity_type: "restaurant_members",
+        metadata: { userId: "target-user", role: "bartender", propertyId: PROPERTY_A1 },
+      },
+    ]);
   });
 
   it("allows a tenant-wide owner granting a role anywhere in the tenant, including tenant-wide", async () => {
@@ -227,5 +253,17 @@ describe("removeMember — property-scoped grant cannot revoke another property'
       removeMember(sb, "caller", { tenantId: TENANT_A, memberId: "m-1" } as any),
     ).resolves.toEqual({ ok: true });
     expect(sb.members).toHaveLength(0);
+    // ME-11: revocation is the same class of sensitive governance action as
+    // a grant — it must be audited too.
+    expect(sb.activityLogs).toMatchObject([
+      {
+        tenant_id: TENANT_A,
+        actor_id: "caller",
+        action: "restaurant.member.revoked",
+        entity_type: "restaurant_members",
+        entity_id: "m-1",
+        metadata: { userId: "victim", role: "bartender", propertyId: PROPERTY_A2 },
+      },
+    ]);
   });
 });

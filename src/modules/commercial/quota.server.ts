@@ -230,38 +230,36 @@ export async function incrementUsage(
     before.hasOverride,
   );
 
-  let existingQ = sb
-    .from("commercial_usage_counters")
-    .select("id")
-    .eq("tenant_id", tenantId)
-    .eq("quota_definition_id", def.id)
-    .eq("period_start", start.toISOString());
-  existingQ = scopedProperty
-    ? existingQ.eq("property_id", scopedProperty)
-    : existingQ.is("property_id", null);
-  const { data: existing } = await existingQ.maybeSingle();
+  // Goes through a SECURITY DEFINER RPC, not a direct insert/update — RLS on
+  // commercial_usage_counters restricts direct writes to commercial admins
+  // only (0060_p09_quota_usage_ledger.sql) precisely because a raw UPDATE
+  // lets any tenant member with read scope set used_value to whatever they
+  // like, evading a quota block. An ordinary tenant member (the caller for
+  // every non-admin AI-governed feature use) is never a commercial admin, so
+  // a direct write here is rejected by RLS on the very first increment of
+  // each tenant/period. The RPC only ever ADDS a non-negative delta to the
+  // existing value under a row lock — it never accepts or trusts an
+  // absolute used_value from the caller — and returns the authoritative
+  // post-increment value, which may differ from `newUsed` above under
+  // concurrent increments; that's used for the returned status instead of
+  // the possibly-stale locally computed one.
+  const { data: rpcResult, error: rpcError } = await sb.rpc("restaurant_increment_quota_usage", {
+    _tenant_id: tenantId,
+    _property_id: scopedProperty,
+    _quota_definition_id: def.id,
+    _period_start: start.toISOString(),
+    _period_end: end.toISOString(),
+    _delta: amount,
+    _state: newState,
+  });
+  if (rpcError) throw new Error(rpcError.message);
+  const row = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult;
+  const finalUsed = Number(row?.used_value ?? newUsed);
+  const finalState = deriveState(
+    finalUsed,
+    { ...def, limit_value: before.limitValue },
+    before.hasOverride,
+  );
 
-  if (existing) {
-    const { error } = await sb
-      .from("commercial_usage_counters")
-      .update({ used_value: newUsed, state: newState, updated_at: new Date().toISOString() })
-      .eq("id", existing.id);
-    if (error) throw new Error(error.message);
-  } else {
-    const { error } = await sb.from("commercial_usage_counters").insert({
-      tenant_id: tenantId,
-      property_id: scopedProperty,
-      quota_definition_id: def.id,
-      period_start: start.toISOString(),
-      period_end: end.toISOString(),
-      used_value: newUsed,
-      state: newState,
-    });
-    // A concurrent first-increment can race the unique index; treat as a benign retry-losing case rather than failing the caller's whole request.
-    if (error && !String(error.message).includes("commercial_usage_counters_unique")) {
-      throw new Error(error.message);
-    }
-  }
-
-  return { ...before, usedValue: newUsed, state: newState };
+  return { ...before, usedValue: finalUsed, state: finalState };
 }

@@ -8,6 +8,7 @@
 import type { z } from "zod";
 import { assertCanManageMembership, assertTenantRead } from "./access.server";
 import type { removeMemberSchema, upsertMemberSchema, listMembersSchema } from "./contracts";
+import { logActivity } from "@/lib/activity-log.server";
 
 type Sb = any;
 
@@ -65,6 +66,14 @@ export async function upsertMember(
     }
     throw new Error(error.message);
   }
+  await logActivity(sb, {
+    actorId: userId,
+    tenantId: input.tenantId,
+    action: "restaurant.member.granted",
+    entityType: "restaurant_members",
+    entityId: data.id,
+    metadata: { userId: input.userId, role: input.role, propertyId },
+  });
   return data;
 }
 
@@ -75,7 +84,7 @@ export async function removeMember(
 ) {
   const { data: target, error: findError } = await sb
     .from("restaurant_members")
-    .select("property_id")
+    .select("user_id, role, property_id")
     .eq("id", input.memberId)
     .eq("tenant_id", input.tenantId)
     .maybeSingle();
@@ -88,5 +97,13 @@ export async function removeMember(
     .eq("id", input.memberId)
     .eq("tenant_id", input.tenantId);
   if (error) throw new Error(error.message);
+  await logActivity(sb, {
+    actorId: userId,
+    tenantId: input.tenantId,
+    action: "restaurant.member.revoked",
+    entityType: "restaurant_members",
+    entityId: input.memberId,
+    metadata: { userId: target.user_id, role: target.role, propertyId: target.property_id ?? null },
+  });
   return { ok: true };
 }
