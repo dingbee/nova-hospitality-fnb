@@ -24,7 +24,7 @@ export default defineViteConfig(async (env) => {
   tanstackStart: {
     server: { entry: "server" },
   },
-  nitro: false,
+  nitro: false as never,
   test: {
     // e2e/, e2e-auth/ and e2e-staff/ hold Playwright specs (run via `npx
     // playwright test`), not vitest tests — without this, vitest's
