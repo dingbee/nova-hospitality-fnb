@@ -76,7 +76,7 @@ import {
   upsertCommercialPropertyPolicyFn,
   upsertCommercialQuotaDefinitionFn,
   upsertCommercialSubscriptionFn,
-  whoAmICommercialFn,
+  whoAmICommercialFn,\n  listCommercialProvidersFn,
 } from "../commercial.functions";
 import { BillingOverviewPanel, CustomerWorkspacePanel } from "./CommercialLifecycle";
 import {
@@ -195,7 +195,7 @@ function useCommercialData() {
 
 export function CommercialCentre() {
   const qc = useQueryClient();
-  const data = useCommercialData();
+  const data = useCommercialData();\n  const providers = useQuery({ queryKey: ["commercial.providers"], queryFn: () => data.providerList({ data: {} }) });
 
   const invalidate = (...keys: string[]) =>
     keys.forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
@@ -265,7 +265,7 @@ export function CommercialCentre() {
           <TabsTrigger value="ops-customers">Customers</TabsTrigger>
           <TabsTrigger value="ops-renewals">Renewals</TabsTrigger>
           <TabsTrigger value="ops-collections">Collections</TabsTrigger>
-          <TabsTrigger value="intelligence">Intelligence</TabsTrigger>
+          <TabsTrigger value="intelligence">Intelligence</TabsTrigger>\n          <TabsTrigger value="providers">Providers &amp; Integrations</TabsTrigger>
           <TabsTrigger value="overview">Governance</TabsTrigger>
           <TabsTrigger value="plans">Plans</TabsTrigger>
           <TabsTrigger value="capabilities">Capabilities</TabsTrigger>
@@ -296,7 +296,7 @@ export function CommercialCentre() {
         <TabsContent value="ops-collections">
           <CollectionsPanel />
         </TabsContent>
-        <TabsContent value="intelligence">
+        <TabsContent value="providers">\n          <ProvidersIntegrationsPanel providers={data.providerList.data ?? []} onSaved={() => invalidate("commercial.providers")} />\n        </TabsContent>\n        <TabsContent value="intelligence">
           <div className="space-y-6">
             <IntelligenceOverviewPanel />
             <CustomerHealthPanel />

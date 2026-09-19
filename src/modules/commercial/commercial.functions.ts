@@ -588,3 +588,35 @@ export const dismissCommercialRecommendationFn = createServerFn({ method: "POST"
     const mod = await import("./intelligence.server");
     return mod.dismissRecommendation(context.supabase, context.userId, data);
   });
+
+
+/* -------------------------------------------------------- Providers */
+export const listCommercialProvidersFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => empty.parse(d))
+  .handler(async ({ context }) => {
+    const mod = await import("./providers.server");
+    return mod.listProviders(context.supabase, context.userId);
+  });
+
+export const upsertCommercialProviderFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => {
+    const mod = require("./provider.contracts") as typeof import("./provider.contracts");
+    return mod.upsertCommercialProviderSchema.parse(d);
+  })
+  .handler(async ({ data, context }) => {
+    const mod = await import("./providers.server");
+    return mod.upsertProvider(context.supabase, context.userId, data);
+  });
+
+export const updateCommercialProviderStatusFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => {
+    const mod = require("./provider.contracts") as typeof import("./provider.contracts");
+    return mod.updateCommercialProviderStatusSchema.parse(d);
+  })
+  .handler(async ({ data, context }) => {
+    const mod = await import("./providers.server");
+    return mod.updateProviderStatus(context.supabase, context.userId, data);
+  });
