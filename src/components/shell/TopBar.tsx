@@ -46,20 +46,12 @@ export function TopBar({
           <Menu className="size-5" />
         </button>
 
-        <Link to="/admin/restaurant" className="flex items-center gap-2.5" aria-label="LexiBite">
+        <Link to="/admin/restaurant" className="flex shrink-0 items-center" aria-label="LexiBite">
           <img
             src="/brand/lexibite-wordmark.svg"
             alt="LexiBite"
-            className="h-9 w-auto max-w-[8.5rem] object-contain"
+            className="h-10 w-auto max-w-[11rem] object-contain"
           />
-          <span className="hidden leading-tight sm:block">
-            <span className="block text-sm font-semibold tracking-tight text-[color:var(--nova-ink)]">
-              {PRODUCT.shortName}
-            </span>
-            <span className="block text-[0.68rem] text-[color:var(--nova-ink-3)]">
-              {PRODUCT.tagline}
-            </span>
-          </span>
         </Link>
 
         {workspace?.tenant && (
