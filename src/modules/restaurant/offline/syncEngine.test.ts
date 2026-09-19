@@ -284,6 +284,128 @@ describe("sync engine — conflict handling", () => {
   });
 });
 
+describe("sync engine — dependency cascade on permanent parent failure (ME-09)", () => {
+  it("a child whose parent open_order DEAD_LETTERs is cascaded to CONFLICT, not left PENDING forever behind an unresolvable dependency", async () => {
+    const openOp = await enqueueOpenOrder();
+    const addOp = await enqueue({
+      clientRequestId: crypto.randomUUID(),
+      deviceId: "device-1",
+      tenantId: TENANT,
+      propertyId: "prop-1",
+      outletId: "outlet-1",
+      operationType: "add_item",
+      dependsOnOperationId: openOp.operationId,
+      payload: {
+        tenantId: TENANT,
+        orderRef: { kind: "local", operationId: openOp.operationId },
+        lines: [],
+        clientRequestId: crypto.randomUUID(),
+      },
+    });
+    const callers = makeCallers({
+      openOrder: vi.fn(async () => {
+        throw new Error("persistent 500");
+      }),
+    });
+
+    // Drive the parent to DEAD_LETTER (MAX_ATTEMPTS_BEFORE_DEAD_LETTER = 5).
+    // Because entries are processed in sequence order within one pass, the
+    // child (a later sequence number) is cascaded in this SAME final pass,
+    // the instant its parent goes terminal — not on some later call.
+    let lastSummary;
+    for (let i = 0; i < 5; i += 1) lastSummary = await syncPendingQueue(TENANT, callers);
+    expect((await getQueueEntry(openOp.operationId))?.state).toBe("DEAD_LETTER");
+
+    // Before this fix, the child would sit in PENDING forever, counted as
+    // "skippedWaitingOnDependency" every pass with no operator-visible
+    // signal that it can never resolve.
+    expect(lastSummary?.conflicts).toBe(1);
+    expect(lastSummary?.skippedWaitingOnDependency).toBe(0);
+
+    // Terminal — a further pass never re-attempts either entry.
+    const later = await syncPendingQueue(TENANT, makeCallers());
+    expect(later.attempted).toBe(0);
+    expect(later.conflicts).toBe(0);
+    const finalChild = await getQueueEntry(addOp.operationId);
+    expect(finalChild?.state).toBe("CONFLICT");
+    expect(finalChild?.failureReason).toMatch(/DEAD_LETTER/);
+
+    const conflicts = await getAllByIndex<ConflictRecord>(
+      STORES.conflicts,
+      "by_operation",
+      addOp.operationId,
+    );
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].outcome).toBe("REQUIRES_OPERATOR");
+  });
+
+  it("a grandchild (fire_to_kitchen depending on add_item depending on open_order) cascades transitively in the same pass once the root parent CONFLICTs", async () => {
+    const openOp = await enqueueOpenOrder();
+    const addOp = await enqueue({
+      clientRequestId: crypto.randomUUID(),
+      deviceId: "device-1",
+      tenantId: TENANT,
+      propertyId: "prop-1",
+      outletId: "outlet-1",
+      operationType: "add_item",
+      dependsOnOperationId: openOp.operationId,
+      payload: {
+        tenantId: TENANT,
+        orderRef: { kind: "local", operationId: openOp.operationId },
+        lines: [],
+        clientRequestId: crypto.randomUUID(),
+      },
+    });
+    const fireOp = await enqueue({
+      clientRequestId: crypto.randomUUID(),
+      deviceId: "device-1",
+      tenantId: TENANT,
+      propertyId: "prop-1",
+      outletId: "outlet-1",
+      operationType: "fire_to_kitchen",
+      dependsOnOperationId: addOp.operationId,
+      payload: { tenantId: TENANT, orderRef: { kind: "local", operationId: openOp.operationId } },
+    });
+    const callers = makeCallers({
+      openOrder: vi.fn(async () => {
+        throw new Error('Forbidden — "sales.manage" requires one of: owner.');
+      }),
+    });
+
+    const summary = await syncPendingQueue(TENANT, callers);
+    expect((await getQueueEntry(openOp.operationId))?.state).toBe("CONFLICT");
+    expect((await getQueueEntry(addOp.operationId))?.state).toBe("CONFLICT");
+    expect((await getQueueEntry(fireOp.operationId))?.state).toBe("CONFLICT");
+    // 1 direct conflict (open_order) + 2 cascaded (add_item, fire_to_kitchen).
+    expect(summary.conflicts).toBe(3);
+  });
+
+  it("a child whose parent was explicitly CANCELLED is also cascaded, not left waiting on a dependency an operator already gave up on", async () => {
+    const openOp = await enqueueOpenOrder();
+    const addOp = await enqueue({
+      clientRequestId: crypto.randomUUID(),
+      deviceId: "device-1",
+      tenantId: TENANT,
+      propertyId: "prop-1",
+      outletId: "outlet-1",
+      operationType: "add_item",
+      dependsOnOperationId: openOp.operationId,
+      payload: {
+        tenantId: TENANT,
+        orderRef: { kind: "local", operationId: openOp.operationId },
+        lines: [],
+        clientRequestId: crypto.randomUUID(),
+      },
+    });
+    const { cancelQueueEntry } = await import("./queue");
+    await cancelQueueEntry(openOp.operationId);
+
+    const summary = await syncPendingQueue(TENANT, makeCallers());
+    expect(summary.conflicts).toBe(1);
+    expect((await getQueueEntry(addOp.operationId))?.state).toBe("CONFLICT");
+  });
+});
+
 describe("sync engine — status observability", () => {
   it("syncStatusFor reports an accurate breakdown across every terminal and non-terminal state", async () => {
     const synced = await enqueueOpenOrder();
