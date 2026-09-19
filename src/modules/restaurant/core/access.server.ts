@@ -268,29 +268,35 @@ export async function resolveMultiPropertyScope(
   }
 }
 
+/**
+ * ME-13: `tenantScope` lets a caller that already resolved a `TenantScope`
+ * for this exact (userId, tenantId) — via `getTenantScope`, moments earlier
+ * in the same logical action — pass it in and skip re-querying
+ * `isPlatformAdmin`/`memberGrantsInTenant` a second (or third, fourth...)
+ * time. Omitting it (every call site before this pass, and the great
+ * majority after it) preserves the exact previous behaviour and round-trip
+ * count: this function resolves its own scope via `getTenantScope`, which
+ * is byte-for-byte the same two calls `assertTenantRead` made inline
+ * before this refactor.
+ */
 export async function assertTenantRead(
   supabase: Sb,
   userId: string,
   tenantId: string,
   scope?: ResourceScope,
+  tenantScope?: TenantScope,
 ) {
-  if (await isPlatformAdmin(supabase, userId)) return;
-  const grants = await memberGrantsInTenant(supabase, userId, tenantId);
-  if (grants.length === 0)
+  const resolved = tenantScope ?? (await getTenantScope(supabase, userId, tenantId));
+  if (resolved.platformAdmin) return;
+  if (resolved.grants.length === 0)
     throw new Error("Forbidden — you do not belong to this restaurant tenant.");
   if (scope?.propertyId !== undefined && scope.propertyId !== null) {
-    if (!grants.some((g) => grantCoversProperty(g, scope.propertyId))) {
+    if (!canAccessProperty(resolved, scope.propertyId)) {
       throw new Error("Forbidden — you do not have access to this property.");
     }
   }
   if (scope?.locationId !== undefined && scope.locationId !== null) {
-    const { data } = await supabase
-      .from("restaurant_locations")
-      .select("property_id")
-      .eq("id", scope.locationId)
-      .maybeSingle();
-    const locationProperty = data?.property_id ?? null;
-    if (locationProperty && !grants.some((g) => grantCoversProperty(g, locationProperty))) {
+    if (!(await canAccessLocation(supabase, resolved, scope.locationId))) {
       throw new Error("Forbidden — you do not have access to this location.");
     }
   }
@@ -340,6 +346,16 @@ export async function assertCanManageMembership(
  * caller to hold the capability's role at that specific property — a
  * tenant-wide grant for the role still passes; a grant scoped to a
  * *different* property does not.
+ *
+ * ME-13: `tenantScope`, like `assertTenantRead`'s parameter of the same
+ * name, lets a caller reuse a `TenantScope` it already resolved for this
+ * (userId, tenantId) instead of this function re-resolving its own —
+ * closing the repeated-authorization-resolution finding in
+ * openPosOrder→addPosLines and takePosPayment→transitionOrder→issueReceipt
+ * (see pos.server.ts, sales.server.ts, receipts.server.ts). Omitting it
+ * resolves via `getTenantScope`, identically to the two inline calls this
+ * function made before this refactor — every pre-existing call site's
+ * behaviour and round-trip count is unchanged.
  */
 export async function assertCapability(
   supabase: Sb,
@@ -347,11 +363,12 @@ export async function assertCapability(
   tenantId: string,
   capability: RestaurantCapability,
   scope?: ResourceScope,
+  tenantScope?: TenantScope,
 ) {
-  if (await isPlatformAdmin(supabase, userId)) return;
-  const grants = await memberGrantsInTenant(supabase, userId, tenantId);
+  const resolved = tenantScope ?? (await getTenantScope(supabase, userId, tenantId));
+  if (resolved.platformAdmin) return;
   const allowed = rolesForCapability(capability) as readonly string[];
-  const matching = grants.filter((g) => allowed.includes(g.role));
+  const matching = resolved.grants.filter((g) => allowed.includes(g.role));
   if (matching.length === 0) {
     throw new Error(`Forbidden — "${capability}" requires one of: ${allowed.join(", ")}.`);
   }

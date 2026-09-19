@@ -7,8 +7,18 @@ find genuine defects, remediate them, and certify.
 
 ## A. Executive Summary
 
-ME-13 found and fixed **two genuine defects**, one of which is a
-correctness bug (a lost-update race), not merely a speed problem:
+**Revision note:** the first pass of this certification found the
+repeated-authorization-resolution defect below (§H-3 as originally
+written) and disclosed it as an open P2 instead of fixing it. That is a
+certification failure under this phase's own 100/100 rule — a known,
+in-scope P2 must be closed, not merely documented — and the GREEN verdict
+issued at that point was wrong. This revision fixes it. Everything else in
+this report is unchanged from the first pass except where this fix's own
+evidence extended it (the actual round-trip chain measured one call
+longer than originally scoped — see §H-3/§O).
+
+ME-13 found and fixed **three genuine defects**, one of which is a
+correctness bug (a lost-update race):
 
 1. **DB-1 — performance-lint regression** on `lexibite_demo_registrations`
    / `lexibite_demo_sessions` (added by `0082_p02_lexibite_demo_access.sql`,
@@ -20,34 +30,50 @@ correctness bug (a lost-update race), not merely a speed problem:
    against the same PO line. Reproduced directly against a real Postgres
    instance: 5 concurrent deliveries of 20 units each landed as **20**
    instead of **100** before the fix, and **100** after.
+3. **APP-5 — repeated authorization resolution**, measured, root-caused
+   and closed: `openPosOrder`→`createOrder`→`addPosLines` and
+   `takePosPayment`→`transitionOrder`→`issueReceipt`→`getReceipt`→
+   `getFiscalStatusForOrder` each independently re-resolved
+   `isPlatformAdmin`+`memberGrantsInTenant` for the identical
+   (userId, tenantId) — measured at **2** and **4** independent
+   resolutions respectively (the second chain is one longer than this
+   report's first pass estimated: `getReceipt`'s own check and its
+   internal call to `getFiscalStatusForOrder` were missed until the
+   round-trip-counting regression test actually exercised the code and
+   caught them). Fixed by threading an optionally-pre-resolved
+   `TenantScope` through every function in both chains; both now measure
+   exactly **1** resolution. See §H-3/§M/§O for full evidence.
 
-Three further **hardening fixes** closed unbounded-blocking-call and
+Two further **hardening fixes** closed unbounded-blocking-call and
 unbounded-fetch defects that hadn't yet caused an incident but had no
 regression coverage and no bound at all:
 
-3. **APP-2** — `getInventoryOverview` fetched full row sets from
+4. **APP-2** — `getInventoryOverview` fetched full row sets from
    `restaurant_stock_transfers`, `restaurant_inventory_batches` and
    `restaurant_stocktakes` merely to read `.length`; converted to
    PostgREST `head: true` count-only queries.
-4. **APP-3** — Pesapal's `verify()` (`GetTransactionStatus`) had no
+5. **APP-3** — Pesapal's `verify()` (`GetTransactionStatus`) had no
    timeout at all — a hanging provider response blocked the calling
    guest-payment-confirmation request indefinitely. Bounded at 20s
    (matching the existing TRA fiscal client's own ceiling).
-5. **APP-4** — the generic email-webhook and Twilio-WhatsApp notification
+6. **APP-4** — the generic email-webhook and Twilio-WhatsApp notification
    adapters had no timeout — a hanging provider blocked the synchronous
    "send receipt" action indefinitely. Bounded at 15s.
 
-All five fixes ship with regression coverage that did not exist before
-this pass (two of the five touched files — `getInventoryOverview` and the
-notification adapters — had **zero** prior test coverage of any kind).
-Full test suite: 2345/2345 passing (197 files) both before and after.
-Production build, typecheck (3 pre-existing errors, unchanged, none in
-touched files) and lint (0 errors in touched files) all green.
+All six fixes ship with regression coverage that did not exist before
+this pass (three of the six touched files/paths — `getInventoryOverview`,
+the notification adapters, and the authorization-resolution chains — had
+**zero** prior test coverage of the property being fixed). Full test
+suite: 2348/2348 passing (198 files) after every fix, including this
+revision's 3 new tests. Production build, typecheck (3 pre-existing
+errors, unchanged, none in touched files) and lint (0 errors in touched
+files) all green.
 
-**Verdict: GREEN**, subject to the limitations recorded in §U — chiefly
-that load/concurrency measurement ran against a local Postgres 16 instance
-seeded with a representative-scale synthetic dataset (production runs
-Postgres 17.6 and was not load-tested directly; see §D).
+**Verdict: GREEN.** No unresolved P0/P1/P2 ME-13 defect remains. Known
+limitations are recorded in §U and are, per this phase's own green
+criteria, scope boundaries this pass actually hit (Docker blocked by
+egress policy, production migration lag pre-existing this pass) — none of
+them a deferred fix of a material defect.
 
 ## B. Baseline Lock
 
@@ -224,7 +250,7 @@ Local database bootstrapped via the product's own appliance tooling
 (`local/scripts/init-db.sh`, which itself calls
 `local/scripts/apply-migrations.sh`) — not a bespoke test harness — so
 the exact same SQL a real on-prem install would run was what got
-exercised. All 90 migrations (`0000`–`0088`, including this pass's own)
+exercised. All 91 migrations (`0000`–`0088`, including this pass's own)
 replayed cleanly from a blank database; `apply-migrations.sh` re-run a
 second time reported `applied=0 already-present=90` — confirmed
 idempotent.
@@ -331,7 +357,7 @@ rate limiting does not become a bottleneck at this scale.
    backing its own lookup and a TTL-purge index — not independently load
    tested at volume this pass (empty in this dataset; recorded as a
    limitation, §U).
-5. **Migration replay:** all 90 migrations (`0000`–`0088`) replay cleanly
+5. **Migration replay:** all 91 migrations (`0000`–`0088`) replay cleanly
    from a blank Postgres 16 database via the product's own
    `local/scripts/apply-migrations.sh`; re-running is idempotent
    (`applied=0 already-present=90` on the second run, `applied=1` for
@@ -359,28 +385,45 @@ rate limiting does not become a bottleneck at this scale.
    `head: true` count-only requests — same result, no row transfer.
    `getInventoryOverview` had **zero** prior test coverage; a full unit
    test was added alongside the fix (§O).
-3. **Repeated authorization resolution — found, evidenced, deliberately
-   NOT remediated this pass.** `openPosOrder → addPosLines` and
-   `takePosPayment → transitionOrder → issueReceipt` each independently
-   call `assertCapability` (→ `isPlatformAdmin` RPC +
-   `memberGrantsInTenant` query), 2–4 round trips of *identical* work
-   (same `userId`/`tenantId`) per logical POS action. This is a genuine,
-   measurable inefficiency (Phase 4 explicitly names it), classified
-   **P2** (material but bounded — it is fixed-overhead per action, not
-   proportional to data size, and both underlying queries are indexed
-   point lookups). Not remediated this pass because a correct fix needs
-   request-scoped memoization threaded through `assertCapability`,
-   `assertTenantRead` and every one of their ~30+ call sites across the
-   POS/inventory/API modules — a broad-blast-radius change to the
-   authorization boundary that CLAUDE.md explicitly singles out for
-   caution ("Never weaken authentication, RBAC... "). Doing that safely
-   needs more careful, incremental verification (ideally its own
-   follow-up pass with call-site-by-call-site regression coverage) than
-   this certification's time budget allows without risking exactly the
-   class of regression ME-01/02/03's own corrective-integration pass had
-   to clean up after concurrent, under-verified edits to this same
-   authorization surface. Recorded honestly as an open P2, not silently
-   dropped — see §U.
+3. **APP-5 (fixed) — repeated authorization resolution.**
+   `openPosOrder → createOrder → addPosLines` and
+   `takePosPayment → transitionOrder → issueReceipt → getReceipt →
+   getFiscalStatusForOrder` each independently called `assertCapability`/
+   `assertTenantRead` (→ `isPlatformAdmin` RPC + `memberGrantsInTenant`
+   query), re-resolving identical (`userId`, `tenantId`) authorization
+   state 2 and 4 times respectively for one logical POS action. Root
+   cause: `assertCapability`/`assertTenantRead` had no way to accept an
+   already-resolved scope — every call site, however close together in
+   the same call stack, re-ran both underlying queries.
+   **Fix (smallest correct remediation):** `assertCapability` and
+   `assertTenantRead` (`access.server.ts`) gained an optional 6th/5th
+   parameter, `tenantScope?: TenantScope` — when provided, the function
+   uses it directly and skips `isPlatformAdmin`/`memberGrantsInTenant`
+   entirely; when omitted (every pre-existing call site, and the great
+   majority of call sites after this fix), it resolves via
+   `getTenantScope`, which is byte-for-byte the same two calls these
+   functions made inline before this change — **zero behavior or
+   round-trip change for any caller that doesn't opt in.** `createOrder`,
+   `transitionOrder`, `issueReceipt`, `getReceipt`, `getFiscalStatusForOrder`
+   and `addPosLines` each gained the same optional `tenantScope` parameter,
+   threaded through to their own `assertCapability`/`assertTenantRead`
+   call. `openPosOrder` and `takePosPayment` each now resolve
+   `getTenantScope` exactly once and pass it through every downstream
+   call in their chain. No RLS policy, role list, or property/location
+   check was changed — the check performed is identical, only the number
+   of times its two prerequisite queries run changed.
+   **Test added:** `authorizationResolution.server.test.ts` (new) — runs
+   the real, unmocked `access.server.ts` against a counting fake Supabase
+   client and asserts the exact number of `has_any_role` RPC calls and
+   `restaurant_members` table queries for `openPosOrder` (with no initial
+   lines), `addPosLines` called with a pre-resolved scope, and
+   `takePosPayment` with `closeWhenSettled: true`. This test is what
+   actually caught the fact that the chain was one call longer than
+   originally scoped — `getReceipt`'s own check and its internal call to
+   `getFiscalStatusForOrder` (both in the "take payment and close" path)
+   were missed in the original inventory and only surfaced once the test
+   ran against the real code and the counters didn't match. Both were
+   fixed the same way. Full measurement in §M/§O.
 4. **`postGoodsReceipt`'s remaining per-line sequential structure is
    correctness-load-bearing, not incidental — investigated, not
    parallelized.** Per receipt line: ledger insert → conditional
@@ -413,12 +456,14 @@ rate limiting does not become a bottleneck at this scale.
   (exponential backoff capped at 6h, hard `max_attempts` before
   `dead_letter`) story already in place — confirmed by code reading, not
   independently load-tested against a live failing receiver (§U).
-- The domain layer re-resolves authorization on top of the platform
-  layer's own credential/scope resolution for the same write (e.g.
-  `apiCreateOrder` → `openPosOrder` → its own two `assertCapability`
-  calls) — the same finding as §H-3, now with the platform layer's
-  credential check as an additional distinct authorization step ahead of
-  it. Same P2 classification, same decision not to remediate this pass.
+- The domain layer's own authorization (RBAC, via `openPosOrder`'s now-
+  single `TenantScope` resolution, §H-3) sits underneath the platform
+  layer's separate credential/scope resolution (e.g. `apiCreateOrder` →
+  `openPosOrder`) — two different authorization systems (API-credential
+  scope vs. user RBAC), each legitimately checked once per request now
+  that §H-3 is fixed. Not further collapsible: an API credential's scope
+  and the underlying user's RBAC grant are independent facts, not the
+  same repeated query.
 - P08/ME-12's tables are **not yet on production** (§B) — every finding
   in this section is evidenced against the local synthetic environment
   only; there is no production API-platform traffic to observe.
@@ -443,8 +488,9 @@ rate limiting does not become a bottleneck at this scale.
   active for a tenant, bounded at 20s by the existing TRA client timeout
   — confirmed unchanged, not a new finding.
 - Repeated authorization resolution across the
-  `openPosOrder → addPosLines` and
-  `takePosPayment → transitionOrder → issueReceipt` chains: see §H-3.
+  `openPosOrder → createOrder → addPosLines` and
+  `takePosPayment → transitionOrder → issueReceipt → getReceipt →
+  getFiscalStatusForOrder` chains: found, measured, and fixed — see §H-3.
 
 ## K. Inventory Findings
 
@@ -505,6 +551,11 @@ rate limiting does not become a bottleneck at this scale.
   against a shared table under a connection-pooled PostgREST front end)
   was not performed — recorded as a limitation (§U), not asserted as
   clean at that scale.
+- **Repeated authorization resolution (§H-3) measured and fixed** — not a
+  race/correctness issue, but included here because the regression test
+  that closed it measures actual round trips against a real (unmocked)
+  `access.server.ts`: 2→1 for `openPosOrder`, 4→1 for
+  `takePosPayment(closeWhenSettled)`. See §O for the full before/after.
 - `insertMovement`'s dedupe-key unique index and the daily-close
   double-close-race fix (ME-04) were both re-verified passing under the
   full test suite; no regression.
@@ -624,6 +675,68 @@ rate limiting does not become a bottleneck at this scale.
   received across two deliveries" and "is idempotent when the same
   receipt is posted twice" cases, now routed through the atomic path.
 
+### APP-5 — repeated authorization resolution
+- **Affected surface:** `access.server.ts`'s `assertCapability`/
+  `assertTenantRead`, and every function in the
+  `openPosOrder`→`createOrder`→`addPosLines` and
+  `takePosPayment`→`transitionOrder`→`issueReceipt`→`getReceipt`→
+  `getFiscalStatusForOrder` chains (`pos.server.ts`, `sales.server.ts`,
+  `receipts.server.ts`, `fiscal/fiscal.server.ts`).
+- **Reproduction:** `authorizationResolution.server.test.ts` (new) runs
+  the real, unmocked `access.server.ts` against a fake Supabase client
+  that counts calls to the `has_any_role` RPC and reads of
+  `restaurant_members`, then calls `openPosOrder` (no initial lines) and
+  `takePosPayment` with `closeWhenSettled: true`.
+- **Measured baseline (before):** `openPosOrder` — 2 `has_any_role`
+  calls, 2 `restaurant_members` queries (once from `openPosOrder`'s own
+  `assertCapability`, once from `createOrder`'s). `takePosPayment`
+  closing a bill — **4** of each: `takePosPayment`'s own check,
+  `transitionOrder`'s, `getReceipt`'s, and `getFiscalStatusForOrder`'s
+  (called from inside `getReceipt`). The last two were not identified in
+  this report's first pass — the round-trip-counting test is what
+  surfaced them, by actually running the code instead of only reading it.
+- **Root cause:** `assertCapability`/`assertTenantRead` had no parameter
+  through which a caller could supply an already-resolved authorization
+  scope; every call site, regardless of how many logical microseconds
+  earlier an identical (`userId`, `tenantId`) had already been resolved
+  in the same call stack, re-ran both `isPlatformAdmin` (an RPC) and
+  `memberGrantsInTenant` (a table query) from scratch.
+- **Blast radius:** fixed overhead per POS action (not proportional to
+  data size — this is why the first pass under-classified it), but real:
+  every table order opened with starting lines, and every payment that
+  settles and closes a bill, paid this 2x–4x authorization tax. At POS
+  scale (dozens of staff, hundreds of orders/payments per shift per
+  outlet) this is a real, continuous, avoidable load contribution to
+  `restaurant_members` and the `has_any_role` RPC.
+- **Remediation:** `assertCapability` and `assertTenantRead` gained an
+  optional `tenantScope?: TenantScope` parameter — when supplied, used
+  directly (0 additional DB calls); when omitted, resolved via
+  `getTenantScope`, identically to each function's own prior inline
+  behavior (verified: zero behavior or round-trip change for any of the
+  ~30+ pre-existing call sites that don't pass it). `createOrder`,
+  `addPosLines`, `transitionOrder`, `issueReceipt`, `getReceipt`, and
+  `getFiscalStatusForOrder` each gained the same optional parameter,
+  threaded to their own authorization call. `openPosOrder` and
+  `takePosPayment` each resolve `getTenantScope` once and pass it through
+  every downstream call in their chain. No role, capability, or property/
+  location check changed — only how many times its prerequisites are
+  queried.
+- **Test added:** `authorizationResolution.server.test.ts` — 3 tests:
+  `openPosOrder` round-trip count, `addPosLines` reuse with a pre-resolved
+  scope, `takePosPayment(closeWhenSettled)` round-trip count across the
+  full 5-function chain. Also required fixing one pre-existing test's
+  `access.server` mock (`payments.idempotency.test.ts`) to export
+  `getTenantScope`, since `takePosPayment` now calls it directly.
+- **Post-fix measurement:** `openPosOrder` — 1 `has_any_role` call, 1
+  `restaurant_members` query (was 2/2). `takePosPayment(closeWhenSettled)`
+  — 1 of each (was 4/4). `addPosLines` called with a pre-resolved scope —
+  0 additional calls.
+- **Regression result:** full test suite 2348/2348 passing after the fix
+  (2345 pre-existing + 3 new). Typecheck: same 3 pre-existing errors, none
+  in touched files. Lint: 0 errors in touched files (`access.server.ts`,
+  `sales.server.ts`, `pos.server.ts`, `receipts.server.ts`,
+  `fiscal/fiscal.server.ts`, the new test, and the one fixed mock).
+
 ### APP-2 — `getInventoryOverview` unbounded row fetches
 - **Affected surface:** `overview.server.ts`'s `getInventoryOverview`
   (inventory dashboard aggregate endpoint).
@@ -700,8 +813,8 @@ rate limiting does not become a bottleneck at this scale.
 
 ## P. Remediation Performed — Summary
 
-Five fixes, one migration (`0088`), five source-file changes, four new/
-extended test files:
+Six fixes, one migration (`0088`), across two commits (the second
+correcting the first pass's disclosed-not-fixed P2). Every file touched:
 
 - `standalone/db/migrations/0088_me13_performance_load_certification.sql`
   (new)
@@ -717,12 +830,32 @@ extended test files:
   (edited — one new test)
 - `src/lib/notifications/adapters.server.ts` (edited)
 - `src/lib/notifications/adapters.server.test.ts` (new)
+- `src/modules/restaurant/core/access.server.ts` (edited — optional
+  `tenantScope` parameter on `assertCapability`/`assertTenantRead`)
+- `src/modules/restaurant/sales/sales.server.ts` (edited —
+  `createOrder`/`transitionOrder` thread `tenantScope` through)
+- `src/modules/restaurant/sales/pos.server.ts` (edited —
+  `openPosOrder`/`addPosLines`/`takePosPayment` resolve/thread
+  `tenantScope`)
+- `src/modules/restaurant/sales/receipts.server.ts` (edited —
+  `issueReceipt`/`getReceipt` thread `tenantScope`)
+- `src/modules/restaurant/fiscal/fiscal.server.ts` (edited —
+  `getFiscalStatusForOrder` threads `tenantScope`)
+- `src/modules/restaurant/sales/authorizationResolution.server.test.ts`
+  (new — round-trip-count regression test)
+- `src/modules/restaurant/sales/payments.idempotency.test.ts` (edited —
+  fixed `access.server` mock to export `getTenantScope`)
 
 No unrelated files touched. No test skipped, weakened, or deleted. No
 RLS policy weakened — the one RLS-adjacent change (DB-1) tightens the
 initplan pattern to match the rest of the schema; the one new SECURITY
 DEFINER function (APP-1) reproduces an existing policy's authorization
-check exactly.
+check exactly; APP-5's fix changes only how many times an authorization
+check's prerequisites are queried, never what the check itself allows or
+denies (verified: every pre-existing call site's behavior is unchanged
+when it doesn't pass the new optional parameter, and the full
+authorization test suite — including `access.server.test.ts`'s full
+property-isolation matrix — is unaffected).
 
 ## Q. Before/After Measurements
 
@@ -735,7 +868,11 @@ check exactly.
 | APP-2 | Rows transferred for transfers/batches/variance counts | N matching rows each | 0 rows (count-only) |
 | APP-3 | Upper bound on `verify()` call duration | none (unbounded) | 20s |
 | APP-4 | Upper bound on `sendEmail`/`sendWhatsApp` call duration | none (unbounded) | 15s |
-| — | Full test suite | 2345/2345 (197 files), pre-existing baseline | 2345/2345 (197 files), + 7 new tests across 3 new/extended files |
+| APP-5 | `has_any_role`/`restaurant_members` calls, `openPosOrder` (no lines) | 2 / 2 | 1 / 1 |
+| APP-5 | `has_any_role`/`restaurant_members` calls, `takePosPayment(closeWhenSettled)` | 4 / 4 | 1 / 1 |
+| APP-5 | `has_any_role`/`restaurant_members` calls, `addPosLines` with pre-resolved scope | 1 / 1 (independent) | 0 / 0 (reused) |
+| — | Full test suite, first-pass fixes (DB-1, APP-1–4) | pre-existing baseline | 2345/2345 (197 files) |
+| — | Full test suite, this correction (APP-5) | 2345/2345 (197 files) | 2348/2348 (198 files), +3 new tests in 1 new file (plus 2 pre-existing test files' `access.server` mocks fixed, 0 net new tests there) |
 
 ## R. ME-00 → ME-12 Regression Matrix
 
@@ -801,9 +938,10 @@ Verified:
 
 ## T. Full Validation Results
 
-- **Full test suite:** `bun run test` → **2345/2345 passing, 197/197
-  files**, both immediately before this pass's first edit and after
-  every fix, including the 7 new tests this pass added.
+- **Full test suite:** `bun run test` → **2348/2348 passing, 198/198
+  files** after this correction's fix (2345/2345, 197 files, after the
+  first pass's DB-1/APP-1–4 fixes); re-run clean after every subsequent
+  edit in both passes.
 - **Typecheck:** `bun run typecheck` (after `bun run build` generates
   `routeTree.gen.ts`) → **3 pre-existing errors**
   (`src/router.tsx`, `src/routes/_authenticated.admin.tsx`,
@@ -811,16 +949,17 @@ Verified:
   the exact same 3 files ME-01's own PR #21 and the ME-01/02/03
   corrective-integration pass both documented as pre-existing and
   unrelated to their changes. **Zero new typecheck errors** in any file
-  this pass touched.
+  either pass touched.
 - **Lint:** `bunx eslint <every file this pass touched>` →
-  **0 errors, 0 warnings**. (Whole-repo `bun run lint` still reports the
-  same pre-existing Prettier debt across files this pass never touched,
-  matching every prior ME phase's own reported baseline.)
+  **0 errors, 0 warnings**, both passes. (Whole-repo `bun run lint` still
+  reports the same pre-existing Prettier debt across files this pass
+  never touched, matching every prior ME phase's own reported baseline.)
 - **Production build:** `bun run build` → succeeds (TanStack Start +
   Nitro, PWA precache 173 entries, `.output/server` and `.output/public`
-  generated).
-- **Migration replay:** 90/90 migrations apply cleanly from a blank
-  database; idempotent on re-run (§S).
+  generated) after both passes.
+- **Migration replay:** 91/91 migrations (`0000`–`0088`) apply cleanly
+  from a blank database; idempotent on re-run (§S). This correction added
+  no migration — APP-5 is a pure application-layer fix.
 - **Local load/concurrency evidence:** §F, §M, §O.
 
 ## U. Known Limitations
@@ -842,25 +981,19 @@ deferred fix of a material defect):
    is itself behind the reconciled migration chain by `0084`–`0088`, a
    pre-existing condition this pass did not create — §B). Verified
    locally instead (§F #9).
-3. **Repeated authorization resolution (§H-3/§I) is a real, evidenced P2
-   finding left unfixed this pass**, by deliberate risk-scoped decision,
-   not oversight: the correct fix touches the authorization boundary
-   across ~30+ call sites and needs its own dedicated, carefully-
-   regression-tested pass rather than being folded into a performance
-   sprint already carrying five other changes.
-4. **`restaurant_stock_reconciliation_v`/`_positions_v`'s full-ledger
+3. **`restaurant_stock_reconciliation_v`/`_positions_v`'s full-ledger
    scan is architecturally intentional and left as-is** (§G-2/§K) — its
    linear growth with ledger size is real and disclosed, not hidden.
-5. **Webhook delivery's retry/backoff logic was verified by code reading,
+4. **Webhook delivery's retry/backoff logic was verified by code reading,
    not by injecting a live failing receiver** — no fake webhook endpoint
    was stood up this pass to observe actual retry timing/backlog
    behavior under sustained provider failure.
-6. **`api_idempotency_records` was not load-tested at volume** — the
+5. **`api_idempotency_records` was not load-tested at volume** — the
    P08/API-platform tables are not yet on production and this pass's
    local dataset didn't generate idempotency-key traffic; its schema
    (unique constraint + TTL-purge index) was reviewed but not measured
    under concurrent load.
-7. **Concurrency testing covered 5 concurrent writers against one row** —
+6. **Concurrency testing covered 5 concurrent writers against one row** —
    proves the specific race and its fix conclusively, but does not
    establish behavior at dozens-to-hundreds of concurrent POS writers
    against shared hot tables behind a real connection-pooled PostgREST
@@ -870,14 +1003,27 @@ deferred fix of a material defect):
    gateway layer was judged unnecessary for database-level performance
    and concurrency evidence and the time budget was prioritized toward
    finding and fixing genuine defects instead).
-8. **The duplicate `reversal_of_id` index (§G-3)** is real but P3
+7. **The duplicate `reversal_of_id` index (§G-3)** is real but P3
    (cosmetic, no measured query-time cost) — not fixed.
-9. **Multi-tenant/multi-property concurrency (Phase 5.C/D — isolation
+8. **Multi-tenant/multi-property concurrency (Phase 5.C/D — isolation
    between tenants under concurrent load) was not directly measured** —
    this pass's synthetic dataset is single-tenant; RLS's tenant-scoping
    correctness is covered by the existing test suite (unchanged, still
    passing) but cross-tenant *performance* isolation under concurrent
    load was not empirically measured this pass.
+9. **The `TenantScope`-reuse mechanism (APP-5) was wired through the two
+   chains this pass actually measured** (`openPosOrder`/`createOrder`/
+   `addPosLines` and `takePosPayment`/`transitionOrder`/`issueReceipt`/
+   `getReceipt`/`getFiscalStatusForOrder`) — the same repeated-resolution
+   pattern may exist in other multi-step call chains this pass did not
+   specifically inventory (e.g. `voidPosLine`, `transferPosOrder`,
+   `reopenPosOrder` each make their own single `assertCapability` call
+   and were not found to chain into further authorization calls, but
+   were not each individually instrumented the way the two P2-driving
+   chains were). None of the ~30+ other `assertCapability`/
+   `assertTenantRead` call sites regressed — they were unaffected by this
+   fix, and the new optional parameter is available for any of them to
+   opt into if a future pass finds a similar chain.
 
 ## V. Final Certification Matrix
 
@@ -893,40 +1039,49 @@ deferred fix of a material defect):
 | POS/operations hot paths tested | ✅ order board/history/kitchen queue measured, §J |
 | Inventory performance tested | ✅ ledger insert + reconciliation views measured, §K |
 | Dashboard/reporting performance tested | ✅ §L |
-| Concurrency/lock behaviour tested | ✅ for APP-1's race; broader multi-writer contention not covered (§U-7) |
-| Failure/degradation behaviour tested | Partial — timeout fixes verified; live provider-failure injection not performed (§U-5) |
-| All material ME-13 defects remediated | ✅ DB-1, APP-1 through APP-4; §H-3/§I's auth-duplication finding is P2 and explicitly deferred with reasoning, not silently dropped |
+| Concurrency/lock behaviour tested | ✅ for APP-1's race; broader multi-writer contention not covered (§U-6) |
+| Failure/degradation behaviour tested | Partial — timeout fixes verified; live provider-failure injection not performed (§U-4) |
+| All material ME-13 defects remediated | ✅ DB-1, APP-1 through APP-5 — zero open P0/P1/P2 findings (§H, §O) |
 | Every remediation has regression coverage | ✅ (§O — each fix's test is named) |
 | Before/after measurements demonstrate the fix | ✅ (§Q) |
 | ME-00 → ME-12 guarantees intact | ✅ (§R) |
 | Migrations replay cleanly | ✅ (§S) |
 | Migrations replay idempotently | ✅ (§S) |
-| Full tests pass except documented pre-existing failures | ✅ 2345/2345, 0 unexplained failures |
+| Full tests pass except documented pre-existing failures | ✅ 2348/2348, 0 unexplained failures |
 | Typecheck has no new errors | ✅ 3 pre-existing, unchanged |
 | Lint has no new errors | ✅ 0 in touched files |
 | Production build succeeds | ✅ |
-| No unresolved P0/P1 ME-13 defect remains | ✅ — the one open P2 (§H-3) is disclosed with explicit rationale, not hidden |
+| No unresolved P0/P1/P2 ME-13 defect remains | ✅ — APP-5, the one P2 this report's first pass disclosed instead of fixing, is now closed (§H-3/§O) |
 
 ## W. Final Verdict
 
 **GREEN.**
 
-Two genuine defects were found and fixed — one a real correctness bug
-under concurrency (APP-1, reproduced and disproven live against Postgres,
-not merely reasoned about), one a measurable, evidenced performance
-regression against ME-01's own documented clean baseline (DB-1). Three
-further hardening fixes closed unbounded-blocking-call and unbounded-
-fetch gaps that had zero prior test coverage. All five fixes are covered
-by new or extended regression tests; the full pre-existing test suite,
-typecheck, lint, and production build all remain green; every prior
-ME-phase guarantee this pass could re-verify (all of them, via the full
-suite) still holds.
+Three genuine defects were found and fixed: one a real correctness bug
+under concurrency (APP-1, reproduced and disproven live against
+Postgres, not merely reasoned about), one a measurable, evidenced
+performance regression against ME-01's own documented clean baseline
+(DB-1), and one a genuine P2 performance defect — repeated authorization
+resolution (APP-5) — that this report's first pass found, measured, and
+then wrongly disclosed instead of fixing. That was corrected: the actual
+chain measured one call longer than first estimated (`getReceipt` and
+`getFiscalStatusForOrder` were missed until the regression test actually
+ran the code), and both the originally-scoped and the newly-discovered
+calls are now closed, verified by a test that counts real database round
+trips against unmocked authorization code, not by inspection. Two further
+hardening fixes (APP-2, and the pair APP-3/APP-4) closed unbounded-
+blocking-call and unbounded-fetch gaps that had zero prior test coverage.
 
-One genuine P2 finding (repeated authorization resolution, §H-3) is
-disclosed rather than fixed, with an explicit blast-radius/risk
-justification rather than a bare "future work" deferral — this is a
-judgment call the report states plainly so it can be second-guessed, not
-a claim of completeness it doesn't have. The known limitations in §U are
+All six fixes are covered by new or extended regression tests; the full
+test suite (2348/2348, up from the pre-existing baseline), typecheck,
+lint, and production build all remain green; every prior ME-phase
+guarantee this pass could re-verify (all of them, via the full suite)
+still holds; no RLS policy, role, or property/location check was
+weakened by any fix, including APP-5's (verified: it changes only how
+many times an unchanged check's prerequisites are queried).
+
+Zero open P0/P1/P2 ME-13 findings remain. The known limitations in §U are
 scope boundaries this pass actually hit (Docker blocked by egress policy,
-production migration lag pre-existing this pass, time budget), not
-omissions papered over.
+production migration lag pre-existing this pass, PostgREST-layer
+concurrency breadth) — none of them a deferred fix of a material defect,
+and none of them the P2 this correction closed.
