@@ -54,6 +54,6 @@ describe("independence", () => {
 
   it("ships its own product identity", async () => {
     const { PRODUCT } = await import("@/config/product");
-    expect(PRODUCT.name).toBe("NOVA Hospitality F&B");
+    expect(PRODUCT.name).toBe("LexiBite");
   });
 });

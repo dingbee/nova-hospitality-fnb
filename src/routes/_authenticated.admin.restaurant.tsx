@@ -5,7 +5,7 @@ import "@/modules/restaurant/intelligence/provider";
 export const Route = createFileRoute("/_authenticated/admin/restaurant")({
   head: () => ({
     meta: [
-      { title: "Restaurant & Bar OS — NOVA Hospitality F&B" },
+      { title: "Restaurant & Bar OS — LexiBite" },
       { name: "robots", content: "noindex,nofollow" },
     ],
   }),

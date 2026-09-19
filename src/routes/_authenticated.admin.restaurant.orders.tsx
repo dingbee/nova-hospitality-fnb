@@ -108,7 +108,7 @@ function OrdersPage() {
     <div className="space-y-4">
       <PageHeader
         title="Orders"
-        description="Every sale that enters NOVA Hospitality F&B — covers, revenue, payment state and actual cost."
+        description="Every sale that enters LexiBite — covers, revenue, payment state and actual cost."
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
