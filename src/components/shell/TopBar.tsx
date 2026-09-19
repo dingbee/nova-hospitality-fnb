@@ -47,10 +47,11 @@ export function TopBar({
         </button>
 
         <Link to="/admin/restaurant" className="flex items-center gap-2.5" aria-label="LexiBite">
-          <span className="flex h-9 items-center rounded-xl bg-white px-2.5 text-[15px] font-extrabold tracking-[-0.04em] shadow-sm">
-            <span className="text-[#2A7C13]">lexibit</span>
-            <span className="text-[#ECB65F]">e</span>
-          </span>
+          <img
+            src="/brand/lexibite-wordmark.svg"
+            alt="LexiBite"
+            className="h-9 w-auto max-w-[8.5rem] object-contain"
+          />
           <span className="hidden leading-tight sm:block">
             <span className="block text-sm font-semibold tracking-tight text-[color:var(--nova-ink)]">
               {PRODUCT.shortName}
