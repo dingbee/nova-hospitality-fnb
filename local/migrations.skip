@@ -12,3 +12,4 @@
 
 20260721144859_b10a8bc5-70f4-451d-9560-c7a3011c4128.sql  # property-specific room unit data (hard-coded room UUIDs)
 20260806142337_0c977466-741b-4cd6-bc22-892f03edb5bd.sql  # demo/test booking data for one hosted property
+0088_commercial_capability_activation_reconciliation.sql  # ME-15: broken JOIN-on-UPDATE-target syntax, fails on every PostgreSQL server ("invalid reference to FROM-clause entry for table pe"); never successfully applied anywhere, including the hosted project. Superseded by 0089_commercial_capability_activation_reconciliation_v2.sql, which performs the same data reconciliation correctly.
