@@ -9,7 +9,8 @@ export const Route = createRootRoute({
   head: () => ({ meta: [
     { charSet: "utf-8" }, { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
     { title: `${PRODUCT.name} — ${PRODUCT.tagline}` }, { name: "description", content: `${PRODUCT.tagline}: point of sale, kitchen, inventory, procurement and costing for restaurants and bars.` },
-    { name: "robots", content: "noindex,nofollow" }, { name: "theme-color", content: "#2A7C13" },\n    { name: "application-name", content: PRODUCT.name },
+    { name: "robots", content: "noindex,nofollow" }, { name: "theme-color", content: "#2A7C13" },
+    { name: "application-name", content: PRODUCT.name },
   // No PWA manifest linked here: this app serves two different installable
   // experiences (the staff terminal and the guest ordering PWA) and each
   // must declare its own manifest at its own route layout — never a shared

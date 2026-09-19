@@ -79,7 +79,8 @@
     "vaul": "^1.1.2",
     "vite-tsconfig-paths": "^6.0.2",
     "xlsx": "^0.18.5",
-    "zod": "^3.24.2"
+    "zod": "^3.24.2",
+    "@tanstack/query-core": "^5.103.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
@@ -114,5 +115,6 @@
     }
   },
   "description": "LexiBite — Restaurant & Bar OS",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "packageManager": "pnpm@10.15.0"
 }
