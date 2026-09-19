@@ -784,7 +784,32 @@ export function PosWorkspace({
           direct items of THIS grid at lg+, landing in columns 2 and 3 by
           normal auto-placement — while below lg that same wrapper is a real
           flex column holding the tab-switcher behavior unchanged. */}
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[minmax(330px,40fr)_minmax(0,60fr)] gap-3 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(200px,22fr)_minmax(0,45fr)_minmax(300px,33fr)] xl:gap-4">
+      <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(200px,22fr)_minmax(0,45fr)_minmax(300px,33fr)] lg:grid-rows-[minmax(0,1fr)] lg:gap-3 lg:overflow-hidden xl:gap-4">
+        {!mobileFloorExpanded && (
+          <div className="os-card flex shrink-0 items-center gap-2 overflow-x-auto px-3 py-2 lg:hidden">
+            <button type="button" onClick={() => setMobileFloorExpanded(true)} className="shrink-0 rounded-md border px-2 py-1 text-xs font-medium">
+              Floor
+            </button>
+            {((board.data as any)?.tables ?? []).map((t: any) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() =>
+                  t.order
+                    ? setOrderId(t.order.id)
+                    : openBill.mutate({ tableId: t.id, guestCount: t.seats ?? 2 })
+                }
+                className={cn(
+                  "shrink-0 rounded-md border px-2.5 py-1.5 text-xs font-semibold tabular-nums",
+                  orderId === t.order?.id ? "border-primary bg-primary text-primary-foreground" : "bg-background",
+                )}
+              >
+                {t.code}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Floor */}
         <SectionCard
           title={isBar ? "Bar floor & tabs" : "Floor"}
@@ -793,7 +818,10 @@ export function PosWorkspace({
               ? "Counter, bar seats and tables — colour follows the tab."
               : "Colour follows the bill, not just the table row."
           }
-          className="flex h-full min-h-0 flex-col overflow-hidden p-3 lg:p-4"
+          className={cn(
+            mobileFloorExpanded ? "flex" : "hidden",
+            "min-h-0 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:p-4",
+          )}
         >
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="grid grid-cols-2 gap-2">
@@ -884,8 +912,8 @@ export function PosWorkspace({
             (in that DOM order) become direct items of the OUTER three-
             column grid, landing in columns 2 and 3 — persistently
             side-by-side, never stacked, never a tab away from each other. */}
-        <div className="flex h-full min-h-0 flex-col gap-3 lg:contents">
-          <div className="flex shrink-0 gap-2 lg:hidden">
+        <div className="flex min-h-0 flex-col gap-2 lg:contents">
+          <div className="sticky top-0 z-30 flex shrink-0 gap-2 bg-background/95 py-1 backdrop-blur lg:hidden">
             <Button
               type="button"
               variant={mobileRightTab === "menu" ? "default" : "outline"}
@@ -914,7 +942,7 @@ export function PosWorkspace({
             }
             className={cn(
               mobileRightTab === "menu" ? "flex" : "hidden",
-              "h-full min-h-0 flex-1 flex-col overflow-hidden p-3 lg:flex lg:p-4",
+              "min-h-[calc(100dvh-15rem)] flex-1 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:min-h-0 lg:p-4",
             )}
           >
             <div className="shrink-0">
@@ -998,7 +1026,7 @@ export function PosWorkspace({
             }
             className={cn(
               mobileRightTab === "bill" ? "flex" : "hidden",
-              "h-full min-h-0 flex-1 flex-col overflow-hidden p-4 lg:flex",
+              "min-h-[calc(100dvh-15rem)] flex-1 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:min-h-0 lg:p-4",
             )}
           >
             {!orderId && queuedOrder ? (
