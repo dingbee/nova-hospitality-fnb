@@ -33,14 +33,6 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
-import {
   Table,
   TableBody,
   TableCell,
@@ -53,6 +45,7 @@ import { EmptyState } from "@/components/os/EmptyState";
 import { StatusChip, type StatusTone } from "@/components/os/StatusChip";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "../../ui/useRestaurantWorkspace";
+import { SearchSelect } from "../../ui/forms/SearchSelect";
 import {
   bulkUpsertRestaurantPricesFn,
   getRestaurantPricingCatalogueFn,
@@ -585,26 +578,21 @@ function ConfigurePriceSheet({
         <div className="mt-4 space-y-4">
           {!item ? (
             <Field label="Item">
-              <Command className="rounded-lg border">
-                <CommandInput placeholder="Search menu item by name…" />
-                <CommandList>
-                  <CommandEmpty>No item matches.</CommandEmpty>
-                  <CommandGroup>
-                    {allRows.map((r) => (
-                      <CommandItem
-                        key={r.menuItemId}
-                        value={r.name}
-                        onSelect={() => onPickItem(r.menuItemId)}
-                      >
-                        <span className="min-w-0 flex-1 truncate">{r.name}</span>
-                        <span className="ml-2 shrink-0 text-xs text-muted-foreground">
-                          {r.menuName}
-                        </span>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                </CommandList>
-              </Command>
+              <SearchSelect
+                options={allRows.map((r) => ({
+                  value: r.menuItemId,
+                  label: r.name,
+                  hint: r.menuName,
+                }))}
+                value={null}
+                onChange={(value) => {
+                  if (value) onPickItem(value);
+                }}
+                placeholder="Select menu item…"
+                searchPlaceholder="Search menu item by name…"
+                emptyText="No item matches."
+                allowClear={false}
+              />
             </Field>
           ) : (
             <>
