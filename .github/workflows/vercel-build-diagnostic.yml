@@ -1,0 +1,24 @@
+name: Vercel Build Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - claude/me-00-baseline-lock
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: VERCEL=1 npm run build
+      - name: Inspect Vercel output
+        run: |
+          echo "=== .vercel/output ==="
+          find .vercel/output -maxdepth 4 -type f -print 2>/dev/null | sort | head -200 || true
+          echo "=== .output ==="
+          find .output -maxdepth 3 -type f -print 2>/dev/null | sort | head -100 || true
