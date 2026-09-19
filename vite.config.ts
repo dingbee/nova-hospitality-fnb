@@ -21,7 +21,16 @@ export default defineConfig({
   tanstackStart: {
     server: { entry: "server" },
   },
-  nitro: isVercel ? { preset: "vercel" } : true,
+  nitro: isVercel
+    ? {
+        preset: "vercel",
+        output: {
+          dir: ".vercel/output",
+          serverDir: ".vercel/output/functions/__server.func",
+          publicDir: ".vercel/output/static",
+        },
+      }
+    : true,
   test: {
     // e2e/, e2e-auth/ and e2e-staff/ hold Playwright specs (run via `npx
     // playwright test`), not vitest tests — without this, vitest's
