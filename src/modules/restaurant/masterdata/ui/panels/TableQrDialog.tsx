@@ -69,7 +69,7 @@ export function TableQrDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-x-hidden sm:max-w-xl">
         <DialogHeader>
           {/* The restaurant's own identity, front and center on-screen — the
               printed card also carries it, but at on-screen preview size
@@ -95,14 +95,14 @@ export function TableQrDialog({
             )}
           </div>
 
-          <div className="w-full space-y-1">
+          <div className="min-w-0 w-full space-y-1">
             <p className="text-xs font-medium text-muted-foreground">Guest ordering link</p>
             <button
               type="button"
               onClick={copyLink}
               title={card.guestUrl}
               aria-label={`Copy guest ordering link: ${card.guestUrl}`}
-              className="w-full select-none truncate rounded-md bg-muted px-3 py-2 text-left font-mono text-xs text-foreground transition-colors hover:bg-muted/70"
+              className="min-w-0 w-full select-none truncate rounded-md bg-muted px-3 py-2 text-left font-mono text-xs text-foreground transition-colors hover:bg-muted/70"
             >
               {card.guestUrl}
             </button>
