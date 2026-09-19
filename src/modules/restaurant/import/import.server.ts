@@ -818,3 +818,778 @@ export async function listStagedRecords(
     .from("restaurant_import_staged_records")
     .select("*")
     .eq("tenant_id", input.tenantId)
+    .eq("workspace_id", input.workspaceId)
+    .order("domain")
+    .order("source_row")
+    .limit(input.limit);
+  if (input.domain) q = q.eq("domain", input.domain);
+  if (input.severity) q = q.eq("severity", input.severity);
+  if (input.decision) q = q.eq("decision", input.decision);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+export async function decideStagedRecord(sb: Sb, userId: string, input: DecideStagedRecordInput) {
+  const { data: existing, error: readErr } = await sb
+    .from("restaurant_import_staged_records")
+    .select("id, workspace_id, committed_at, mapped_data, matched_entity_table")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.recordId)
+    .maybeSingle();
+  if (readErr) throw new Error(readErr.message);
+  if (!existing) throw new Error("Staged record not found.");
+  const scope = await resolveWorkspaceScope(sb, input.tenantId, existing.workspace_id);
+  await assertCapability(sb, userId, input.tenantId, "import.manage", scope);
+  if (existing.committed_at)
+    throw new Error("This record has already been committed and can no longer be changed.");
+
+  const patch: any = {
+    decision: input.decision,
+    decided_by: userId,
+    decided_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  if (input.matchedEntityId !== undefined) {
+    patch.matched_entity_id = input.matchedEntityId;
+    patch.match_status = input.matchedEntityId ? "exact_match" : "new_entity";
+  }
+  if (input.mappedDataPatch) {
+    patch.mapped_data = { ...(existing.mapped_data as object), ...input.mappedDataPatch };
+  }
+  const { data, error } = await sb
+    .from("restaurant_import_staged_records")
+    .update(patch)
+    .eq("id", input.recordId)
+    .eq("tenant_id", input.tenantId)
+    .select("*")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function bulkDecideStagedRecords(
+  sb: Sb,
+  userId: string,
+  input: {
+    tenantId: string;
+    workspaceId: string;
+    domain?: ImportDomain;
+    severity?: string;
+    decision: "approved" | "rejected" | "skipped";
+  },
+) {
+  const scope = await resolveWorkspaceScope(sb, input.tenantId, input.workspaceId);
+  await assertCapability(sb, userId, input.tenantId, "import.manage", scope);
+  let q = sb
+    .from("restaurant_import_staged_records")
+    .update({
+      decision: input.decision,
+      decided_by: userId,
+      decided_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("tenant_id", input.tenantId)
+    .eq("workspace_id", input.workspaceId)
+    .is("committed_at", null);
+  if (input.domain) q = q.eq("domain", input.domain);
+  if (input.severity) q = q.eq("severity", input.severity);
+  const { data, error } = await q.select("id");
+  if (error) throw new Error(error.message);
+  return { updated: ((data ?? []) as any[]).length };
+}
+
+/* ================= Commit ================= */
+
+interface CommitOutcome {
+  recordId: string;
+  domain: ImportDomain;
+  committedEntityId: string | null;
+  error: string | null;
+}
+
+async function commitSupplierRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+): Promise<string> {
+  const m = record.mapped_data;
+  const result = await upsertSupplier(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    name: m.name,
+    code: m.code ?? undefined,
+    contactName: m.contactName ?? undefined,
+    email: m.email ?? undefined,
+    phone: m.phone ?? undefined,
+    address: m.address ?? undefined,
+    paymentTerms: m.paymentTerms ?? undefined,
+    leadTimeDays: m.leadTimeDays ?? undefined,
+    status: "active",
+    deliveryDays: [],
+    preferred: false,
+    suppliedCategoryIds: [],
+  });
+  return result.id as string;
+}
+
+async function commitInventoryItemRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+  propertyCurrency: string,
+): Promise<string> {
+  const m = record.mapped_data;
+  // packSize is required by upsertInventoryItem's own contract (see
+  // contracts.ts) — the column it fills, restaurant_inventory_items.
+  // pack_size, is NOT NULL. Passing `undefined` here would silently drop
+  // the key from the insert payload and let the column's DEFAULT 1 win
+  // with no validation ever firing, which is exactly the "arbitrary
+  // default" this cleanup exists to eliminate: a genuinely-missing Pack
+  // Size on the source sheet must fail this row explicitly, the same way
+  // an unresolved supplier or dish fails a row elsewhere in this file.
+  if (m.packSize == null) {
+    throw new Error(
+      `"${m.name ?? "This item"}": no Pack Size mapped for this row. Map a Pack Size column (or fix the value) and re-stage the sheet before importing.`,
+    );
+  }
+  const result = await upsertInventoryItem(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    categoryId: m.categoryId ?? undefined,
+    unitId: m.unitId ?? undefined,
+    sku: m.sku ?? undefined,
+    barcode: m.barcode ?? undefined,
+    brand: m.brand ?? undefined,
+    name: m.name,
+    itemType: "ingredient",
+    currentQuantity: Number(m.openingQuantity ?? 0),
+    parLevel: m.parLevel ?? undefined,
+    reorderPoint: m.reorderPoint ?? undefined,
+    averageCost: Number(m.averageCost ?? 0),
+    currency: propertyCurrency,
+    trackBatches: false,
+    allowNegative: false,
+    packSize: Number(m.packSize),
+    purchaseUnitId: m.purchaseUnitId ?? undefined,
+    consumptionUnitId: m.consumptionUnitId ?? undefined,
+    contentPerStockUnit: m.contentPerStockUnit ?? undefined,
+    contentUnitId: m.contentUnitId ?? undefined,
+    isBeverage: m.isBeverage ?? undefined,
+    shelfLifeDays: m.shelfLifeDays ?? undefined,
+  });
+  return result.id as string;
+}
+
+async function commitSupplierProductRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+  propertyCurrency: string,
+): Promise<string> {
+  const m = record.mapped_data;
+  if (!m.supplierId || !m.inventoryItemId) {
+    throw new Error(
+      "Supplier or item was never resolved for this row — re-stage the sheet after importing them.",
+    );
+  }
+  const result = await upsertSupplierProduct(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    supplierId: m.supplierId,
+    inventoryItemId: m.inventoryItemId,
+    supplierSku: m.supplierSku ?? undefined,
+    barcode: m.barcode ?? undefined,
+    name: m.name ?? m.itemName ?? "Supplier product",
+    unitId: m.unitId ?? undefined,
+    packSize: m.packSize ?? undefined,
+    unitPrice: Number(m.unitPrice ?? 0),
+    currency: m.currency ?? propertyCurrency,
+    minOrderQuantity: m.minOrderQuantity ?? undefined,
+    leadTimeDays: m.leadTimeDays ?? undefined,
+    active: true,
+  });
+  return result.id as string;
+}
+
+async function commitMenuRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  propertyId: string | null,
+  locationId: string | null,
+  record: any,
+  propertyCurrency: string,
+): Promise<string> {
+  const m = record.mapped_data;
+  const slug = slugify(m.code ?? m.name);
+  const result = await upsertMenu(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    propertyId: propertyId ?? undefined,
+    locationId: locationId ?? undefined,
+    name: m.name,
+    slug,
+    version: 1,
+    status: (m.status ?? "draft") as "draft" | "published" | "archived",
+    currency: m.currency ?? propertyCurrency,
+    description: m.description ?? undefined,
+  });
+  return result.id as string;
+}
+
+async function commitCategoryRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+): Promise<string> {
+  const m = record.mapped_data;
+  const slug = slugify(m.code ?? m.name);
+  const result = await upsertCategory(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    kind: "menu",
+    name: m.name,
+    slug,
+    sortOrder: Number(m.sortOrder ?? 0),
+    active: true,
+  });
+  return result.id as string;
+}
+
+async function commitMenuItemRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  fallbackMenuId: string,
+  record: any,
+  propertyCurrency: string,
+): Promise<string> {
+  const m = record.mapped_data;
+  // A row that resolved its own Menu Code at staging time (the LexiBite
+  // template path, or any source sheet with a menu-code column) targets
+  // that menu directly; only a source with no menu concept at all falls
+  // back to the workspace's single target/draft menu, exactly as before.
+  const menuId = m.menuId ?? fallbackMenuId;
+  const slug = `${slugify(m.name)}-${record.source_row}`;
+  const result = await upsertMenuItem(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    menuId,
+    categoryId: m.categoryId ?? undefined,
+    name: m.name,
+    slug,
+    description: m.description ?? undefined,
+    price: Number(m.price ?? 0),
+    currency: m.currency ?? propertyCurrency,
+    available: m.available ?? true,
+    tags: [],
+    allergens: [],
+    sortOrder: Number(m.sortOrder ?? 0),
+  });
+  return result.id as string;
+}
+
+async function commitProductStationRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+  propertyCurrency: string,
+): Promise<string> {
+  const m = record.mapped_data;
+  if (!m.menuItemId) {
+    throw new Error(
+      "Dish was never resolved for this row — re-stage the sheet after importing it.",
+    );
+  }
+  if (!m.stationId) {
+    throw new Error(
+      "Station was never resolved for this row — check the station code and re-stage.",
+    );
+  }
+  const result = await upsertProduct(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    sku: m.sku ?? `PROD-${slugify(m.menuItemName ?? "item")}-${record.source_row}`,
+    name: m.menuItemName,
+    productType: "standard",
+    menuItemId: m.menuItemId,
+    stationId: m.stationId,
+    price: Number(m.price ?? 0),
+    currency: propertyCurrency,
+    active: m.active ?? true,
+    servicePeriodIds: [],
+    sortOrder: 0,
+    taxRate: 0,
+  });
+  return result.id as string;
+}
+
+async function commitVariantRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+): Promise<string> {
+  const m = record.mapped_data;
+  if (!m.productId) {
+    throw new Error(
+      "Product/station link was never resolved for this row — import the product/station relationship first, then re-stage this sheet.",
+    );
+  }
+  const result = await upsertVariant(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    productId: m.productId,
+    sku: m.sku ?? undefined,
+    name: m.name,
+    price: Number(m.price ?? 0),
+    priceIsDelta: Boolean(m.priceIsDelta),
+    yieldFactor: 1,
+    active: m.active ?? true,
+    sortOrder: Number(m.sortOrder ?? 0),
+  });
+  return result.id as string;
+}
+
+async function commitModifierGroupRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+): Promise<string> {
+  const m = record.mapped_data;
+  const result = await upsertModifierGroup(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    code: m.code,
+    name: m.name,
+    minSelect: Number(m.minSelect ?? 0),
+    maxSelect: Number(m.maxSelect ?? 1),
+    required: Boolean(m.required),
+    active: m.active ?? true,
+    sortOrder: Number(m.sortOrder ?? 0),
+  });
+  return result.id as string;
+}
+
+async function commitModifierRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+): Promise<string> {
+  const m = record.mapped_data;
+  if (!m.groupId) {
+    throw new Error(
+      "Modifier group was never resolved for this row — import the modifier group first, then re-stage this sheet.",
+    );
+  }
+  // Belt-and-braces: staging already blocks "recipe" (see stage.ts), but a
+  // human can still force-approve a row that still carries a validation
+  // error — this must never fall through to writing a wrong effect.
+  if (m.effect === "recipe") {
+    throw new Error(
+      "Recipe-effect modifiers are not supported by import — create this modifier manually.",
+    );
+  }
+  if (m.effect === "inventory" && !m.inventoryItemId) {
+    throw new Error(
+      "Ingredient was never resolved for this row — re-stage the sheet after importing it.",
+    );
+  }
+  const result = await upsertModifier(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    groupId: m.groupId,
+    name: m.name,
+    priceDelta: Number(m.priceDelta ?? 0),
+    effect: m.effect === "inventory" ? "inventory" : "none",
+    inventoryItemId: m.inventoryItemId ?? undefined,
+    quantity: Number(m.quantity ?? 0),
+    unitId: m.unitId ?? undefined,
+    active: m.active ?? true,
+    sortOrder: Number(m.sortOrder ?? 0),
+  });
+  return result.id as string;
+}
+
+async function commitProductModifierGroupRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+): Promise<string | null> {
+  const m = record.mapped_data;
+  if (!m.productId) {
+    throw new Error(
+      "Product/station link was never resolved for this row — import it first, then re-stage this sheet.",
+    );
+  }
+  if (!m.groupId) {
+    throw new Error(
+      "Modifier group was never resolved for this row — import it first, then re-stage this sheet.",
+    );
+  }
+  await attachModifierGroup(sb, userId, {
+    tenantId,
+    productId: m.productId,
+    groupId: m.groupId,
+    sortOrder: Number(m.sortOrder ?? 0),
+    attached: true,
+  });
+  const { data } = await sb
+    .from("restaurant_product_modifier_groups")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("product_id", m.productId)
+    .eq("group_id", m.groupId)
+    .maybeSingle();
+  return (data as any)?.id ?? null;
+}
+
+async function commitRecipeComponentRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+  units: readonly UnitRow[],
+): Promise<string> {
+  const m = record.mapped_data;
+  if (!m.menuItemId || !m.inventoryItemId) {
+    throw new Error(
+      "Dish or ingredient was never resolved for this row — re-stage the sheet after importing them.",
+    );
+  }
+  const { data: item, error } = await sb
+    .from("restaurant_inventory_items")
+    .select("unit_id")
+    .eq("tenant_id", tenantId)
+    .eq("id", m.inventoryItemId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+
+  let quantity = Number(m.quantity ?? 0);
+  let unitId: string | null = item?.unit_id ?? m.unitId ?? null;
+  if (m.unitId && item?.unit_id && m.unitId !== item.unit_id) {
+    const fromUnit = units.find((u) => u.id === m.unitId);
+    const toUnit = units.find((u) => u.id === item.unit_id);
+    const converted = convertUnits(quantity, fromUnit, toUnit);
+    if (!converted.exact) {
+      throw new Error(
+        converted.reason ?? "This ingredient's unit cannot be converted to the item's stock unit.",
+      );
+    }
+    quantity = converted.quantity;
+    unitId = item.unit_id;
+  }
+
+  const result = await upsertRecipeComponent(sb, userId, {
+    tenantId,
+    id: record.matched_entity_id ?? undefined,
+    menuItemId: m.menuItemId,
+    inventoryItemId: m.inventoryItemId,
+    unitId: unitId ?? undefined,
+    quantity,
+    yieldPercent: Number(m.yieldPercent ?? 100),
+    notes: m.notes ?? undefined,
+  });
+  return result.id as string;
+}
+
+async function commitOpeningStockRow(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  record: any,
+  workspace: any,
+  units: readonly UnitRow[],
+  propertyCurrency: string,
+): Promise<string> {
+  const m = record.mapped_data;
+  if (!m.inventoryItemId) {
+    throw new Error(
+      "Item was never resolved for this row — re-stage the sheet after importing it.",
+    );
+  }
+  const { data: item, error } = await sb
+    .from("restaurant_inventory_items")
+    .select("id, unit_id, average_cost, currency, property_id, location_id")
+    .eq("tenant_id", tenantId)
+    .eq("id", m.inventoryItemId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!item)
+    throw new Error(
+      "Item was never resolved for this row — re-stage the sheet after importing it.",
+    );
+
+  const locationId = m.locationId ?? workspace.location_id ?? item.location_id ?? null;
+  if (!locationId)
+    throw new Error(
+      "No storage location — set one on the workspace or in the source's Location column.",
+    );
+
+  let quantity = Number(m.quantity ?? 0);
+  if (m.unitId && item.unit_id && m.unitId !== item.unit_id) {
+    const fromUnit = units.find((u) => u.id === m.unitId);
+    const toUnit = units.find((u) => u.id === item.unit_id);
+    const converted = convertUnits(quantity, fromUnit, toUnit);
+    if (!converted.exact) {
+      throw new Error(
+        converted.reason ??
+          "This opening quantity's unit cannot be converted to the item's stock unit.",
+      );
+    }
+    quantity = converted.quantity;
+  }
+  if (quantity <= 0) throw new Error("Opening quantity must be greater than zero.");
+
+  // Same dedupe key an item's own opening-quantity write uses (upsertInventoryItem), so
+  // whichever sheet posts the balance first wins and a second description of the same
+  // item's opening stock is a safe no-op rather than a double count.
+  await insertMovement(sb, userId, {
+    tenantId,
+    propertyId: workspace.property_id ?? item.property_id ?? null,
+    locationId,
+    inventoryItemId: item.id,
+    unitId: item.unit_id,
+    movementType: "opening_balance",
+    quantity,
+    unitCost: Number(m.unitCost ?? item.average_cost ?? 0),
+    currency: m.currency ?? item.currency ?? propertyCurrency,
+    reason: "Opening balance (import)",
+    referenceType: "restaurant_import_staged_records",
+    referenceId: record.id,
+    dedupeKey: `opening_balance:${item.id}`,
+  });
+  return item.id as string;
+}
+
+export async function commitImportWorkspace(
+  sb: Sb,
+  userId: string,
+  input: CommitImportWorkspaceInput,
+) {
+  const { data: workspace, error: wErr } = await sb
+    .from("restaurant_import_workspaces")
+    .select("*")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.workspaceId)
+    .maybeSingle();
+  if (wErr) throw new Error(wErr.message);
+  if (!workspace) throw new Error("Import workspace not found.");
+  await assertCapability(sb, userId, input.tenantId, "import.manage", {
+    propertyId: workspace.property_id,
+    locationId: workspace.location_id,
+  });
+  if (workspace.status === "cancelled")
+    throw new Error("This workspace was cancelled and cannot be committed.");
+  // Not "already committed": a workspace stays open to a follow-up commit —
+  // a human resolving exceptions after the fact approves more records, then
+  // commits again. Already-committed records are gated by committed_at, not
+  // by workspace status, so this is always safe to re-run.
+  const statusBeforeThisRun = workspace.status;
+
+  await sb
+    .from("restaurant_import_workspaces")
+    .update({ status: "committing", updated_at: new Date().toISOString() })
+    .eq("id", workspace.id);
+
+  const { data: units } = await sb
+    .from("restaurant_inventory_units")
+    .select("id, code, name, dimension, factor, base_unit_id")
+    .or(`tenant_id.is.null,tenant_id.eq.${input.tenantId}`);
+  const unitRows = (units ?? []) as UnitRow[];
+  const propertyCurrency = await resolvePropertyCurrency(sb, input.tenantId, workspace.property_id);
+
+  let targetMenuId = input.targetMenuId ?? null;
+  const outcomes: CommitOutcome[] = [];
+
+  for (const domain of IMPORT_DOMAIN_COMMIT_ORDER) {
+    const { data: records, error } = await sb
+      .from("restaurant_import_staged_records")
+      .select("*")
+      .eq("tenant_id", input.tenantId)
+      .eq("workspace_id", input.workspaceId)
+      .eq("domain", domain)
+      .eq("decision", "approved")
+      .is("committed_at", null)
+      .order("source_row");
+    if (error) throw new Error(error.message);
+    const pending = (records ?? []) as any[];
+    if (pending.length === 0) continue;
+
+    // Only when a row genuinely has no menu of its own — a row that resolved
+    // its own Menu Code at staging time (the LexiBite template path, or any
+    // source with a menu-code column) never needs this fallback; creating
+    // one anyway would leave an unused, orphaned draft menu behind.
+    const needsFallbackMenu =
+      domain === "menu_item" && !targetMenuId && pending.some((r) => !r.mapped_data?.menuId);
+    if (needsFallbackMenu) {
+      const menu = await upsertMenu(sb, userId, {
+        tenantId: input.tenantId,
+        propertyId: workspace.property_id ?? undefined,
+        locationId: workspace.location_id ?? undefined,
+        name: `${workspace.name} — Imported Menu`,
+        slug: `${slugify(workspace.name)}-${slugify(workspace.workspace_number)}`,
+        version: 1,
+        status: "draft",
+        currency: propertyCurrency,
+      });
+      targetMenuId = menu.id as string;
+    }
+
+    for (const record of pending) {
+      let committedEntityId: string | null = null;
+      let commitError: string | null = null;
+      try {
+        switch (domain) {
+          case "supplier":
+            committedEntityId = await commitSupplierRow(sb, userId, input.tenantId, record);
+            break;
+          case "inventory_item":
+            committedEntityId = await commitInventoryItemRow(
+              sb,
+              userId,
+              input.tenantId,
+              record,
+              propertyCurrency,
+            );
+            break;
+          case "supplier_product":
+            committedEntityId = await commitSupplierProductRow(
+              sb,
+              userId,
+              input.tenantId,
+              record,
+              propertyCurrency,
+            );
+            break;
+          case "menu":
+            committedEntityId = await commitMenuRow(
+              sb,
+              userId,
+              input.tenantId,
+              workspace.property_id ?? null,
+              workspace.location_id ?? null,
+              record,
+              propertyCurrency,
+            );
+            break;
+          case "category":
+            committedEntityId = await commitCategoryRow(sb, userId, input.tenantId, record);
+            break;
+          case "menu_item":
+            committedEntityId = await commitMenuItemRow(
+              sb,
+              userId,
+              input.tenantId,
+              targetMenuId!,
+              record,
+              propertyCurrency,
+            );
+            break;
+          case "product_station":
+            committedEntityId = await commitProductStationRow(
+              sb,
+              userId,
+              input.tenantId,
+              record,
+              propertyCurrency,
+            );
+            break;
+          case "variant":
+            committedEntityId = await commitVariantRow(sb, userId, input.tenantId, record);
+            break;
+          case "modifier_group":
+            committedEntityId = await commitModifierGroupRow(sb, userId, input.tenantId, record);
+            break;
+          case "modifier":
+            committedEntityId = await commitModifierRow(sb, userId, input.tenantId, record);
+            break;
+          case "product_modifier_group":
+            committedEntityId = await commitProductModifierGroupRow(
+              sb,
+              userId,
+              input.tenantId,
+              record,
+            );
+            break;
+          case "recipe_component":
+            committedEntityId = await commitRecipeComponentRow(
+              sb,
+              userId,
+              input.tenantId,
+              record,
+              unitRows,
+            );
+            break;
+          case "opening_stock":
+            committedEntityId = await commitOpeningStockRow(
+              sb,
+              userId,
+              input.tenantId,
+              record,
+              workspace,
+              unitRows,
+              propertyCurrency,
+            );
+            break;
+        }
+      } catch (err) {
+        commitError = err instanceof Error ? err.message : String(err);
+      }
+
+      await sb
+        .from("restaurant_import_staged_records")
+        .update({
+          committed_at: commitError ? null : new Date().toISOString(),
+          committed_entity_id: committedEntityId,
+          commit_error: commitError,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", record.id)
+        .eq("tenant_id", input.tenantId);
+
+      outcomes.push({ recordId: record.id, domain, committedEntityId, error: commitError });
+    }
+  }
+
+  const failedCount = outcomes.filter((o) => o.error).length;
+  const finalStatus =
+    outcomes.length === 0 ? statusBeforeThisRun : failedCount > 0 ? "failed" : "committed";
+  await sb
+    .from("restaurant_import_workspaces")
+    .update({ status: finalStatus, updated_at: new Date().toISOString() })
+    .eq("id", workspace.id)
+    .eq("tenant_id", input.tenantId);
+
+  await emitRestaurantEvent(sb, userId, {
+    type: "restaurant.import.committed",
+    tenantId: input.tenantId,
+    propertyId: workspace.property_id ?? undefined,
+    locationId: workspace.location_id ?? undefined,
+    entityType: "restaurant_import_workspace",
+    entityId: workspace.id,
+    source: "restaurant-os",
+    payload: {
+      workspace_number: workspace.workspace_number,
+      committed: outcomes.length - failedCount,
+      failed: failedCount,
+      status: finalStatus,
+    },
+  });
+
+  return {
+    status: finalStatus as "committed" | "failed" | "committing",
+    committed: outcomes.length - failedCount,
+    failed: failedCount,
+    outcomes,
+  };
+}
