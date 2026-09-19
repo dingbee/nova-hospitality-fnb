@@ -784,6 +784,69 @@ describe("askStaffNova — I14: deterministic priorities/changes/correlations re
     expect(sentPayload.context.correlations[0].type).toBe("inferred");
   });
 
+  it("REGRESSION: a stored decision with a legacy/partial reasoning JSONB (missing whatHappensNext) never crashes the whole Ask LexiBite request — reproduces a live production incident where askStaffNova threw past every guard and the boundary in staffnova.functions.ts degraded the entire request to a generic 'unable to process' error, for tenant-wide owners asking basic questions like 'how many outlets do we have'", async () => {
+    assertCapabilityMock.mockResolvedValue(undefined);
+    stubEngines();
+    const legacyDecision = {
+      key: "restaurant.t1.legacy",
+      module: "restaurant",
+      domain: "inventory",
+      title: "Legacy decision",
+      trigger: "Some legacy trigger",
+      status: "approved",
+      riskLevel: "medium",
+      confidence: 0.9,
+      requiresApproval: true,
+      criteriaWeights: {},
+      constraints: [],
+      options: [],
+      recommendedOptionKey: null,
+      // Deliberately missing whatHappensNext/whyItMatters/etc — this is the
+      // exact shape a decision persisted before those reasoning fields
+      // existed has in production (JSONB has no DB-level schema guarantee).
+      reasoning: {
+        whatIsLikely: "Some historical projection",
+        selectedOption: "Some option",
+        whatIsHappening: "Some situation",
+      },
+      expectedOutcomes: [],
+      evidence: [],
+      assumptions: [],
+      uncertainties: [],
+      risks: [],
+      reasoningSources: [],
+      predictionKeys: [],
+      plan: { objective: "x", status: "draft", steps: [] },
+      action: null,
+    };
+    getRestaurantDecisionBoardMock.mockResolvedValue({
+      generated_at: new Date().toISOString(),
+      tenant_id: TENANT_A,
+      window_days: 30,
+      headline: "",
+      findings: [],
+      candidates: [],
+      stored: [legacyDecision],
+    });
+    callReasoningProviderMock.mockResolvedValue({
+      content: "You have 2 outlets.",
+      provider: "openai",
+      unavailable: false,
+    });
+
+    const result = await askStaffNova(
+      {} as any,
+      USER_ID,
+      staffNovaAskSchema.parse({ tenantId: TENANT_A, message: "How many outlets do we have?" }),
+    );
+
+    expect(result.degraded).toBe(false);
+    expect(result.answer).toBe("You have 2 outlets.");
+    const call = callReasoningProviderMock.mock.calls[0][1] as { user: string };
+    const sentPayload = JSON.parse(call.user);
+    expect(sentPayload.context.topPriorities[0].recommendedNextStep).toBeNull();
+  });
+
   it("M: when the decision board is unavailable, topPriorities/correlations degrade to empty arrays — never a fabricated priority", async () => {
     assertCapabilityMock.mockResolvedValue(undefined);
     stubEngines();

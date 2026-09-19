@@ -88,10 +88,17 @@ export function topPriorities(decisions: RestaurantStoredDecision[], limit = 5):
       confidence: d.confidence,
       status: d.status,
       what: d.trigger,
-      why: d.reasoning.whyItMatters,
-      evidence: d.evidence,
-      impact: d.reasoning.whatIsLikely,
-      recommendedNextStep: d.reasoning.whatHappensNext[0] ?? null,
+      // `reasoning` is persisted as JSONB with no DB-level shape guarantee —
+      // an older decision written before a reasoning field existed (or one
+      // whose `context` was hand-modified) can legitimately be missing any
+      // of these keys. Every field here degrades to a safe empty value
+      // rather than trusting the Decision.reasoning TypeScript contract,
+      // which describes what a freshly-computed decision looks like, not
+      // what every row in intelligence_decisions is guaranteed to contain.
+      why: d.reasoning?.whyItMatters ?? "",
+      evidence: d.evidence ?? [],
+      impact: d.reasoning?.whatIsLikely ?? "",
+      recommendedNextStep: d.reasoning?.whatHappensNext?.[0] ?? null,
       hasExistingAction: d.action != null,
     }));
 }
