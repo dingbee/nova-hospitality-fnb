@@ -1,5 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "tanstack-start",
-  "installCommand": "npm install --legacy-peer-deps"
+  "installCommand": "bun install --frozen-lockfile"
 }
