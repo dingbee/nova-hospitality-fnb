@@ -1,0 +1,33 @@
+name: P02 Production Probe
+
+on:
+  push:
+    branches:
+      - diag/p02-production-probe
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for production health
+        run: |
+          set -e
+          for i in $(seq 1 24); do
+            code=$(curl -sS -o /tmp/health.txt -w '%{http_code}' https://nova-hospitality-fnb.vercel.app/api/v1/health || true)
+            echo "health attempt $i: HTTP $code"
+            cat /tmp/health.txt || true
+            if [ "$code" = "200" ]; then
+              break
+            fi
+            sleep 10
+          done
+          test "$code" = "200"
+
+      - name: Probe demo API validation
+        run: |
+          set -e
+          curl -sS -i -X POST \
+            https://nova-hospitality-fnb.vercel.app/api/public/demo/register \
+            -H 'content-type: application/json' \
+            -d '{}' | tee /tmp/demo.txt
+          grep -q '"status"' /tmp/demo.txt
