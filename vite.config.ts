@@ -29,7 +29,10 @@ export default defineConfig({
   plugins: [
     VitePWA({
       manifest: false,
-      registerType: "prompt",
+      // Guest PWA updates must not get stranded behind an old service worker.
+      // The guest route is safe to reload because the basket/order state is
+      // held by the application and order submission is idempotent.
+      registerType: "autoUpdate",
       injectRegister: null,
       filename: "sw.js",
       outDir: publicOutDir,
@@ -40,8 +43,10 @@ export default defineConfig({
         navigateFallback: "/offline.html",
         navigateFallbackDenylist: [/^\/auth\/v1/, /^\/rest\//, /^\/nova\//, /^\/_serverFn/],
         cleanupOutdatedCaches: true,
-        clientsClaim: false,
-        skipWaiting: false,
+        // Take the newly deployed guest worker immediately so an installed
+        // PWA cannot remain controlled by a stale worker after deployment.
+        clientsClaim: true,
+        skipWaiting: true,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         runtimeCaching: [
           {
@@ -49,7 +54,7 @@ export default defineConfig({
               request.mode === "navigate" && !url.pathname.startsWith("/_serverFn"),
             handler: "NetworkFirst",
             options: {
-              cacheName: "nova-pages",
+              cacheName: "lexibite-guest-pages-v2",
               networkTimeoutSeconds: 4,
               expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 7 },
               cacheableResponse: { statuses: [0, 200] },
