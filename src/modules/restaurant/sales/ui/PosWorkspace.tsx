@@ -685,13 +685,13 @@ export function PosWorkspace({
   }
 
   return (
-    <div className={cn("flex h-full min-h-0 flex-col gap-3", className)}>
+    <div className={cn("flex h-full min-h-0 flex-col gap-2 lg:gap-3", className)}>
       <div className="shrink-0 space-y-3">
         {/* Compact operational strip: the four figures a cashier glances at,
             in one row, not four large cards — the selling workspace below
             (Floor/Menu/Bill) is the thing this screen exists for, and it
             must own the viewport, not compete with KPI tiles for it. */}
-        <div className="os-card os-fade-in flex flex-wrap items-center gap-x-6 gap-y-1.5 px-4 py-2.5">
+        <div className="os-card os-fade-in flex min-w-0 flex-nowrap items-center gap-x-4 overflow-x-auto px-3 py-2 lg:flex-wrap lg:gap-x-6 lg:gap-y-1.5 lg:px-4 lg:py-2.5">
           {[
             { label: "Open bills", value: String(stats?.openBills ?? 0), icon: Users },
             {
@@ -793,7 +793,7 @@ export function PosWorkspace({
               ? "Counter, bar seats and tables — colour follows the tab."
               : "Colour follows the bill, not just the table row."
           }
-          className="flex h-full min-h-0 flex-col overflow-hidden p-4"
+          className="flex h-full min-h-0 flex-col overflow-hidden p-3 lg:p-4"
         >
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="grid grid-cols-2 gap-2">
@@ -855,7 +855,7 @@ export function PosWorkspace({
             </div>
           </div>
           <div className="shrink-0">
-            <div className="mt-3 flex flex-wrap gap-1">
+            <div className="mt-2 flex flex-wrap gap-1 lg:mt-3">
               {FLOOR_LEGEND.map((tone) => (
                 <span
                   key={tone}
@@ -867,7 +867,7 @@ export function PosWorkspace({
             </div>
             <Button
               variant="outline"
-              className="mt-3 min-h-11 w-full"
+              className="mt-2 min-h-10 w-full lg:mt-3 lg:min-h-11"
               onClick={() => openBill.mutate({ guestCount: 1 })}
               disabled={openBill.isPending}
             >
@@ -889,7 +889,7 @@ export function PosWorkspace({
             <Button
               type="button"
               variant={mobileRightTab === "menu" ? "default" : "outline"}
-              className="min-h-11 flex-1"
+              className="min-h-10 flex-1 lg:min-h-11"
               onClick={() => setMobileRightTab("menu")}
             >
               {isBar ? "Drinks" : "Menu"}
@@ -914,7 +914,7 @@ export function PosWorkspace({
             }
             className={cn(
               mobileRightTab === "menu" ? "flex" : "hidden",
-              "h-full min-h-0 flex-1 flex-col overflow-hidden p-4 lg:flex",
+              "h-full min-h-0 flex-1 flex-col overflow-hidden p-3 lg:flex lg:p-4",
             )}
           >
             <div className="shrink-0">
@@ -924,13 +924,13 @@ export function PosWorkspace({
                   value={catalogSearch}
                   onChange={(e) => setCatalogSearch(e.target.value)}
                   placeholder={isBar ? "Search drinks…" : "Search the menu…"}
-                  className="h-11 pl-8"
+                  className="h-10 pl-8 lg:h-11"
                 />
               </div>
-              <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+              <div className="mb-2 flex gap-2 overflow-x-auto pb-1 lg:mb-3">
                 <Button
                   variant={categoryId ? "outline" : "default"}
-                  className="min-h-11 shrink-0 rounded-full"
+                  className="min-h-10 shrink-0 rounded-full lg:min-h-11"
                   onClick={() => setCategoryId(null)}
                 >
                   All
@@ -1061,7 +1061,7 @@ export function PosWorkspace({
                     able to reach, so its own height stays bounded (a total
                     row plus a single button) instead of competing for space
                     with whatever this bill happens to contain right now. */}
-                <div className="space-y-2 min-h-0 flex-1 overflow-y-auto pt-2">
+                <div className="min-h-0 flex-1 overflow-y-auto pt-1 lg:space-y-2 lg:pt-2">
                   {/* Line items are the most important thing on a bill — they
                       render first, above the fold, before the lifecycle
                       status block below. Same scroll region, just item-first
