@@ -50,6 +50,25 @@ function fakeDb(seed: {
         filtered = filtered.filter((r) => vals.includes(r[col]));
         return builder;
       },
+      // initiateGuestPayment's claim uses this to mean "no live claim/session
+      // exists yet, or the one that did has expired" — a timestamp value can
+      // itself contain dots (fractional seconds), so this splits only the
+      // leading col/op and treats everything after as the value, unlike a
+      // naive `.split(".")`.
+      or(clause: string) {
+        const conditions = clause.split(",").map((c) => {
+          const m = c.match(/^([^.]+)\.([^.]+)\.(.*)$/)!;
+          return { col: m[1]!, op: m[2]!, val: m[3]! };
+        });
+        filtered = filtered.filter((r) =>
+          conditions.some((c) => {
+            if (c.op === "is") return r[c.col] == null;
+            if (c.op === "lt") return r[c.col] != null && String(r[c.col]) < c.val;
+            return false;
+          }),
+        );
+        return builder;
+      },
       limit() {
         return builder;
       },
