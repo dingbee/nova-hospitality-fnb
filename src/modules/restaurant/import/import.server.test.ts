@@ -210,6 +210,7 @@ vi.mock("../core/access.server", () => ({
   isPlatformAdmin: vi.fn(async () => true),
   rolesInTenant: vi.fn(async () => ["owner"]),
 }));
+import { assertCapability } from "../core/access.server";
 vi.mock("../events/emit.server", () => ({ emitRestaurantEvent: vi.fn(async () => undefined) }));
 
 /**
@@ -1657,5 +1658,188 @@ describe("LexiBite template deterministic import — end to end", () => {
         fileBase64: base64,
       }),
     ).rejects.toThrow(/not recognised as a LexiBite Import Template/);
+  });
+});
+
+/**
+ * ME-10: every workspace-orchestration entry point resolves the workspace's
+ * OWN property/location and passes it as assertCapability's scope, so a
+ * property-scoped owner/general_manager/restaurant_manager grant is checked
+ * against the actual property the workspace/source/record belongs to — not
+ * just "does this role exist somewhere in the tenant". This is what
+ * 0063_p09_import_workspace_property_scope.sql's own comment documents as
+ * already fixed at the application layer; before this change, every call
+ * site below passed no scope at all (assertCapability's global test mock
+ * always returns true regardless of arguments, which is exactly why this
+ * regression was invisible to every other test in this file).
+ */
+
+/**
+ * ME-10 Phase 10 (scale): the existing suite only ever imports a handful of
+ * rows at a time. Nothing here exercised a realistic single-sheet import —
+ * a full shift's worth of inventory catalog, several hundred rows — end to
+ * end through staging, bulk decision and commit. This proves the pipeline
+ * neither loses nor duplicates rows, stays correctly ordered/deduped, and
+ * completes in one commit pass at that size, not a fabricated timing
+ * benchmark.
+ */
+describe("scale: a realistically large single-sheet import", () => {
+  it("stages, approves and commits 400 new inventory rows in one pass — no loss, no duplication", async () => {
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Bulk load",
+    } as any);
+    const rowCount = 400;
+    const lines = ["Name,SKU,Cost,Pack Size"];
+    for (let i = 0; i < rowCount; i++) {
+      lines.push(`Bulk Item ${i},BULK-${i},1000,1`);
+    }
+    const csv = lines.join("\n");
+    const source = await stageCsv(TENANT, ws.id, csv, "inventory_item");
+
+    const staged = await listStagedRecords(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      limit: 2000,
+    } as any);
+    expect(staged).toHaveLength(rowCount);
+    expect(new Set(staged.map((r: any) => r.mapped_data.sku)).size).toBe(rowCount);
+
+    // Re-confirming the SAME source's mapping before ever committing (e.g. a
+    // reviewer re-opens the mapping screen) must not duplicate staged rows
+    // at this volume — the dedupe_key gating (Phase 6) holds under volume,
+    // not just for a handful of rows.
+    const headers = csv.split("\n")[0]!.split(",");
+    const mapping = headers.map((h) => ({
+      sourceColumn: h,
+      canonicalField: mapHeader("inventory_item", h),
+      confidence: 1,
+      auto: true,
+    }));
+    await confirmImportMapping(sb, USER, {
+      tenantId: TENANT,
+      sourceId: source.id,
+      sheetName: "Sheet1",
+      domain: "inventory_item",
+      mapping,
+    } as any);
+    const restaged = await listStagedRecords(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      limit: 2000,
+    } as any);
+    expect(restaged).toHaveLength(rowCount);
+
+    await approveAllPending(TENANT, ws.id);
+    const result = await commitImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    } as any);
+    expect(result.status).toBe("committed");
+    expect(result.committed).toBe(rowCount);
+    expect(result.failed).toBe(0);
+    expect(db.restaurant_inventory_items).toHaveLength(rowCount);
+    expect(new Set(db.restaurant_inventory_items!.map((r: any) => r.sku)).size).toBe(rowCount);
+
+    // Retrying the commit itself (e.g. the client retried after a dropped
+    // response, or an operator clicks Commit again) must be a safe no-op at
+    // this volume too — committed_at gating, not just dedupe_key, holds
+    // under volume.
+    const result2 = await commitImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+    } as any);
+    expect(result2.committed).toBe(0);
+    expect(db.restaurant_inventory_items).toHaveLength(rowCount);
+  }, 20_000);
+});
+
+describe("import.manage authorization scope", () => {
+  it("resolves a scoped workspace's real property/location for every entry point that acts on it", async () => {
+    const mock = assertCapability as unknown as ReturnType<typeof vi.fn>;
+    const expectedScope = { propertyId: "prop-scope-a", locationId: "loc-scope-a" };
+
+    mock.mockClear();
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Scoped workspace",
+      propertyId: "prop-scope-a",
+      locationId: "loc-scope-a",
+    } as any);
+    expect(mock).toHaveBeenLastCalledWith(sb, USER, TENANT, "import.manage", expectedScope);
+
+    mock.mockClear();
+    const source = await uploadImportSource(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      kind: "csv",
+      text: "Name,SKU\nRice,ITM-SCOPE-1\n",
+    } as any);
+    expect(mock).toHaveBeenLastCalledWith(sb, USER, TENANT, "import.manage", expectedScope);
+
+    mock.mockClear();
+    await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
+    expect(mock).toHaveBeenLastCalledWith(sb, USER, TENANT, "import.manage", expectedScope);
+
+    mock.mockClear();
+    await confirmImportMapping(sb, USER, {
+      tenantId: TENANT,
+      sourceId: source.id,
+      sheetName: "Sheet1",
+      domain: "inventory_item",
+      mapping: [
+        { sourceColumn: "Name", canonicalField: "name", confidence: 1, auto: true },
+        { sourceColumn: "SKU", canonicalField: "sku", confidence: 1, auto: true },
+      ],
+    } as any);
+    expect(mock).toHaveBeenLastCalledWith(sb, USER, TENANT, "import.manage", expectedScope);
+
+    const staged = await listStagedRecords(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      limit: 100,
+    } as any);
+    expect(staged.length).toBeGreaterThan(0);
+    const recordId = staged[0]!.id;
+
+    mock.mockClear();
+    await decideStagedRecord(sb, USER, {
+      tenantId: TENANT,
+      recordId,
+      decision: "approved",
+    } as any);
+    expect(mock).toHaveBeenLastCalledWith(sb, USER, TENANT, "import.manage", expectedScope);
+
+    mock.mockClear();
+    await bulkDecideStagedRecords(sb, USER, {
+      tenantId: TENANT,
+      workspaceId: ws.id,
+      decision: "approved",
+    } as any);
+    expect(mock).toHaveBeenLastCalledWith(sb, USER, TENANT, "import.manage", expectedScope);
+
+    mock.mockClear();
+    await commitImportWorkspace(sb, USER, { tenantId: TENANT, workspaceId: ws.id } as any);
+    expect(mock).toHaveBeenLastCalledWith(sb, USER, TENANT, "import.manage", expectedScope);
+  });
+
+  it("resolves a null scope for a tenant-wide workspace (no property/location set)", async () => {
+    const mock = assertCapability as unknown as ReturnType<typeof vi.fn>;
+    mock.mockClear();
+    const ws = await createImportWorkspace(sb, USER, {
+      tenantId: TENANT,
+      name: "Tenant-wide",
+    } as any);
+    expect(mock).toHaveBeenLastCalledWith(sb, USER, TENANT, "import.manage", {
+      propertyId: null,
+      locationId: null,
+    });
+
+    mock.mockClear();
+    await commitImportWorkspace(sb, USER, { tenantId: TENANT, workspaceId: ws.id } as any);
+    expect(mock).toHaveBeenLastCalledWith(sb, USER, TENANT, "import.manage", {
+      propertyId: null,
+      locationId: null,
+    });
   });
 });

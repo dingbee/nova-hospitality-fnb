@@ -90,7 +90,10 @@ export async function createImportWorkspace(
   userId: string,
   input: CreateImportWorkspaceInput,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
+  await assertCapability(sb, userId, input.tenantId, "import.manage", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   const workspaceNumber = await nextWorkspaceNumber(sb, input.tenantId);
   const { data, error } = await sb
     .from("restaurant_import_workspaces")
@@ -316,6 +319,36 @@ async function resolvePropertyCurrency(
   return (data as any)?.currency ?? "TZS";
 }
 
+/**
+ * Resolves a workspace's own property/location scope for the "lookup-then-
+ * scope" pattern 0063_p09_import_workspace_property_scope.sql documents
+ * (the same one 0061 uses for restaurant_menu_items/restaurant_recipe_components):
+ * every workspace-orchestration entry point below that acts on an EXISTING
+ * workspace resolves its real property_id/location_id first, then passes
+ * that as assertCapability's scope — so a property-scoped owner/general_manager/
+ * restaurant_manager can only drive an import workspace that belongs to a
+ * property they actually hold that grant at. RLS enforces the same boundary
+ * independently (0063/0072's "…write scoped" policies) and fails closed
+ * either way; this is what turns a raw RLS rejection into the same clean
+ * "Forbidden" error every other capability check in this codebase gives.
+ */
+async function resolveWorkspaceScope(
+  sb: Sb,
+  tenantId: string,
+  workspaceId: string,
+): Promise<{ propertyId: string | null; locationId: string | null }> {
+  const { data } = await sb
+    .from("restaurant_import_workspaces")
+    .select("property_id, location_id")
+    .eq("tenant_id", tenantId)
+    .eq("id", workspaceId)
+    .maybeSingle();
+  return {
+    propertyId: (data as any)?.property_id ?? null,
+    locationId: (data as any)?.location_id ?? null,
+  };
+}
+
 async function parseSourceContent(sb: Sb, source: any): Promise<ParsedSource> {
   if (source.kind === "pdf" || source.kind === "image") {
     throw new ExtractionUnavailableError(
@@ -338,14 +371,17 @@ async function parseSourceContent(sb: Sb, source: any): Promise<ParsedSource> {
 }
 
 export async function uploadImportSource(sb: Sb, userId: string, input: UploadImportSourceInput) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
   const { data: ws } = await sb
     .from("restaurant_import_workspaces")
-    .select("id, status")
+    .select("id, status, property_id, location_id")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.workspaceId)
     .maybeSingle();
   if (!ws) throw new Error("Import workspace not found.");
+  await assertCapability(sb, userId, input.tenantId, "import.manage", {
+    propertyId: ws.property_id,
+    locationId: ws.location_id,
+  });
   // "committed" isn't terminal — a migration often lands in phases (inventory
   // today, recipes next once it exists to reference); only a cancelled
   // workspace refuses more sources.
@@ -406,8 +442,9 @@ export async function parseImportSource(
   userId: string,
   input: { tenantId: string; sourceId: string },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
   const source = await loadSourceRow(sb, input.tenantId, input.sourceId);
+  const scope = await resolveWorkspaceScope(sb, input.tenantId, source.workspace_id);
+  await assertCapability(sb, userId, input.tenantId, "import.manage", scope);
 
   try {
     const parsed = await parseSourceContent(sb, source);
@@ -641,8 +678,9 @@ export async function confirmImportMapping(
   userId: string,
   input: ConfirmImportMappingInput,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
   const source = await loadSourceRow(sb, input.tenantId, input.sourceId);
+  const scope = await resolveWorkspaceScope(sb, input.tenantId, source.workspace_id);
+  await assertCapability(sb, userId, input.tenantId, "import.manage", scope);
 
   const { error: mapErr } = await sb.from("restaurant_import_field_mappings").upsert(
     {
@@ -662,17 +700,7 @@ export async function confirmImportMapping(
   const sheet = parsed.sheets.find((s) => s.sheetName === input.sheetName);
   if (!sheet) throw new Error(`Sheet "${input.sheetName}" not found in this source.`);
 
-  const { data: workspaceForCurrency } = await sb
-    .from("restaurant_import_workspaces")
-    .select("property_id")
-    .eq("tenant_id", input.tenantId)
-    .eq("id", source.workspace_id)
-    .maybeSingle();
-  const propertyCurrency = await resolvePropertyCurrency(
-    sb,
-    input.tenantId,
-    (workspaceForCurrency as any)?.property_id,
-  );
+  const propertyCurrency = await resolvePropertyCurrency(sb, input.tenantId, scope.propertyId);
   const ref = { ...(await fetchRefData(sb, input.tenantId)), propertyCurrency };
 
   const { data: existingStaged, error: exErr } = await sb
@@ -783,15 +811,16 @@ export async function listStagedRecords(
 }
 
 export async function decideStagedRecord(sb: Sb, userId: string, input: DecideStagedRecordInput) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
   const { data: existing, error: readErr } = await sb
     .from("restaurant_import_staged_records")
-    .select("id, committed_at, mapped_data, matched_entity_table")
+    .select("id, workspace_id, committed_at, mapped_data, matched_entity_table")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.recordId)
     .maybeSingle();
   if (readErr) throw new Error(readErr.message);
   if (!existing) throw new Error("Staged record not found.");
+  const scope = await resolveWorkspaceScope(sb, input.tenantId, existing.workspace_id);
+  await assertCapability(sb, userId, input.tenantId, "import.manage", scope);
   if (existing.committed_at)
     throw new Error("This record has already been committed and can no longer be changed.");
 
@@ -830,7 +859,8 @@ export async function bulkDecideStagedRecords(
     decision: "approved" | "rejected" | "skipped";
   },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
+  const scope = await resolveWorkspaceScope(sb, input.tenantId, input.workspaceId);
+  await assertCapability(sb, userId, input.tenantId, "import.manage", scope);
   let q = sb
     .from("restaurant_import_staged_records")
     .update({
@@ -1326,7 +1356,6 @@ export async function commitImportWorkspace(
   userId: string,
   input: CommitImportWorkspaceInput,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "import.manage");
   const { data: workspace, error: wErr } = await sb
     .from("restaurant_import_workspaces")
     .select("*")
@@ -1335,6 +1364,10 @@ export async function commitImportWorkspace(
     .maybeSingle();
   if (wErr) throw new Error(wErr.message);
   if (!workspace) throw new Error("Import workspace not found.");
+  await assertCapability(sb, userId, input.tenantId, "import.manage", {
+    propertyId: workspace.property_id,
+    locationId: workspace.location_id,
+  });
   if (workspace.status === "cancelled")
     throw new Error("This workspace was cancelled and cannot be committed.");
   // Not "already committed": a workspace stays open to a follow-up commit —
