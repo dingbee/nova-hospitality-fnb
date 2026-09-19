@@ -1,5 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "tanstack-start",
-  "installCommand": "corepack enable && corepack prepare pnpm@10.34.5 --activate && pnpm install --no-frozen-lockfile --child-concurrency=1 --network-concurrency=1"
+  "installCommand": "corepack enable && corepack prepare pnpm@10.34.5 --activate && pnpm install --no-frozen-lockfile --child-concurrency=1 --network-concurrency=1 --registry=https://registry.npmjs.org/"
 }
