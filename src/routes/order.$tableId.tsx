@@ -2061,6 +2061,19 @@ function AskNovaDrawer({
   const askFn = useServerFn(askNovaFn);
   const [turns, setTurns] = useState<NovaTurn[]>([]);
   const [input, setInput] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Keep the guest's conversation anchored to the newest content. This is
+  // intentionally a layout-level scroll, not window scrolling: long NOVA
+  // replies, recommendation cards, and basket confirmations must never leave
+  // the guest looking at the beginning of an older response.
+  useEffect(() => {
+    if (!open || turns.length === 0) return;
+    const frame = requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ block: "end" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open, turns, ask.isPending]);
 
   const ask = useMutation({
     mutationFn: (message: string) => {
@@ -2137,14 +2150,15 @@ function AskNovaDrawer({
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent>
-        <DrawerHeader>
+      <DrawerContent className="h-[85dvh] max-h-[85dvh] min-h-0">
+        <DrawerHeader className="shrink-0">
           <DrawerTitle className="font-display flex items-center gap-1.5 text-xl">
             <Sparkles className="size-4 text-primary" /> Ask {PRODUCT.aiName}
           </DrawerTitle>
         </DrawerHeader>
 
-        <div className="max-h-[50vh] space-y-3 overflow-y-auto px-4 pb-2">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-2">
+          <div className="space-y-3">
           {turns.length === 0 && (
             <p className="text-sm text-muted-foreground">
               Tell me what you're in the mood for, or tap a suggestion below.
@@ -2249,6 +2263,8 @@ function AskNovaDrawer({
               Thinking…
             </div>
           )}
+          <div ref={messagesEndRef} aria-hidden="true" className="h-px" />
+          </div>
         </div>
 
         {turns.length === 0 && (
