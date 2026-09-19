@@ -1,4 +1,4 @@
-# NOVA Hospitality F&B — Restaurant & Bar OS
+# LexiBite — Restaurant & Bar OS
 
 An independent, self-hosted operating system for restaurants and bars:
 point of sale, orders and kitchen, inventory and stock control, procurement
