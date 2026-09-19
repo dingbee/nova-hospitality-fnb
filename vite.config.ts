@@ -1,4 +1,6 @@
-import { defineConfig } from "@lovable.dev/vite-tanstack-config";
+import { defineConfig as defineViteConfig } from "vite";
+import { defineConfig as defineLovableConfig } from "@lovable.dev/vite-tanstack-config";
+import { nitro } from "nitro/vite";
 import { VitePWA } from "vite-plugin-pwa";
 // Side-effect only: augments vite's `UserConfig` type with vitest's `test`
 // option, so the `test` key below typechecks against the wrapped
@@ -9,7 +11,6 @@ import "vitest/config";
 // its Nitro build target to the sandbox/Cloudflare runtime unless the target
 // is explicit. On Vercel we must emit Vercel Functions and use this project's
 // real server entry so raw HTTP endpoints under /api are handled by Start.
-const isVercel = !!process.env.VERCEL;
 
 /**
  * NOVA Hospitality F&B — Restaurant & Bar OS.
@@ -17,20 +18,13 @@ const isVercel = !!process.env.VERCEL;
  * The same bundle serves the hosted deployment and the on-premise appliance;
  * only the runtime target differs (see src/modules/runtime/runtime-config.ts).
  */
-export default defineConfig({
+export default defineViteConfig(async (env) => {
+  const isVercelBuild = Boolean(process.env.VERCEL && process.env.VERCEL !== "0") || Boolean(process.env.VERCEL_URL);
+  const config = await defineLovableConfig({
   tanstackStart: {
     server: { entry: "server" },
   },
-  nitro: isVercel
-    ? {
-        preset: "vercel",
-        output: {
-          dir: ".vercel/output",
-          serverDir: ".vercel/output/functions/__server.func",
-          publicDir: ".vercel/output/static",
-        },
-      }
-    : true,
+  nitro: false as never,
   test: {
     // e2e/, e2e-auth/ and e2e-staff/ hold Playwright specs (run via `npx
     // playwright test`), not vitest tests — without this, vitest's
@@ -50,7 +44,7 @@ export default defineConfig({
       // build never deploys. Without this, sw.js/workbox-*.js were written
       // to a directory nothing ever serves, so the service worker 404'd in
       // every real deployment regardless of client-side registration code.
-      outDir: ".output/public",
+      outDir: isVercelBuild ? ".vercel/output/static" : ".output/public",
       // Scoped to the guest ordering PWA only — matches
       // lexibite-guest.webmanifest's own "scope" exactly (no trailing
       // slash: service worker scope matching is a literal string prefix,
@@ -97,4 +91,21 @@ export default defineConfig({
       },
     }),
   ],
+  })(env);
+
+  if (env.command === "build" && isVercelBuild) {
+    config.plugins = [
+      ...(config.plugins ?? []),
+      nitro({
+        preset: "vercel",
+        output: {
+          dir: ".vercel/output",
+          serverDir: ".vercel/output/functions/__server.func",
+          publicDir: ".vercel/output/static",
+        },
+      }),
+    ];
+  }
+
+  return config;
 });
