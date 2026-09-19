@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { inviteStaffUser, listStaffUsers } from "@/lib/staff.functions";
-import { RESTAURANT_ROLES } from "@/modules/restaurant/core/contracts";
+import { ASSIGNABLE_RESTAURANT_ROLES } from "@/modules/restaurant/core/contracts";
 import { RESTAURANT_ROLE_LABELS } from "@/modules/restaurant/core/permissions";
 import {
   getRestaurantWorkspaceFn,
@@ -175,7 +175,7 @@ export function TeamPanel({ tenantId, canManage }: { tenantId: string; canManage
               value={role}
               onChange={(e) => setRole(e.target.value)}
             >
-              {RESTAURANT_ROLES.map((r) => (
+              {ASSIGNABLE_RESTAURANT_ROLES.map((r) => (
                 <option key={r} value={r}>
                   {RESTAURANT_ROLE_LABELS[r]}
                 </option>

@@ -104,6 +104,11 @@ export function createFakeSupabase(
         filters.ilike.push([col, re]);
         return api;
       },
+      /** P08: `.contains(col, [v1, v2, ...])` — array column contains every named value. */
+      contains(col: string, vals: any[]) {
+        filters.contains.push([col, vals]);
+        return api;
+      },
       lte() {
         return api;
       },

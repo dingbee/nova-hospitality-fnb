@@ -22,6 +22,7 @@ export const RESTAURANT_ROLE_LABELS: Record<RestaurantRole, string> = {
   purchasing_officer: "Purchasing Officer",
   accountant: "Accountant",
   viewer: "Viewer",
+  api_service: "API Service (machine credential)",
 };
 
 export const RESTAURANT_CAPABILITIES = [
@@ -266,6 +267,13 @@ const CAPABILITY_ROLES: Record<RestaurantCapability, readonly RestaurantRole[]> 
     "chef",
     "kitchen_manager",
     "accountant",
+    // P08 — the ONLY capability a write-scoped external API credential's
+    // synthetic service-account role carries (see RESTAURANT_ROLES' own
+    // comment in ./contracts.ts). A credential can place/progress/settle
+    // orders exactly like a bartender can; it can void nothing, discount
+    // nothing, manage no menu/inventory/pricing — every other capability
+    // in this file deliberately omits "api_service".
+    "api_service",
   ],
   // Money-affecting corrections stay with supervisors: a void, a reopen or a
   // manual discount rewrites revenue evidence after the fact.
