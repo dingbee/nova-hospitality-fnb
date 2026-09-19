@@ -335,6 +335,40 @@ function makeFixture() {
           );
           return { data: isAdmin, error: null };
         }
+        if (fn === "restaurant_increment_quota_usage") {
+          // Mirrors restaurant_increment_quota_usage's real semantics
+          // (0060_p09_quota_usage_ledger.sql): only ever ADDS a
+          // non-negative delta under the tenant/property/quota/period key —
+          // never accepts an absolute used_value from the caller.
+          const safeDelta = Math.max(params._delta, 0);
+          const existing = usageCounters.find(
+            (r) =>
+              r.tenant_id === params._tenant_id &&
+              r.quota_definition_id === params._quota_definition_id &&
+              r.period_start === params._period_start &&
+              (r.property_id ?? null) === (params._property_id ?? null),
+          );
+          if (existing) {
+            existing.used_value = (existing.used_value ?? 0) + safeDelta;
+            existing.state = params._state;
+            return {
+              data: [{ used_value: existing.used_value, state: existing.state }],
+              error: null,
+            };
+          }
+          const row = {
+            id: `commercial_usage_counters-${Date.now()}-${usageCounters.length}`,
+            tenant_id: params._tenant_id,
+            property_id: params._property_id ?? null,
+            quota_definition_id: params._quota_definition_id,
+            period_start: params._period_start,
+            period_end: params._period_end,
+            used_value: safeDelta,
+            state: params._state,
+          };
+          usageCounters.push(row);
+          return { data: [{ used_value: row.used_value, state: row.state }], error: null };
+        }
         return { data: null, error: null };
       },
     },
@@ -578,6 +612,56 @@ describe("quota engine", () => {
       amount: 50,
     });
     expect(status?.state).toBe("OVERRIDE");
+  });
+
+  // ME-11: RLS on commercial_usage_counters (0060_p09_quota_usage_ledger.sql)
+  // restricts direct INSERT/UPDATE/DELETE to commercial admins only — an
+  // ordinary tenant member (the caller for every non-admin AI-governed
+  // feature use) is never one. A direct write from incrementUsage would be
+  // rejected by RLS on the very first increment of each tenant/period
+  // (confirmed live against Postgres during ME-11 certification). The only
+  // write path that survives RLS for an ordinary caller is the
+  // restaurant_increment_quota_usage SECURITY DEFINER RPC, so incrementUsage
+  // must never fall back to a direct table write.
+  it("writes usage exclusively through the increment RPC — never a direct table insert/update", async () => {
+    const fx = makeFixture();
+    fx.subscriptions.push({
+      id: "sub-a",
+      tenant_id: TENANT_A,
+      status: "active",
+      billing_interval: "monthly",
+      plan_id: CORE,
+      programme_id: null,
+      commercial_plans: { id: CORE, code: "core" },
+      commercial_programmes: null,
+    });
+    const originalFrom = fx.supabase.from;
+    const directWrites: string[] = [];
+    const guardedSupabase = {
+      ...fx.supabase,
+      from(table: string) {
+        const real = originalFrom(table);
+        if (table !== "commercial_usage_counters") return real;
+        return {
+          ...real,
+          insert(row: any) {
+            directWrites.push("insert");
+            return real.insert(row);
+          },
+          update(patch: any) {
+            directWrites.push("update");
+            return real.update(patch);
+          },
+        };
+      },
+    };
+
+    await incrementUsage(guardedSupabase, TENANT_A, "ai_requests_monthly", { amount: 1 });
+    await incrementUsage(guardedSupabase, TENANT_A, "ai_requests_monthly", { amount: 1 });
+
+    expect(directWrites).toEqual([]);
+    expect(fx.usageCounters).toHaveLength(1);
+    expect(fx.usageCounters[0].used_value).toBe(2);
   });
 });
 

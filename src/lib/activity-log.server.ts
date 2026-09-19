@@ -9,6 +9,8 @@ type LogInput = {
   entityType: string;
   entityId?: string | null;
   entityLabel?: string | null;
+  /** The tenant a tenant-scoped governance action belongs to. Omit for a platform-tier action with no tenant context — such rows are visible only to platform admins (see 0085_me11_activity_logs.sql), never broadened by omission. */
+  tenantId?: string | null;
   metadata?: Record<string, unknown>;
   previousValue?: unknown;
   newValue?: unknown;
@@ -30,6 +32,7 @@ export async function logActivity(supabase: any, input: LogInput) {
   try {
     const { ip, ua } = safeHeaders();
     const row = {
+      tenant_id: input.tenantId ?? null,
       actor_id: input.actorId,
       actor_email: input.actorEmail ?? null,
       action: input.action,
