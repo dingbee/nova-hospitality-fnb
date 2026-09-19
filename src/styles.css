@@ -64,6 +64,7 @@
 }
 
 :root {
+  color-scheme: light;
   --radius: 4px;
 
   /* NOVA modern-luxury palette — exact HEX system
@@ -102,6 +103,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: var(--charcoal);
   --foreground: var(--ivory);
   --card: oklch(0.22 0.01 80);
@@ -132,6 +134,18 @@
     text-size-adjust: 100%;
     overflow-x: hidden;
     max-width: 100%;
+  }
+
+  /* Native form controls (especially <select>/<option>) use the
+     browser/OS color scheme for their popup surface. Keep that scheme tied
+     to LexiBite's semantic theme so dark-mode dropdowns never render as
+     white text on a white native popup. */
+  select,
+  select option,
+  select optgroup {
+    color-scheme: inherit;
+    color: var(--color-foreground);
+    background-color: var(--color-popover);
   }
 
   body {
