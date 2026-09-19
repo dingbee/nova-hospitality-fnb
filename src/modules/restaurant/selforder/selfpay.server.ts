@@ -120,6 +120,17 @@ export type PaymentProviderAdapter = {
    * `merchantReference` is this codebase's own order id, so a later
    * server-to-server callback (which never carries a tableId) can be
    * resolved back to the right order with no separate mapping table.
+   *
+   * `signal` aborts once this attempt's claim window elapses (see
+   * initiateGuestPayment) — an adapter must forward it to its own
+   * outbound call(s) so an expired claim's request is actually cancelled,
+   * not merely ignored. Without that, the underlying HTTP call keeps
+   * running after we've internally given up on it, and could still
+   * complete with a real, independent session after a second caller has
+   * already claimed and started its own — the exact "two live provider
+   * sessions" outcome this interface exists to prevent. A caller with no
+   * meaningful way to cancel its own transport may ignore the signal, but
+   * then cannot claim to uphold the single-live-initiation invariant.
    */
   initiate(input: {
     amount: number;
@@ -127,6 +138,7 @@ export type PaymentProviderAdapter = {
     merchantReference: string;
     description: string;
     returnUrl: string;
+    signal?: AbortSignal;
   }): Promise<{ providerReference: string; redirectUrl: string }>;
   /**
    * The only source of truth for "did this actually get paid" — always
@@ -226,6 +238,21 @@ function isLiveSession(session: PendingSession): boolean {
  * that exact token still being present — an ownership-qualified CAS, not a
  * blind write — so a late-arriving result from an expired claim can never
  * overwrite or clear a newer claimant's live session.
+ *
+ * That alone still leaves the DB claim and the actual outbound call to the
+ * provider as two independently-lived things: a slow SubmitOrderRequest
+ * could keep running against Pesapal's servers well after we've internally
+ * decided its claim expired, and could still complete with a second, real,
+ * independent checkout session once a new caller has already claimed and
+ * started its own — the exact "two live provider sessions" outcome this
+ * whole mechanism exists to prevent, just delayed rather than closed. So
+ * the claim TTL is not only a DB bookkeeping window: an AbortController
+ * tied to that identical deadline is threaded into provider.initiate()
+ * itself, so the moment a claim would be treated as expired, this
+ * attempt's own request to the provider has already been cancelled and can
+ * no longer independently produce a session at all — at any instant, at
+ * most one live call to the provider exists for a given order, not merely
+ * at most one DB row claiming to own one.
  */
 export async function initiateGuestPayment(
   sb: Sb,
@@ -288,6 +315,15 @@ export async function initiateGuestPayment(
     return { ok: false, reason: "initiation_in_progress" };
   }
 
+  // The provider call is bounded by the exact same deadline as the DB
+  // claim, via an actual cancellation signal — not merely a bookkeeping
+  // timestamp. Once this fires, this attempt's own request to the provider
+  // is dead; it cannot go on to independently produce a real session after
+  // a newer caller has already claimed the slot. Cleared on settle either
+  // way so it never fires (harmlessly) after this call has already returned.
+  const claimDeadline = new AbortController();
+  const claimTimer = setTimeout(() => claimDeadline.abort(), GUEST_PAYMENT_CLAIM_TTL_MS);
+
   // Server-derived amount/currency/reference only — input carries nothing but tableId/orderId/method.
   let initiated: { providerReference: string; redirectUrl: string };
   try {
@@ -297,8 +333,10 @@ export async function initiateGuestPayment(
       merchantReference: order.id,
       description: `Order ${order.order_number}`,
       returnUrl,
+      signal: claimDeadline.signal,
     });
   } catch (err) {
+    clearTimeout(claimTimer);
     // Release the claim — but only if it's still ours. If this attempt's
     // own claim already expired and a newer caller has since claimed (or
     // completed) a session, that newer state must never be cleared by a
@@ -315,6 +353,7 @@ export async function initiateGuestPayment(
       .eq("guest_payment_session_reference", myClaimToken);
     throw err;
   }
+  clearTimeout(claimTimer);
 
   // Finalize — again only if this attempt's claim is still the one on the
   // row. A late success from an expired claim must never overwrite a newer

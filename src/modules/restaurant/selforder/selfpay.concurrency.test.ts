@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- fake Supabase rows are untyped at this boundary. */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initiateGuestPayment, type PaymentProviderAdapter } from "./selfpay.server";
 
 /**
@@ -391,5 +391,102 @@ describe("initiateGuestPayment — ownership survives a slow, late-arriving prov
     expect(order.guest_payment_session_reference).toBe(bReference);
     expect(order.guest_payment_session_redirect_url).toBe(bRedirect);
     expect(order.guest_payment_session_expires_at).toBe(bExpiry);
+  });
+});
+
+/**
+ * The ownership CAS above proves the DB claim can never be overwritten or
+ * cleared by a stale caller — but on its own that only protects bookkeeping.
+ * It does not, by itself, stop a slow provider call from independently
+ * completing a second real session after a newer caller has already
+ * claimed and started its own: the DB claim and the live outbound request
+ * are otherwise two separate things with two separate lifetimes. This
+ * suite proves the stronger invariant actually adopted: the claim TTL is
+ * wired to a real AbortController passed into provider.initiate(), so the
+ * instant a claim would be treated as expired, this attempt's own request
+ * to the provider is already dead and cannot go on to produce a session at
+ * all — at any instant, at most one *live* provider call exists for a
+ * given order, not merely at most one DB row claiming to own one.
+ */
+describe("initiateGuestPayment — the provider call itself is bounded by the claim, not just DB bookkeeping", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a provider call that hangs past the claim TTL is genuinely cancelled — it can never independently complete a session afterward", async () => {
+    const order = baseOrder();
+    const db = fakeDb(order);
+
+    let sawAbort = false;
+    const hangingAdapter: PaymentProviderAdapter = {
+      name: "fake",
+      initiate: ({ signal }) =>
+        new Promise<{ providerReference: string; redirectUrl: string }>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            sawAbort = true;
+            reject(Object.assign(new Error("The operation was aborted"), { name: "AbortError" }));
+          });
+        }),
+      verify: async () => ({ status: "paid", amount: 11000, currency: "TZS" }),
+    };
+
+    const aCall = initiateGuestPayment(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, method: "mobile_money" },
+      RETURN_URL,
+      hangingAdapter,
+    );
+    // Attach the rejection assertion immediately — before advancing any
+    // timers — so Node never observes a window where aCall's eventual
+    // rejection is unhandled.
+    const aCallRejection = expect(aCall).rejects.toThrow(/aborted/i);
+
+    // Let A run through claiming and into its now-hanging provider call.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sawAbort).toBe(false); // still well within the claim window
+
+    // Advance exactly to the claim TTL boundary: this must actually cancel
+    // A's own in-flight request, not merely relabel it as "expired" in the DB.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(sawAbort).toBe(true);
+    await aCallRejection;
+
+    // A's own claim is released (it still owned the slot at that point).
+    expect(order.guest_payment_session_reference).toBeNull();
+
+    // B claims fresh and completes — exactly one provider call ever
+    // resulted in a real session for this order.
+    const adapterB = countingAdapter();
+    const bResult = await initiateGuestPayment(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, method: "mobile_money" },
+      RETURN_URL,
+      adapterB,
+    );
+    expect(bResult.ok).toBe(true);
+    expect(adapterB.calls).toBe(1);
+  });
+
+  it("a provider call that returns comfortably within the claim TTL is never aborted", async () => {
+    const order = baseOrder();
+    const db = fakeDb(order);
+    const adapter = countingAdapter();
+
+    const result = await initiateGuestPayment(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, method: "mobile_money" },
+      RETURN_URL,
+      adapter,
+    );
+    // Advancing time after the call has already settled must not throw or
+    // retroactively abort a completed, successful session.
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(result.ok).toBe(true);
+    expect(adapter.calls).toBe(1);
+    expect(order.guest_payment_session_reference).toBe("track-1");
   });
 });

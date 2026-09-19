@@ -38,10 +38,11 @@ let tokenCache: TokenCache = null;
 let ipnIdCache: string | null = null;
 
 async function pesapalFetch(path: string, init: RequestInit & { auth?: boolean } = {}) {
-  const { auth = true, headers, ...rest } = init;
-  const token = auth ? await getToken() : undefined;
+  const { auth = true, headers, signal, ...rest } = init;
+  const token = auth ? await getToken(signal) : undefined;
   const res = await fetch(`${baseUrl()}${path}`, {
     ...rest,
+    signal,
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
@@ -59,11 +60,12 @@ async function pesapalFetch(path: string, init: RequestInit & { auth?: boolean }
 }
 
 /** Cached for its ~5 minute lifetime; refreshed a little early to avoid a request racing expiry. */
-async function getToken(): Promise<string> {
+async function getToken(signal?: AbortSignal | null): Promise<string> {
   if (tokenCache && tokenCache.expiresAt > Date.now() + 15_000) return tokenCache.token;
   const body = await pesapalFetch("/api/Auth/RequestToken", {
     method: "POST",
     auth: false,
+    signal,
     body: JSON.stringify({
       consumer_key: process.env.PESAPAL_CONSUMER_KEY,
       consumer_secret: process.env.PESAPAL_CONSUMER_SECRET,
@@ -83,7 +85,7 @@ async function getToken(): Promise<string> {
  * a fresh IPN subscription on every cold start. Falling back to
  * self-registration keeps this adapter usable without that extra step.
  */
-async function ensureIpnId(): Promise<string> {
+async function ensureIpnId(signal?: AbortSignal): Promise<string> {
   if (process.env.PESAPAL_IPN_ID) return process.env.PESAPAL_IPN_ID;
   if (ipnIdCache) return ipnIdCache;
   if (!process.env.PESAPAL_IPN_URL) {
@@ -93,6 +95,7 @@ async function ensureIpnId(): Promise<string> {
   }
   const body = await pesapalFetch("/api/URLSetup/RegisterIPN", {
     method: "POST",
+    signal,
     body: JSON.stringify({
       url: process.env.PESAPAL_IPN_URL,
       ipn_notification_type: "GET",
@@ -120,10 +123,11 @@ export function createPesapalAdapter(): PaymentProviderAdapter | null {
   return {
     name: "pesapal",
 
-    async initiate({ amount, currency, merchantReference, description, returnUrl }) {
-      const notificationId = await ensureIpnId();
+    async initiate({ amount, currency, merchantReference, description, returnUrl, signal }) {
+      const notificationId = await ensureIpnId(signal);
       const body = await pesapalFetch("/api/Transactions/SubmitOrderRequest", {
         method: "POST",
+        signal,
         body: JSON.stringify({
           id: merchantReference,
           currency,
