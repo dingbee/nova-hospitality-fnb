@@ -10,7 +10,7 @@
  * which are thin wrappers around the one versioned upsertPrice function.
  * No UUID is ever typed by an operator here.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { AlertTriangle, ChevronRight, Plus, Search } from "lucide-react";
@@ -508,11 +508,11 @@ function ConfigurePriceSheet({
   const [reason, setReason] = useState("");
   const [requiresApproval, setRequiresApproval] = useState(false);
 
-  // Reset the form to the current filters/currency every time a fresh
-  // configuration sheet is opened for a (possibly different) item.
-  const [lastItemId, setLastItemId] = useState<string | null>(null);
-  if (open && item?.menuItemId !== lastItemId) {
-    setLastItemId(item?.menuItemId ?? null);
+  // Reset from the current filters whenever the sheet opens or the operator
+  // selects a different item. Keep this in an effect so opening the sheet with
+  // no item selected cannot trigger render-phase state updates.
+  useEffect(() => {
+    if (!open) return;
     setPropertyId(defaultPropertyId);
     setLocationId(defaultLocationId);
     setChannel(defaultChannel);
@@ -524,7 +524,15 @@ function ConfigurePriceSheet({
     setEffectiveFrom("");
     setReason("");
     setRequiresApproval(false);
-  }
+  }, [
+    open,
+    item?.menuItemId,
+    item?.currency,
+    defaultPropertyId,
+    defaultLocationId,
+    defaultChannel,
+    baseCurrency,
+  ]);
 
   const scopedLocations = propertyId
     ? locations.filter((l) => l.property_id === propertyId)
