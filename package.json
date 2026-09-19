@@ -115,6 +115,5 @@
     }
   },
   "description": "LexiBite — Restaurant & Bar OS",
-  "version": "1.0.0",
-  "packageManager": "pnpm@10.34.5"
+  "version": "1.0.0"
 }
