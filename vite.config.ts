@@ -1,5 +1,6 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import { VitePWA } from "vite-plugin-pwa";
+import { nitro } from "nitro/vite";
 // Side-effect only: augments vite's `UserConfig` type with vitest's `test`
 // option, so the `test` key below typechecks against the wrapped
 // defineConfig's vite-derived UserConfig type.
@@ -14,11 +15,19 @@ import "vitest/config";
  * build output instead of the default Cloudflare Worker artifact.
  */
 const isVercel = Boolean(process.env.VERCEL);
+const publicOutDir = isVercel ? ".vercel/output/static" : ".output/public";
 
 export default defineConfig({
   // Lovable's wrapper already supplies TanStack Start, React, Tailwind,
   // path aliases and Nitro. Explicitly pin the Nitro target on Vercel.
-  nitro: isVercel ? { preset: "vercel" } : true,
+  // Disable the wrapper-provided Nitro instance on Vercel and inject the
+  // first-party Nitro Vite plugin explicitly. This avoids the wrapper's
+  // Cloudflare-targeted build plugin winning in fresh CI installs.
+  nitro: isVercel ? false : true,
+
+  // The wrapper already provides the Cloudflare integration for Lovable.
+  // Vercel must not receive both Cloudflare and Nitro deployment adapters.
+  cloudflare: isVercel ? false : undefined,
 
   tanstackStart: {
     // Keep the canonical server entry used by the application's SSR/error
@@ -34,6 +43,21 @@ export default defineConfig({
     exclude: ["**/node_modules/**", "e2e/**"],
   },
 
+  vite: isVercel
+    ? {
+        plugins: [
+          nitro({
+            preset: "vercel",
+            output: {
+              dir: ".vercel/output",
+              serverDir: ".vercel/output/functions/__server.func",
+              publicDir: ".vercel/output/static",
+            },
+          }),
+        ],
+      }
+    : undefined,
+
   plugins: [
     VitePWA({
       manifest: false,
@@ -43,7 +67,7 @@ export default defineConfig({
       // Static assets are emitted into the active Nitro public directory.
       // Lovable/Cloudflare uses .output/public; the Vercel Nitro preset
       // remaps the production artifact to Vercel's output contract.
-      outDir: ".output/public",
+      outDir: publicOutDir,
       scope: "/order",
       devOptions: { enabled: false },
       workbox: {
