@@ -22,8 +22,8 @@ export const Route = createFileRoute("/order/")({
       { name: "apple-mobile-web-app-title", content: PRODUCT.guestFacingName },
     ],
     links: [
-      { rel: "manifest", href: "/lexibite-guest.webmanifest" },
-      { rel: "apple-touch-icon", href: "/lexibite-guest-192.png" },
+      { rel: "manifest", href: "/lexibite-guest.webmanifest?v=2" },
+      { rel: "apple-touch-icon", href: "/lexibite-apple-touch-icon-v2.png" },
     ],
   }),
   component: OrderLanding,
