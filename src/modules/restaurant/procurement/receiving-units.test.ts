@@ -119,7 +119,23 @@ function query(table: string) {
   };
   return api;
 }
-const sb: any = { from: (t: string) => query(t) };
+function rpc(name: string, args: any) {
+  if (name === "restaurant_increment_po_item_fulfilment") {
+    const rows = db["restaurant_purchase_order_items"] ?? [];
+    const row = rows.find((r) => r.id === args._po_item_id && r.tenant_id === args._tenant);
+    if (row) {
+      row.received_quantity =
+        Number(row.received_quantity ?? 0) + Number(args._received_delta ?? 0);
+      row.accepted_quantity =
+        Number(row.accepted_quantity ?? 0) + Number(args._accepted_delta ?? 0);
+      row.rejected_quantity =
+        Number(row.rejected_quantity ?? 0) + Number(args._rejected_delta ?? 0);
+    }
+    return Promise.resolve({ data: row ? [row] : [], error: null });
+  }
+  return Promise.resolve({ data: null, error: null });
+}
+const sb: any = { from: (t: string) => query(t), rpc };
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
