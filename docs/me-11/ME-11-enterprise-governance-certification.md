@@ -165,7 +165,7 @@ exists.
 - `0062_p09_inventory_items_property_scope.sql` — inventory items.
 - `0063_p09_import_workspace_property_scope.sql` — Import Studio
   workspaces/sources/field mappings/staged records.
-- `0085_me11_activity_logs.sql` (**new, this pass**) — the `activity_logs`
+- `0087_me11_activity_logs.sql` (**new, this pass**) — the `activity_logs`
   table, closing the auditability gap in §H.2.
 
 ## F. Authorization model (Phase 1/2)
@@ -327,7 +327,7 @@ zero trace.
 
 **Fix.**
 
-- New migration `0085_me11_activity_logs.sql` creates `activity_logs`
+- New migration `0087_me11_activity_logs.sql` creates `activity_logs`
   with the exact column shape `logActivity` already writes (plus a
   nullable `tenant_id` for tenant-scoped events). RLS: `INSERT` is
   restricted to `actor_id = auth.uid()` (nobody can forge another user's
@@ -455,7 +455,7 @@ migration rather than needing a follow-up ME-01-style pass.
 ## P. Migration findings (Phase 11)
 
 - **Fresh replay:** all 87 migrations (0000–0084 plus this pass's own
-  `0085_me11_activity_logs.sql`) applied cleanly to a brand-new Postgres 16
+  `0087_me11_activity_logs.sql`) applied cleanly to a brand-new Postgres 16
   database — `Migrations applied=87 already-present=0 not-applicable=0`,
   no `FATAL`.
 - **Idempotent re-run:** re-running `apply-migrations.sh` against the same
@@ -569,7 +569,7 @@ from-scratch database replay. No known ME-11 defect remains unresolved.
 
 ## V. Files changed
 
-- `standalone/db/migrations/0085_me11_activity_logs.sql` (new)
+- `standalone/db/migrations/0087_me11_activity_logs.sql` (new)
 - `src/lib/activity-log.server.ts`
 - `src/modules/restaurant/core/members.server.ts`
 - `src/modules/restaurant/core/members.server.test.ts`
