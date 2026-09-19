@@ -5,6 +5,12 @@ import { VitePWA } from "vite-plugin-pwa";
 // defineConfig's vite-derived UserConfig type.
 import "vitest/config";
 
+// Vercel runs TanStack Start through Nitro. The Lovable Vite wrapper defaults
+// its Nitro build target to the sandbox/Cloudflare runtime unless the target
+// is explicit. On Vercel we must emit Vercel Functions and use this project's
+// real server entry so raw HTTP endpoints under /api are handled by Start.
+const isVercel = !!process.env.VERCEL;
+
 /**
  * NOVA Hospitality F&B — Restaurant & Bar OS.
  *
@@ -12,6 +18,10 @@ import "vitest/config";
  * only the runtime target differs (see src/modules/runtime/runtime-config.ts).
  */
 export default defineConfig({
+  tanstackStart: {
+    server: { entry: "server" },
+  },
+  nitro: isVercel ? { preset: "vercel" } : true,
   test: {
     // e2e/, e2e-auth/ and e2e-staff/ hold Playwright specs (run via `npx
     // playwright test`), not vitest tests — without this, vitest's
