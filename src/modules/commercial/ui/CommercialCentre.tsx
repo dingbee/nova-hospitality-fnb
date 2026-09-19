@@ -199,7 +199,6 @@ function useCommercialData() {
 export function CommercialCentre() {
   const qc = useQueryClient();
   const data = useCommercialData();
-  const providers = useQuery({ queryKey: ["commercial.providers"], queryFn: () => data.providerList({ data: {} }) });
 
   const invalidate = (...keys: string[]) =>
     keys.forEach((k) => qc.invalidateQueries({ queryKey: [k] }));

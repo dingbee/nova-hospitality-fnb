@@ -44,6 +44,7 @@ import {
   upsertSubscriptionSchema,
   voidInvoiceSchema,
 } from "./contracts";
+import { upsertCommercialProviderSchema, updateCommercialProviderStatusSchema } from "./provider.contracts";
 
 const empty = z.object({}).optional();
 
