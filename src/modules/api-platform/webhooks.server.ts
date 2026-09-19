@@ -29,6 +29,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { assertCapability } from "@/modules/restaurant/core/access.server";
 import { assertEntitled } from "@/modules/commercial/resolver.server";
 import { writeCommercialAudit } from "@/modules/commercial/audit.server";
+import { logServerFailure } from "@/lib/observability/log.server";
 import { ApiError } from "./errors";
 import { decryptSecret, encryptSecret, secretDisplayPrefix } from "./crypto.server";
 import type { RegisterWebhookEndpointInput, WebhookEventType } from "./contracts";
@@ -420,6 +421,17 @@ export async function deliverWebhookDelivery(supabaseAdmin: Sb, deliveryId: stri
     throw new Error(`Endpoint responded ${response.status}`);
   } catch (err) {
     const dead = attemptCount >= (delivery.max_attempts as number);
+    // ME-16 remediation (ME16-06): the outcome was already durable (the
+    // `last_error` column below), but nothing was visible to an operator
+    // watching live logs — deliveryId is this subsystem's own correlation
+    // ID (it already keys the row that carries the full retry/dead-letter
+    // state), so it is reused here rather than inventing a second one.
+    logServerFailure(
+      "webhook:delivery",
+      deliveryId,
+      { eventType: delivery.event_type, attemptCount, dead },
+      err,
+    );
     await supabaseAdmin
       .from("api_webhook_deliveries")
       .update({

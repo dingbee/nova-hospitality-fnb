@@ -25,6 +25,9 @@
  * "re-verify, don't trust" pattern). No payment-recording logic lives in
  * this file.
  */
+import { randomUUID } from "node:crypto";
+import { logServerFailure } from "../src/lib/observability/log.server";
+
 function ok(): Response {
   // Acknowledge receipt regardless of processing outcome for a payload the
   // provider itself sent correctly — a business-logic outcome (duplicate,
@@ -36,7 +39,11 @@ function ok(): Response {
   });
 }
 
-function failed(): Response {
+function failed(providerCode: string, requestId: string, error: unknown): Response {
+  // ME-16 remediation (ME16-06/07): previously this branch logged nothing
+  // at all — a real processing failure (DB unreachable) produced zero
+  // server-side evidence beyond the generic response below.
+  logServerFailure("webhook:mobile-money", requestId, { providerCode }, error);
   // A real processing failure (DB unreachable) — worth the provider
   // retrying. Never leak the underlying error to a public caller.
   return new Response(JSON.stringify({ received: false }), {
@@ -54,6 +61,7 @@ export default async function handler(request: Request): Promise<Response> {
     headers[key] = value;
   });
 
+  const requestId = randomUUID();
   try {
     const { supabaseAdmin } = await import("../src/integrations/supabase/client.server");
     const { handleMobileMoneyWebhookEvent } =
@@ -64,7 +72,7 @@ export default async function handler(request: Request): Promise<Response> {
     // are a reason for the provider to retry this callback.
     await handleMobileMoneyWebhookEvent(supabaseAdmin, { providerCode, rawBody, headers });
     return ok();
-  } catch {
-    return failed();
+  } catch (error) {
+    return failed(providerCode, requestId, error);
   }
 }

@@ -8,6 +8,7 @@
  */
 import { createMiddleware } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { logServerDenial } from "@/lib/observability/log.server";
 import type { Permission } from "./permissions";
 
 export class ForbiddenError extends Error {
@@ -96,8 +97,25 @@ export function requirePermission(perm: Permission) {
   return createMiddleware({ type: "function" })
     .middleware([requireSupabaseAuth])
     .server(async ({ next, context }) => {
-      const ctx = context as { supabase: unknown; userId: string };
-      await assertPermission(ctx.supabase, ctx.userId, perm);
+      const ctx = context as { supabase: unknown; userId: string; requestId?: string };
+      try {
+        await assertPermission(ctx.supabase, ctx.userId, perm);
+      } catch (error) {
+        // ME-16 remediation (ME16-05): a permission-denied attempt is
+        // security-relevant and previously left zero trace. userId is safe
+        // to log (it identifies the actor, not a credential); the
+        // permission requested identifies which authorization layer
+        // refused the operation.
+        logServerDenial("rbac", ctx.requestId ?? null, {
+          reason:
+            error instanceof Error && error.name === "ForbiddenError"
+              ? "forbidden"
+              : "permission_check_failed",
+          permission: perm,
+          userId: ctx.userId ?? null,
+        });
+        throw error;
+      }
       return next({ context: { permission: perm } });
     });
 }

@@ -102,4 +102,22 @@ describe("POST/GET /api/pesapal-ipn", () => {
     expect(body.status).toBe(500);
     expect(JSON.stringify(body)).not.toMatch(/ECONNRESET|Pesapal unreachable/);
   });
+
+  it("ME-16 remediation: a genuine processing exception is now logged server-side (previously: zero evidence)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const originalError = new Error("db_connection_reset: read ECONNRESET");
+    confirmPesapalCallback.mockRejectedValue(originalError);
+
+    await callHandler("?OrderTrackingId=track-99&OrderMerchantReference=order-99");
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const [tag, payload, loggedError] = errorSpy.mock.calls[0]!;
+    expect(tag).toBe("[webhook:pesapal-ipn]");
+    const parsed = JSON.parse(payload as string);
+    expect(parsed.orderId).toBe("order-99");
+    expect(parsed.providerReference).toBe("track-99");
+    expect(typeof parsed.requestId).toBe("string");
+    expect(loggedError).toBe(originalError);
+    errorSpy.mockRestore();
+  });
 });

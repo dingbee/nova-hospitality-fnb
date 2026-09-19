@@ -7,6 +7,7 @@
  * On-premise appliances routinely run with no WAN provider at all — that is a
  * supported state, not an error.
  */
+import { logServerFailure } from "@/lib/observability/log.server";
 
 export type AdapterResult =
   | { ok: true; provider: string; reference?: string }
@@ -71,15 +72,19 @@ export async function sendEmail(input: {
       }),
     });
     const json = (await res.json().catch(() => ({}))) as { id?: string; message?: string };
-    if (!res.ok)
-      return {
-        ok: false,
-        provider: "email",
-        reason: "rejected",
-        error: json?.message ?? `Provider responded ${res.status}.`,
-      };
+    if (!res.ok) {
+      const error = json?.message ?? `Provider responded ${res.status}.`;
+      logServerFailure(
+        "integration:email",
+        null,
+        { operation: "send", reason: "rejected", status: res.status },
+        error,
+      );
+      return { ok: false, provider: "email", reason: "rejected", error };
+    }
     return { ok: true, provider: "email", reference: json?.id };
   } catch (e) {
+    logServerFailure("integration:email", null, { operation: "send", reason: "network" }, e);
     return { ok: false, provider: "email", reason: "network", error: (e as Error)?.message };
   }
 }
@@ -110,15 +115,24 @@ export async function sendWhatsApp(to: string, body: string): Promise<AdapterRes
       },
     );
     const json = (await res.json().catch(() => ({}))) as { sid?: string; message?: string };
-    if (!res.ok)
-      return {
-        ok: false,
-        provider: "twilio_whatsapp",
-        reason: "rejected",
-        error: json?.message ?? `Provider responded ${res.status}.`,
-      };
+    if (!res.ok) {
+      const error = json?.message ?? `Provider responded ${res.status}.`;
+      logServerFailure(
+        "integration:twilio_whatsapp",
+        null,
+        { operation: "send", reason: "rejected", status: res.status },
+        error,
+      );
+      return { ok: false, provider: "twilio_whatsapp", reason: "rejected", error };
+    }
     return { ok: true, provider: "twilio_whatsapp", reference: json?.sid };
   } catch (e) {
+    logServerFailure(
+      "integration:twilio_whatsapp",
+      null,
+      { operation: "send", reason: "network" },
+      e,
+    );
     return {
       ok: false,
       provider: "twilio_whatsapp",

@@ -4,6 +4,7 @@ import { Loader2, UtensilsCrossed } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { PRODUCT } from "@/config/product";
+import { presentUserFacingError } from "@/lib/errors/present-error";
 
 export const Route = createFileRoute("/auth_/sign-up")({
   head: () => ({
@@ -58,8 +59,10 @@ function SignUpPage() {
     if (error) {
       // Supabase returns a generic message for an email already registered
       // (to avoid account enumeration) — pass it through as-is rather than
-      // guessing at a friendlier one we can't actually verify.
-      toast.error(error.message);
+      // guessing at a friendlier one we can't actually verify. Only a
+      // message that looks like a leaked technical/parser error (not a
+      // normal Supabase Auth rejection) is replaced.
+      toast.error(presentUserFacingError(error, "Sign-up failed.").message);
       return;
     }
     if (!data.session) {

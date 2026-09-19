@@ -288,4 +288,35 @@ describe("deliverWebhookDelivery — atomic claim (concurrency)", () => {
     expect(row.data.attempt_count).toBe(8);
     expect(row.data.status).toBe("dead_letter");
   });
+
+  it("ME-16 remediation: a delivery failure is now also logged for live operator visibility, without changing retry/dead-letter behavior", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const sb = seeded();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("nope", { status: 500 })),
+    );
+
+    await deliverWebhookDelivery(sb, "delivery-1");
+
+    const row = await sb
+      .from("api_webhook_deliveries")
+      .select("*")
+      .eq("id", "delivery-1")
+      .maybeSingle();
+    // Unchanged: still one attempt, still "failed" (not yet dead — max_attempts is 8).
+    expect(row.data.attempt_count).toBe(1);
+    expect(row.data.status).toBe("failed");
+    expect(row.data.last_error).toContain("500");
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const [tag, payload] = errorSpy.mock.calls[0]!;
+    expect(tag).toBe("[webhook:delivery]");
+    const parsed = JSON.parse(payload as string);
+    expect(parsed.requestId).toBe("delivery-1"); // deliveryId is this subsystem's own correlation id
+    expect(parsed.eventType).toBe("order.created");
+    expect(parsed.attemptCount).toBe(1);
+    expect(parsed.dead).toBe(false);
+    errorSpy.mockRestore();
+  });
 });

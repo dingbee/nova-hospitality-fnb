@@ -104,3 +104,65 @@ describe("callAiGateway — Responses API protocol, jsonMode", () => {
     expect(body.response_format).toEqual({ type: "json_object" });
   });
 });
+
+describe("callAiGateway — ME-16 remediation: operator-side diagnostic logging", () => {
+  it("logs a non-2xx provider response before throwing, without changing the thrown message", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    global.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      text: async () => "rate limited",
+    })) as any;
+
+    await expect(
+      callAiGateway({
+        system: "sys",
+        user: "hi",
+        endpoint: {
+          url: "https://api.openai.com/v1/chat/completions",
+          apiKey: "sk-test",
+          model: "gpt-test",
+        },
+      }),
+    ).rejects.toThrow("AI rate limit reached. Try again in a moment.");
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const [tag, payload, loggedError] = errorSpy.mock.calls[0]!;
+    expect(tag).toBe("[integration:ai-gateway]");
+    const parsed = JSON.parse(payload as string);
+    expect(parsed.status).toBe(429);
+    expect((loggedError as Error).message).toBe("AI rate limit reached. Try again in a moment.");
+  });
+
+  it("logs a timeout before throwing, without changing the thrown message", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    global.fetch = vi.fn(
+      (_url: string, opts: any) =>
+        new Promise((_resolve, reject) => {
+          opts.signal.addEventListener("abort", () => {
+            const abortError = new Error("aborted");
+            abortError.name = "AbortError";
+            reject(abortError);
+          });
+        }),
+    ) as any;
+
+    await expect(
+      callAiGateway({
+        system: "sys",
+        user: "hi",
+        timeoutMs: 5,
+        endpoint: {
+          url: "https://api.openai.com/v1/chat/completions",
+          apiKey: "sk-test",
+          model: "gpt-test",
+        },
+      }),
+    ).rejects.toThrow("AI request timed out after 5ms.");
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const [tag, payload] = errorSpy.mock.calls[0]!;
+    expect(tag).toBe("[integration:ai-gateway]");
+    expect(JSON.parse(payload as string).reason).toBe("timeout");
+  });
+});

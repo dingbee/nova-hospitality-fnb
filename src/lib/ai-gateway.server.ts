@@ -1,6 +1,7 @@
 // NOVA Hospitality F&B — server-side AI transport.
 // Existing Staff/Guest NOVA callers use Chat Completions; INT-01 reasoning
 // can explicitly opt into the OpenAI Responses API without changing them.
+import { logServerFailure } from "@/lib/observability/log.server";
 
 export const AI_GATEWAY_URL =
   process.env["NOVA_AI_GATEWAY_URL"] ?? "https://api.openai.com/v1/chat/completions";
@@ -97,8 +98,27 @@ export async function callAiGateway(opts: AiGatewayCallOptions): Promise<AiGatew
       signal: controller.signal,
     });
   } catch (err) {
-    if ((err as Error).name === "AbortError")
-      throw new Error(`AI request timed out after ${opts.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms.`);
+    // ME-16 remediation (ME16-07): logged at the source so evidence exists
+    // regardless of how far a caller further up the chain propagates or
+    // swallows this exception.
+    if ((err as Error).name === "AbortError") {
+      const timeoutError = new Error(
+        `AI request timed out after ${opts.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms.`,
+      );
+      logServerFailure(
+        "integration:ai-gateway",
+        null,
+        { operation: "call", model, protocol, reason: "timeout" },
+        timeoutError,
+      );
+      throw timeoutError;
+    }
+    logServerFailure(
+      "integration:ai-gateway",
+      null,
+      { operation: "call", model, protocol, reason: "network" },
+      err,
+    );
     throw err;
   } finally {
     clearTimeout(timeout);
@@ -106,11 +126,21 @@ export async function callAiGateway(opts: AiGatewayCallOptions): Promise<AiGatew
   const latencyMs = Date.now() - started;
   if (!res.ok) {
     const text = await res.text();
-    if (res.status === 401) throw new Error("AI authentication failed. Check NOVA_AI_API_KEY.");
-    if (res.status === 429) throw new Error("AI rate limit reached. Try again in a moment.");
-    if (res.status === 402)
-      throw new Error("AI credits exhausted. Please top up in workspace settings.");
-    throw new Error(`AI request failed (${res.status}): ${text.slice(0, 200)}`);
+    const failure =
+      res.status === 401
+        ? new Error("AI authentication failed. Check NOVA_AI_API_KEY.")
+        : res.status === 429
+          ? new Error("AI rate limit reached. Try again in a moment.")
+          : res.status === 402
+            ? new Error("AI credits exhausted. Please top up in workspace settings.")
+            : new Error(`AI request failed (${res.status}): ${text.slice(0, 200)}`);
+    logServerFailure(
+      "integration:ai-gateway",
+      null,
+      { operation: "call", model, protocol, status: res.status },
+      failure,
+    );
+    throw failure;
   }
   const json = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>;

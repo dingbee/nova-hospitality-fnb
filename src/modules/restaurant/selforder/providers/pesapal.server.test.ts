@@ -101,6 +101,82 @@ describe("createPesapalAdapter", () => {
       });
     });
 
+    // Both tests below mock EVERY Pesapal endpoint the adapter might call
+    // (not just the one under test), because `pesapalFetch`'s access-token
+    // cache is process-wide and may already be warm from an earlier test
+    // in this file — these must hold regardless of cache state.
+    it("ME-16 remediation: a rejected order-submission call is logged server-side without changing the thrown message", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (url.includes("/Auth/RequestToken")) {
+            return jsonResponse({
+              token: "tok-x",
+              expiryDate: new Date(Date.now() + 300_000).toISOString(),
+            });
+          }
+          if (url.includes("/Transactions/SubmitOrderRequest")) {
+            return jsonResponse({ error: { message: "invalid consumer key" } }, false, 401);
+          }
+          throw new Error(`unexpected fetch: ${url}`);
+        }),
+      );
+
+      const adapter = createPesapalAdapter()!;
+      await expect(
+        adapter.initiate({
+          amount: 1000,
+          currency: "TZS",
+          merchantReference: "order-2",
+          description: "Order",
+          returnUrl: "https://example.test/return",
+        }),
+      ).rejects.toThrow("invalid consumer key");
+
+      const submissionLog = errorSpy.mock.calls.find(
+        (c) => JSON.parse(c[1] as string).status === 401,
+      );
+      expect(submissionLog).toBeDefined();
+      expect(submissionLog![0]).toBe("[integration:pesapal]");
+    });
+
+    it("ME-16 remediation: a network failure is logged server-side without changing the thrown error", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (url.includes("/Auth/RequestToken")) {
+            return jsonResponse({
+              token: "tok-y",
+              expiryDate: new Date(Date.now() + 300_000).toISOString(),
+            });
+          }
+          if (url.includes("/Transactions/SubmitOrderRequest")) {
+            throw new TypeError("fetch failed");
+          }
+          throw new Error(`unexpected fetch: ${url}`);
+        }),
+      );
+
+      const adapter = createPesapalAdapter()!;
+      await expect(
+        adapter.initiate({
+          amount: 1000,
+          currency: "TZS",
+          merchantReference: "order-3",
+          description: "Order",
+          returnUrl: "https://example.test/return",
+        }),
+      ).rejects.toThrow("fetch failed");
+
+      const networkLog = errorSpy.mock.calls.find(
+        (c) => JSON.parse(c[1] as string).reason === "network",
+      );
+      expect(networkLog).toBeDefined();
+      expect(networkLog![0]).toBe("[integration:pesapal]");
+    });
+
     it("verify() maps a completed transaction to paid", async () => {
       vi.stubGlobal(
         "fetch",

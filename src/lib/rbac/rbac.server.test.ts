@@ -19,8 +19,8 @@
  * NULL at that level. These tests reproduce that exact predicate against a
  * fake nova_can_manage_scoped RPC and prove the guard matches it.
  */
-import { describe, expect, it } from "vitest";
-import { assertCanManageRbacRole, ForbiddenError } from "./rbac.server";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { assertCanManageRbacRole, ForbiddenError, requirePermission } from "./rbac.server";
 
 type Grant = { tenantId: string | null; propertyId: string | null; outletId: string | null };
 
@@ -84,5 +84,68 @@ describe("assertCanManageRbacRole", () => {
     await expect(
       assertCanManageRbacRole(sb, { tenantId: "tenant-a", propertyId: "prop-1", outletId: null }),
     ).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * ME-16 remediation (ME16-05) — requirePermission's server middleware
+ * previously let a permission denial pass through with zero server-side
+ * trace. These reproduce a denial and an allow directly against
+ * `.options.server`, same pattern used for the other middleware factories
+ * in this repo's ME-16 tests (auth-middleware.test.ts,
+ * server-fn-correlation.test.ts).
+ */
+describe("requirePermission denial logging", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function fakeSbWithPermission(allowed: boolean) {
+    return {
+      async rpc() {
+        return { data: allowed, error: null };
+      },
+    };
+  }
+
+  it("logs a forbidden denial (permission, userId, requestId) and rethrows ForbiddenError", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const middleware = requirePermission("INVENTORY:WRITE" as never);
+    const next = vi.fn();
+
+    await expect(
+      middleware.options.server!({
+        next,
+        context: {
+          supabase: fakeSbWithPermission(false),
+          userId: "user-42",
+          requestId: "req-rbac-1",
+        },
+      } as never),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const [tag, payload] = warnSpy.mock.calls[0]!;
+    expect(tag).toBe("[rbac]");
+    const parsed = JSON.parse(payload as string);
+    expect(parsed).toMatchObject({
+      requestId: "req-rbac-1",
+      reason: "forbidden",
+      permission: "INVENTORY:WRITE",
+      userId: "user-42",
+    });
+  });
+
+  it("logs nothing and calls next() when the permission is granted", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const middleware = requirePermission("INVENTORY:WRITE" as never);
+    const next = vi.fn(async (opts) => ({ context: opts.context }));
+
+    await middleware.options.server!({
+      next,
+      context: { supabase: fakeSbWithPermission(true), userId: "user-42", requestId: "req-rbac-2" },
+    } as never);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 });
