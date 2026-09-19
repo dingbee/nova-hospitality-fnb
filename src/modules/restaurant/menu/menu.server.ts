@@ -32,10 +32,7 @@ export async function listMenus(sb: Sb, userId: string, input: z.infer<typeof li
 }
 
 export async function upsertMenu(sb: Sb, userId: string, input: UpsertMenuInput) {
-  await assertCapability(sb, userId, input.tenantId, "menu.manage", {
-    propertyId: input.propertyId ?? null,
-    locationId: input.locationId ?? null,
-  });
+  await assertCapability(sb, userId, input.tenantId, "menu.manage");
   const row = {
     tenant_id: input.tenantId,
     property_id: input.propertyId ?? null,
@@ -94,21 +91,7 @@ export async function listMenuItems(
 }
 
 export async function upsertMenuItem(sb: Sb, userId: string, input: UpsertMenuItemInput) {
-  // restaurant_menu_items has no property/location column of its own — it
-  // inherits scope from the menu it belongs to, so the capability check
-  // must be scoped to THAT menu's property, not left tenant-wide (the same
-  // class of gap already fixed for restaurant_members).
-  const { data: menu } = await sb
-    .from("restaurant_menus")
-    .select("id, property_id, location_id")
-    .eq("id", input.menuId)
-    .eq("tenant_id", input.tenantId)
-    .maybeSingle();
-  if (!menu) throw new Error("That menu does not belong to this tenant.");
-  await assertCapability(sb, userId, input.tenantId, "menu.manage", {
-    propertyId: menu.property_id ?? null,
-    locationId: menu.location_id ?? null,
-  });
+  await assertCapability(sb, userId, input.tenantId, "menu.manage");
   const row = {
     tenant_id: input.tenantId,
     menu_id: input.menuId,

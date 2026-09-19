@@ -106,6 +106,30 @@ function take<T>(rows: T[] | undefined, n = MAX_ROWS_PER_LIST): T[] {
 }
 
 /**
+ * Structured, server-only diagnostics for a failure at a named pre-answer
+ * stage. Never sent to the browser — the boundary in staffnova.functions.ts
+ * always degrades to a generic message regardless of what's logged here.
+ * Exists so a production failure (auth/scope/capability/entitlement/context/
+ * provider) can be told apart from deployment logs alone, without needing to
+ * reproduce it first.
+ */
+function logStageFailure(
+  stage: string,
+  err: unknown,
+  ctx: { tenantId: string; userId: string; propertyId?: string | null },
+) {
+  const e = err as Partial<Error> | undefined;
+  console.error("[StaffNova] stage failure", {
+    stage,
+    tenantId: ctx.tenantId,
+    userId: ctx.userId,
+    propertyId: ctx.propertyId ?? null,
+    errorName: e?.name,
+    errorMessage: e?.message,
+  });
+}
+
+/**
  * Gathers the bounded, compact grounding context handed to the model.
  * Every field traces to an existing, unmodified read function — see the
  * file doc comment. Nothing here is invented; anything a given tenant
@@ -289,21 +313,38 @@ async function buildStaffNovaContext(
   // above; nothing here performs I/O. `board` is either the object above
   // or `{ unavailable: true, reason }` from tryLoad — the unavailable case
   // degrades to empty priorities/changes/correlations, never a guess.
-  const boardOk = !(board as any)?.unavailable;
-  const topDecisions = boardOk ? topPriorities((board as any).rawStored, 5) : [];
-  const correlations = boardOk ? correlateFindingsByEntity((board as any).rawFindings) : [];
-  const changes = detectMaterialChanges({
-    menu: !(menu as any)?.unavailable ? { declining: (menu as any).declining } : undefined,
-    inventory: !(inventory as any)?.unavailable
-      ? { wastage: (inventory as any).wastage }
-      : undefined,
-    kitchen: !(kitchen as any)?.unavailable
-      ? { trendPercent: (kitchen as any).trendPercent }
-      : undefined,
-    purchasing: !(purchasing as any)?.unavailable
-      ? { spendChangePercent: (purchasing as any).spendChangePercent }
-      : undefined,
-  });
+  //
+  // These are pure functions over already-fetched rows, but "already
+  // fetched successfully" is not the same as "shaped exactly like a
+  // freshly-computed Decision" — intelligence_decisions is JSONB with no
+  // DB-level schema guarantee, so a decision persisted before some field
+  // existed can still be read back today. tryLoad above only protects
+  // against a *loader* failing; it does not protect this derivation step,
+  // so the same fail-safe discipline is applied explicitly here: a defect
+  // in the derived attention/correlation layer degrades to empty results
+  // rather than failing the entire Ask LexiBite answer.
+  let topDecisions: ReturnType<typeof topPriorities> = [];
+  let correlations: ReturnType<typeof correlateFindingsByEntity> = [];
+  let changes: ReturnType<typeof detectMaterialChanges> = [];
+  try {
+    const boardOk = !(board as any)?.unavailable;
+    topDecisions = boardOk ? topPriorities((board as any).rawStored, 5) : [];
+    correlations = boardOk ? correlateFindingsByEntity((board as any).rawFindings) : [];
+    changes = detectMaterialChanges({
+      menu: !(menu as any)?.unavailable ? { declining: (menu as any).declining } : undefined,
+      inventory: !(inventory as any)?.unavailable
+        ? { wastage: (inventory as any).wastage }
+        : undefined,
+      kitchen: !(kitchen as any)?.unavailable
+        ? { trendPercent: (kitchen as any).trendPercent }
+        : undefined,
+      purchasing: !(purchasing as any)?.unavailable
+        ? { spendChangePercent: (purchasing as any).spendChangePercent }
+        : undefined,
+    });
+  } catch (err) {
+    logStageFailure("context_derivation", err, { tenantId, userId, propertyId });
+  }
 
   const fullContext = {
     generatedAt: new Date().toISOString(),
@@ -365,7 +406,14 @@ export async function askStaffNova(
   // JWT userId — never off anything the client asserts. A guest has no
   // session that could ever satisfy this; there is no code path from the
   // guest surface into this function.
-  const scope = await getTenantScope(sb, userId, input.tenantId);
+  let scope: Awaited<ReturnType<typeof getTenantScope>>;
+  try {
+    scope = await getTenantScope(sb, userId, input.tenantId);
+  } catch (err) {
+    logStageFailure("tenant_scope", err, { tenantId: input.tenantId, userId });
+    throw err;
+  }
+
   // P01: aggregating across every property this tenant has (propertyId
   // undefined) is a real multi-property operation — this resolves the same
   // way resolveEffectivePropertyId always did, but additionally requires
@@ -373,10 +421,22 @@ export async function askStaffNova(
   // tenant not entitled (and with more than one property) is transparently
   // narrowed to their own first property instead of erroring, since this is
   // an implicit read-path default, not a user-facing "view all" action.
-  const propertyId = await resolveMultiPropertyScope(sb, input.tenantId, scope, null);
-  await assertCapability(sb, userId, input.tenantId, "intelligence.read", {
-    propertyId: propertyId ?? null,
-  });
+  let propertyId: string | undefined;
+  try {
+    propertyId = await resolveMultiPropertyScope(sb, input.tenantId, scope, null);
+  } catch (err) {
+    logStageFailure("property_scope", err, { tenantId: input.tenantId, userId });
+    throw err;
+  }
+
+  try {
+    await assertCapability(sb, userId, input.tenantId, "intelligence.read", {
+      propertyId: propertyId ?? null,
+    });
+  } catch (err) {
+    logStageFailure("capability_check", err, { tenantId: input.tenantId, userId, propertyId });
+    throw err;
+  }
 
   const generatedAt = new Date().toISOString();
 
@@ -391,6 +451,9 @@ export async function askStaffNova(
   try {
     await assertEntitled(sb, input.tenantId, "ai_business_assistant", { propertyId });
   } catch (err) {
+    if (!(err instanceof CommercialEntitlementError)) {
+      logStageFailure("entitlement_check", err, { tenantId: input.tenantId, userId, propertyId });
+    }
     const detail =
       err instanceof CommercialEntitlementError
         ? err.message
@@ -451,8 +514,21 @@ export async function askStaffNova(
   // I14: the same verified-JWT userId already used for assertCapability
   // above — never a client-supplied role — decides which context sections
   // this answer may draw from (attention.ts's contextSectionsForRole).
-  const roles = await rolesInTenant(sb, userId, input.tenantId);
-  const context = await buildStaffNovaContext(sb, userId, input.tenantId, roles, propertyId);
+  let roles: import("../core/contracts").RestaurantRole[];
+  try {
+    roles = await rolesInTenant(sb, userId, input.tenantId);
+  } catch (err) {
+    logStageFailure("roles_lookup", err, { tenantId: input.tenantId, userId, propertyId });
+    throw err;
+  }
+
+  let context: Awaited<ReturnType<typeof buildStaffNovaContext>>;
+  try {
+    context = await buildStaffNovaContext(sb, userId, input.tenantId, roles, propertyId);
+  } catch (err) {
+    logStageFailure("context_construction", err, { tenantId: input.tenantId, userId, propertyId });
+    throw err;
+  }
 
   // P01 commercial gate, second half: this is the one place in this
   // function that actually incurs AI provider cost, so it's the one place
@@ -464,6 +540,9 @@ export async function askStaffNova(
   try {
     await assertAiCapability(sb, input.tenantId, "ai_business_assistant", propertyId);
   } catch (err) {
+    if (!(err instanceof CommercialEntitlementError) && !(err instanceof QuotaExceededError)) {
+      logStageFailure("ai_capability_check", err, { tenantId: input.tenantId, userId, propertyId });
+    }
     const detail =
       err instanceof CommercialEntitlementError || err instanceof QuotaExceededError
         ? err.message
@@ -508,7 +587,8 @@ export async function askStaffNova(
     });
 
     return { answer, degraded: false, generatedAt };
-  } catch {
+  } catch (err) {
+    logStageFailure("reasoning_provider", err, { tenantId: input.tenantId, userId, propertyId });
     // Never fabricate on an AI failure — degrade to an honest, static
     // message, same "fail closed to a plain apology" behavior guest Ask
     // NOVA's defaultAiCaller degrade path already uses.

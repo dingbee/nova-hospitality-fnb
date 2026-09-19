@@ -65,15 +65,10 @@ export async function getPurchasingIntelligence(
       .from("restaurant_suppliers")
       .select("id, name, lead_time_days, reliability_score, status")
       .eq("tenant_id", tenantId),
-    (() => {
-      let q = sb
-        .from("restaurant_purchase_orders")
-        .select("id, supplier_id, status, order_date, expected_at, received_at, total")
-        .eq("tenant_id", tenantId);
-      if (input.propertyId) q = q.eq("property_id", input.propertyId);
-      if (input.locationId) q = q.eq("location_id", input.locationId);
-      return q;
-    })(),
+    sb
+      .from("restaurant_purchase_orders")
+      .select("id, supplier_id, status, order_date, expected_at, received_at, total")
+      .eq("tenant_id", tenantId),
   ]);
 
   const items = (itemsRes.data ?? []) as any[];

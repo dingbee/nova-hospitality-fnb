@@ -35,7 +35,7 @@ import { presentRestaurantBillFn } from "@/modules/restaurant/sales/bill.functio
 export const Route = createFileRoute("/_authenticated/admin/restaurant/")({
   head: () => ({
     meta: [
-      { title: "Restaurant & Bar OS Overview — NOVA Hospitality F&B" },
+      { title: "Restaurant & Bar OS Overview — LexiBite" },
       {
         name: "description",
         content:

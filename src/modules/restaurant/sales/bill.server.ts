@@ -251,13 +251,6 @@ export async function releaseTable(sb: Sb, userId: string, input: { tenantId: st
 export async function refundPayment(sb: Sb, userId: string, input: RefundPaymentInput) {
   await assertCapability(sb, userId, input.tenantId, "sales.void");
 
-  const { data: duplicate } = await sb
-    .from("restaurant_payments")
-    .select("id")
-    .eq("tenant_id", input.tenantId)
-    .eq("client_request_id", input.clientRequestId)
-    .maybeSingle();
-
   const { data: original } = await sb
     .from("restaurant_payments")
     .select("id, amount, method, state, order_id")
@@ -266,24 +259,63 @@ export async function refundPayment(sb: Sb, userId: string, input: RefundPayment
     .single();
   if (!original) throw new Error("Payment not found.");
   if (original.order_id !== input.orderId) throw new Error("That payment belongs to a different bill.");
-  if (input.amount > num(original.amount) + 0.001) {
-    throw new Error("A refund cannot exceed the payment it reverses.");
+
+  // ME-06: a refund must never be checked against the original payment's
+  // amount alone — that only catches a single refund larger than the whole
+  // payment, not two-or-more partial refunds that individually pass but
+  // together exceed it. Sum what has already been refunded against this
+  // same payment first. Production already enforces this at the database
+  // layer via restaurant_payment_refund_integrity (a trigger that predates
+  // this repository's Git history — reconstructed into migration 0081,
+  // which also locks the original row so concurrent refund attempts
+  // serialize correctly); that same trigger had its own retry-idempotency
+  // bug, fixed in migration 0082. This application-level check exists so a
+  // caller gets a clear message instead of a raw constraint error.
+  const { data: priorRefunds } = await sb
+    .from("restaurant_payments")
+    .select("amount, client_request_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("refund_of", original.id)
+    .eq("state", "refunded");
+  // A retry of this same idempotent request already exists as its own row —
+  // it is this refund, not an additional one; exclude it from the sum (the
+  // insert-then-recover path below returns that existing row unchanged).
+  const alreadyRefunded = ((priorRefunds ?? []) as any[])
+    .filter((p) => !input.clientRequestId || p.client_request_id !== input.clientRequestId)
+    .reduce((s, p) => s + Math.abs(num(p.amount)), 0);
+  if (alreadyRefunded + input.amount > num(original.amount) + 0.001) {
+    throw new Error(
+      `A refund cannot exceed the payment it reverses. ${alreadyRefunded.toFixed(2)} of ${num(original.amount).toFixed(2)} already refunded.`,
+    );
   }
 
-  if (!duplicate) {
-    const { error } = await sb.from("restaurant_payments").insert({
-      tenant_id: input.tenantId,
-      order_id: input.orderId,
-      client_request_id: input.clientRequestId,
-      method: original.method,
-      state: "refunded",
-      amount: -Math.abs(input.amount),
-      reference: `refund of ${original.id}`,
-      refund_of: original.id,
-      refund_reason: input.reason,
-      created_by: userId,
-    });
-    if (error) throw new Error(error.message);
+  // ME-04: a pre-check-then-insert here left the same race ME-03 already
+  // fixed for takePosPayment/recordGuestPayment — two concurrent refund
+  // requests carrying the same clientRequestId could both read "no existing
+  // refund" before either had inserted, and the second insert then hit the
+  // (tenant_id, client_request_id) unique index and threw a raw duplicate-
+  // key error instead of resolving idempotently. Insert unconditionally and
+  // recover on conflict instead.
+  const { error: insertError } = await sb.from("restaurant_payments").insert({
+    tenant_id: input.tenantId,
+    order_id: input.orderId,
+    client_request_id: input.clientRequestId,
+    method: original.method,
+    state: "refunded",
+    amount: -Math.abs(input.amount),
+    reference: `refund of ${original.id}`,
+    refund_of: original.id,
+    refund_reason: input.reason,
+    created_by: userId,
+  });
+  let duplicate = false;
+  if (insertError) {
+    if (String((insertError as any).code) === "23505") {
+      duplicate = true;
+    } else {
+      throw new Error(insertError.message);
+    }
+  } else {
     await sb
       .from("restaurant_payments")
       .update({ state: "refunded", refund_reason: input.reason })
@@ -305,7 +337,7 @@ export async function refundPayment(sb: Sb, userId: string, input: RefundPayment
       dedupeKey: `refund:${input.clientRequestId}`,
     });
   }
-  return { order: totals, duplicate: Boolean(duplicate) };
+  return { order: totals, duplicate };
 }
 
 /** Records how the receipt reached the guest. The receipt itself never changes. */

@@ -44,10 +44,7 @@ export async function upsertStation(
   userId: string,
   input: z.infer<typeof upsertStationSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "kitchen.manage", {
-    propertyId: input.propertyId ?? null,
-    locationId: input.locationId ?? null,
-  });
+  await assertCapability(sb, userId, input.tenantId, "kitchen.manage");
   const row = {
     tenant_id: input.tenantId,
     property_id: input.propertyId ?? null,
@@ -345,6 +342,60 @@ const NEXT_ITEM_STATUS: Record<string, string> = {
   queued: "queued",
 };
 
+/**
+ * Cancels the kitchen/bar ticket item(s) fired for order lines that are being
+ * voided or cancelled off the bill.
+ *
+ * voidPosLine and cancelOrder correct the bill and the stock ledger, but
+ * neither ever touched restaurant_kitchen_ticket_items — a line voided after
+ * being fired left its ticket item sitting at queued/preparing/ready
+ * indefinitely: a phantom production ticket kitchen/bar staff kept working
+ * from (or a guest's own tracker kept showing progress on) for a line that
+ * no longer exists on the bill. This is the missing sync between the two.
+ *
+ * A ticket item already `served` is left untouched — the dish was actually
+ * made and delivered, so a later void is a financial correction on the
+ * record, never a rewrite of service history (the same principle
+ * voidPosLine's own doc comment states for the bill itself). Already
+ * `cancelled` items are left alone too, so this is safe to call more than
+ * once for the same order items.
+ */
+export async function cancelKitchenTicketItemsForOrderItems(
+  sb: Sb,
+  tenantId: string,
+  orderItemIds: string[],
+): Promise<{ cancelled: number }> {
+  if (orderItemIds.length === 0) return { cancelled: 0 };
+  const { data, error } = await sb
+    .from("restaurant_kitchen_ticket_items")
+    .update({ status: "cancelled" })
+    .eq("tenant_id", tenantId)
+    .in("order_item_id", orderItemIds)
+    .not("status", "in", "(served,cancelled)")
+    .select("id");
+  if (error) throw new Error(error.message);
+  return { cancelled: ((data ?? []) as any[]).length };
+}
+
+/**
+ * Legal ticket-status transitions, enforced here rather than trusted from
+ * the UI. The Kitchen board only ever offers the single next status as a
+ * button (queued -> preparing -> ready -> served), but that is UI-only
+ * protection: a stale client (a second device's cached board, a retried
+ * request) could otherwise send any enum value at all and move a ticket
+ * backward, or resurrect one already served/cancelled.
+ */
+const LEGAL_TICKET_TRANSITIONS: Record<string, readonly string[]> = {
+  queued: ["preparing", "cancelled"],
+  preparing: ["ready", "cancelled"],
+  ready: ["served", "cancelled"],
+  served: [],
+  cancelled: [],
+};
+
+const TICKET_SUMMARY_COLUMNS =
+  "id, ticket_number, status, prep_seconds, delay_seconds, is_delayed, target_minutes";
+
 export async function advanceTicket(sb: Sb, userId: string, input: AdvanceTicketInput) {
   const { data: ticket } = await sb
     .from("restaurant_kitchen_tickets")
@@ -360,6 +411,22 @@ export async function advanceTicket(sb: Sb, userId: string, input: AdvanceTicket
   await assertCapability(sb, userId, input.tenantId, "kitchen.manage", {
     locationId: ticket.location_id,
   });
+
+  if (input.status === ticket.status) {
+    // Double click / client retry re-sending the status it already reached:
+    // idempotent no-op, not an error and not a re-fired event.
+    const { data: current } = await sb
+      .from("restaurant_kitchen_tickets")
+      .select(TICKET_SUMMARY_COLUMNS)
+      .eq("tenant_id", input.tenantId)
+      .eq("id", input.ticketId)
+      .single();
+    return current;
+  }
+  const legalNext = LEGAL_TICKET_TRANSITIONS[ticket.status] ?? [];
+  if (!legalNext.includes(input.status)) {
+    throw new Error(`A ticket cannot move from "${ticket.status}" to "${input.status}".`);
+  }
 
   const now = new Date();
   const patch: Record<string, unknown> = { status: input.status };
@@ -381,14 +448,36 @@ export async function advanceTicket(sb: Sb, userId: string, input: AdvanceTicket
   }
   if (input.status === "served") patch.served_at = now.toISOString();
 
+  // Compare-and-swap on the status this decision was made from: without it,
+  // two concurrent calls that both read the same starting status (e.g. one
+  // stale client still on "preparing" racing another that already moved to
+  // "ready") can each pass the legality check above, and the second write
+  // wins — silently discarding whichever transition lost the race and, in
+  // that example, reverting an already-ready ticket back to preparing.
   const { data: updated, error } = await sb
     .from("restaurant_kitchen_tickets")
     .update(patch)
     .eq("tenant_id", input.tenantId)
     .eq("id", input.ticketId)
-    .select("id, ticket_number, status, prep_seconds, delay_seconds, is_delayed, target_minutes")
-    .single();
+    .eq("status", ticket.status)
+    .select(TICKET_SUMMARY_COLUMNS)
+    .maybeSingle();
   if (error) throw new Error(error.message);
+  if (!updated) {
+    // Lost the race: some other call already moved this ticket since it was
+    // read above. Re-fetch and decide rather than clobbering whatever it
+    // landed on.
+    const { data: latest } = await sb
+      .from("restaurant_kitchen_tickets")
+      .select(TICKET_SUMMARY_COLUMNS)
+      .eq("tenant_id", input.tenantId)
+      .eq("id", input.ticketId)
+      .single();
+    if (latest?.status === input.status) return latest; // another caller made the identical move
+    throw new Error(
+      `This ticket changed to "${latest?.status ?? "unknown"}" before this update reached it — refresh and try again.`,
+    );
+  }
 
   await sb
     .from("restaurant_kitchen_ticket_items")

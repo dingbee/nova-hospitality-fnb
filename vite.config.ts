@@ -1,59 +1,38 @@
-import { defineConfig as defineViteConfig } from "vite";
-import { defineConfig as defineLovableConfig } from "@lovable.dev/vite-tanstack-config";
-import { nitro } from "nitro/vite";
+import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import { VitePWA } from "vite-plugin-pwa";
-// Side-effect only: augments vite's `UserConfig` type with vitest's `test`
-// option, so the `test` key below typechecks against the wrapped
-// defineConfig's vite-derived UserConfig type.
 import "vitest/config";
 
-// Vercel runs TanStack Start through Nitro. The Lovable Vite wrapper defaults
-// its Nitro build target to the sandbox/Cloudflare runtime unless the target
-// is explicit. On Vercel we must emit Vercel Functions and use this project's
-// real server entry so raw HTTP endpoints under /api are handled by Start.
-
 /**
- * NOVA Hospitality F&B — Restaurant & Bar OS.
+ * LexiBite — Restaurant & Bar OS.
  *
- * The same bundle serves the hosted deployment and the on-premise appliance;
- * only the runtime target differs (see src/modules/runtime/runtime-config.ts).
+ * Lovable/Cloudflare keeps the wrapper's normal Nitro target. Vercel uses
+ * Nitro's first-party Vercel preset so the same repository emits a native
+ * Vercel deployment artifact.
  */
-export default defineViteConfig(async (env) => {
-  const isVercelBuild = Boolean(process.env.VERCEL && process.env.VERCEL !== "0") || Boolean(process.env.VERCEL_URL);
-  const config = await defineLovableConfig({
+const isVercel = Boolean(process.env.VERCEL);
+const publicOutDir = isVercel ? ".vercel/output/static" : ".output/public";
+
+export default defineConfig({
+  // The wrapper owns TanStack Start/Nitro integration. Do not disable its
+  // Nitro plugin and replace it with a second Vite plugin: that can leave
+  // Vercel with no valid server output in CI.
+  nitro: isVercel ? { preset: "vercel" } : true,
+
   tanstackStart: {
     server: { entry: "server" },
   },
-  nitro: false as never,
+
   test: {
-    // e2e/, e2e-auth/ and e2e-staff/ hold Playwright specs (run via `npx
-    // playwright test`), not vitest tests — without this, vitest's
-    // default *.spec.ts glob picks them up too and fails, since they use
-    // @playwright/test's `test`, not vitest's.
-    exclude: ["**/node_modules/**", "e2e/**", "e2e-auth/**", "e2e-staff/**"],
+    exclude: ["**/node_modules/**", "e2e/**"],
   },
+
   plugins: [
     VitePWA({
       manifest: false,
       registerType: "prompt",
       injectRegister: null,
       filename: "sw.js",
-      // The Cloudflare/Nitro build for this app serves static assets from
-      // .output/public (see .output/server/wrangler.json's assets.directory)
-      // — not the plain "dist" vite-plugin-pwa defaults to, which this
-      // build never deploys. Without this, sw.js/workbox-*.js were written
-      // to a directory nothing ever serves, so the service worker 404'd in
-      // every real deployment regardless of client-side registration code.
-      outDir: isVercelBuild ? ".vercel/output/static" : ".output/public",
-      // Scoped to the guest ordering PWA only — matches
-      // lexibite-guest.webmanifest's own "scope" exactly (no trailing
-      // slash: service worker scope matching is a literal string prefix,
-      // so "/order/" would exclude the manifest's own start_url, "/order",
-      // from the worker's control). A shared device that has both scanned
-      // a guest QR and signed in to the staff terminal must never have the
-      // guest service worker intercept an admin navigation, serve the
-      // guest offline page, or otherwise reach outside the guest
-      // experience it was installed for.
+      outDir: publicOutDir,
       scope: "/order",
       devOptions: { enabled: false },
       workbox: {
@@ -64,17 +43,6 @@ export default defineViteConfig(async (env) => {
         clientsClaim: false,
         skipWaiting: false,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        // Server functions (/_serverFn) are the ONLY path through which
-        // prices, menu state, stock, cart truth, order status, payment
-        // status and guest session state ever reach the client — every one
-        // of them is a POST to a shared URL differentiated only by request
-        // body, which the Cache Storage API cannot key on. A NetworkFirst
-        // rule here previously risked serving a cached response for a
-        // DIFFERENT query (wrong order/price/stock) whenever the network
-        // request took longer than its timeout. Deliberately no runtime
-        // caching rule for /_serverFn: Workbox's default for anything with
-        // no matching rule is NetworkOnly, so these always hit the server —
-        // "dynamic transactional data must remain server-authoritative."
         runtimeCaching: [
           {
             urlPattern: ({ request, url }) =>
@@ -91,21 +59,4 @@ export default defineViteConfig(async (env) => {
       },
     }),
   ],
-  })(env);
-
-  if (env.command === "build" && isVercelBuild) {
-    config.plugins = [
-      ...(config.plugins ?? []),
-      nitro({
-        preset: "vercel",
-        output: {
-          dir: ".vercel/output",
-          serverDir: ".vercel/output/functions/__server.func",
-          publicDir: ".vercel/output/static",
-        },
-      }),
-    ];
-  }
-
-  return config;
 });

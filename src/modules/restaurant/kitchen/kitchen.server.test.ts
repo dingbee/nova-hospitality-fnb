@@ -205,6 +205,67 @@ describe("fireGuestOrder — guest-safe entry point, no staff principal required
   });
 });
 
+describe("ME-09/ME-08 integration — offline fire_to_kitchen replay after a line was voided while offline", () => {
+  // The offline module (src/modules/restaurant/offline/adapters.ts) replays
+  // a queued fire_to_kitchen operation through this exact function
+  // (fireOrder -> fireOrderItemsCore), potentially long after it was queued.
+  // ME-08 added cancelKitchenTicketItemsForOrderItems, called from
+  // voidPosLine/cancelOrder, which sets a voided/cancelled line's
+  // restaurant_kitchen_ticket_items row to "cancelled" — but always
+  // alongside setting the underlying restaurant_order_items.status to
+  // "voided" first (see pos.server.ts/cancellation.server.ts). Since
+  // fireOrderItemsCore's own idempotency gate filters strictly on
+  // restaurant_order_items.status === "ordered" and never reads
+  // restaurant_kitchen_ticket_items at all, a line another (online) device
+  // voided while this device was offline is excluded by that same,
+  // unmodified gate — proving the two features compose safely without
+  // either needing to know about the other.
+  it("fires only the still-ordered line when a sibling line was voided by another device while this one was offline", async () => {
+    const fake = makeFakeSupabase({
+      items: [
+        { id: "item-voided", station_id: KITCHEN_STATION, status: "voided" },
+        { id: "item-ordered", station_id: KITCHEN_STATION, status: "ordered" },
+      ],
+      restaurantMembers: [{ tenant_id: TENANT, user_id: USER, role: "chef" }],
+    });
+
+    const result = await fireOrder(fake.supabase, USER, {
+      tenantId: TENANT,
+      orderId: ORDER,
+      orderItemIds: [],
+      priority: 0,
+    });
+
+    expect(result.fired).toBe(1);
+    expect(fake.tickets).toHaveLength(1);
+    expect(fake.ticketItems).toHaveLength(1);
+    expect(fake.ticketItems[0]!.order_item_id).toBe("item-ordered");
+    // The voided line is never touched by fireOrderItemsCore — it was
+    // already voided by the other device's (online) void, not by this call.
+    const voided = fake.items.find((i) => i.id === "item-voided")!;
+    expect(voided.status).toBe("voided");
+  });
+
+  it("a queued fire_to_kitchen replaying after EVERY line on the order was voided offline-elsewhere is a clean no-op, not an error — matches the offline conflict classifier's AUTO_RESOLVE path, never DEAD_LETTER/CONFLICT", async () => {
+    const fake = makeFakeSupabase({
+      items: [{ id: "item-voided", station_id: KITCHEN_STATION, status: "voided" }],
+      restaurantMembers: [{ tenant_id: TENANT, user_id: USER, role: "chef" }],
+    });
+
+    const result = await fireOrder(fake.supabase, USER, {
+      tenantId: TENANT,
+      orderId: ORDER,
+      orderItemIds: [],
+      priority: 0,
+    });
+
+    // Same shape the offline module's conflict.ts classifies as a
+    // successful, terminal AUTO_RESOLVE (fired === 0, no error thrown) —
+    // never surfaced as a failure requiring retry or operator attention.
+    expect(result).toEqual({ tickets: [], fired: 0 });
+  });
+});
+
 describe("fireOrder — staff path is unaffected by the extraction", () => {
   it("still requires kitchen.manage and behaves exactly as before", async () => {
     const fake = makeFakeSupabase({

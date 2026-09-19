@@ -49,6 +49,35 @@ function latestFunctionBody(name: string): string {
   return body;
 }
 
+/**
+ * Latest USING clause of a named policy across the FULL migration chain, as
+ * it would actually exist after replaying every migration in order —
+ * unlike checking one migration file in isolation, this catches a later
+ * migration silently reverting an earlier one's fix (exactly what
+ * 0071_me01_reconcile_concurrent_rbac_user_roles_policy.sql did to
+ * "rbac_user_roles_read" until 0077 fixed it back).
+ */
+function latestPolicyUsing(table: string, policyName: string): string | null {
+  const files = readdirSync(MIG_DIR)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+  let using: string | null = null;
+  for (const f of files) {
+    const sql = sqlOf(f);
+    if (
+      new RegExp(`DROP POLICY IF EXISTS\\s+"?${policyName}"?\\s+ON\\s+public\\.${table}`).test(sql)
+    ) {
+      using = null;
+    }
+    const re = new RegExp(
+      `CREATE POLICY\\s+"?${policyName}"?\\s+ON\\s+public\\.${table}[\\s\\S]*?USING\\s*\\(([\\s\\S]*?)\\)\\s*(?:WITH CHECK|;)`,
+      "g",
+    );
+    for (const m of sql.matchAll(re)) using = m[1]!;
+  }
+  return using;
+}
+
 /* --------------------------------------------------- has_any_role: canonical */
 describe("has_any_role resolves exclusively through canonical RBAC", () => {
   const body = latestFunctionBody("has_any_role");
@@ -512,31 +541,37 @@ describe("direct server-function bypass", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("assignRole/revokeRole delegate to the scope-checked grant/revoke core, not a bare permission check", () => {
+  it("the administered staff API checks ADMINISTRATION:ADMIN — scoped to the grant's own tenant/property/outlet — before every grant or revoke", () => {
+    // ME-02: assertPermission(..., "ADMINISTRATION:ADMIN") with no scope was
+    // the KD-11 gap — nova_has_permission treats an omitted tenant/property/
+    // outlet argument as "don't check this level" for the *caller's own*
+    // grant, so a caller holding ADMINISTRATION:ADMIN in one tenant passed
+    // the same check as a platform-wide grant. assertCanManageRbacRole
+    // (rbac.server.ts) closes this by calling the database's own
+    // nova_can_manage_scoped(permission, tenant, property, outlet) — the
+    // exact predicate 0059_p09_tenancy_write_isolation.sql already puts
+    // behind the rbac_user_roles RLS write policy — with the *target*
+    // grant's own scope, never omitted.
+    const rbacServer = read(join(ROOT, "src/lib/rbac/rbac.server.ts"));
+    expect(rbacServer).toMatch(/export async function assertCanManageRbacRole/);
+    const guardBody = rbacServer.slice(
+      rbacServer.indexOf("export async function assertCanManageRbacRole"),
+    );
+    expect(guardBody).toMatch(/nova_can_manage_scoped/);
+    expect(guardBody).toMatch(/"ADMINISTRATION:ADMIN"/);
+    expect(guardBody).toMatch(/_tenant_id:\s*scope\.tenantId/);
+    expect(guardBody).toMatch(/_property_id:\s*scope\.propertyId/);
+    expect(guardBody).toMatch(/_outlet_id:\s*scope\.outletId/);
+
     const s = read(join(ROOT, "src/lib/staff.functions.ts"));
-    // P09: a plain assertPermission(..., "ADMINISTRATION:ADMIN") with no
-    // scope is exactly the cross-tenant escalation this closes — a
-    // caller's grant at ANY tenant/property/outlet would pass. assignRole/
-    // revokeRole must delegate to grantRbacRole/revokeRbacRole, which go
-    // through assertCanManageRbacRole instead — requiring the target's own
-    // (tenant, property, outlet), including a NULL/broader level, to be
-    // covered by the caller's own grant, not merely "checked somewhere".
     for (const fn of ["assignRole", "revokeRole"]) {
       const seg = s.slice(s.indexOf(`export const ${fn}`));
       const body = seg.slice(
         0,
         seg.indexOf("export const", 10) === -1 ? seg.length : seg.indexOf("export const", 10),
       );
-      expect(body).toMatch(fn === "assignRole" ? /grantRbacRole\(/ : /revokeRbacRole\(/);
+      expect(body).toMatch(/assertCanManageRbacRole\(/);
       expect(body).not.toMatch(/assertPermission\([^)]*"ADMINISTRATION:ADMIN"\)/);
-    }
-    for (const fn of ["grantRbacRole", "revokeRbacRole"]) {
-      const seg = s.slice(s.indexOf(`export async function ${fn}`));
-      const body = seg.slice(
-        0,
-        seg.indexOf("export ", 10) === -1 ? seg.length : seg.indexOf("export ", 10),
-      );
-      expect(body).toMatch(/assertCanManageRbacRole\([^)]*"ADMINISTRATION:ADMIN"[^)]*\)/);
       expect(body).toMatch(/rbac_user_roles/);
     }
   });
@@ -627,5 +662,73 @@ describe("RBAC identity-check functions refuse to answer for another user", () =
   it("has_role and restaurant_is_platform_admin inherit the guard by delegating to has_any_role", () => {
     expect(latestFunctionBody("has_role")).toMatch(/has_any_role\(_user_id/);
     expect(latestFunctionBody("restaurant_is_platform_admin")).toMatch(/has_any_role\(_user_id/);
+  });
+});
+
+/* ------------------------------------------- ME-02 live-verified defects */
+describe("restaurant_fiscal_next_counter is authorized (ME-02, CONFIRMED CRITICAL)", () => {
+  // Live-verified on the production database: this SECURITY DEFINER
+  // function is GRANTed EXECUTE to `authenticated` directly
+  // (0031_tra_vfd_protocol.sql) so it's reachable via
+  // /rest/v1/rpc/restaurant_fiscal_next_counter by any signed-in user of
+  // ANY tenant. Before 0065, its body had no authorization check at all —
+  // it trusted the comment "writes only ever happen through this function,
+  // called from an already-checked code path", which the GRANT itself
+  // falsifies. A hostile call with another tenant's `_tenant`/
+  // `_fiscal_config` would advance or corrupt that tenant's fiscal
+  // (tax-authority) receipt counter. 0065 closes it by enforcing the exact
+  // predicate the table's own RLS policy ("fiscal_counters_write scoped",
+  // 0031) already requires.
+  const body = latestFunctionBody("restaurant_fiscal_next_counter");
+
+  it("checks the caller is authenticated", () => {
+    expect(body).toMatch(/auth\.uid\(\)\s+IS\s+NULL/i);
+  });
+
+  it("checks restaurant_can_write_scoped for the target tenant/property before writing", () => {
+    const authIdx = body.search(/restaurant_can_write_scoped/);
+    const insertIdx = body.search(/INSERT INTO public\.restaurant_fiscal_counters/i);
+    expect(authIdx).toBeGreaterThan(-1);
+    expect(insertIdx).toBeGreaterThan(-1);
+    expect(authIdx).toBeLessThan(insertIdx); // the check runs before any write
+  });
+});
+
+describe("rbac_user_roles read policy is scoped per row (ME-02, CONFIRMED CRITICAL)", () => {
+  // Live-verified on the production database: before
+  // 0068_p11_rbac_user_roles_read_scope.sql, the "rbac_user_roles_read"
+  // policy's second disjunct called nova_has_permission(auth.uid(),
+  // 'STAFF:READ') with no scope arguments, which — per
+  // nova_has_permission's own NULL-is-"don't check" semantics — does not
+  // reference the row's tenant_id/property_id/outlet_id at all, so it
+  // evaluates identically for every row. Any authenticated user holding
+  // STAFF:READ anywhere (even a single-property grant) could therefore
+  // SELECT every rbac_user_roles row for every tenant on the platform. 0068
+  // replaced it with nova_can_manage_scoped, matched per row, mirroring the
+  // sibling write policy (rbac_user_roles_admin_scoped, 0059) that already
+  // did this correctly.
+  //
+  // This checks the FINAL merged policy across the whole migration chain,
+  // not 0068 in isolation — 0068's fix alone is not evidence of anything
+  // once a later migration can touch the same policy. That distinction is
+  // exactly what let 0071 (a same-day concurrent-modification reconciler)
+  // silently OR the old unscoped check back in alongside 0068's scoped one
+  // instead of replacing it, live in production, until 0077 fixed it back.
+  const finalUsing = latestPolicyUsing("rbac_user_roles", "rbac_user_roles_read");
+
+  it("the policy still exists after every migration replays", () => {
+    expect(finalUsing).not.toBeNull();
+  });
+
+  it("no longer grants a scope-blind STAFF:READ bypass", () => {
+    expect(finalUsing).not.toMatch(
+      /nova_has_permission\(\s*(?:\(select )?auth\.uid\(\)\)?,\s*'STAFF:READ'\)/,
+    );
+  });
+
+  it("scopes the read to the row's own tenant/property/outlet via nova_can_manage_scoped", () => {
+    expect(finalUsing).toMatch(
+      /nova_can_manage_scoped\('STAFF:READ'::text,\s*tenant_id,\s*property_id,\s*outlet_id\)/,
+    );
   });
 });

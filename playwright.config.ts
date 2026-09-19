@@ -1,15 +1,4 @@
-import { existsSync } from "node:fs";
 import { defineConfig, devices } from "@playwright/test";
-
-// P09 — this pinned path matches the dev sandbox's pre-installed Chromium
-// revision only; a standard CI runner (GitHub Actions) has no such path and
-// instead gets its own browser via a normal `playwright install chromium`
-// step, landing in Playwright's own default cache location. Falling back to
-// `undefined` here (rather than requiring this exact path) lets Playwright
-// resolve that default install instead of failing to find a file that only
-// exists in this one sandboxed environment.
-const PINNED_CHROMIUM = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
-const chromiumExecutablePath = existsSync(PINNED_CHROMIUM) ? PINNED_CHROMIUM : undefined;
 
 /**
  * P10 Phase 21 — real-browser certification for the offline module.
@@ -51,7 +40,7 @@ export default defineConfig({
       use: {
         ...devices["Desktop Chrome"],
         launchOptions: {
-          executablePath: chromiumExecutablePath,
+          executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
           args: ["--no-sandbox"],
         },
       },
@@ -66,7 +55,7 @@ export default defineConfig({
         defaultBrowserType: "chromium",
         browserName: "chromium",
         launchOptions: {
-          executablePath: chromiumExecutablePath,
+          executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
           args: ["--no-sandbox"],
         },
       },
@@ -76,7 +65,7 @@ export default defineConfig({
       use: {
         ...devices["Pixel 7"],
         launchOptions: {
-          executablePath: chromiumExecutablePath,
+          executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
           args: ["--no-sandbox"],
         },
       },

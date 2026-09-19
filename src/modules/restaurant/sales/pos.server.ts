@@ -20,8 +20,10 @@ import {
   assertTenantRead,
   getTenantScope,
   NO_MATCH_ID,
+  type TenantScope,
 } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
+import { cancelKitchenTicketItemsForOrderItems } from "../kitchen/kitchen.server";
 import { reverseMovementsForOrderItem } from "../inventory/reversal.server";
 import { REASON_CODES } from "../inventory/policy";
 import {
@@ -409,49 +411,78 @@ function toSalesLines(lines: PosLineInput[]): SalesLineInput[] {
 
 /** Opens a bill. The same client request key always resolves to the same order. */
 export async function openPosOrder(sb: Sb, userId: string, input: OpenPosOrderInput) {
-  await assertCapability(sb, userId, input.tenantId, "sales.manage");
+  // ME-13: resolved once and threaded through createOrder/addPosLines below
+  // instead of each re-resolving isPlatformAdmin/memberGrantsInTenant for
+  // the same (userId, tenantId) — this single logical "open a table, maybe
+  // with starting lines" action used to cost 2-3 independent authorization
+  // resolutions (4-6 round trips); now it costs exactly one.
+  const tenantScope = await getTenantScope(sb, userId, input.tenantId);
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", undefined, tenantScope);
 
-  const { data: existing } = await sb
-    .from("restaurant_orders")
-    .select("id, order_number, status, total, currency")
-    .eq("tenant_id", input.tenantId)
-    .eq("client_request_id", input.clientRequestId)
-    .maybeSingle();
-  if (existing) return { ...existing, idempotent: true };
+  // ME-03: client_request_id is now claimed atomically inside createOrder's
+  // own insert (see sales.server.ts#createOrder), not via a pre-check
+  // followed by a second, separate UPDATE. The old shape had a real race: two
+  // concurrent opens with the same clientRequestId could both pass the
+  // pre-check before either wrote the id, each fully create its own order
+  // (with its own lines and table-occupied side effects), and only then
+  // collide on the claiming UPDATE — by which point two real orders already
+  // existed. createOrder's insert-time recovery means at most one order is
+  // ever created for a given (tenant, clientRequestId).
+  const order = await createOrder(
+    sb,
+    userId,
+    {
+      tenantId: input.tenantId,
+      propertyId: input.propertyId,
+      locationId: input.locationId,
+      tableId: input.tableId,
+      servicePeriodId: input.servicePeriodId,
+      orderType: input.orderType,
+      guestCount: input.guestCount,
+      guestName: input.guestName,
+      bookingId: input.bookingId,
+      currency: input.currency,
+      source: "pos",
+      clientRequestId: input.clientRequestId,
+      lines: [],
+    } as any,
+    tenantScope,
+  );
 
-  const order = await createOrder(sb, userId, {
-    tenantId: input.tenantId,
-    propertyId: input.propertyId,
-    locationId: input.locationId,
-    tableId: input.tableId,
-    servicePeriodId: input.servicePeriodId,
-    orderType: input.orderType,
-    guestCount: input.guestCount,
-    guestName: input.guestName,
-    bookingId: input.bookingId,
-    currency: input.currency,
-    source: "pos",
-    lines: [],
-  } as any);
+  if ((order as any).duplicate) {
+    return { ...order, idempotent: true };
+  }
 
-  await sb
-    .from("restaurant_orders")
-    .update({ client_request_id: input.clientRequestId, terminal_id: input.terminalId ?? null })
-    .eq("tenant_id", input.tenantId)
-    .eq("id", order.id);
+  if (input.terminalId) {
+    await sb
+      .from("restaurant_orders")
+      .update({ terminal_id: input.terminalId })
+      .eq("tenant_id", input.tenantId)
+      .eq("id", order.id);
+  }
 
   if (input.lines.length > 0) {
-    await addPosLines(sb, userId, {
-      tenantId: input.tenantId,
-      orderId: order.id,
-      lines: input.lines,
-    });
+    await addPosLines(
+      sb,
+      userId,
+      {
+        tenantId: input.tenantId,
+        orderId: order.id,
+        lines: input.lines,
+      },
+      tenantScope,
+    );
   }
   const totals = await recalcOrder(sb, input.tenantId, order.id);
   return { ...order, ...totals, idempotent: false };
 }
 
-export async function addPosLines(sb: Sb, userId: string, input: AddPosLinesInput) {
+export async function addPosLines(
+  sb: Sb,
+  userId: string,
+  input: AddPosLinesInput,
+  tenantScope?: TenantScope,
+) {
   const { data: order } = await sb
     .from("restaurant_orders")
     .select(
@@ -464,10 +495,17 @@ export async function addPosLines(sb: Sb, userId: string, input: AddPosLinesInpu
   // Property/location scope re-checked against the order's own row, not the
   // caller's claim — a sales.manage grant scoped to Property A must not
   // reach Property B's order just because its id was discoverable.
-  await assertCapability(sb, userId, input.tenantId, "sales.manage", {
-    propertyId: order.property_id,
-    locationId: order.location_id,
-  });
+  await assertCapability(
+    sb,
+    userId,
+    input.tenantId,
+    "sales.manage",
+    {
+      propertyId: order.property_id,
+      locationId: order.location_id,
+    },
+    tenantScope,
+  );
   if (!OPEN_STATES.includes(order.status))
     throw new Error("This bill is closed and can no longer be modified.");
 
@@ -573,6 +611,11 @@ export async function voidPosLine(sb: Sb, userId: string, input: VoidPosLineInpu
     .eq("id", input.orderItemId);
   if (error) throw new Error(error.message);
 
+  // The line may already have been fired to the kitchen/bar — a voided line
+  // must not leave a phantom ticket item behind for production to keep
+  // acting on. See cancelKitchenTicketItemsForOrderItems's own doc comment.
+  await cancelKitchenTicketItemsForOrderItems(sb, input.tenantId, [item.id]);
+
   const totals = await recalcOrder(sb, input.tenantId, input.orderId);
 
   await emitRestaurantEvent(sb, userId, {
@@ -671,36 +714,52 @@ export async function takePosPayment(sb: Sb, userId: string, input: PosPaymentIn
     .eq("id", input.orderId)
     .maybeSingle();
   if (!order) throw new Error("Order not found.");
-  await assertCapability(sb, userId, input.tenantId, "sales.manage", {
-    propertyId: order.property_id,
-    locationId: order.location_id,
+  // ME-13: resolved once and threaded through transitionOrder→issueReceipt
+  // below when this payment settles and closes the bill — that chain used
+  // to independently re-resolve isPlatformAdmin/memberGrantsInTenant twice
+  // more for the same (userId, tenantId).
+  const tenantScope = await getTenantScope(sb, userId, input.tenantId);
+  await assertCapability(
+    sb,
+    userId,
+    input.tenantId,
+    "sales.manage",
+    {
+      propertyId: order.property_id,
+      locationId: order.location_id,
+    },
+    tenantScope,
+  );
+
+  // ME-03: a pre-check-then-insert here left a real race — two concurrent
+  // requests carrying the same clientRequestId (a genuine double-tap, or a
+  // client retry racing the original request) could both read "no existing
+  // payment" before either had inserted, and the second insert then hit the
+  // (tenant_id, client_request_id) unique index and threw a raw duplicate-key
+  // error instead of resolving idempotently. Insert unconditionally and
+  // recover on conflict instead — the same pattern createGuestOrder already
+  // uses for orders.
+  const { error } = await sb.from("restaurant_payments").insert({
+    tenant_id: input.tenantId,
+    order_id: input.orderId,
+    client_request_id: input.clientRequestId,
+    method: input.method,
+    state: input.state,
+    amount: input.amount,
+    tendered: input.tendered ?? null,
+    change_due:
+      input.tendered != null ? Math.max(0, Number((input.tendered - input.amount).toFixed(2))) : 0,
+    reference: input.reference ?? null,
+    booking_id: input.bookingId ?? null,
+    created_by: userId,
   });
-
-  const { data: duplicate } = await sb
-    .from("restaurant_payments")
-    .select("id, amount, method, state")
-    .eq("tenant_id", input.tenantId)
-    .eq("client_request_id", input.clientRequestId)
-    .maybeSingle();
-
-  if (!duplicate) {
-    const { error } = await sb.from("restaurant_payments").insert({
-      tenant_id: input.tenantId,
-      order_id: input.orderId,
-      client_request_id: input.clientRequestId,
-      method: input.method,
-      state: input.state,
-      amount: input.amount,
-      tendered: input.tendered ?? null,
-      change_due:
-        input.tendered != null
-          ? Math.max(0, Number((input.tendered - input.amount).toFixed(2)))
-          : 0,
-      reference: input.reference ?? null,
-      booking_id: input.bookingId ?? null,
-      created_by: userId,
-    });
-    if (error) throw new Error(error.message);
+  let duplicate = false;
+  if (error) {
+    if (String((error as any).code) === "23505") {
+      duplicate = true;
+    } else {
+      throw new Error(error.message);
+    }
   }
 
   let totals = await recalcOrder(sb, input.tenantId, input.orderId);
@@ -736,13 +795,23 @@ export async function takePosPayment(sb: Sb, userId: string, input: PosPaymentIn
   if (input.closeWhenSettled && settled && totals.status !== "closed") {
     // Closing is the commercial commit point: it consumes stock, posts actual
     // cost and freezes the receipt. It lives in the sales core, not here.
-    await transitionOrder(sb, userId, {
-      tenantId: input.tenantId,
-      orderId: input.orderId,
-      status: "closed",
-    });
+    await transitionOrder(
+      sb,
+      userId,
+      {
+        tenantId: input.tenantId,
+        orderId: input.orderId,
+        status: "closed",
+      },
+      tenantScope,
+    );
     const { getReceipt } = await import("./receipts.server");
-    receipt = await getReceipt(sb, userId, { tenantId: input.tenantId, orderId: input.orderId });
+    receipt = await getReceipt(
+      sb,
+      userId,
+      { tenantId: input.tenantId, orderId: input.orderId },
+      tenantScope,
+    );
     totals = await recalcOrder(sb, input.tenantId, input.orderId);
   }
 
@@ -772,30 +841,31 @@ export async function recordGuestPayment(
     providerReference: string;
   },
 ) {
-  const { data: duplicate } = await sb
-    .from("restaurant_payments")
-    .select("id, amount, method, state")
-    .eq("tenant_id", input.tenantId)
-    .eq("client_request_id", input.providerReference)
-    .maybeSingle();
-
-  if (!duplicate) {
-    const { error } = await sb.from("restaurant_payments").insert({
-      tenant_id: input.tenantId,
-      order_id: input.orderId,
-      client_request_id: input.providerReference,
-      method: input.method,
-      state: "paid",
-      amount: input.amount,
-      currency: input.currency,
-      reference: input.providerReference,
-      created_by: null,
-    });
-    if (error) throw new Error(error.message);
+  // ME-03: same check-then-insert race as takePosPayment — insert
+  // unconditionally and recover on the (tenant_id, client_request_id)
+  // unique-index conflict instead of pre-checking then racing on the write.
+  const { error } = await sb.from("restaurant_payments").insert({
+    tenant_id: input.tenantId,
+    order_id: input.orderId,
+    client_request_id: input.providerReference,
+    method: input.method,
+    state: "paid",
+    amount: input.amount,
+    currency: input.currency,
+    reference: input.providerReference,
+    created_by: null,
+  });
+  let duplicate = false;
+  if (error) {
+    if (String((error as any).code) === "23505") {
+      duplicate = true;
+    } else {
+      throw new Error(error.message);
+    }
   }
 
   const totals = await recalcOrder(sb, input.tenantId, input.orderId);
-  return { order: totals, duplicate: Boolean(duplicate) };
+  return { order: totals, duplicate };
 }
 
 /** Reopens a closed bill for correction. Supervisor-only and always evidenced. */
@@ -812,6 +882,18 @@ export async function reopenPosOrder(sb: Sb, userId: string, input: ReopenPosOrd
     locationId: order.location_id,
   });
   if (order.status !== "closed") throw new Error("Only a closed bill can be reopened.");
+
+  const { data: fiscalReceipt } = await sb
+    .from("restaurant_fiscal_receipts")
+    .select("state")
+    .eq("tenant_id", input.tenantId)
+    .eq("order_id", input.orderId)
+    .maybeSingle();
+  if (fiscalReceipt?.state === "fiscalized") {
+    throw new Error(
+      "This bill has already been fiscalized and reported to the tax authority. It cannot be reopened or edited — the reported totals must stay traceable to what was submitted.",
+    );
+  }
 
   const { data: updated, error } = await sb
     .from("restaurant_orders")

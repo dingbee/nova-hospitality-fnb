@@ -19,9 +19,17 @@
  * add_item/fire_to_kitchen op queued against an order that was *itself*
  * still just a queued open_order op gets the real, server-assigned order
  * id once that dependency has synced (see contracts.ts's OrderRef).
+ *
+ * ME-09: a dependency that reaches a terminal *failure* state (CONFLICT,
+ * DEAD_LETTER, CANCELLED) will never reach SYNCED — treating that the same
+ * as "not yet synced" left the dependent op silently retried as
+ * "waiting on dependency" forever (still PENDING, indistinguishable in the
+ * UI from genuine in-progress work, never surfaced for operator
+ * reconciliation). Such a dependent is cascaded to CONFLICT immediately
+ * instead — see the dependency check in runSyncPass.
  */
 import { classifyOutcome } from "./conflict";
-import type { ConflictRecord, QueuedOperation } from "./contracts";
+import type { ConflictRecord, QueuedOperation, QueueState } from "./contracts";
 import {
   getQueueEntry,
   listQueueByState,
@@ -180,9 +188,23 @@ async function runSyncPass(
     ...(await listQueueByState(tenantId, "RETRYABLE_FAILURE")),
   ].sort((a, b) => a.sequence - b.sequence);
 
+  const TERMINAL_FAILURE_STATES: readonly QueueState[] = ["CONFLICT", "DEAD_LETTER", "CANCELLED"];
+
   for (const op of pending) {
     if (op.dependsOnOperationId) {
       const dep = await getQueueEntry(op.dependsOnOperationId);
+      if (dep && TERMINAL_FAILURE_STATES.includes(dep.state)) {
+        // The parent will never reach SYNCED — replaying this op against
+        // it can never produce valid domain state, so it cannot be left
+        // "waiting on dependency" indefinitely (that would look identical
+        // to normal in-progress work in the UI, forever). Cascade to a
+        // terminal, operator-visible state instead.
+        const reason = `Depends on operation ${op.dependsOnOperationId}, which ended in ${dep.state} and will not sync.`;
+        await recordConflict(op, "REQUIRES_OPERATOR", reason);
+        await transitionQueueEntry(op.operationId, { state: "CONFLICT", failureReason: reason });
+        summary.conflicts += 1;
+        continue;
+      }
       if (!dep || dep.state !== "SYNCED") {
         summary.skippedWaitingOnDependency += 1;
         continue;

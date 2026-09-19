@@ -1,16 +1,16 @@
 /**
- * NOVA Hospitality F&B — product identity.
+ * LexiBite — product identity.
  *
  * Product identity is fixed; *customer* identity (tenant, property, outlet)
  * is data and is resolved from the database at runtime. Nothing here may
  * name a specific hotel, lodge or restaurant group.
  */
 export const PRODUCT = {
-  name: "NOVA Hospitality F&B",
-  shortName: "NOVA F&B",
+  name: "LexiBite",
+  shortName: "LexiBite",
   tagline: "Restaurant & Bar OS",
-  vendor: "NOVA Hospitality",
-  supportEmail: "support@nova-hospitality.local",
+  vendor: "Nolmark",
+  supportEmail: "support@nolmark.co",
   /**
    * The customer/operator-facing name of the AI intelligence experience —
    * "Ask LexiBite", "LexiBite's interpretation", "LexiBite recommendation",
@@ -34,5 +34,5 @@ export const PRODUCT = {
 } as const;
 
 export function productTitle(page: string): string {
-  return `${page} — ${PRODUCT.shortName}`;
+  return `${page} — ${PRODUCT.name}`;
 }

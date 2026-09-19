@@ -89,6 +89,74 @@ describe("getForecastingIntelligence — composition", () => {
     expect(result.revenue.method).toBe("linear_trend");
   });
 
+  it("ME-06: a fully-refunded closed order never inflates the revenue forecast", async () => {
+    // restaurant_orders.payment_state can never actually be "refunded" in
+    // the real application (recalcOrder only ever writes unpaid /
+    // partially_paid / paid) — a fully-refunded closed order settles back
+    // to paid_total 0 with payment_state "unpaid" instead, evidenced by a
+    // restaurant_payments refund row. This must still be excluded from the
+    // forecast's revenue series, not counted as if the money were real —
+    // proven here by comparing against an identical run without the
+    // refunded order rather than asserting a hand-derived number.
+    const baseOrders = Array.from({ length: 20 }, (_, i) => ({
+      id: `o${i}`,
+      tenant_id: TENANT_A,
+      opened_at: iso(i + 1),
+      total: 1000,
+      paid_total: 1000,
+      currency: "TZS",
+      status: "closed",
+      payment_state: "paid",
+    }));
+    const refundedOrder = {
+      id: "o-refunded",
+      tenant_id: TENANT_A,
+      opened_at: iso(1),
+      total: 99999,
+      paid_total: 0,
+      currency: "TZS",
+      status: "closed",
+      payment_state: "unpaid",
+    };
+    const refundPayments = [
+      {
+        id: "pay-orig",
+        tenant_id: TENANT_A,
+        order_id: "o-refunded",
+        state: "refunded",
+        refund_of: null,
+        amount: 99999,
+      },
+      {
+        id: "pay-refund",
+        tenant_id: TENANT_A,
+        order_id: "o-refunded",
+        state: "refunded",
+        refund_of: "pay-orig",
+        amount: -99999,
+      },
+    ];
+
+    const baseline = await getForecastingIntelligence(
+      createP05FakeSupabase({ restaurant_members: [OWNER_MEMBER], restaurant_orders: baseOrders }),
+      OWNER,
+      { tenantId: TENANT_A, windowDays: 30, horizonDays: 14 },
+    );
+    const withRefund = await getForecastingIntelligence(
+      createP05FakeSupabase({
+        restaurant_members: [OWNER_MEMBER],
+        restaurant_orders: [...baseOrders, refundedOrder],
+        restaurant_payments: refundPayments,
+      }),
+      OWNER,
+      { tenantId: TENANT_A, windowDays: 30, horizonDays: 14 },
+    );
+
+    expect(withRefund.revenue.method).toBe("linear_trend");
+    expect(withRefund.revenue.dailyAverage).toBe(baseline.revenue.dailyAverage);
+    expect(withRefund.revenue.horizonTotal).toBe(baseline.revenue.horizonTotal);
+  });
+
   it("reframes purchasing's own suggestions verbatim as the inventory-requirement forecast, without recomputing them", async () => {
     const sb = createP05FakeSupabase({
       restaurant_members: [OWNER_MEMBER],

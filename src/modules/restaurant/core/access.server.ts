@@ -268,31 +268,74 @@ export async function resolveMultiPropertyScope(
   }
 }
 
+/**
+ * ME-13: `tenantScope` lets a caller that already resolved a `TenantScope`
+ * for this exact (userId, tenantId) — via `getTenantScope`, moments earlier
+ * in the same logical action — pass it in and skip re-querying
+ * `isPlatformAdmin`/`memberGrantsInTenant` a second (or third, fourth...)
+ * time. Omitting it (every call site before this pass, and the great
+ * majority after it) preserves the exact previous behaviour and round-trip
+ * count: this function resolves its own scope via `getTenantScope`, which
+ * is byte-for-byte the same two calls `assertTenantRead` made inline
+ * before this refactor.
+ */
 export async function assertTenantRead(
   supabase: Sb,
   userId: string,
   tenantId: string,
   scope?: ResourceScope,
+  tenantScope?: TenantScope,
 ) {
-  if (await isPlatformAdmin(supabase, userId)) return;
-  const grants = await memberGrantsInTenant(supabase, userId, tenantId);
-  if (grants.length === 0)
+  const resolved = tenantScope ?? (await getTenantScope(supabase, userId, tenantId));
+  if (resolved.platformAdmin) return;
+  if (resolved.grants.length === 0)
     throw new Error("Forbidden — you do not belong to this restaurant tenant.");
   if (scope?.propertyId !== undefined && scope.propertyId !== null) {
-    if (!grants.some((g) => grantCoversProperty(g, scope.propertyId))) {
+    if (!canAccessProperty(resolved, scope.propertyId)) {
       throw new Error("Forbidden — you do not have access to this property.");
     }
   }
   if (scope?.locationId !== undefined && scope.locationId !== null) {
-    const { data } = await supabase
-      .from("restaurant_locations")
-      .select("property_id")
-      .eq("id", scope.locationId)
-      .maybeSingle();
-    const locationProperty = data?.property_id ?? null;
-    if (locationProperty && !grants.some((g) => grantCoversProperty(g, locationProperty))) {
+    if (!(await canAccessLocation(supabase, resolved, scope.locationId))) {
       throw new Error("Forbidden — you do not have access to this location.");
     }
+  }
+}
+
+/**
+ * Membership-management guard for restaurant_members writes (grant/revoke a
+ * role on another user). Delegates to the database's own
+ * restaurant_can_manage_membership(tenant, roles, target_property) — the
+ * exact predicate migration 0057_p09_membership_scope_enforcement.sql put
+ * behind the "members write scoped" RLS policy — rather than re-deriving an
+ * equivalent check in TypeScript: `assertCapability(..., "tenant.manage")`
+ * alone (this repo's pre-ME-02 state) checks that the caller is owner/GM
+ * *somewhere* in the tenant but not that their grant covers
+ * `targetPropertyId`, so a property-scoped owner/GM could ask the RLS layer
+ * to grant or revoke a role at a property (or tenant-wide) they don't
+ * control — RLS already refuses that write (fail-closed), but with a raw
+ * database error instead of this clean one. `targetPropertyId: null` means
+ * the membership row itself is tenant-wide (the broadest grant a row can
+ * hold), which the database function treats as requiring the caller's own
+ * grant to also be tenant-wide — never "nothing to check".
+ */
+export async function assertCanManageMembership(
+  supabase: Sb,
+  tenantId: string,
+  targetPropertyId: string | null,
+): Promise<void> {
+  const { data, error } = await supabase.rpc("restaurant_can_manage_membership", {
+    _tenant_id: tenantId,
+    _roles: ["owner", "general_manager"],
+    _target_property_id: targetPropertyId,
+  });
+  if (error) throw new Error(error.message);
+  if (!data) {
+    throw new Error(
+      targetPropertyId
+        ? "Forbidden — you do not have owner/general manager authority at this property."
+        : "Forbidden — granting or revoking a tenant-wide role requires a tenant-wide owner/general manager grant.",
+    );
   }
 }
 
@@ -303,6 +346,16 @@ export async function assertTenantRead(
  * caller to hold the capability's role at that specific property — a
  * tenant-wide grant for the role still passes; a grant scoped to a
  * *different* property does not.
+ *
+ * ME-13: `tenantScope`, like `assertTenantRead`'s parameter of the same
+ * name, lets a caller reuse a `TenantScope` it already resolved for this
+ * (userId, tenantId) instead of this function re-resolving its own —
+ * closing the repeated-authorization-resolution finding in
+ * openPosOrder→addPosLines and takePosPayment→transitionOrder→issueReceipt
+ * (see pos.server.ts, sales.server.ts, receipts.server.ts). Omitting it
+ * resolves via `getTenantScope`, identically to the two inline calls this
+ * function made before this refactor — every pre-existing call site's
+ * behaviour and round-trip count is unchanged.
  */
 export async function assertCapability(
   supabase: Sb,
@@ -310,11 +363,12 @@ export async function assertCapability(
   tenantId: string,
   capability: RestaurantCapability,
   scope?: ResourceScope,
+  tenantScope?: TenantScope,
 ) {
-  if (await isPlatformAdmin(supabase, userId)) return;
-  const grants = await memberGrantsInTenant(supabase, userId, tenantId);
+  const resolved = tenantScope ?? (await getTenantScope(supabase, userId, tenantId));
+  if (resolved.platformAdmin) return;
   const allowed = rolesForCapability(capability) as readonly string[];
-  const matching = grants.filter((g) => allowed.includes(g.role));
+  const matching = resolved.grants.filter((g) => allowed.includes(g.role));
   if (matching.length === 0) {
     throw new Error(`Forbidden — "${capability}" requires one of: ${allowed.join(", ")}.`);
   }

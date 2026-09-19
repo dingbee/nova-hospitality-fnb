@@ -1,9 +1,4 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run build",
-  "outputDirectory": ".vercel/output",
-  "framework": null,
-  "github": {
-    "autoAlias": true
-  }
+  "framework": "tanstack-start"
 }

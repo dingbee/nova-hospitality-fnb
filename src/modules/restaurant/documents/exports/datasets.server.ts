@@ -8,10 +8,6 @@ import { assertCapability } from "../../core/access.server";
 import { nameMap } from "../builders/context.server";
 import { fileStem } from "../core/format";
 import { documentType, type DocumentTypeId } from "../core/registry";
-import {
-  buildIntelligenceDataset,
-  INTELLIGENCE_EXPORT_TYPES,
-} from "./datasets.intelligence.server";
 import type { ExportWorkbook } from "./model";
 
 type Sb = any;
@@ -24,9 +20,6 @@ export interface DatasetInput {
   locationId?: string;
   from?: string;
   to?: string;
-  /** Intelligence exports only — see datasets.intelligence.server.ts. */
-  windowDays?: number;
-  horizonDays?: number;
   limit: number;
 }
 
@@ -36,11 +29,7 @@ function range(input: DatasetInput) {
   return { from, to, fromTs: `${from}T00:00:00.000Z`, toTs: `${to}T23:59:59.999Z` };
 }
 
-export async function buildDataset(
-  sb: Sb,
-  userId: string,
-  input: DatasetInput,
-): Promise<ExportWorkbook> {
+export async function buildDataset(sb: Sb, userId: string, input: DatasetInput): Promise<ExportWorkbook> {
   const def = documentType(input.type);
   if (!def) throw new Error(`Unknown export "${input.type}".`);
   await assertCapability(sb, userId, input.tenantId, def.capability);
@@ -65,11 +54,7 @@ export async function buildDataset(
       outlet: input.locationId ? (locations.get(input.locationId) ?? null) : null,
       dateRange: `${from} to ${to}`,
       source: def.sourceTable ?? null,
-      filters: {
-        From: from,
-        To: to,
-        Location: input.locationId ? (locations.get(input.locationId) ?? "") : "All",
-      },
+      filters: { From: from, To: to, Location: input.locationId ? (locations.get(input.locationId) ?? "") : "All" },
     },
   };
 
@@ -94,9 +79,7 @@ export async function buildDataset(
       movement_type: m.movement_type,
       item: items.get(m.inventory_item_id) ?? "",
       location: locations.get(m.location_id) ?? "",
-      destination: m.destination_location_id
-        ? (locations.get(m.destination_location_id) ?? "")
-        : "",
+      destination: m.destination_location_id ? (locations.get(m.destination_location_id) ?? "") : "",
       quantity: num(m.quantity),
       unit_cost: num(m.unit_cost),
       total_cost: num(m.total_cost),
@@ -139,9 +122,7 @@ export async function buildDataset(
   if (input.type === "inventory_valuation") {
     let q = sb
       .from("restaurant_inventory_items")
-      .select(
-        "sku, name, item_type, location_id, current_quantity, par_level, reorder_point, average_cost, currency, status",
-      )
+      .select("sku, name, item_type, location_id, current_quantity, par_level, reorder_point, average_cost, currency, status")
       .eq("tenant_id", input.tenantId)
       .order("name")
       .limit(input.limit);
@@ -270,9 +251,7 @@ export async function buildDataset(
   if (input.type === "payment_reconciliation") {
     let ordersQ = sb
       .from("restaurant_orders")
-      .select(
-        "id, order_number, total, paid_total, payment_state, currency, location_id, closed_at",
-      )
+      .select("id, order_number, total, paid_total, payment_state, currency, location_id, closed_at")
       .eq("tenant_id", input.tenantId)
       .gte("opened_at", fromTs)
       .lte("opened_at", toTs)
@@ -285,9 +264,7 @@ export async function buildDataset(
     const { data: payments } = list.length
       ? await sb
           .from("restaurant_payments")
-          .select(
-            "order_id, method, state, amount, tendered, change_due, currency, reference, captured_at",
-          )
+          .select("order_id, method, state, amount, tendered, change_due, currency, reference, captured_at")
           .eq("tenant_id", input.tenantId)
           .in("order_id", [...byId.keys()])
       : { data: [] };
@@ -336,11 +313,7 @@ export async function buildDataset(
             { key: "count", label: "Payments", format: "integer" },
             { key: "amount", label: "Amount", format: "money" },
           ],
-          rows: [...summary.entries()].map(([method, v]) => ({
-            method,
-            count: v.count,
-            amount: v.amount,
-          })),
+          rows: [...summary.entries()].map(([method, v]) => ({ method, count: v.count, amount: v.amount })),
         },
         {
           name: "Payments",
@@ -371,10 +344,6 @@ export async function buildDataset(
         },
       ],
     };
-  }
-
-  if ((INTELLIGENCE_EXPORT_TYPES as readonly string[]).includes(input.type)) {
-    return buildIntelligenceDataset(sb, userId, input, base, def.label);
   }
 
   throw new Error(

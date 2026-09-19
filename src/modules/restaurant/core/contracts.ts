@@ -15,8 +15,33 @@ export const RESTAURANT_ROLES = [
   "purchasing_officer",
   "accountant",
   "viewer",
+  // P08 — machine principal for a write-scoped external API credential
+  // (src/modules/api-platform/credentials.server.ts). Never assignable to a
+  // human staff member — see ASSIGNABLE_RESTAURANT_ROLES below.
+  "api_service",
 ] as const;
 export type RestaurantRole = (typeof RESTAURANT_ROLES)[number];
+
+/**
+ * RESTAURANT_ROLES minus "api_service" — every role a human staff member may
+ * hold. Use this (never RESTAURANT_ROLES directly) for a staff role picker
+ * or for validating a human-facing membership-assignment request: the
+ * server-side upsertMemberSchema below enforces this, not just the UI, so a
+ * direct call to upsertRestaurantMemberFn can't grant a human the
+ * machine-only "api_service" role either.
+ */
+export const ASSIGNABLE_RESTAURANT_ROLES = [
+  "owner",
+  "general_manager",
+  "restaurant_manager",
+  "chef",
+  "kitchen_manager",
+  "bartender",
+  "inventory_manager",
+  "purchasing_officer",
+  "accountant",
+  "viewer",
+] as const satisfies readonly RestaurantRole[];
 
 export const RESTAURANT_LOCATION_TYPES = [
   "restaurant",
@@ -479,6 +504,11 @@ export const createOrderSchema = tenantScopeSchema.extend({
   externalRef: z.string().max(120).optional(),
   notes: z.string().max(2000).optional(),
   lines: z.array(orderLineSchema).default([]),
+  // ME-03: set directly on the insert (like createGuestOrder already does)
+  // so a retried/double-tapped open claims the same order atomically via
+  // the (tenant_id, client_request_id) unique index, instead of creating a
+  // brand-new order first and only trying to claim the id afterwards.
+  clientRequestId: z.string().max(120).optional(),
 });
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 
@@ -508,6 +538,13 @@ export const recordPaymentSchema = z.object({
   reference: z.string().max(120).optional(),
   bookingId: uuid.optional(),
   state: z.enum(PAYMENT_STATES).default("paid"),
+  // ME-03: this path had no idempotency guard at all — a client retry
+  // (timeout, double form-submit) unconditionally inserted a second
+  // payment row. Optional to stay backward-compatible with existing
+  // callers; when supplied it is enforced the same way every other
+  // payment surface in this codebase enforces it (restaurant_payments'
+  // (tenant_id, client_request_id) partial unique index).
+  clientRequestId: z.string().max(120).optional(),
 });
 export type RecordPaymentInput = z.infer<typeof recordPaymentSchema>;
 
@@ -584,6 +621,7 @@ export const transferStockSchema = tenantScopeSchema.extend({
   quantity: z.number().min(0.0001),
   unitId: uuid.optional(),
   reason: z.string().max(200).optional(),
+  dedupeKey: z.string().max(200).optional(),
 });
 export type TransferStockInput = z.infer<typeof transferStockSchema>;
 
@@ -608,7 +646,7 @@ export const listMembersSchema = z.object({ tenantId: uuid });
 export const upsertMemberSchema = z.object({
   tenantId: uuid,
   userId: uuid,
-  role: z.enum(RESTAURANT_ROLES),
+  role: z.enum(ASSIGNABLE_RESTAURANT_ROLES),
   /**
    * Which property this role applies to. Omitted/null = tenant-wide — the
    * role applies at every property in the tenant (the correct choice for
@@ -619,17 +657,3 @@ export const upsertMemberSchema = z.object({
 });
 
 export const removeMemberSchema = z.object({ tenantId: uuid, memberId: uuid });
-
-/**
- * Change an existing member's role and/or property scope in place. Distinct
- * from `upsertMemberSchema` (which always creates a new grant row): this
- * targets one specific `restaurant_members.id` and replaces it, so a caller
- * changing "owner, tenant-wide" to "viewer, one property" actually revokes
- * the old grant instead of leaving it active alongside the new one.
- */
-export const updateMemberRoleSchema = z.object({
-  tenantId: uuid,
-  memberId: uuid,
-  role: z.enum(RESTAURANT_ROLES),
-  propertyId: uuid.nullish(),
-});

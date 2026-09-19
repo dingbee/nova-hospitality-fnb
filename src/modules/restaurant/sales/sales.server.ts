@@ -20,7 +20,7 @@ import type {
   upsertServicePeriodSchema,
   upsertTableSchema,
 } from "../core/contracts";
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import { assertCapability, assertTenantRead, type TenantScope } from "../core/access.server";
 import { resolveOrderScope } from "./orderScope.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { consumeForOrderItem } from "../inventory/movements.server";
@@ -539,7 +539,20 @@ export async function insertLines(
     .from("restaurant_order_items")
     .insert(rows)
     .select("id, line_total, line_cost");
-  if (error) throw new Error(error.message);
+  if (error) {
+    // ME-07: an untrusted (guest) caller reaches this via a createServerFn
+    // handler that has no error-sanitization layer of its own — whatever
+    // Error.message this throws is what ends up in the guest's browser. A
+    // trusted (staff/POS) caller keeps the raw message: it's already
+    // authenticated/capability-checked and the detail is useful there.
+    if (!trusted) {
+      console.error("[guest-order] order_items insert failed", error);
+      throw new Error(
+        "We couldn't process your order. Please try again or ask a member of staff for help.",
+      );
+    }
+    throw new Error(error.message);
+  }
   return (data ?? []) as any[];
 }
 
@@ -597,11 +610,16 @@ export async function recalcOrder(sb: Sb, tenantId: string, orderId: string) {
   return data;
 }
 
-export async function createOrder(sb: Sb, userId: string, input: CreateOrderInput) {
+export async function createOrder(
+  sb: Sb,
+  userId: string,
+  input: CreateOrderInput,
+  tenantScope?: TenantScope,
+) {
   // The table (when there is one) is the sole source of truth for property/
   // location — never the caller's own claim. See orderScope.server.ts.
   const scope = await resolveOrderScope(sb, input.tenantId, input);
-  await assertCapability(sb, userId, input.tenantId, "sales.manage", scope);
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", scope, tenantScope);
 
   const { data: order, error } = await sb
     .from("restaurant_orders")
@@ -621,12 +639,36 @@ export async function createOrder(sb: Sb, userId: string, input: CreateOrderInpu
       source: input.source,
       external_ref: input.externalRef ?? null,
       notes: input.notes ?? null,
+      client_request_id: input.clientRequestId ?? null,
       server_user_id: userId,
       created_by: userId,
     })
     .select("id, order_number, currency")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) {
+    // ME-03: claiming client_request_id directly on this insert (rather
+    // than creating the order first and trying to stamp the id on afterward,
+    // as openPosOrder previously did) means a genuine concurrent double-open
+    // — two requests racing on the same idempotency key — never creates two
+    // real orders. Only one insert wins; the loser recovers the winner's
+    // order here instead of creating a second one or throwing a raw
+    // duplicate-key error, exactly like createGuestOrder already does.
+    if (String((error as any).code) === "23505" && input.clientRequestId) {
+      const { data: winner, error: recoverErr } = await sb
+        .from("restaurant_orders")
+        .select("id, order_number, currency")
+        .eq("tenant_id", input.tenantId)
+        .eq("client_request_id", input.clientRequestId)
+        .maybeSingle();
+      if (recoverErr || !winner) throw new Error(error.message);
+      return {
+        ...winner,
+        ...(await recalcOrder(sb, input.tenantId, winner.id)),
+        duplicate: true,
+      };
+    }
+    throw new Error(error.message);
+  }
 
   // The exchange rate in force at open time is pinned to the order and every
   // line, so historical receipts are never revalued.
@@ -673,7 +715,7 @@ export async function createOrder(sb: Sb, userId: string, input: CreateOrderInpu
       total: Number(totals.total),
     },
   });
-  return { ...order, ...totals };
+  return { ...order, ...totals, duplicate: false };
 }
 
 /**
@@ -751,14 +793,25 @@ export async function createGuestOrder(
         .eq("tenant_id", input.tenantId)
         .eq("client_request_id", input.clientRequestId)
         .maybeSingle();
-      if (recoverErr || !winner) throw new Error(error.message);
+      if (recoverErr || !winner) {
+        // ME-07: guest-exclusive path (createGuestOrder has no other
+        // caller) reached through a createServerFn handler with no
+        // sanitization layer — never hand a guest a raw DB error.
+        console.error("[guest-order] order insert conflict recovery failed", error, recoverErr);
+        throw new Error(
+          "We couldn't process your order. Please try again or ask a member of staff for help.",
+        );
+      }
       return {
         ...winner,
         ...(await recalcOrder(sb, input.tenantId, winner.id)),
         idempotent: true,
       };
     }
-    throw new Error(error.message);
+    console.error("[guest-order] order insert failed", error);
+    throw new Error(
+      "We couldn't process your order. Please try again or ask a member of staff for help.",
+    );
   }
 
   const baseCurrency = await tenantBaseCurrency(sb, input.tenantId);
@@ -769,17 +822,32 @@ export async function createGuestOrder(
     .eq("id", order.id)
     .eq("tenant_id", input.tenantId);
 
-  await insertLines(sb, input.tenantId, order.id, input.lines, {
-    currency: input.currency,
-    propertyId: input.propertyId,
-    locationId: input.locationId,
-    orderType: "dine_in",
-    exchangeRate,
-    // This is the guest ordering path: no staff principal authorized these
-    // lines, so their discount and modifier price fields are never
-    // money-authoritative — see insertLines' `trusted` doc comment.
-    trusted: false,
-  });
+  try {
+    await insertLines(sb, input.tenantId, order.id, input.lines, {
+      currency: input.currency,
+      propertyId: input.propertyId,
+      locationId: input.locationId,
+      orderType: "dine_in",
+      exchangeRate,
+      // This is the guest ordering path: no staff principal authorized these
+      // lines, so their discount and modifier price fields are never
+      // money-authoritative — see insertLines' `trusted` doc comment.
+      trusted: false,
+    });
+  } catch (err) {
+    // ME-07: insertLines can throw after this function's own order-header
+    // insert above already committed (e.g. resolveLineModifiersStrict
+    // rejecting a modifier that went stale between menu load and submit).
+    // Left uncaught, the header would persist with zero items — and because
+    // it already carries this clientRequestId, submitGuestOrder's own
+    // idempotency check would then hand back that empty order as a
+    // "successful" retry forever, with no way to add the failed items.
+    // insertLines builds its row array (and can throw) before ever calling
+    // .insert(), so no order_items exist yet — deleting the header is a
+    // complete, safe compensation, not a partial one.
+    await sb.from("restaurant_orders").delete().eq("id", order.id).eq("tenant_id", input.tenantId);
+    throw err;
+  }
 
   await sb
     .from("restaurant_tables")
@@ -825,6 +893,14 @@ export async function addOrderItems(sb: Sb, userId: string, input: AddOrderItems
 
 export async function recordPayment(sb: Sb, userId: string, input: RecordPaymentInput) {
   await assertCapability(sb, userId, input.tenantId, "sales.manage");
+
+  // ME-03: unconditional insert with no duplicate-submission guard used to
+  // mean a retried request (client timeout, double form-submit) recorded a
+  // second real payment. Mirrors the recovery-on-conflict pattern already
+  // used by createGuestOrder/takePosPayment/refundPayment: insert with
+  // client_request_id set, and on a (tenant_id, client_request_id) unique
+  // conflict, return the row the winning request already created instead
+  // of erroring or double-recording.
   const { data: payment, error } = await sb
     .from("restaurant_payments")
     .insert({
@@ -840,13 +916,33 @@ export async function recordPayment(sb: Sb, userId: string, input: RecordPayment
           : 0,
       reference: input.reference ?? null,
       booking_id: input.bookingId ?? null,
+      client_request_id: input.clientRequestId ?? null,
       created_by: userId,
     })
     .select("id, amount, method, state")
     .single();
-  if (error) throw new Error(error.message);
+  let duplicate = false;
+  let resolvedPayment = payment;
+  if (error) {
+    if (String((error as any).code) === "23505" && input.clientRequestId) {
+      const { data: winner, error: recoverErr } = await sb
+        .from("restaurant_payments")
+        .select("id, amount, method, state")
+        .eq("tenant_id", input.tenantId)
+        .eq("client_request_id", input.clientRequestId)
+        .maybeSingle();
+      if (recoverErr || !winner) throw new Error(error.message);
+      resolvedPayment = winner;
+      duplicate = true;
+    } else {
+      throw new Error(error.message);
+    }
+  }
 
   const totals = await recalcOrder(sb, input.tenantId, input.orderId);
+  if (duplicate) {
+    return { payment: resolvedPayment, order: totals, duplicate: true };
+  }
   if (input.state === "room_charged" || input.state === "comped") {
     await sb
       .from("restaurant_orders")
@@ -869,15 +965,20 @@ export async function recordPayment(sb: Sb, userId: string, input: RecordPayment
       order_total: Number(totals.total),
     },
   });
-  return { payment, order: totals };
+  return { payment: resolvedPayment, order: totals, duplicate: false };
 }
 
 /**
  * Closing an order is the commercial commit point:
  * consume recipe ingredients → record actual cost → publish sales facts.
  */
-export async function transitionOrder(sb: Sb, userId: string, input: TransitionOrderInput) {
-  await assertCapability(sb, userId, input.tenantId, "sales.manage");
+export async function transitionOrder(
+  sb: Sb,
+  userId: string,
+  input: TransitionOrderInput,
+  tenantScope?: TenantScope,
+) {
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", undefined, tenantScope);
 
   const { data: order } = await sb
     .from("restaurant_orders")
@@ -897,16 +998,44 @@ export async function transitionOrder(sb: Sb, userId: string, input: TransitionO
   if (input.status === "closed") patch.closed_at = new Date().toISOString();
   if (input.reason) patch.notes = input.reason;
 
-  const { data: updated, error } = await sb
-    .from("restaurant_orders")
-    .update(patch)
-    .eq("tenant_id", input.tenantId)
-    .eq("id", input.orderId)
-    .select("id, order_number, status, total, cost_total, currency, closed_at")
-    .single();
-  if (error) throw new Error(error.message);
+  if (input.status !== "closed") {
+    const { data: updated, error } = await sb
+      .from("restaurant_orders")
+      .update(patch)
+      .eq("tenant_id", input.tenantId)
+      .eq("id", input.orderId)
+      .select("id, order_number, status, total, cost_total, currency, closed_at")
+      .single();
+    if (error) throw new Error(error.message);
 
-  if (input.status === "closed") {
+    if (input.status === "voided" || input.status === "cancelled") {
+      await emitRestaurantEvent(sb, userId, {
+        type: "restaurant.order.voided",
+        tenantId: input.tenantId,
+        propertyId: order.property_id ?? undefined,
+        locationId: order.location_id ?? undefined,
+        entityType: "restaurant_order",
+        entityId: order.id,
+        source: "restaurant-os",
+        payload: { order_number: order.order_number, reason: input.reason ?? null },
+      });
+    }
+    return updated;
+  }
+
+  {
+    // ME-03: closing is the commercial commit point, so the order must not
+    // be marked `closed` until stock consumption for every line has
+    // actually succeeded. Previously the status flip happened first — a
+    // failure partway through the consumption loop below (a negative-stock
+    // guard, a unit-conversion error, a dropped connection) left the order
+    // permanently `closed` with partial or zero stock consumed and a wrong
+    // cost_total, and the transition guard above (`status === input.status`
+    // short-circuits) meant retrying the same close could never finish the
+    // job. Consumption runs first now; each movement it writes is
+    // idempotent (dedupe_key `consume:<orderItemId>:<componentId>`, see
+    // movements.server.ts#insertMovement), so retrying an interrupted close
+    // safely resumes rather than double-consuming or double-charging.
     const { data: items } = await sb
       .from("restaurant_order_items")
       .select(
@@ -976,13 +1105,19 @@ export async function transitionOrder(sb: Sb, userId: string, input: TransitionO
       });
     }
 
-    if (actualCost > 0) {
-      await sb
-        .from("restaurant_orders")
-        .update({ cost_total: Number(actualCost.toFixed(4)) })
-        .eq("tenant_id", input.tenantId)
-        .eq("id", input.orderId);
-    }
+    // Stock consumption for every line succeeded — only now is the order
+    // actually committed to `closed`, together with the actual cost it
+    // just posted, in the one write that flips its terminal state.
+    if (actualCost > 0) patch.cost_total = Number(actualCost.toFixed(4));
+    const { data: updated, error } = await sb
+      .from("restaurant_orders")
+      .update(patch)
+      .eq("tenant_id", input.tenantId)
+      .eq("id", input.orderId)
+      .select("id, order_number, status, total, cost_total, currency, closed_at")
+      .single();
+    if (error) throw new Error(error.message);
+
     if (order.table_id) {
       await sb
         .from("restaurant_tables")
@@ -1012,28 +1147,19 @@ export async function transitionOrder(sb: Sb, userId: string, input: TransitionO
     // Evidence of the sale, frozen at close. Never recomputed.
     try {
       const { issueReceipt } = await import("./receipts.server");
-      await issueReceipt(sb, userId, {
-        tenantId: input.tenantId,
-        orderId: order.id,
-        reprint: false,
-      });
+      await issueReceipt(
+        sb,
+        userId,
+        {
+          tenantId: input.tenantId,
+          orderId: order.id,
+          reprint: false,
+        },
+        tenantScope,
+      );
     } catch (err) {
       console.warn("[restaurant-os] receipt not issued", (err as Error).message);
     }
     return { ...updated, cost_total: Number(actualCost.toFixed(4)) };
   }
-
-  if (input.status === "voided" || input.status === "cancelled") {
-    await emitRestaurantEvent(sb, userId, {
-      type: "restaurant.order.voided",
-      tenantId: input.tenantId,
-      propertyId: order.property_id ?? undefined,
-      locationId: order.location_id ?? undefined,
-      entityType: "restaurant_order",
-      entityId: order.id,
-      source: "restaurant-os",
-      payload: { order_number: order.order_number, reason: input.reason ?? null },
-    });
-  }
-  return updated;
 }

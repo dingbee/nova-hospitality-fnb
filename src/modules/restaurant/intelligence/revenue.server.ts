@@ -21,6 +21,7 @@
  */
 import { assertTenantRead } from "../core/access.server";
 import { round, percentChange } from "./analysis";
+import { fetchFullyRefundedOrderIds } from "./revenueRecognition.server";
 import { assessDataSufficiency } from "./sufficiency";
 import type { RestaurantInsight } from "./types";
 import type {
@@ -62,7 +63,6 @@ export async function getRevenueIntelligence(
     )
     .eq("tenant_id", tenantId)
     .eq("status", "closed")
-    .neq("payment_state", "refunded")
     .gte("opened_at", prevStart);
   if (input.propertyId) ordersQuery = ordersQuery.eq("property_id", input.propertyId);
   if (input.locationId) ordersQuery = ordersQuery.eq("location_id", input.locationId);
@@ -73,7 +73,12 @@ export async function getRevenueIntelligence(
     sb.from("restaurant_service_periods").select("id, name").eq("tenant_id", tenantId),
   ]);
 
-  const allOrders = (ordersRes.data ?? []) as any[];
+  const fullyRefundedIds = await fetchFullyRefundedOrderIds(
+    sb,
+    tenantId,
+    (ordersRes.data ?? []) as any[],
+  );
+  const allOrders = ((ordersRes.data ?? []) as any[]).filter((o) => !fullyRefundedIds.has(o.id));
   const currentOrders = allOrders.filter((o) => o.opened_at >= start);
   const previousOrders = allOrders.filter((o) => o.opened_at >= prevStart && o.opened_at < start);
   const currency = (currentOrders[0] ?? allOrders[0])?.currency ?? "TZS";

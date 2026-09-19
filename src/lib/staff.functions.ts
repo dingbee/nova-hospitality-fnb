@@ -7,60 +7,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { assertPermission, ForbiddenError } from "@/lib/rbac/rbac.server";
-import {
-  ROLES,
-  ROLE_LABELS,
-  roleHasPermission,
-  type Permission,
-  type Role,
-} from "@/lib/rbac/permissions";
+import { assertPermission, assertCanManageRbacRole, ForbiddenError } from "@/lib/rbac/rbac.server";
+import { ROLES, ROLE_LABELS, type Role } from "@/lib/rbac/permissions";
 import { logActivity } from "@/lib/activity-log.server";
-
-/**
- * Authorizes granting/revoking a role at a specific (tenant, property,
- * outlet) target scope — the same both-sides discipline
- * `assertCanManageMembership` applies to `restaurant_members`. Unlike
- * `assertPermission`'s `ScopeRef`, a `null` at any level of `target` here
- * is a real, broader privilege (tenant-wide, property-wide, or fully
- * platform-wide), never "nothing to check": passing `assertPermission`
- * with an omitted scope always short-circuits to true for a NULL grant
- * level, which would let a caller whose own grant is scoped (e.g. OWNER at
- * one property) write a broader (e.g. tenant-wide) grant for someone else.
- * A caller may only reach a target level that is NULL if their own grant
- * is ALSO NULL at that level.
- */
-async function assertCanManageRbacRole(
-  /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client is untyped at this seam. */
-  supabase: any,
-  callerId: string,
-  perm: Permission,
-  target: { tenantId: string | null; propertyId: string | null; outletId: string | null },
-): Promise<void> {
-  const { data, error } = await supabase
-    .from("rbac_user_roles")
-    .select("role_code, tenant_id, property_id, outlet_id")
-    .eq("user_id", callerId);
-  if (error) throw new Error(error.message);
-  const grants = (data ?? []) as {
-    role_code: string;
-    tenant_id: string | null;
-    property_id: string | null;
-    outlet_id: string | null;
-  }[];
-  const covers =
-    (level: "tenant_id" | "property_id" | "outlet_id", targetVal: string | null) =>
-    (g: (typeof grants)[number]) =>
-      targetVal === null ? g[level] === null : g[level] === null || g[level] === targetVal;
-  const authorized = grants.some(
-    (g) =>
-      roleHasPermission(g.role_code as Role, perm) &&
-      covers("tenant_id", target.tenantId)(g) &&
-      covers("property_id", target.propertyId)(g) &&
-      covers("outlet_id", target.outletId)(g),
-  );
-  if (!authorized) throw new ForbiddenError(perm);
-}
 
 export const APP_ROLES = ROLES;
 export type AppRole = Role;
@@ -179,112 +128,93 @@ export const inviteStaffUser = createServerFn({ method: "POST" })
     return result;
   });
 
-export type RbacRoleTarget = {
-  userId: string;
-  role: Role;
-  tenantId?: string | null;
-  propertyId?: string | null;
-  outletId?: string | null;
-};
-
-const rbacRoleTargetSchema = z.object({
-  userId: z.string().uuid(),
-  role: z.enum(ROLES),
-  tenantId: z.string().uuid().nullable().optional(),
-  propertyId: z.string().uuid().nullable().optional(),
-  outletId: z.string().uuid().nullable().optional(),
-});
-
-/**
- * Core grant logic, pulled out of the createServerFn handler so it's
- * callable directly against a fake client in tests — same reason
- * `provisionInvitedStaffUser` is separated from `inviteStaffUser` above.
- */
-export async function grantRbacRole(
-  supabase: any,
-  callerId: string,
-  input: RbacRoleTarget,
-): Promise<{ ok: true }> {
-  const target = {
-    tenantId: input.tenantId ?? null,
-    propertyId: input.propertyId ?? null,
-    outletId: input.outletId ?? null,
-  };
-  await assertCanManageRbacRole(supabase, callerId, "ADMINISTRATION:ADMIN", target);
-  const { error } = await supabase.from("rbac_user_roles").insert({
-    user_id: input.userId,
-    role_code: input.role,
-    tenant_id: target.tenantId,
-    property_id: target.propertyId,
-    outlet_id: target.outletId,
-    granted_by: callerId,
-  });
-  if (error && !error.message.includes("duplicate")) throw new Error(error.message);
-  await logActivity(supabase, {
-    actorId: callerId,
-    action: "rbac.role.assign",
-    entityType: "rbac_user_roles",
-    entityId: input.userId,
-    metadata: { role: input.role },
-  });
-  return { ok: true };
-}
-
-/**
- * Core revoke logic — deletes exactly the one grant row at this scope, not
- * every row matching (user, role) regardless of scope, which would revoke a
- * sibling property's grant as collateral damage for the same role.
- */
-export async function revokeRbacRole(
-  supabase: any,
-  callerId: string,
-  input: RbacRoleTarget,
-): Promise<{ ok: true }> {
-  const target = {
-    tenantId: input.tenantId ?? null,
-    propertyId: input.propertyId ?? null,
-    outletId: input.outletId ?? null,
-  };
-  await assertCanManageRbacRole(supabase, callerId, "ADMINISTRATION:ADMIN", target);
-  let query = supabase
-    .from("rbac_user_roles")
-    .delete()
-    .eq("user_id", input.userId)
-    .eq("role_code", input.role);
-  query =
-    target.tenantId === null ? query.is("tenant_id", null) : query.eq("tenant_id", target.tenantId);
-  query =
-    target.propertyId === null
-      ? query.is("property_id", null)
-      : query.eq("property_id", target.propertyId);
-  query =
-    target.outletId === null ? query.is("outlet_id", null) : query.eq("outlet_id", target.outletId);
-  const { error } = await query;
-  if (error) throw new Error(error.message);
-  await logActivity(supabase, {
-    actorId: callerId,
-    action: "rbac.role.revoke",
-    entityType: "rbac_user_roles",
-    entityId: input.userId,
-    metadata: { role: input.role },
-  });
-  return { ok: true };
-}
-
 export const assignRole = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: RbacRoleTarget) => rbacRoleTargetSchema.parse(input))
+  .inputValidator(
+    (input: {
+      userId: string;
+      role: string;
+      tenantId?: string | null;
+      propertyId?: string | null;
+      outletId?: string | null;
+    }) =>
+      z
+        .object({
+          userId: z.string().uuid(),
+          role: z.enum(ROLES),
+          tenantId: z.string().uuid().nullable().optional(),
+          propertyId: z.string().uuid().nullable().optional(),
+          outletId: z.string().uuid().nullable().optional(),
+        })
+        .parse(input),
+  )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context as { supabase: any; userId: string };
-    return grantRbacRole(supabase, userId, data);
+    await assertCanManageRbacRole(supabase, {
+      tenantId: data.tenantId ?? null,
+      propertyId: data.propertyId ?? null,
+      outletId: data.outletId ?? null,
+    });
+    const { error } = await supabase.from("rbac_user_roles").insert({
+      user_id: data.userId,
+      role_code: data.role,
+      tenant_id: data.tenantId ?? null,
+      property_id: data.propertyId ?? null,
+      outlet_id: data.outletId ?? null,
+      granted_by: userId,
+    });
+    if (error && !error.message.includes("duplicate")) throw new Error(error.message);
+    await logActivity(supabase, {
+      actorId: userId,
+      action: "rbac.role.assign",
+      entityType: "rbac_user_roles",
+      entityId: data.userId,
+      metadata: { role: data.role },
+    });
+    return { ok: true };
   });
 
 export const revokeRole = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: RbacRoleTarget) => rbacRoleTargetSchema.parse(input))
+  .inputValidator((input: { userId: string; role: string }) =>
+    z.object({ userId: z.string().uuid(), role: z.enum(ROLES) }).parse(input),
+  )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context as { supabase: any; userId: string };
-    return revokeRbacRole(supabase, userId, data);
+    const { data: targets, error: findError } = await supabase
+      .from("rbac_user_roles")
+      .select("tenant_id, property_id, outlet_id")
+      .eq("user_id", data.userId)
+      .eq("role_code", data.role);
+    if (findError) throw new Error(findError.message);
+    if (!targets || targets.length === 0) {
+      throw new ForbiddenError("ADMINISTRATION:ADMIN");
+    }
+    for (const target of targets as {
+      tenant_id: string | null;
+      property_id: string | null;
+      outlet_id: string | null;
+    }[]) {
+      await assertCanManageRbacRole(supabase, {
+        tenantId: target.tenant_id,
+        propertyId: target.property_id,
+        outletId: target.outlet_id,
+      });
+    }
+    const { error } = await supabase
+      .from("rbac_user_roles")
+      .delete()
+      .eq("user_id", data.userId)
+      .eq("role_code", data.role);
+    if (error) throw new Error(error.message);
+    await logActivity(supabase, {
+      actorId: userId,
+      action: "rbac.role.revoke",
+      entityType: "rbac_user_roles",
+      entityId: data.userId,
+      metadata: { role: data.role },
+    });
+    return { ok: true };
   });
 
 export const setStaffUserDisabled = createServerFn({ method: "POST" })

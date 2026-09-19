@@ -43,7 +43,6 @@ function makeFakeSupabase(opts: { item: any; components: any[]; units: any[] }) 
         return api;
       },
       single: () => resolve(),
-      maybeSingle: () => resolve(),
       then: (onFulfilled: any, onRejected: any) => resolve().then(onFulfilled, onRejected),
     };
 

@@ -10,11 +10,32 @@
 
 export type AdapterResult =
   | { ok: true; provider: string; reference?: string }
-  | { ok: false; provider: string; reason: "not_configured" | "rejected" | "network"; error?: string };
+  | {
+      ok: false;
+      provider: string;
+      reason: "not_configured" | "rejected" | "network";
+      error?: string;
+    };
 
 function env(name: string): string | undefined {
   const v = process.env[name];
   return v && v.trim() ? v.trim() : undefined;
+}
+
+// ME-13: neither adapter had a timeout — a hanging email/WhatsApp provider
+// held the calling "send receipt" request open indefinitely. Both are
+// synchronously awaited from a staff-facing action, so a bound here is a
+// bound on that action, not just on this outbound call.
+const NOTIFICATION_TIMEOUT_MS = 15_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), NOTIFICATION_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /* ---------------------------------------------------------------- email --- */
@@ -38,7 +59,7 @@ export async function sendEmail(input: {
   if (key) headers["Authorization"] = `Bearer ${key}`;
   if (input.idempotencyKey) headers["Idempotency-Key"] = input.idempotencyKey;
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -50,7 +71,13 @@ export async function sendEmail(input: {
       }),
     });
     const json = (await res.json().catch(() => ({}))) as { id?: string; message?: string };
-    if (!res.ok) return { ok: false, provider: "email", reason: "rejected", error: json?.message ?? `Provider responded ${res.status}.` };
+    if (!res.ok)
+      return {
+        ok: false,
+        provider: "email",
+        reason: "rejected",
+        error: json?.message ?? `Provider responded ${res.status}.`,
+      };
     return { ok: true, provider: "email", reference: json?.id };
   } catch (e) {
     return { ok: false, provider: "email", reason: "network", error: (e as Error)?.message };
@@ -68,21 +95,36 @@ export async function sendWhatsApp(to: string, body: string): Promise<AdapterRes
   const sid = env("TWILIO_ACCOUNT_SID");
   const tokenSecret = env("TWILIO_AUTH_TOKEN");
   const from = env("WHATSAPP_FROM");
-  if (!sid || !tokenSecret || !from) return { ok: false, provider: "twilio_whatsapp", reason: "not_configured" };
+  if (!sid || !tokenSecret || !from)
+    return { ok: false, provider: "twilio_whatsapp", reason: "not_configured" };
   try {
-    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${btoa(`${sid}:${tokenSecret}`)}`,
-        "Content-Type": "application/x-www-form-urlencoded",
+    const res = await fetchWithTimeout(
+      `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${btoa(`${sid}:${tokenSecret}`)}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ From: from, To: `whatsapp:${to}`, Body: body }),
       },
-      body: new URLSearchParams({ From: from, To: `whatsapp:${to}`, Body: body }),
-    });
+    );
     const json = (await res.json().catch(() => ({}))) as { sid?: string; message?: string };
-    if (!res.ok) return { ok: false, provider: "twilio_whatsapp", reason: "rejected", error: json?.message ?? `Provider responded ${res.status}.` };
+    if (!res.ok)
+      return {
+        ok: false,
+        provider: "twilio_whatsapp",
+        reason: "rejected",
+        error: json?.message ?? `Provider responded ${res.status}.`,
+      };
     return { ok: true, provider: "twilio_whatsapp", reference: json?.sid };
   } catch (e) {
-    return { ok: false, provider: "twilio_whatsapp", reason: "network", error: (e as Error)?.message };
+    return {
+      ok: false,
+      provider: "twilio_whatsapp",
+      reason: "network",
+      error: (e as Error)?.message,
+    };
   }
 }
 
@@ -114,10 +156,15 @@ export function renderReceiptEmail(data: {
 </body></html>`;
   const text = `${data.outlet}\nReceipt ${data.receiptNumber} (${data.issuedAt})\n${data.lines
     .map((l) => `${l.quantity} x ${l.description} — ${l.amount}`)
-    .join("\n")}\nTotal ${data.total}\nPaid ${data.paid} (${data.paymentStatus})\n${data.receiptUrl}`;
+    .join(
+      "\n",
+    )}\nTotal ${data.total}\nPaid ${data.paid} (${data.paymentStatus})\n${data.receiptUrl}`;
   return { subject, html, text };
 }
 
 function escapeHtml(s: string): string {
-  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+  return String(s).replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
+  );
 }

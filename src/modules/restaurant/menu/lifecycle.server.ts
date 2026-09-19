@@ -51,6 +51,7 @@ export async function getMenuItemUsage(sb: Sb, tenantId: string, menuItemId: str
 }
 
 export async function transitionMenuItem(sb: Sb, userId: string, input: MenuLifecycleInput) {
+  await assertCapability(sb, userId, input.tenantId, "menu.manage");
   const { data: item, error } = await sb
     .from("restaurant_menu_items")
     .select("id, name, lifecycle_status, menu_id")
@@ -59,20 +60,6 @@ export async function transitionMenuItem(sb: Sb, userId: string, input: MenuLife
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!item) throw new Error("Menu item not found in this tenant.");
-
-  // Scoped to the item's own menu's property, not left tenant-wide — a menu
-  // item has no property/location column of its own; it inherits scope from
-  // its menu (same fix as upsertMenuItem in menu.server.ts).
-  const { data: menu } = await sb
-    .from("restaurant_menus")
-    .select("property_id, location_id")
-    .eq("id", item.menu_id)
-    .eq("tenant_id", input.tenantId)
-    .maybeSingle();
-  await assertCapability(sb, userId, input.tenantId, "menu.manage", {
-    propertyId: menu?.property_id ?? null,
-    locationId: menu?.location_id ?? null,
-  });
 
   const current = (item.lifecycle_status ?? "draft") as MenuLifecycleState;
   const next = nextLifecycleState(current, input.action);
@@ -123,24 +110,14 @@ export async function transitionMenuItem(sb: Sb, userId: string, input: MenuLife
  * server side, from real counts — the button state is irrelevant.
  */
 export async function deleteMenuItem(sb: Sb, userId: string, input: MenuDeleteInput) {
+  await assertCapability(sb, userId, input.tenantId, "menu.delete");
   const { data: item } = await sb
     .from("restaurant_menu_items")
-    .select("id, name, lifecycle_status, menu_id")
+    .select("id, name, lifecycle_status")
     .eq("id", input.menuItemId)
     .eq("tenant_id", input.tenantId)
     .maybeSingle();
   if (!item) throw new Error("Menu item not found in this tenant.");
-
-  const { data: menu } = await sb
-    .from("restaurant_menus")
-    .select("property_id, location_id")
-    .eq("id", item.menu_id)
-    .eq("tenant_id", input.tenantId)
-    .maybeSingle();
-  await assertCapability(sb, userId, input.tenantId, "menu.delete", {
-    propertyId: menu?.property_id ?? null,
-    locationId: menu?.location_id ?? null,
-  });
 
   const usage = await getMenuItemUsage(sb, input.tenantId, input.menuItemId);
   const verdict = evaluateDeletion(usage);

@@ -55,7 +55,7 @@ export async function handleDemoPublicApi(request: Request): Promise<Response | 
   const cors = corsHeaders(request);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
 
-  const { supabaseAdmin } = await import("../../integrations/supabase/client.server");
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
   if (url.pathname === "/api/public/demo/register" && request.method === "POST") {
     let parsed;

@@ -90,6 +90,18 @@ export async function startProduction(sb: Sb, userId: string, input: z.infer<typ
   }
 
   const cost = await resolveRecipeCost(sb, input.tenantId, recipe.id);
+  // A component whose unit can't be resolved to its item's stock unit has no
+  // safe quantity to consume — `componentToStock` failing for a line means
+  // `stockQuantity` falls back to the unconverted `effectiveQuantity`, which
+  // is exactly the "gram costed/consumed as a kilogram" class of error every
+  // other consumption path in this codebase refuses outright rather than
+  // silently mis-consuming. Refuse before anything is created, not after.
+  if (cost.unresolvedComponents > 0) {
+    const bad = cost.lines.filter((l) => l.unresolved).map((l) => l.name);
+    throw new Error(
+      `"${recipe.name}" has ${cost.unresolvedComponents} component(s) that cannot be costed or consumed in their declared unit (${bad.join(", ")}). Fix the component's unit, or the item's stock unit, before this recipe can be produced.`,
+    );
+  }
   const batches = Number(input.batches);
   const planned = Number(recipe.yield_quantity ?? 1) * batches;
 
@@ -124,8 +136,9 @@ export async function startProduction(sb: Sb, userId: string, input: z.infer<typ
       tenant_id: input.tenantId,
       production_id: production.id,
       inventory_item_id: l.refId as string,
-      planned_quantity: Number((l.effectiveQuantity * batches).toFixed(4)),
-      actual_quantity: Number((l.effectiveQuantity * batches).toFixed(4)),
+      unit_id: l.stockUnitId,
+      planned_quantity: Number((l.stockQuantity * batches).toFixed(4)),
+      actual_quantity: Number((l.stockQuantity * batches).toFixed(4)),
       unit_cost: l.unitCost,
       total_cost: Number((l.lineCost * batches).toFixed(4)),
     }));

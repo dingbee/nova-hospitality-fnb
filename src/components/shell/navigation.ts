@@ -324,7 +324,15 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Readiness centre",
         icon: Wrench,
         permission: "SETTINGS:READ",
+        exact: true,
         hint: "What's configured, what's blocked, and what to fix before going live",
+      },
+      {
+        to: "/admin/restaurant/setup/foundation",
+        label: "Restaurant setup",
+        icon: Settings2,
+        permission: "SETTINGS:READ",
+        hint: "Configure business, outlets, stores, stations, tables and service periods",
       },
       {
         to: "/admin/restaurant/staff",

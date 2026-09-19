@@ -37,33 +37,55 @@ type TokenCache = { token: string; expiresAt: number } | null;
 let tokenCache: TokenCache = null;
 let ipnIdCache: string | null = null;
 
+// ME-13: every call into Pesapal must have a hard ceiling even when the
+// caller passes no signal of its own (verify() takes none at all — see
+// selfpay.server.ts's PaymentProviderAdapter interface — so before this a
+// hanging GetTransactionStatus response blocked the calling request
+// indefinitely, matching TRA's own 20s ceiling in traClient.server.ts).
+// A caller-supplied signal (e.g. initiate()'s claim-TTL bound) still aborts
+// the request; this only adds a floor under callers that pass none.
+const PESAPAL_REQUEST_TIMEOUT_MS = 20_000;
+
 async function pesapalFetch(path: string, init: RequestInit & { auth?: boolean } = {}) {
-  const { auth = true, headers, ...rest } = init;
-  const token = auth ? await getToken() : undefined;
-  const res = await fetch(`${baseUrl()}${path}`, {
-    ...rest,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok || body?.error) {
-    const message =
-      body?.error?.message ?? body?.message ?? `Pesapal request to ${path} failed (${res.status}).`;
-    throw new Error(message);
+  const { auth = true, headers, signal, ...rest } = init;
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => timeoutController.abort(), PESAPAL_REQUEST_TIMEOUT_MS);
+  const onExternalAbort = () => timeoutController.abort();
+  signal?.addEventListener("abort", onExternalAbort);
+  try {
+    const token = auth ? await getToken(timeoutController.signal) : undefined;
+    const res = await fetch(`${baseUrl()}${path}`, {
+      ...rest,
+      signal: timeoutController.signal,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
+      },
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body?.error) {
+      const message =
+        body?.error?.message ??
+        body?.message ??
+        `Pesapal request to ${path} failed (${res.status}).`;
+      throw new Error(message);
+    }
+    return body as any;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onExternalAbort);
   }
-  return body as any;
 }
 
 /** Cached for its ~5 minute lifetime; refreshed a little early to avoid a request racing expiry. */
-async function getToken(): Promise<string> {
+async function getToken(signal?: AbortSignal | null): Promise<string> {
   if (tokenCache && tokenCache.expiresAt > Date.now() + 15_000) return tokenCache.token;
   const body = await pesapalFetch("/api/Auth/RequestToken", {
     method: "POST",
     auth: false,
+    signal,
     body: JSON.stringify({
       consumer_key: process.env.PESAPAL_CONSUMER_KEY,
       consumer_secret: process.env.PESAPAL_CONSUMER_SECRET,
@@ -83,7 +105,7 @@ async function getToken(): Promise<string> {
  * a fresh IPN subscription on every cold start. Falling back to
  * self-registration keeps this adapter usable without that extra step.
  */
-async function ensureIpnId(): Promise<string> {
+async function ensureIpnId(signal?: AbortSignal): Promise<string> {
   if (process.env.PESAPAL_IPN_ID) return process.env.PESAPAL_IPN_ID;
   if (ipnIdCache) return ipnIdCache;
   if (!process.env.PESAPAL_IPN_URL) {
@@ -93,6 +115,7 @@ async function ensureIpnId(): Promise<string> {
   }
   const body = await pesapalFetch("/api/URLSetup/RegisterIPN", {
     method: "POST",
+    signal,
     body: JSON.stringify({
       url: process.env.PESAPAL_IPN_URL,
       ipn_notification_type: "GET",
@@ -120,10 +143,11 @@ export function createPesapalAdapter(): PaymentProviderAdapter | null {
   return {
     name: "pesapal",
 
-    async initiate({ amount, currency, merchantReference, description, returnUrl }) {
-      const notificationId = await ensureIpnId();
+    async initiate({ amount, currency, merchantReference, description, returnUrl, signal }) {
+      const notificationId = await ensureIpnId(signal);
       const body = await pesapalFetch("/api/Transactions/SubmitOrderRequest", {
         method: "POST",
+        signal,
         body: JSON.stringify({
           id: merchantReference,
           currency,

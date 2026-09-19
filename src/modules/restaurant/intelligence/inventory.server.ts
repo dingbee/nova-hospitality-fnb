@@ -3,7 +3,7 @@
  * Sprint 3.2 — Inventory Intelligence.
  * Stock runway from consumption velocity, wastage trend, supplier price threats.
  */
-import { assertTenantRead, canAccessProperty, type TenantScope } from "../core/access.server";
+import { assertTenantRead } from "../core/access.server";
 import { daysOfCover, percentChange, round } from "./analysis";
 import type {
   InventoryIntelligence,
@@ -24,92 +24,42 @@ export async function getInventoryIntelligence(
     windowDays: number;
     propertyId?: string | null;
     locationId?: string | null;
-    /**
-     * P09 — a caller that fans this out across many locations in one
-     * request (Multi-Location Command) already resolved tenant membership
-     * once via getTenantScope/assertTenantRead for the whole request, and
-     * already knows each location's own property_id from its own
-     * restaurant_locations read. Passing that scope here skips this
-     * function's own membership + location->property lookup (an
-     * assertTenantRead call), which would otherwise re-run once per
-     * location. Only the property-scope check is re-verified (via the
-     * synchronous canAccessProperty) — the caller remains responsible for
-     * having established baseline tenant membership itself before ever
-     * reaching this. Every other caller (none of which loop) omits this
-     * and gets the exact previous behavior.
-     */
-    scope?: TenantScope;
-    /**
-     * P09 — pre-fetched, pre-filtered rows for this exact property/
-     * location, so a caller batching across many locations (one `.in(...)`
-     * query across all of them, grouped in memory) can skip the two
-     * per-call queries below entirely. Shaped identically to what the
-     * default query would itself return.
-     */
-    itemsData?: readonly any[];
-    movesData?: readonly any[];
-    /**
-     * P09 — restaurant_supplier_products/restaurant_suppliers are tenant-
-     * wide (never location-filtered), so a per-location fan-out was
-     * re-fetching the exact same rows once per location. A caller looping
-     * across locations fetches these once and passes them through here.
-     */
-    refData?: {
-      suppliers: readonly any[];
-      supplierProducts: readonly any[];
-    };
   },
 ): Promise<InventoryIntelligence> {
   const { tenantId, windowDays } = input;
-  if (input.scope) {
-    if (!canAccessProperty(input.scope, input.propertyId ?? null)) {
-      throw new Error("Forbidden — you do not have access to this property.");
-    }
-  } else {
-    await assertTenantRead(sb, userId, tenantId, {
-      propertyId: input.propertyId ?? null,
-      locationId: input.locationId ?? null,
-    });
-  }
+  await assertTenantRead(sb, userId, tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
 
   const now = Date.now();
   const start = new Date(now - windowDays * DAY).toISOString();
   const weekStart = new Date(now - 7 * DAY).toISOString();
   const prevWeekStart = new Date(now - 14 * DAY).toISOString();
 
-  function buildItemsQuery() {
-    let q = sb
-      .from("restaurant_inventory_items")
-      .select("id, name, current_quantity, reorder_point, average_cost, currency, status")
-      .eq("tenant_id", tenantId);
-    if (input.propertyId) q = q.eq("property_id", input.propertyId);
-    if (input.locationId) q = q.eq("location_id", input.locationId);
-    return q;
-  }
+  let itemsQuery = sb
+    .from("restaurant_inventory_items")
+    .select("id, name, current_quantity, reorder_point, average_cost, currency, status")
+    .eq("tenant_id", tenantId);
+  if (input.propertyId) itemsQuery = itemsQuery.eq("property_id", input.propertyId);
+  if (input.locationId) itemsQuery = itemsQuery.eq("location_id", input.locationId);
 
-  function buildMovesQuery() {
-    let q = sb
-      .from("restaurant_stock_movements")
-      .select("inventory_item_id, movement_type, quantity, total_cost, occurred_at")
-      .eq("tenant_id", tenantId)
-      .gte("occurred_at", new Date(now - Math.max(windowDays, 14) * DAY).toISOString());
-    if (input.propertyId) q = q.eq("property_id", input.propertyId);
-    if (input.locationId) q = q.eq("location_id", input.locationId);
-    return q;
-  }
+  let movesQuery = sb
+    .from("restaurant_stock_movements")
+    .select("inventory_item_id, movement_type, quantity, total_cost, occurred_at")
+    .eq("tenant_id", tenantId)
+    .gte("occurred_at", new Date(now - Math.max(windowDays, 14) * DAY).toISOString());
+  if (input.propertyId) movesQuery = movesQuery.eq("property_id", input.propertyId);
+  if (input.locationId) movesQuery = movesQuery.eq("location_id", input.locationId);
 
   const [itemsRes, movesRes, supplierProductsRes, suppliersRes] = await Promise.all([
-    input.itemsData ? Promise.resolve({ data: input.itemsData, error: null }) : buildItemsQuery(),
-    input.movesData ? Promise.resolve({ data: input.movesData, error: null }) : buildMovesQuery(),
-    input.refData
-      ? Promise.resolve({ data: input.refData.supplierProducts, error: null })
-      : sb
-          .from("restaurant_supplier_products")
-          .select("supplier_id, inventory_item_id, name, unit_price, active")
-          .eq("tenant_id", tenantId),
-    input.refData
-      ? Promise.resolve({ data: input.refData.suppliers, error: null })
-      : sb.from("restaurant_suppliers").select("id, name").eq("tenant_id", tenantId),
+    itemsQuery,
+    movesQuery,
+    sb
+      .from("restaurant_supplier_products")
+      .select("supplier_id, inventory_item_id, name, unit_price, active")
+      .eq("tenant_id", tenantId),
+    sb.from("restaurant_suppliers").select("id, name").eq("tenant_id", tenantId),
   ]);
 
   const items = (itemsRes.data ?? []) as any[];

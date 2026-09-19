@@ -335,6 +335,20 @@ artifacts (`e2e/.generated/`) are gitignored.
 - `npx vite build` — production build succeeds; bundle provenance
   (`scripts/verify-bundle-origin.ts`) clean.
 
+## 17a. ME-09 certification pass (addendum)
+
+See [`docs/me-09/ME-09-offline-certification.md`](me-09/ME-09-offline-certification.md)
+for a full independent re-certification. Summary: the `pruneSynced`
+wiring gap (§8/§10 above) was re-verified as already fixed and unchanged.
+One new real defect was found and fixed — a dependent operation
+(`add_item`/`fire_to_kitchen`) queued behind a parent that later reached
+a terminal failure state (`CONFLICT`/`DEAD_LETTER`/`CANCELLED`) was left
+`PENDING` indefinitely instead of being surfaced for operator
+reconciliation; `runSyncPass` now cascades it to `CONFLICT` immediately.
+Queue/storage-load certification at a realistic size (500 queued
+operations; pruning across 370 entries) was also added, closing the one
+certification gap this document did not previously cover.
+
 ## 17. Known limitations (deliberate scope, not oversights)
 
 - `change_quantity`/`remove_item` are not offline-queueable this pass —

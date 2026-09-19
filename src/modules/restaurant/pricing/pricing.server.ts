@@ -217,10 +217,7 @@ export async function upsertPrice(
   userId: string,
   input: z.infer<typeof upsertPriceSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "pricing.manage", {
-    propertyId: input.propertyId ?? null,
-    locationId: input.locationId ?? null,
-  });
+  await assertCapability(sb, userId, input.tenantId, "pricing.manage");
   if (!input.productId && !input.menuItemId)
     throw new Error("A price needs a product or a menu item.");
 
@@ -447,10 +444,7 @@ export async function upsertTaxRule(
   userId: string,
   input: z.infer<typeof upsertTaxRuleSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "tax.manage", {
-    propertyId: input.propertyId ?? null,
-    locationId: input.locationId ?? null,
-  });
+  await assertCapability(sb, userId, input.tenantId, "tax.manage");
   const row = {
     tenant_id: input.tenantId,
     property_id: input.propertyId ?? null,
@@ -521,10 +515,7 @@ export async function upsertServiceCharge(
   userId: string,
   input: z.infer<typeof upsertServiceChargeSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "tax.manage", {
-    propertyId: input.propertyId ?? null,
-    locationId: input.locationId ?? null,
-  });
+  await assertCapability(sb, userId, input.tenantId, "tax.manage");
   const row = {
     tenant_id: input.tenantId,
     property_id: input.propertyId ?? null,
@@ -587,10 +578,7 @@ export async function upsertDiscountRule(
   userId: string,
   input: z.infer<typeof upsertDiscountRuleSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "discount.manage", {
-    propertyId: input.propertyId ?? null,
-    locationId: input.locationId ?? null,
-  });
+  await assertCapability(sb, userId, input.tenantId, "discount.manage");
   const row = {
     tenant_id: input.tenantId,
     property_id: input.propertyId ?? null,
@@ -693,46 +681,78 @@ export async function applyDiscount(
   });
   if (!verdict.allowed) throw new Error(verdict.message ?? "Discount not permitted.");
 
+  let applied: any;
   if (item) {
-    await sb
-      .from("restaurant_order_items")
-      .update({
-        discount: verdict.amount,
+    // A line-scoped discount must go through the canonical giveaway-
+    // application path: restaurant_giveaway_guard (DB trigger) rejects any
+    // direct write to restaurant_order_items.discount/line_total that isn't
+    // accompanied by a matching approved restaurant_discount_applications
+    // row applied via restaurant_apply_giveaway — writing the columns
+    // directly (the old approach) is unconditionally rejected.
+    const { data: inserted, error: insertError } = await sb
+      .from("restaurant_discount_applications")
+      .insert({
+        tenant_id: input.tenantId,
         discount_rule_id: input.discountRuleId ?? null,
-        discount_reason: input.reason ?? null,
-        line_total: Number((base - verdict.amount).toFixed(2)),
+        order_id: input.orderId,
+        order_item_id: input.orderItemId ?? null,
+        scope: input.scope,
+        basis: input.basis,
+        value: input.value,
+        amount: verdict.amount,
+        currency: order.currency ?? "USD",
+        reason: input.reason ?? null,
+        actor_id: userId,
+        actor_role: roles[0] ?? (admin ? "platform_admin" : null),
+        approved_by: verdict.requiresApproval ? null : userId,
+        approved_at: verdict.requiresApproval ? null : new Date().toISOString(),
       })
-      .eq("id", item.id)
-      .eq("tenant_id", input.tenantId);
+      .select("*")
+      .single();
+    if (insertError) throw new Error(insertError.message);
+
+    const { error: applyError } = await sb.rpc("restaurant_apply_giveaway", {
+      _application_id: inserted.id,
+    });
+    if (applyError) throw new Error(applyError.message);
+
+    const { data: refreshed, error: refreshError } = await sb
+      .from("restaurant_discount_applications")
+      .select("*")
+      .eq("id", inserted.id)
+      .single();
+    if (refreshError) throw new Error(refreshError.message);
+    applied = refreshed;
   } else {
     await sb
       .from("restaurant_orders")
       .update({ discount_total: verdict.amount, total: Number((base - verdict.amount).toFixed(2)) })
       .eq("id", input.orderId)
       .eq("tenant_id", input.tenantId);
-  }
 
-  const { data: applied, error } = await sb
-    .from("restaurant_discount_applications")
-    .insert({
-      tenant_id: input.tenantId,
-      discount_rule_id: input.discountRuleId ?? null,
-      order_id: input.orderId,
-      order_item_id: input.orderItemId ?? null,
-      scope: input.scope,
-      basis: input.basis,
-      value: input.value,
-      amount: verdict.amount,
-      currency: order.currency ?? "USD",
-      reason: input.reason ?? null,
-      actor_id: userId,
-      actor_role: roles[0] ?? (admin ? "platform_admin" : null),
-      approved_by: verdict.requiresApproval ? null : userId,
-      approved_at: verdict.requiresApproval ? null : new Date().toISOString(),
-    })
-    .select("*")
-    .single();
-  if (error) throw new Error(error.message);
+    const { data: inserted, error } = await sb
+      .from("restaurant_discount_applications")
+      .insert({
+        tenant_id: input.tenantId,
+        discount_rule_id: input.discountRuleId ?? null,
+        order_id: input.orderId,
+        order_item_id: input.orderItemId ?? null,
+        scope: input.scope,
+        basis: input.basis,
+        value: input.value,
+        amount: verdict.amount,
+        currency: order.currency ?? "USD",
+        reason: input.reason ?? null,
+        actor_id: userId,
+        actor_role: roles[0] ?? (admin ? "platform_admin" : null),
+        approved_by: verdict.requiresApproval ? null : userId,
+        approved_at: verdict.requiresApproval ? null : new Date().toISOString(),
+      })
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    applied = inserted;
+  }
 
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.discount.applied",

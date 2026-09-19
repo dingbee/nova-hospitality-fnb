@@ -264,14 +264,40 @@ export async function postStocktake(
     .eq("tenant_id", input.tenantId)
     .eq("stocktake_id", input.stocktakeId);
 
+  const countedLines = ((lines ?? []) as any[]).filter((l) => l.counted_quantity != null);
+
+  // `variance_quantity` (a GENERATED column) is counted minus the balance
+  // frozen at startStocktake — call it T0. Posting that number as a ledger
+  // *delta* is only correct if the balance never moved between T0 and now
+  // (T1). A count can span minutes or hours; any sale, receipt, waste or
+  // other movement against the same item during that window is real,
+  // already-correct activity — posting the T0-relative variance on top of
+  // it double-applies that activity into the adjustment, corrupting the
+  // balance by exactly the amount that moved in between. The correction
+  // that actually belongs on the ledger is the gap between what's
+  // physically on hand *right now* (assumed unchanged since counting
+  // finished) and what the ledger currently shows — re-diffed against a
+  // fresh read at post time, not the stale T0 snapshot.
+  const itemIds = [...new Set(countedLines.map((l) => l.inventory_item_id))];
+  const { data: freshItems } = itemIds.length
+    ? await sb.from("restaurant_inventory_items").select("id, current_quantity").in("id", itemIds)
+    : { data: [] as any[] };
+  const freshQtyById = new Map(
+    ((freshItems ?? []) as any[]).map((i) => [i.id, Number(i.current_quantity ?? 0)]),
+  );
+
   const now = new Date().toISOString();
   let posted = 0;
   let varianceValue = 0;
 
-  for (const line of (lines ?? []) as any[]) {
-    if (line.counted_quantity == null) continue;
-    const variance = Number(line.variance_quantity ?? 0);
-    if (Math.abs(variance) < 1e-9) continue;
+  for (const line of countedLines) {
+    const displayVariance = Number(line.variance_quantity ?? 0);
+    varianceValue += Math.abs(displayVariance) * Number(line.unit_cost ?? 0);
+
+    const currentQty = freshQtyById.get(line.inventory_item_id);
+    if (currentQty == null) continue; // item no longer exists — nothing to post
+    const postQuantity = Number(line.counted_quantity) - currentQty;
+    if (Math.abs(postQuantity) < 1e-9) continue; // ledger already matches the physical count
 
     const moved = await insertMovement(sb, userId, {
       tenantId: input.tenantId,
@@ -279,8 +305,8 @@ export async function postStocktake(
       locationId: line.location_id,
       inventoryItemId: line.inventory_item_id,
       unitId: line.unit_id,
-      movementType: variance > 0 ? "adjustment_in" : "adjustment_out",
-      quantity: variance,
+      movementType: postQuantity > 0 ? "adjustment_in" : "adjustment_out",
+      quantity: postQuantity,
       unitCost: Number(line.unit_cost ?? 0),
       currency: head.currency ?? "TZS",
       reason: `Stocktake ${head.stocktake_number}`,
@@ -294,7 +320,6 @@ export async function postStocktake(
       occurredAt: now,
       dedupeKey: `stocktake:${line.id}`,
     });
-    varianceValue += Math.abs(variance) * Number(line.unit_cost ?? 0);
     if (moved) {
       posted += 1;
       await sb

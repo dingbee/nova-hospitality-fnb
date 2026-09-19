@@ -250,6 +250,20 @@ export interface RecipeCostLine {
   unitCode: string | null;
   yieldPercent: number;
   effectiveQuantity: number;
+  /**
+   * `effectiveQuantity` converted into the referenced item's own stock unit
+   * (e.g. grams -> kilograms) — the only quantity safe to post to the stock
+   * ledger. `effectiveQuantity` alone is in the recipe line's *declared*
+   * unit, which is frequently not the stock unit; posting it unconverted
+   * silently over/under-deducts by the conversion factor. Equal to
+   * `effectiveQuantity` for a `sub_recipe` line (not a stock item, no
+   * conversion applies) or when the component's unit could not be resolved
+   * (`unresolved: true` — the caller must refuse to proceed, not consume
+   * this value).
+   */
+  stockQuantity: number;
+  /** The stock item's own unit id — what `stockQuantity` is denominated in. Null for a `sub_recipe` line (not a stock item). */
+  stockUnitId: string | null;
   unitCost: number;
   lineCost: number;
   unresolved?: boolean;

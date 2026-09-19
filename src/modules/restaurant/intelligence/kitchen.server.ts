@@ -35,28 +35,12 @@ export async function getKitchenIntelligence(
   const start = new Date(now - windowDays * DAY).toISOString();
   const prevStart = new Date(now - 2 * windowDays * DAY).toISOString();
 
-  // restaurant_kitchen_tickets has no property_id column — property scope is
-  // derived through location_id, so a property-scoped request (without an
-  // explicit locationId) must resolve the property's locations first, or an
-  // org-wide caller would see every property's tickets mixed together.
-  let locationIdsForProperty: string[] | null = null;
-  if (input.propertyId && !input.locationId) {
-    const locRes = await sb
-      .from("restaurant_locations")
-      .select("id")
-      .eq("tenant_id", tenantId)
-      .eq("property_id", input.propertyId);
-    locationIdsForProperty = ((locRes.data ?? []) as any[]).map((l) => l.id);
-  }
-
   let ticketsQuery = sb
     .from("restaurant_kitchen_tickets")
     .select("id, station_id, status, queued_at, prep_seconds, is_delayed, target_minutes")
     .eq("tenant_id", tenantId)
     .gte("queued_at", prevStart);
   if (input.locationId) ticketsQuery = ticketsQuery.eq("location_id", input.locationId);
-  else if (locationIdsForProperty)
-    ticketsQuery = ticketsQuery.in("location_id", locationIdsForProperty);
 
   let stationsQuery = sb
     .from("restaurant_stations")

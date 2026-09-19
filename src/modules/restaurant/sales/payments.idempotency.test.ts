@@ -1,0 +1,360 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- fake Supabase rows are untyped at this boundary. */
+/**
+ * ME-03 — payment double-submission protection.
+ *
+ * recordPayment() (the admin order-pad payment path) had NO idempotency
+ * guard at all: a retried request (client timeout, double form-submit)
+ * unconditionally inserted a second real payment row for the same order.
+ * takePosPayment()/recordGuestPayment() had a client_request_id guard, but
+ * it was a pre-check-then-insert: two concurrent requests carrying the same
+ * clientRequestId could both read "no existing payment" before either had
+ * written it, and the loser's insert then hit the
+ * (tenant_id, client_request_id) unique index and surfaced a raw
+ * duplicate-key Postgres error instead of resolving idempotently.
+ *
+ * All three now insert unconditionally and recover on a 23505 conflict —
+ * the same pattern createGuestOrder already used for orders — so these
+ * tests exercise that recovery path directly: since the fix removes the
+ * pre-check entirely, calling the same operation twice in sequence (which
+ * is exactly what a genuine concurrent race collapses to at the database
+ * boundary — the loser always sees the unique-index conflict at insert
+ * time, whether the winner beat it by a millisecond or by a full
+ * round-trip) is sufficient to prove the recovery path, not just the
+ * happy path.
+ *
+ * ME-04 found the identical pre-check-then-insert shape, unfixed by ME-03,
+ * in refundPayment (bill.server.ts) — same table, same
+ * (tenant_id, client_request_id) unique index, same race. Fixed the same
+ * way and covered below.
+ *
+ * ME-06 found a second, more severe defect in the same function: the
+ * overage check compared a new refund's amount only against the ORIGINAL
+ * payment's amount, never against refunds already recorded against that
+ * same payment. Two distinct partial refunds, each individually within the
+ * original amount, together silently exceeded it at the application layer.
+ * (Production, it turned out, already carries a database-level guard for
+ * this — restaurant_payment_refund_integrity, a trigger that predates this
+ * repository's Git history and was reconstructed into migration 0081 — so
+ * this specific overage was never actually reachable in production; the
+ * application-level bug still mattered on its own, since the same
+ * insert would otherwise have surfaced the DB trigger's raw error to the
+ * caller with no clear explanation.) Fixed by summing prior refunds
+ * against the same refund_of id (excluding this exact request's own retry,
+ * so idempotency above is unaffected) and rejecting the insert when the
+ * cumulative total would exceed the original payment — mirroring exactly
+ * what the reconstructed database trigger already enforces.
+ *
+ * Reconstructing that trigger also surfaced a genuine, independent,
+ * currently-live production defect in it: it excluded only the row being
+ * inserted (`id<>NEW.id`) from its "already refunded" sum, not any prior
+ * row sharing the same client_request_id — so a legitimate idempotent
+ * retry of a full-amount refund was incorrectly rejected with "Refund
+ * exceeds original payment" instead of resolving via the
+ * (tenant_id, client_request_id) unique index, because this is a BEFORE
+ * INSERT trigger and fires before that index is ever checked. Fixed in
+ * migration 0082, proven against a local Postgres replica running the
+ * exact reconstructed trigger, including with 10 genuinely concurrent
+ * refund attempts against the same payment (see
+ * docs/me-06/ME-06-fiscal-integrity.md).
+ */
+import { describe, expect, it, vi } from "vitest";
+import { recordPayment } from "./sales.server";
+import { takePosPayment, recordGuestPayment } from "./pos.server";
+import { refundPayment } from "./bill.server";
+
+vi.mock("../core/access.server", () => ({
+  assertCapability: vi.fn(async () => true),
+  getTenantScope: vi.fn(async () => ({ platformAdmin: true, grants: [] })),
+}));
+vi.mock("../events/emit.server", () => ({
+  emitRestaurantEvent: vi.fn(async () => ({ delivered: true, duplicate: false })),
+}));
+
+const TENANT = "tenant-1";
+const ORDER = "order-1";
+const USER = "user-1";
+
+function fakeDb(seed: { orders: any[]; orderItems: any[]; payments: any[] }) {
+  const tables: Record<string, any[]> = {
+    restaurant_orders: seed.orders,
+    restaurant_order_items: seed.orderItems,
+    restaurant_payments: seed.payments,
+  };
+  let seq = 0;
+
+  function from(table: string) {
+    const rows = tables[table] ?? (tables[table] = []);
+    let filtered = rows;
+    const api: any = {
+      select: () => api,
+      eq: (col: string, val: unknown) => {
+        filtered = filtered.filter((r) => r[col] === val);
+        return api;
+      },
+      // recalcOrder awaits the builder directly (no .single()/.maybeSingle())
+      // for its list reads, exactly like the real supabase-js
+      // PostgrestFilterBuilder — it is thenable, not a plain object.
+      then: (resolve: (v: { data: any[]; error: null }) => unknown) =>
+        resolve({ data: filtered, error: null }),
+      maybeSingle: async () => ({ data: filtered[0] ?? null, error: null }),
+      single: async () =>
+        filtered.length
+          ? { data: filtered[0], error: null }
+          : { data: null, error: { message: `${table}: not found` } },
+      insert: (row: any) => {
+        if (
+          table === "restaurant_payments" &&
+          row.client_request_id != null &&
+          rows.some(
+            (r) => r.tenant_id === row.tenant_id && r.client_request_id === row.client_request_id,
+          )
+        ) {
+          const conflict = {
+            data: null,
+            error: {
+              code: "23505",
+              message:
+                'duplicate key value violates unique constraint "restaurant_payments_client_request_idx"',
+            },
+          };
+          // Both call shapes appear in production code: takePosPayment/
+          // recordGuestPayment await the insert directly (needs .then()),
+          // recordPayment chains .select().single() off it (needs that too)
+          // — a plain object with only one of the two silently resolves to
+          // itself instead of the conflict, and `error` reads as undefined.
+          return {
+            then: (resolve: (v: typeof conflict) => unknown) => resolve(conflict),
+            select: () => ({ single: async () => conflict }),
+          };
+        }
+        const stored = { id: `payment-${++seq}`, ...row };
+        rows.push(stored);
+        filtered = [stored];
+        return { select: () => ({ single: async () => ({ data: stored, error: null }) }) };
+      },
+      update: (patch: any) => {
+        let lastMatched: any[] = rows;
+        const target: any = {
+          eq: (col: string, val: unknown) => {
+            lastMatched = lastMatched.filter((r) => r[col] === val);
+            for (const r of lastMatched) Object.assign(r, patch);
+            return target;
+          },
+          // recalcOrder chains .select(...).single() after .update().eq().eq() —
+          // the real supabase-js PostgrestFilterBuilder supports this to
+          // return the row(s) just written.
+          select: () => ({
+            single: async () =>
+              lastMatched.length
+                ? { data: lastMatched[0], error: null }
+                : { data: null, error: { message: "not found" } },
+          }),
+        };
+        return target;
+      },
+    };
+    return api;
+  }
+
+  return { from, tables } as any;
+}
+
+function baseOrder() {
+  return {
+    id: ORDER,
+    tenant_id: TENANT,
+    property_id: "prop-1",
+    location_id: "loc-1",
+    status: "open",
+    total: 100,
+    paid_total: 0,
+    currency: "TZS",
+  };
+}
+
+describe("recordPayment — double submission (ME-03)", () => {
+  it("a retried request with the same clientRequestId never creates a second payment row", async () => {
+    const sb = fakeDb({ orders: [baseOrder()], orderItems: [], payments: [] });
+
+    const first = await recordPayment(sb, USER, {
+      tenantId: TENANT,
+      orderId: ORDER,
+      method: "cash",
+      amount: 40,
+      state: "paid",
+      clientRequestId: "retry-key-1",
+    } as any);
+    expect(first.duplicate).toBe(false);
+
+    const second = await recordPayment(sb, USER, {
+      tenantId: TENANT,
+      orderId: ORDER,
+      method: "cash",
+      amount: 40,
+      state: "paid",
+      clientRequestId: "retry-key-1",
+    } as any);
+    expect(second.duplicate).toBe(true);
+    expect(second.payment.id).toBe(first.payment.id);
+
+    const stored = (sb as any).tables.restaurant_payments.filter(
+      (r: any) => r.client_request_id === "retry-key-1",
+    );
+    expect(stored).toHaveLength(1);
+  });
+
+  it("without a clientRequestId, behaviour is unchanged (no accidental dedupe of distinct payments)", async () => {
+    const sb = fakeDb({ orders: [baseOrder()], orderItems: [], payments: [] });
+    const a = await recordPayment(sb, USER, {
+      tenantId: TENANT,
+      orderId: ORDER,
+      method: "cash",
+      amount: 10,
+      state: "paid",
+    } as any);
+    const b = await recordPayment(sb, USER, {
+      tenantId: TENANT,
+      orderId: ORDER,
+      method: "cash",
+      amount: 10,
+      state: "paid",
+    } as any);
+    expect(a.payment.id).not.toBe(b.payment.id);
+  });
+});
+
+describe("takePosPayment — double submission (ME-03)", () => {
+  it("a retried request with the same clientRequestId resolves idempotently instead of throwing a raw duplicate-key error", async () => {
+    const sb = fakeDb({ orders: [baseOrder()], orderItems: [], payments: [] });
+    const input = {
+      tenantId: TENANT,
+      orderId: ORDER,
+      method: "cash",
+      amount: 40,
+      state: "paid",
+      clientRequestId: "pos-retry-1",
+    } as any;
+
+    const first = await takePosPayment(sb, USER, input);
+    expect(first.duplicate).toBe(false);
+
+    // Previously: the pre-check-then-insert shape meant a second call whose
+    // insert lost the race threw the raw Postgres unique-violation error
+    // instead of returning gracefully. It must now resolve without throwing.
+    const second = await takePosPayment(sb, USER, input);
+    expect(second.duplicate).toBe(true);
+  });
+});
+
+describe("recordGuestPayment — double submission (ME-03)", () => {
+  it("a retried guest payment with the same providerReference resolves idempotently", async () => {
+    const sb = fakeDb({ orders: [baseOrder()], orderItems: [], payments: [] });
+    const input = {
+      tenantId: TENANT,
+      orderId: ORDER,
+      method: "mobile_money",
+      amount: 40,
+      currency: "TZS",
+      providerReference: "provider-ref-1",
+    };
+
+    const first = await recordGuestPayment(sb, input);
+    expect(first.duplicate).toBe(false);
+
+    const second = await recordGuestPayment(sb, input);
+    expect(second.duplicate).toBe(true);
+  });
+});
+
+describe("refundPayment — double submission (ME-04)", () => {
+  it("a retried refund with the same clientRequestId resolves idempotently instead of throwing a raw duplicate-key error", async () => {
+    const original = {
+      id: "payment-original",
+      tenant_id: TENANT,
+      order_id: ORDER,
+      amount: 40,
+      method: "cash",
+      state: "paid",
+    };
+    const sb = fakeDb({ orders: [baseOrder()], orderItems: [], payments: [original] });
+    const input = {
+      tenantId: TENANT,
+      orderId: ORDER,
+      paymentId: original.id,
+      amount: 40,
+      reason: "guest complaint",
+      clientRequestId: "refund-retry-1",
+    } as any;
+
+    const first = await refundPayment(sb, USER, input);
+    expect(first.duplicate).toBe(false);
+
+    // Previously: the pre-check-then-insert shape meant a second call whose
+    // insert lost the race threw the raw Postgres unique-violation error
+    // instead of returning gracefully. It must now resolve without throwing.
+    const second = await refundPayment(sb, USER, input);
+    expect(second.duplicate).toBe(true);
+
+    const refundRows = (sb as any).tables.restaurant_payments.filter(
+      (r: any) => r.client_request_id === "refund-retry-1",
+    );
+    expect(refundRows).toHaveLength(1);
+  });
+
+  it("a second distinct partial refund cannot push the cumulative total past the original payment (ME-06)", async () => {
+    const original = {
+      id: "payment-original",
+      tenant_id: TENANT,
+      order_id: ORDER,
+      amount: 40,
+      method: "cash",
+      state: "paid",
+    };
+    const sb = fakeDb({ orders: [baseOrder()], orderItems: [], payments: [original] });
+
+    const first = await refundPayment(sb, USER, {
+      tenantId: TENANT,
+      orderId: ORDER,
+      paymentId: original.id,
+      amount: 25,
+      reason: "partial refund 1",
+      clientRequestId: "refund-partial-1",
+    } as any);
+    expect(first.duplicate).toBe(false);
+
+    // 25 already refunded; a second, distinct 25 would total 50 > the
+    // original 40. Must be rejected, not silently allowed through.
+    await expect(
+      refundPayment(sb, USER, {
+        tenantId: TENANT,
+        orderId: ORDER,
+        paymentId: original.id,
+        amount: 25,
+        reason: "partial refund 2",
+        clientRequestId: "refund-partial-2",
+      } as any),
+    ).rejects.toThrow(/cannot exceed the payment it reverses/);
+
+    const refundRows = (sb as any).tables.restaurant_payments.filter(
+      (r: any) => r.refund_of === original.id && r.state === "refunded",
+    );
+    expect(refundRows).toHaveLength(1);
+    expect(refundRows[0].amount).toBe(-25);
+
+    // The remaining balance (15) must still be refundable.
+    const remainder = await refundPayment(sb, USER, {
+      tenantId: TENANT,
+      orderId: ORDER,
+      paymentId: original.id,
+      amount: 15,
+      reason: "remaining balance",
+      clientRequestId: "refund-partial-3",
+    } as any);
+    expect(remainder.duplicate).toBe(false);
+
+    const totalRefunded = (sb as any).tables.restaurant_payments
+      .filter((r: any) => r.refund_of === original.id && r.state === "refunded")
+      .reduce((s: number, r: any) => s + Math.abs(Number(r.amount)), 0);
+    expect(totalRefunded).toBe(40);
+  });
+});

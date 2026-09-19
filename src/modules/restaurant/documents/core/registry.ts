@@ -9,14 +9,7 @@
 import type { RestaurantCapability } from "../../core/permissions";
 import type { DocFormat } from "./types";
 
-export const DOCUMENT_GROUPS = [
-  "procurement",
-  "inventory",
-  "products",
-  "sales",
-  "operations",
-  "intelligence",
-] as const;
+export const DOCUMENT_GROUPS = ["procurement", "inventory", "products", "sales", "operations"] as const;
 export type DocumentGroup = (typeof DOCUMENT_GROUPS)[number];
 
 export const DOCUMENT_TYPE_IDS = [
@@ -44,17 +37,6 @@ export const DOCUMENT_TYPE_IDS = [
   "payment_reconciliation",
   // Operations
   "daily_closing",
-  // Intelligence — Pro Intelligence's own analytics, exported from the same
-  // engines the screen reads (see exports/datasets.server.ts), never a
-  // second derivation of the numbers.
-  "revenue_intelligence",
-  "menu_intelligence",
-  "demand_intelligence",
-  "forecasting_intelligence",
-  "inventory_intelligence_pro",
-  "advanced_analytics",
-  "executive_intelligence",
-  "multi_location_intelligence",
 ] as const;
 export type DocumentTypeId = (typeof DOCUMENT_TYPE_IDS)[number];
 
@@ -316,114 +298,9 @@ export const DOCUMENT_TYPES: Record<DocumentTypeId, DocumentTypeDefinition> = {
     description: "End-of-day trading, tender mix and unresolved exceptions.",
     immutable: false,
   },
-  revenue_intelligence: {
-    id: "revenue_intelligence",
-    label: "Revenue Intelligence",
-    group: "intelligence",
-    kind: "export",
-    capability: "intelligence.read",
-    formats: EXPORT_FORMATS,
-    sourceTable: "revenue.server.ts",
-    workflowRoute: "/admin/restaurant/pro-intelligence",
-    description:
-      "Gross sales, discounts, tax, service charge, net sales, cash collected and outstanding, plus the daily series, top contributors and outlet performance behind the Pro Intelligence revenue view.",
-    immutable: false,
-  },
-  menu_intelligence: {
-    id: "menu_intelligence",
-    label: "Menu Intelligence",
-    group: "intelligence",
-    kind: "export",
-    capability: "intelligence.read",
-    formats: EXPORT_FORMATS,
-    sourceTable: "menu.server.ts",
-    workflowRoute: "/admin/restaurant/pro-intelligence",
-    description:
-      "Every menu item's sales, cost, margin and star/dog/puzzle/plough-horse classification for the window.",
-    immutable: false,
-  },
-  demand_intelligence: {
-    id: "demand_intelligence",
-    label: "Demand Intelligence",
-    group: "intelligence",
-    kind: "export",
-    capability: "intelligence.read",
-    formats: EXPORT_FORMATS,
-    sourceTable: "demand.server.ts",
-    workflowRoute: "/admin/restaurant/pro-intelligence",
-    description:
-      "Order/cover volume by day of week and service period, and emerging/declining items.",
-    immutable: false,
-  },
-  forecasting_intelligence: {
-    id: "forecasting_intelligence",
-    label: "Forecasting",
-    group: "intelligence",
-    kind: "export",
-    capability: "intelligence.read",
-    formats: EXPORT_FORMATS,
-    sourceTable: "forecasting.server.ts",
-    workflowRoute: "/admin/restaurant/pro-intelligence",
-    description:
-      "Deterministic linear-trend demand and revenue projections, plus forecast-driven inventory requirements.",
-    immutable: false,
-  },
-  inventory_intelligence_pro: {
-    id: "inventory_intelligence_pro",
-    label: "Inventory Intelligence (Pro)",
-    group: "intelligence",
-    kind: "export",
-    capability: "intelligence.read",
-    formats: EXPORT_FORMATS,
-    sourceTable: "inventoryPro.server.ts",
-    workflowRoute: "/admin/restaurant/pro-intelligence",
-    description: "Abnormal consumption anomalies and explained reorder requirements.",
-    immutable: false,
-  },
-  advanced_analytics: {
-    id: "advanced_analytics",
-    label: "Advanced Analytics",
-    group: "intelligence",
-    kind: "export",
-    capability: "intelligence.read",
-    formats: EXPORT_FORMATS,
-    sourceTable: "advancedAnalytics.server.ts",
-    workflowRoute: "/admin/restaurant/pro-intelligence",
-    description:
-      "Cross-domain correlations (high sales/low margin, slow-moving stock, revenue drivers, risk vs forecast, revenue concentration) with their evidence.",
-    immutable: false,
-  },
-  executive_intelligence: {
-    id: "executive_intelligence",
-    label: "Executive Intelligence",
-    group: "intelligence",
-    kind: "export",
-    capability: "intelligence.read",
-    formats: EXPORT_FORMATS,
-    sourceTable: "executive.server.ts",
-    workflowRoute: "/admin/restaurant/pro-intelligence",
-    description:
-      "The owner-facing health rollup: overall health, revenue/inventory/demand/menu/margin summaries, and the ranked anomalies and recommendations behind it.",
-    immutable: false,
-  },
-  multi_location_intelligence: {
-    id: "multi_location_intelligence",
-    label: "Multi-Location Command",
-    group: "intelligence",
-    kind: "export",
-    capability: "intelligence.read",
-    formats: EXPORT_FORMATS,
-    sourceTable: "multiLocation.server.ts",
-    workflowRoute: "/admin/restaurant/pro-intelligence",
-    description:
-      "Per-outlet and per-property performance rollups for callers with multi-location reach.",
-    immutable: false,
-  },
 };
 
-export const DOCUMENT_TYPE_LIST: DocumentTypeDefinition[] = DOCUMENT_TYPE_IDS.map(
-  (id) => DOCUMENT_TYPES[id],
-);
+export const DOCUMENT_TYPE_LIST: DocumentTypeDefinition[] = DOCUMENT_TYPE_IDS.map((id) => DOCUMENT_TYPES[id]);
 
 export function documentType(id: string): DocumentTypeDefinition | undefined {
   return (DOCUMENT_TYPES as Record<string, DocumentTypeDefinition>)[id];

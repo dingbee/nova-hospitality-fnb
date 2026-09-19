@@ -468,6 +468,80 @@ describe("reverseMobileMoneyCollection", () => {
       }),
     ).rejects.toThrow(/only a paid collection/i);
   });
+
+  it("ME-06: a second reversal attempt on an already-reversed collection is rejected, not double-processed", async () => {
+    // Simulates the race two concurrent reversal calls would collapse to at
+    // the database boundary: the old code read collection.state === "paid"
+    // in application code and only wrote state="reversed" via an
+    // unconditional UPDATE at the very end, so two callers reading "paid"
+    // before either wrote back would both call the provider and both
+    // insert a refund row (restaurant_mobile_money_refunds has no
+    // uniqueness constraint of its own). The fix claims the transition
+    // atomically (UPDATE ... WHERE state = 'paid') before any provider call
+    // or refund/payment write, so a second call — whether a genuine retry
+    // or the loser of a real race — is rejected before it can duplicate
+    // anything.
+    const db = fakeDb({ orders: [order()], accounts: [activeAccount()] });
+    const collection = await requestMobileMoneyCollection(
+      db as any,
+      USER,
+      { tenantId: TENANT, orderId: ORDER, amount: 36000, clientRequestId: "req-1" },
+      createTestMobileMoneyAdapter("success"),
+    );
+    await confirmMobileMoneyCollection(db as any, {
+      tenantId: TENANT,
+      collectionId: collection.collectionId,
+      confirmedAmount: 36000,
+      confirmedCurrency: "TZS",
+    });
+
+    const first = await reverseMobileMoneyCollection(db as any, USER, {
+      tenantId: TENANT,
+      collectionId: collection.collectionId,
+      reason: "first reversal",
+    });
+    expect(first.collection.state).toBe("reversed");
+
+    await expect(
+      reverseMobileMoneyCollection(db as any, USER, {
+        tenantId: TENANT,
+        collectionId: collection.collectionId,
+        reason: "second reversal attempt",
+      }),
+    ).rejects.toThrow(/only a paid collection/i);
+
+    const refunds = await (db as any)
+      .from("restaurant_mobile_money_refunds")
+      .eq("tenant_id", TENANT);
+    expect(refunds.data).toHaveLength(1);
+    const payments = await (db as any).from("restaurant_payments").eq("tenant_id", TENANT);
+    expect(payments.data).toHaveLength(1);
+  });
+
+  it("ME-06: a reversal cannot ask for more than was collected", async () => {
+    const db = fakeDb({ orders: [order()], accounts: [activeAccount()] });
+    const collection = await requestMobileMoneyCollection(
+      db as any,
+      USER,
+      { tenantId: TENANT, orderId: ORDER, amount: 36000, clientRequestId: "req-1" },
+      createTestMobileMoneyAdapter("success"),
+    );
+    await confirmMobileMoneyCollection(db as any, {
+      tenantId: TENANT,
+      collectionId: collection.collectionId,
+      confirmedAmount: 36000,
+      confirmedCurrency: "TZS",
+    });
+
+    await expect(
+      reverseMobileMoneyCollection(db as any, USER, {
+        tenantId: TENANT,
+        collectionId: collection.collectionId,
+        amount: 50000,
+        reason: "test",
+      }),
+    ).rejects.toThrow(/cannot exceed the amount collected/i);
+  });
 });
 
 describe("handleMobileMoneyWebhookEvent", () => {
