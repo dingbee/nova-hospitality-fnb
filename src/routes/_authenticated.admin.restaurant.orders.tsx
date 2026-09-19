@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import { Receipt, CircleDollarSign, Users, ChefHat } from "lucide-react";
+import { PRODUCT } from "@/config/product";
 import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { StatCard } from "@/components/os/StatCard";
@@ -108,7 +109,7 @@ function OrdersPage() {
     <div className="space-y-4">
       <PageHeader
         title="Orders"
-        description="Every sale that enters NOVA Hospitality F&B — covers, revenue, payment state and actual cost."
+        description={`Every sale that enters ${PRODUCT.name} — covers, revenue, payment state and actual cost.`}
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

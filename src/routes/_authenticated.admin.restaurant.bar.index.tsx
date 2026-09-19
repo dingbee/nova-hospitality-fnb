@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { BarWorkspace } from "@/modules/restaurant/bar/ui/BarWorkspace";
+import { PRODUCT } from "@/config/product";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/bar/")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -10,8 +11,7 @@ export const Route = createFileRoute("/_authenticated/admin/restaurant/bar/")({
       { title: "Bar Operations — Restaurant & Bar OS" },
       {
         name: "description",
-        content:
-          "Bar service board, beverage stock, pour configuration, pour cost and theoretical-versus-actual variance for NOVA.",
+        content: `Bar service board, beverage stock, pour configuration, pour cost and theoretical-versus-actual variance for ${PRODUCT.name}.`,
       },
       { name: "robots", content: "noindex,nofollow" },
     ],

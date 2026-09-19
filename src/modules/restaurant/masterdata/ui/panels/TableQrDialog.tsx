@@ -7,7 +7,8 @@
  * rather than re-verified here on every render.
  */
 import * as React from "react";
-import { Check, Copy, Download, Loader2 } from "lucide-react";
+import { Check, Copy, Download } from "lucide-react";
+import { LexiBiteLoader } from "@/components/brand/LexiBiteLoader";
 import {
   Dialog,
   DialogContent,
@@ -91,7 +92,7 @@ export function TableQrDialog({
                 className="size-full object-contain"
               />
             ) : (
-              <Loader2 className="size-6 animate-spin text-muted-foreground" aria-hidden />
+              <LexiBiteLoader size="md" />
             )}
           </div>
 

@@ -1,9 +1,9 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
-import { Loader2, UtensilsCrossed } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { PRODUCT } from "@/config/product";
+import { LexiBiteLoader } from "@/components/brand/LexiBiteLoader";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
@@ -47,10 +47,10 @@ function AuthPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
       <form onSubmit={submit} className="w-full max-w-sm rounded-xl border bg-card p-8 shadow-sm">
-        <p className="inline-flex items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground">
-          <UtensilsCrossed className="size-4 text-primary" /> {PRODUCT.tagline}
+        <img src="/brand/lexibite-wordmark.svg" alt={PRODUCT.name} className="h-8 w-auto" />
+        <p className="mt-2 text-xs uppercase tracking-widest text-muted-foreground">
+          {PRODUCT.tagline}
         </p>
-        <h1 className="mt-3 text-2xl font-semibold">{PRODUCT.name}</h1>
         <p className="mt-1 text-xs text-muted-foreground">Staff terminal sign-in.</p>
         <div className="mt-6 space-y-4">
           <label className="block text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -80,7 +80,7 @@ function AuthPage() {
           disabled={loading}
           className="mt-6 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground disabled:opacity-60"
         >
-          {loading && <Loader2 className="size-4 animate-spin" />} Sign in
+          {loading && <LexiBiteLoader size="xs" />} Sign in
         </button>
         <p className="mt-4 text-center text-xs text-muted-foreground">
           New restaurant?{" "}

@@ -15,7 +15,12 @@ export const Route = createRootRoute({
   // must declare its own manifest at its own route layout — never a shared
   // one whose start_url could point a guest at an admin route (spec: "Do
   // not use admin routes as PWA entry points").
-  ], links: [{ rel: "stylesheet", href: appCss }, { rel: "stylesheet", href: shellCss }] }),
+  ], links: [
+    { rel: "stylesheet", href: appCss },
+    { rel: "stylesheet", href: shellCss },
+    { rel: "icon", href: "/favicon.ico", sizes: "any" },
+    { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
+  ] }),
   component: RootComponent,
   notFoundComponent: () => <div className="flex min-h-screen items-center justify-center bg-background px-4"><div className="max-w-md text-center"><h1 className="text-5xl font-bold">404</h1><p className="mt-2 text-sm text-muted-foreground">This screen does not exist.</p><Link to="/admin/restaurant" className="mt-6 inline-flex rounded bg-primary px-4 py-2 text-sm text-primary-foreground">Go to the OS</Link></div></div>,
 });

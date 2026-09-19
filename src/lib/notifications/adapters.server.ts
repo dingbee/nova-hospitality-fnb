@@ -42,7 +42,7 @@ export async function sendEmail(input: {
       method: "POST",
       headers,
       body: JSON.stringify({
-        from: env("NOVA_EMAIL_FROM") ?? "no-reply@nova-hospitality.local",
+        from: env("NOVA_EMAIL_FROM") ?? "no-reply@lexibite.local",
         to: input.to,
         subject: input.subject,
         html: input.html,

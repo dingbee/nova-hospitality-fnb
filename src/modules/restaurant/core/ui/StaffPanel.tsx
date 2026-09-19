@@ -11,7 +11,8 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { Loader2, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
+import { LexiBiteLoader } from "@/components/brand/LexiBiteLoader";
 import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { EmptyState } from "@/components/os/EmptyState";
@@ -88,7 +89,7 @@ export function StaffPanel() {
       <SectionCard title="Team" description="Everyone with access to this business.">
         {members.isLoading ? (
           <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Loading…
+            <LexiBiteLoader size="xs" /> Loading…
           </div>
         ) : rows.length === 0 ? (
           <p className="py-6 text-sm text-muted-foreground">No team members found.</p>

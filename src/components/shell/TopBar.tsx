@@ -1,11 +1,4 @@
-import {
-  Command as CommandIcon,
-  LogOut,
-  Menu,
-  Search,
-  Sparkles,
-  UtensilsCrossed,
-} from "lucide-react";
+import { Command as CommandIcon, LogOut, Menu, Search, Sparkles } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { PRODUCT } from "@/config/product";
 import { ThemeToggle } from "@/components/os/ThemeToggle";
@@ -48,8 +41,13 @@ export function TopBar({
         </button>
 
         <Link to="/admin/restaurant" className="flex items-center gap-2.5">
-          <span className="nova-logo flex size-9 items-center justify-center rounded-xl text-[color:var(--nova-accent)]">
-            <UtensilsCrossed className="size-[18px]" />
+          <span className="nova-logo flex size-9 items-center justify-center rounded-xl p-1.5">
+            <img
+              src="/brand/lexibite-icon.svg"
+              alt=""
+              aria-hidden
+              className="size-full object-contain"
+            />
           </span>
           <span className="hidden leading-tight sm:block">
             <span className="block text-sm font-semibold tracking-tight text-[color:var(--nova-ink)]">

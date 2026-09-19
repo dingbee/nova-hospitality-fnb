@@ -58,6 +58,8 @@
   --color-forest: var(--forest);
   --color-charcoal: var(--charcoal);
   --color-gold: var(--gold);
+  --color-lexibite-green: var(--lexibite-green);
+  --color-lexibite-gold: var(--lexibite-gold);
 
   --shadow-soft: 0 30px 60px -30px color-mix(in oklab, var(--charcoal) 40%, transparent);
   --shadow-deep: 0 60px 120px -40px color-mix(in oklab, var(--charcoal) 60%, transparent);
@@ -79,6 +81,12 @@
   --forest: #2A5430;       /* deep green hover */
   --charcoal: #1A1A1A;     /* primary text + black luxe surfaces */
   --green: #346739;        /* brand primary green */
+
+  /* LexiBite official brand colors — reserved for LexiBite brand marks
+     (logo surrounds, the LexiBite loader, "Ask LexiBite" affordances).
+     Not a repaint of the app's existing design-system palette above. */
+  --lexibite-green: #2A7C13;
+  --lexibite-gold: #ECB65F;
 
   --background: var(--ivory);
   --foreground: var(--charcoal);
@@ -1056,3 +1064,20 @@
 /* ---------- Colour-scheme hint (native controls, scrollbars) ---------- */
 [data-os-theme="dark"] { color-scheme: dark; }
 [data-os-theme="light"] { color-scheme: light; }
+
+/* ---------- LexiBite processing/loading signal ----------
+   The official bitten-"e" mark, revolving while LexiBite is working.
+   Continuous, linear, no bounce/elastic/pulse — see LexiBiteLoader.tsx. */
+@keyframes lexibite-revolve {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.lexibite-loader__mark {
+  animation: lexibite-revolve 1.35s linear infinite;
+  transform-origin: center center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lexibite-loader__mark {
+    animation: none;
+  }
+}

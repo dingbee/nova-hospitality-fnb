@@ -1,8 +1,8 @@
 {
   "id": "/admin?terminal",
-  "name": "NOVA Hospitality — Restaurant & Bar OS",
-  "short_name": "NOVA",
-  "description": "Operational terminal for the NOVA Hospitality Restaurant & Bar OS.",
+  "name": "LexiBite — Restaurant & Bar OS",
+  "short_name": "LexiBite",
+  "description": "Operational terminal for the LexiBite Restaurant & Bar OS.",
   "start_url": "/admin/restaurant/pos",
   "scope": "/admin",
   "display": "standalone",

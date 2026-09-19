@@ -35,6 +35,7 @@ import {
   decideDecisionFn,
   updatePlanStepFn,
 } from "@/modules/intelligence/decisions/decision.functions";
+import { PRODUCT } from "@/config/product";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/decisions")({
   head: () => ({
@@ -42,8 +43,7 @@ export const Route = createFileRoute("/_authenticated/admin/restaurant/decisions
       { title: "Restaurant Decisions — Restaurant & Bar OS" },
       {
         name: "description",
-        content:
-          "Findings become predictions, options, plans and approvals inside the NOVA decision engine.",
+        content: `Findings become predictions, options, plans and approvals inside the ${PRODUCT.aiName} decision engine.`,
       },
       { name: "robots", content: "noindex,nofollow" },
     ],

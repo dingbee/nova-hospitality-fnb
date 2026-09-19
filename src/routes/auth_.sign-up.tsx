@@ -1,9 +1,9 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
-import { Loader2, UtensilsCrossed } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { PRODUCT } from "@/config/product";
+import { LexiBiteLoader } from "@/components/brand/LexiBiteLoader";
 
 export const Route = createFileRoute("/auth_/sign-up")({
   head: () => ({
@@ -74,8 +74,13 @@ function SignUpPage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
         <div className="w-full max-w-sm rounded-xl border bg-card p-8 text-center shadow-sm">
-          <p className="inline-flex items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground">
-            <UtensilsCrossed className="size-4 text-primary" /> {PRODUCT.tagline}
+          <img
+            src="/brand/lexibite-wordmark.svg"
+            alt={PRODUCT.name}
+            className="mx-auto h-8 w-auto"
+          />
+          <p className="mt-2 text-xs uppercase tracking-widest text-muted-foreground">
+            {PRODUCT.tagline}
           </p>
           <h1 className="mt-3 text-xl font-semibold">Check your email</h1>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -97,8 +102,9 @@ function SignUpPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
       <form onSubmit={submit} className="w-full max-w-sm rounded-xl border bg-card p-8 shadow-sm">
-        <p className="inline-flex items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground">
-          <UtensilsCrossed className="size-4 text-primary" /> {PRODUCT.tagline}
+        <img src="/brand/lexibite-wordmark.svg" alt={PRODUCT.name} className="h-8 w-auto" />
+        <p className="mt-2 text-xs uppercase tracking-widest text-muted-foreground">
+          {PRODUCT.tagline}
         </p>
         <h1 className="mt-3 text-2xl font-semibold">Create your account</h1>
         <p className="mt-1 text-xs text-muted-foreground">You'll set up your restaurant next.</p>
@@ -145,7 +151,7 @@ function SignUpPage() {
           disabled={loading}
           className="mt-6 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground disabled:opacity-60"
         >
-          {loading && <Loader2 className="size-4 animate-spin" />} Create account
+          {loading && <LexiBiteLoader size="xs" />} Create account
         </button>
         <p className="mt-4 text-center text-xs text-muted-foreground">
           Already have an account?{" "}

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Brain, Sparkles, Wand2, X } from "lucide-react";
 import { PRODUCT } from "@/config/product";
+import { LexiBiteLoader } from "@/components/brand/LexiBiteLoader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -469,7 +470,8 @@ export function StaffNovaPanel({
             ),
           )}
           {ask.isPending && (
-            <div className="mr-auto max-w-[90%] rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
+            <div className="mr-auto flex max-w-[90%] items-center gap-2 rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
+              <LexiBiteLoader size="xs" label={`${PRODUCT.aiName} is thinking`} />
               Thinking…
             </div>
           )}

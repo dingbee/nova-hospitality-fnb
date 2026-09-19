@@ -1,10 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { Loader2, UtensilsCrossed } from "lucide-react";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { activateDemoSessionFn } from "@/modules/lexibite-demo/session.functions";
 import { PRODUCT } from "@/config/product";
+import { LexiBiteLoader } from "@/components/brand/LexiBiteLoader";
 
 export const Route = createFileRoute("/lexibite/demo/activate")({
   ssr: false,
@@ -59,16 +59,15 @@ function DemoActivatePage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
       <div className="w-full max-w-sm rounded-xl border bg-card p-8 text-center shadow-sm">
-        <p className="inline-flex items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground">
-          <UtensilsCrossed className="size-4 text-primary" /> {PRODUCT.tagline}
+        <img src="/brand/lexibite-wordmark.svg" alt={PRODUCT.name} className="mx-auto h-8 w-auto" />
+        <p className="mt-2 text-xs uppercase tracking-widest text-muted-foreground">
+          {PRODUCT.tagline}
         </p>
         <h1 className="mt-3 text-xl font-semibold">
           {status === "working" ? "Launching your demo" : "Couldn't launch your demo"}
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">{message}</p>
-        {status === "working" && (
-          <Loader2 className="mx-auto mt-6 size-5 animate-spin text-primary" />
-        )}
+        {status === "working" && <LexiBiteLoader size="md" className="mx-auto mt-6" />}
       </div>
     </div>
   );

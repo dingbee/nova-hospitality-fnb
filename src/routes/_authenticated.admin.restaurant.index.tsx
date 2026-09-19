@@ -31,11 +31,12 @@ import { posBoardFn } from "@/modules/restaurant/sales/pos.functions";
 import { listRestaurantKitchenTicketsFn } from "@/modules/restaurant/kitchen/kitchen.functions";
 import { acknowledgeServiceRequestFn } from "@/modules/restaurant/service-requests/service-requests.functions";
 import { presentRestaurantBillFn } from "@/modules/restaurant/sales/bill.functions";
+import { productTitle } from "@/config/product";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/")({
   head: () => ({
     meta: [
-      { title: "Restaurant & Bar OS Overview — NOVA Hospitality F&B" },
+      { title: productTitle("Restaurant & Bar OS Overview") },
       {
         name: "description",
         content:

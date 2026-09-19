@@ -1,7 +1,8 @@
 import * as React from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQueryClient } from "@tanstack/react-query";
-import { QrCode, Loader2 } from "lucide-react";
+import { QrCode } from "lucide-react";
+import { LexiBiteLoader } from "@/components/brand/LexiBiteLoader";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SectionCard } from "@/components/os/SectionCard";
@@ -147,7 +148,7 @@ export function TablesPanel({ tenantId, data }: { tenantId: string; data: Master
             onClick={downloadAllQr}
           >
             {bulkPending ? (
-              <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
+              <LexiBiteLoader size="xs" className="mr-1" />
             ) : (
               <QrCode className="mr-1 size-4" aria-hidden />
             )}

@@ -17,10 +17,11 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { Check, Loader2, UtensilsCrossed } from "lucide-react";
+import { Check, UtensilsCrossed } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { PRODUCT } from "@/config/product";
+import { LexiBiteLoader } from "@/components/brand/LexiBiteLoader";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import {
@@ -185,7 +186,7 @@ function OnboardingPage() {
   if (ws.isLoading || (tenant && status.isLoading) || !step) {
     return (
       <Centered>
-        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        <LexiBiteLoader size="md" />
       </Centered>
     );
   }
@@ -394,7 +395,7 @@ function WelcomeAndBusinessStep({ onCreated }: { onCreated: (tenantId: string) =
             disabled={create.isPending || name.trim().length < 2}
             className="min-h-11 w-full"
           >
-            {create.isPending && <Loader2 className="mr-2 size-4 animate-spin" />} Create your
+            {create.isPending && <LexiBiteLoader size="xs" className="mr-2" />} Create your
             restaurant
           </Button>
         </form>
@@ -495,8 +496,7 @@ function PropertyOutletStep({
           }
           className="min-h-11 w-full"
         >
-          {create.isPending && <Loader2 className="mr-2 size-4 animate-spin" />} Add your first
-          outlet
+          {create.isPending && <LexiBiteLoader size="xs" className="mr-2" />} Add your first outlet
         </Button>
       </form>
     </StepShell>
@@ -606,7 +606,7 @@ function OperatingModelStep({ tenantId, onSaved }: { tenantId: string; onSaved: 
           disabled={save.isPending}
           className="min-h-11 w-full"
         >
-          {save.isPending && <Loader2 className="mr-2 size-4 animate-spin" />} Continue
+          {save.isPending && <LexiBiteLoader size="xs" className="mr-2" />} Continue
         </Button>
       </div>
     </StepShell>

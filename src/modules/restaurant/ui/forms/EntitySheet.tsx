@@ -6,7 +6,7 @@
  * reach Save.
  */
 import * as React from "react";
-import { Loader2 } from "lucide-react";
+import { LexiBiteLoader } from "@/components/brand/LexiBiteLoader";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -64,7 +64,7 @@ export function EntitySheet({
                 Cancel
               </Button>
               <Button type="submit" className="h-11 min-w-32" disabled={pending || disabled}>
-                {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                {pending ? <LexiBiteLoader size="xs" className="mr-2" /> : null}
                 {submitLabel}
               </Button>
             </div>

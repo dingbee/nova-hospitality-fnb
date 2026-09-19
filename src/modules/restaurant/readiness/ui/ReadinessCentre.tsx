@@ -12,7 +12,8 @@ import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, Check, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, RefreshCw } from "lucide-react";
+import { LexiBiteLoader } from "@/components/brand/LexiBiteLoader";
 import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { EmptyState } from "@/components/os/EmptyState";
@@ -121,7 +122,7 @@ export function ReadinessCentre() {
         <PageHeader title="Readiness centre" description="Checking what's configured…" />
         {report.isLoading && (
           <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" aria-hidden="true" /> Loading readiness…
+            <LexiBiteLoader size="xs" /> Loading readiness…
           </div>
         )}
       </div>
@@ -197,9 +198,7 @@ export function ReadinessCentre() {
               onClick={() => confirmGoLive.mutate()}
               disabled={confirmGoLive.isPending}
             >
-              {confirmGoLive.isPending && (
-                <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
-              )}
+              {confirmGoLive.isPending && <LexiBiteLoader size="xs" className="mr-2" />}
               Confirm go-live
             </Button>
           </div>

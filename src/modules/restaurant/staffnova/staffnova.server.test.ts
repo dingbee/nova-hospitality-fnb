@@ -366,7 +366,7 @@ describe("askStaffNova — no fabrication on AI failure (G)", () => {
     );
 
     expect(result.degraded).toBe(true);
-    expect(result.answer).toMatch(/unable to reach the nova assistant/i);
+    expect(result.answer).toMatch(/unable to reach lexibite/i);
   });
 
   it("a hard throw from the provider call (defense in depth, beyond its normal never-throws contract) also degrades safely rather than crashing the request", async () => {
@@ -381,7 +381,7 @@ describe("askStaffNova — no fabrication on AI failure (G)", () => {
     );
 
     expect(result.degraded).toBe(true);
-    expect(result.answer).toMatch(/unable to reach the nova assistant/i);
+    expect(result.answer).toMatch(/unable to reach lexibite/i);
   });
 
   it("a malformed provider response — missing/undefined content on an otherwise-available result — degrades safely instead of throwing a TypeError", async () => {

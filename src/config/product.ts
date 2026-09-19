@@ -1,16 +1,22 @@
 /**
- * NOVA Hospitality F&B — product identity.
+ * LexiBite — product identity.
  *
  * Product identity is fixed; *customer* identity (tenant, property, outlet)
  * is data and is resolved from the database at runtime. Nothing here may
  * name a specific hotel, lodge or restaurant group.
+ *
+ * LexiBite is the single product identity across every surface — guest
+ * ordering PWA and staff operational terminal (POS/KDS/back office) alike.
+ * Internal code, database entities and provider identifiers keep their
+ * existing technical names; only the customer/operator-facing strings read
+ * from this file.
  */
 export const PRODUCT = {
-  name: "NOVA Hospitality F&B",
-  shortName: "NOVA F&B",
+  name: "LexiBite",
+  shortName: "LexiBite",
   tagline: "Restaurant & Bar OS",
-  vendor: "NOVA Hospitality",
-  supportEmail: "support@nova-hospitality.local",
+  vendor: "LexiBite",
+  supportEmail: "support@lexibite.local",
   /**
    * The customer/operator-facing name of the AI intelligence experience —
    * "Ask LexiBite", "LexiBite's interpretation", "LexiBite recommendation",
@@ -26,9 +32,9 @@ export const PRODUCT = {
   /**
    * The customer-facing product identity: guest portal, guest PWA, QR
    * artifacts, receipts, invoices, confirmation documents, transactional
-   * emails — anywhere a diner/guest sees the product name. The staff-facing
-   * operational terminal (POS/KDS/back office) keeps `name`/`shortName`
-   * above; only surfaces the GUEST sees must say this, never NOVA.
+   * emails — anywhere a diner/guest sees the product name. Kept as its own
+   * field (currently equal to `name`) so guest-facing copy can keep reading
+   * a dedicated identity even though the staff terminal now shares it too.
    */
   guestFacingName: "LexiBite",
 } as const;

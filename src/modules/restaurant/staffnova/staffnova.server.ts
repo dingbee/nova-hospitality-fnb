@@ -59,6 +59,7 @@ import {
   rolesInTenant,
 } from "../core/access.server";
 import { classifyInstruction } from "../understand/classify";
+import { PRODUCT } from "@/config/product";
 import { assertAiCapability, recordAiUsage } from "@/modules/commercial/ai-governance.server";
 import { assertEntitled, CommercialEntitlementError } from "@/modules/commercial/resolver.server";
 import { QuotaExceededError } from "@/modules/commercial/quota.server";
@@ -513,8 +514,7 @@ export async function askStaffNova(
     // message, same "fail closed to a plain apology" behavior guest Ask
     // NOVA's defaultAiCaller degrade path already uses.
     return {
-      answer:
-        "I'm unable to reach the NOVA assistant right now. Please try again in a moment, or check the Intelligence and Decisions pages directly for the latest data.",
+      answer: `I'm unable to reach ${PRODUCT.aiName} right now. Please try again in a moment, or check the Intelligence and Decisions pages directly for the latest data.`,
       degraded: true,
       generatedAt,
     };

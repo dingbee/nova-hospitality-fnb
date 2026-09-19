@@ -18,6 +18,7 @@
  * verdict for the full audit this boundary is built on.
  */
 import { assertCapability } from "../core/access.server";
+import { PRODUCT } from "@/config/product";
 import type {
   NovaAction,
   NovaEntityMention,
@@ -308,7 +309,7 @@ export async function previewNovaPreparation(
       }
     } else if (contract.supplier.kind === "cheapest") {
       warnings.push(
-        "You asked for the cheapest supplier — NOVA doesn't rank suppliers here; please choose one in the form.",
+        `You asked for the cheapest supplier — ${PRODUCT.aiName} doesn't rank suppliers here; please choose one in the form.`,
       );
     } else if (contract.supplier.status === "unresolved") {
       warnings.push(
@@ -386,7 +387,7 @@ export async function commitNovaPreparation(
       tenantId,
       priority: "normal",
       currency,
-      reason: "Prepared by NOVA from a staff request.",
+      reason: `Prepared by ${PRODUCT.aiName} from a staff request.`,
       lines: fields.lines.map((l) => ({
         inventoryItemId: l.inventoryItemId ?? undefined,
         unitId: l.unitId ?? undefined,
@@ -408,7 +409,7 @@ export async function commitNovaPreparation(
       destinationLocationId: fields.destinationLocationId!,
       requiresApproval: false,
       submit: false,
-      notes: "Prepared by NOVA from a staff request.",
+      notes: `Prepared by ${PRODUCT.aiName} from a staff request.`,
       lines: fields.lines.map((l) => ({
         inventoryItemId: l.inventoryItemId!,
         unitId: l.unitId ?? undefined,
@@ -427,7 +428,7 @@ export async function commitNovaPreparation(
       sourceLocationId: fields.sourceLocationId!,
       destinationLocationId: fields.destinationLocationId!,
       submit: false,
-      notes: "Prepared by NOVA from a staff request.",
+      notes: `Prepared by ${PRODUCT.aiName} from a staff request.`,
       lines: fields.lines.map((l) => ({
         inventoryItemId: l.inventoryItemId!,
         unitId: l.unitId ?? undefined,
