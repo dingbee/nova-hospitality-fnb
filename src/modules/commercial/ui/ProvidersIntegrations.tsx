@@ -184,7 +184,7 @@ export function ProvidersIntegrationsPanel({
               </SelectContent>
             </Select>
           </div>
-          <div><Label>Integration type</Label><Input value={newProvider.integrationType} onChange={(e) => setNewProvider((p) => ({ ...p, integrationType: value }))} /></div>
+          <div><Label>Integration type</Label><Input value={newProvider.integrationType} onChange={(e) => setNewProvider((p) => ({ ...p, integrationType: e.target.value }))} /></div>
         </div>
         <div className="mt-4"><Label>Description</Label><Input value={newProvider.description} onChange={(e) => setNewProvider((p) => ({ ...p, description: e.target.value }))} placeholder="What this provider is used for" /></div>
         <div className="mt-4 flex justify-end"><Button disabled={mutation.isPending || !newProvider.code || !newProvider.name} onClick={() => mutation.mutate(newProvider)}>Register provider</Button></div>

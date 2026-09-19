@@ -76,7 +76,8 @@ import {
   upsertCommercialPropertyPolicyFn,
   upsertCommercialQuotaDefinitionFn,
   upsertCommercialSubscriptionFn,
-  whoAmICommercialFn,\n  listCommercialProvidersFn,
+  whoAmICommercialFn,
+  listCommercialProvidersFn,
 } from "../commercial.functions";
 import { BillingOverviewPanel, CustomerWorkspacePanel } from "./CommercialLifecycle";
 import {
@@ -111,6 +112,7 @@ function useCommercialData() {
     auditLog: useServerFn(listCommercialAuditLogFn),
     administrators: useServerFn(listCommercialAdministratorsFn),
     whoAmI: useServerFn(whoAmICommercialFn),
+    providerList: useServerFn(listCommercialProvidersFn),
     tenants: useServerFn(listCommercialTenantsFn),
   };
   const plans = useQuery({
@@ -189,13 +191,15 @@ function useCommercialData() {
     auditLog,
     administrators,
     whoAmI,
+    providerList,
     tenants,
   };
 }
 
 export function CommercialCentre() {
   const qc = useQueryClient();
-  const data = useCommercialData();\n  const providers = useQuery({ queryKey: ["commercial.providers"], queryFn: () => data.providerList({ data: {} }) });
+  const data = useCommercialData();
+  const providers = useQuery({ queryKey: ["commercial.providers"], queryFn: () => data.providerList({ data: {} }) });
 
   const invalidate = (...keys: string[]) =>
     keys.forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
@@ -215,7 +219,8 @@ export function CommercialCentre() {
     data.plans.isLoading ||
     data.capabilities.isLoading ||
     data.programmes.isLoading ||
-    data.pricing.isLoading;
+    data.pricing.isLoading ||
+    data.providerList.isLoading;
   if (loading) return <LoadingState />;
 
   const plans = data.plans.data ?? [];
@@ -265,7 +270,8 @@ export function CommercialCentre() {
           <TabsTrigger value="ops-customers">Customers</TabsTrigger>
           <TabsTrigger value="ops-renewals">Renewals</TabsTrigger>
           <TabsTrigger value="ops-collections">Collections</TabsTrigger>
-          <TabsTrigger value="intelligence">Intelligence</TabsTrigger>\n          <TabsTrigger value="providers">Providers &amp; Integrations</TabsTrigger>
+          <TabsTrigger value="intelligence">Intelligence</TabsTrigger>
+          <TabsTrigger value="providers">Providers &amp; Integrations</TabsTrigger>
           <TabsTrigger value="overview">Governance</TabsTrigger>
           <TabsTrigger value="plans">Plans</TabsTrigger>
           <TabsTrigger value="capabilities">Capabilities</TabsTrigger>
@@ -296,7 +302,10 @@ export function CommercialCentre() {
         <TabsContent value="ops-collections">
           <CollectionsPanel />
         </TabsContent>
-        <TabsContent value="providers">\n          <ProvidersIntegrationsPanel providers={data.providerList.data ?? []} onSaved={() => invalidate("commercial.providers")} />\n        </TabsContent>\n        <TabsContent value="intelligence">
+        <TabsContent value="providers">
+          <ProvidersIntegrationsPanel providers={data.providerList.data ?? []} onSaved={() => invalidate("commercial.providers")} />
+        </TabsContent>
+        <TabsContent value="intelligence">
           <div className="space-y-6">
             <IntelligenceOverviewPanel />
             <CustomerHealthPanel />
