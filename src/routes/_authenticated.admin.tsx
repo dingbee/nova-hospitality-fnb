@@ -11,7 +11,7 @@ export const Route = createFileRoute("/_authenticated/admin")({
   ),
   errorComponent: ({ error }) => (
     <NovaShell>
-      <ComingSoon title="Something went wrong" description={error.message} />
+      <ComingSoon\n        title="Something went wrong"\n        description={error instanceof Error ? error.message : "An unexpected error occurred."}\n      />
     </NovaShell>
   ),
   notFoundComponent: () => (
