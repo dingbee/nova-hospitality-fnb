@@ -384,20 +384,30 @@ export function stageSupplierProductRow(
     errors.push(`Purchase unit "${mapped.unitCode}" was not recognised.`);
   }
 
-  const supplierMatch = classifyExisting(
-    matchCatalogItem(
-      { sku: mapped.supplierCode, name: mapped.supplierName },
-      supplierCandidates(ref.suppliers),
-    ),
-    `Supplier "${mapped.supplierName ?? mapped.supplierCode ?? "?"}"`,
-  );
-  const itemMatch = classifyExisting(
-    matchCatalogItem(
-      { barcode: mapped.itemBarcode, sku: mapped.itemSku, name: mapped.itemName },
-      inventoryItemCandidates(ref.inventoryItems),
-    ),
-    `Item "${mapped.itemName ?? mapped.itemSku ?? mapped.itemBarcode ?? "?"}"`,
-  );
+  const supplierById = mapped.supplierCode
+    ? ref.suppliers.find((s) => s.id === mapped.supplierCode)
+    : undefined;
+  const supplierMatch = supplierById
+    ? { status: "exact_match" as MatchStatus, id: supplierById.id, confidence: 1, evidence: ["Exact tenant-scoped supplier ID matched."] }
+    : classifyExisting(
+        matchCatalogItem(
+          { sku: mapped.supplierCode, name: mapped.supplierName },
+          supplierCandidates(ref.suppliers),
+        ),
+        `Supplier "${mapped.supplierName ?? mapped.supplierCode ?? "?"}"`,
+      );
+  const itemById = mapped.itemSku
+    ? ref.inventoryItems.find((item) => item.id === mapped.itemSku)
+    : undefined;
+  const itemMatch = itemById
+    ? { status: "exact_match" as MatchStatus, id: itemById.id, confidence: 1, evidence: ["Exact tenant-scoped inventory item ID matched."] }
+    : classifyExisting(
+        matchCatalogItem(
+          { barcode: mapped.itemBarcode, sku: mapped.itemSku, name: mapped.itemName },
+          inventoryItemCandidates(ref.inventoryItems),
+        ),
+        `Item "${mapped.itemName ?? mapped.itemSku ?? mapped.itemBarcode ?? "?"}"`,
+      );
   if (supplierMatch.error) errors.push(required(supplierMatch.error));
   if (itemMatch.error) errors.push(required(itemMatch.error));
 
@@ -585,10 +595,13 @@ export function stageMenuItemRow(
   // any other Advanced Import source) behaves identically to today.
   let menuId: string | null = null;
   if (mapped.menuCode && ref.menus) {
-    const menuMatch = classifyExisting(
-      matchCatalogItem({ sku: mapped.menuCode, name: mapped.menuCode }, menuCandidates(ref.menus)),
-      `Menu "${mapped.menuCode}"`,
-    );
+    const menuById = ref.menus.find((menu) => menu.id === mapped.menuCode);
+    const menuMatch = menuById
+      ? { status: "exact_match" as MatchStatus, id: menuById.id, confidence: 1, evidence: ["Exact tenant-scoped menu ID matched."] }
+      : classifyExisting(
+          matchCatalogItem({ sku: mapped.menuCode, name: mapped.menuCode }, menuCandidates(ref.menus)),
+          `Menu "${mapped.menuCode}"`,
+        );
     if (menuMatch.error) errors.push(required(menuMatch.error));
     menuId = menuMatch.id;
   }
@@ -671,17 +684,27 @@ export function stageProductStationRow(
   const price = numField(mapped.price, "Price", errors);
   if (price !== undefined && price < 0) errors.push(required("Price cannot be negative."));
 
-  const menuItemMatch = classifyExisting(
-    matchCatalogItem({ name: mapped.menuItemName }, menuItemCandidates(ref.menuItems)),
-    `Dish/drink "${mapped.menuItemName ?? "?"}"`,
-  );
-  const stationMatch = classifyExisting(
-    matchCatalogItem(
-      { sku: mapped.stationCode, name: mapped.stationCode },
-      stationCandidates(ref.stations),
-    ),
-    `Station "${mapped.stationCode ?? "?"}"`,
-  );
+  const menuItemById = mapped.menuItemName
+    ? ref.menuItems.find((item) => item.id === mapped.menuItemName)
+    : undefined;
+  const menuItemMatch = menuItemById
+    ? { status: "exact_match" as MatchStatus, id: menuItemById.id, confidence: 1, evidence: ["Exact tenant-scoped menu item ID matched."] }
+    : classifyExisting(
+        matchCatalogItem({ name: mapped.menuItemName }, menuItemCandidates(ref.menuItems)),
+        `Dish/drink "${mapped.menuItemName ?? "?"}"`,
+      );
+  const stationById = mapped.stationCode
+    ? ref.stations.find((station) => station.id === mapped.stationCode)
+    : undefined;
+  const stationMatch = stationById
+    ? { status: "exact_match" as MatchStatus, id: stationById.id, confidence: 1, evidence: ["Exact tenant-scoped station ID matched."] }
+    : classifyExisting(
+        matchCatalogItem(
+          { sku: mapped.stationCode, name: mapped.stationCode },
+          stationCandidates(ref.stations),
+        ),
+        `Station "${mapped.stationCode ?? "?"}"`,
+      );
   if (menuItemMatch.error) errors.push(required(menuItemMatch.error));
   if (stationMatch.error) errors.push(required(stationMatch.error));
 
@@ -1134,10 +1157,13 @@ export function stageRecipeComponentRow(
   let menuItemConfidence: number | null = null;
   let menuItemEvidence: string[] = [];
   if (mapped.itemCode) {
-    const productMatch = classifyExisting(
-      matchCatalogItem({ sku: mapped.itemCode }, productCandidates(ref.products ?? [])),
-      `Item "${mapped.itemCode}"`,
-    );
+    const productById = (ref.products ?? []).find((product) => product.id === mapped.itemCode);
+    const productMatch = productById
+      ? { status: "exact_match" as MatchStatus, id: productById.id, confidence: 1, evidence: ["Exact tenant-scoped product ID matched."] }
+      : classifyExisting(
+          matchCatalogItem({ sku: mapped.itemCode }, productCandidates(ref.products ?? [])),
+          `Item "${mapped.itemCode}"`,
+        );
     if (productMatch.error) errors.push(required(productMatch.error));
     menuItemStatus = productMatch.status;
     menuItemConfidence = productMatch.confidence;
@@ -1151,10 +1177,15 @@ export function stageRecipeComponentRow(
       }
     }
   } else {
-    const menuItemMatch = classifyExisting(
-      matchCatalogItem({ name: mapped.menuItemName }, menuItemCandidates(ref.menuItems)),
-      `Dish/drink "${mapped.menuItemName ?? "?"}"`,
-    );
+    const menuItemById = mapped.menuItemName
+      ? ref.menuItems.find((item) => item.id === mapped.menuItemName)
+      : undefined;
+    const menuItemMatch = menuItemById
+      ? { status: "exact_match" as MatchStatus, id: menuItemById.id, confidence: 1, evidence: ["Exact tenant-scoped menu item ID matched."] }
+      : classifyExisting(
+          matchCatalogItem({ name: mapped.menuItemName }, menuItemCandidates(ref.menuItems)),
+          `Dish/drink "${mapped.menuItemName ?? "?"}"`,
+        );
     if (menuItemMatch.error) errors.push(required(menuItemMatch.error));
     menuItemId = menuItemMatch.id;
     menuItemStatus = menuItemMatch.status;
@@ -1162,13 +1193,18 @@ export function stageRecipeComponentRow(
     menuItemEvidence = menuItemMatch.evidence;
   }
 
-  const ingredientMatch = classifyExisting(
-    matchCatalogItem(
-      { barcode: mapped.ingredientBarcode, sku: mapped.ingredientSku, name: mapped.ingredientName },
-      inventoryItemCandidates(ref.inventoryItems),
-    ),
-    `Ingredient "${mapped.ingredientName ?? mapped.ingredientSku ?? mapped.ingredientBarcode ?? "?"}"`,
-  );
+  const ingredientById = mapped.ingredientSku
+    ? ref.inventoryItems.find((item) => item.id === mapped.ingredientSku)
+    : undefined;
+  const ingredientMatch = ingredientById
+    ? { status: "exact_match" as MatchStatus, id: ingredientById.id, confidence: 1, evidence: ["Exact tenant-scoped inventory item ID matched."] }
+    : classifyExisting(
+        matchCatalogItem(
+          { barcode: mapped.ingredientBarcode, sku: mapped.ingredientSku, name: mapped.ingredientName },
+          inventoryItemCandidates(ref.inventoryItems),
+        ),
+        `Ingredient "${mapped.ingredientName ?? mapped.ingredientSku ?? mapped.ingredientBarcode ?? "?"}"`,
+      );
   if (ingredientMatch.error) errors.push(required(ingredientMatch.error));
 
   const overallStatus = worse(menuItemStatus, ingredientMatch.status);
@@ -1234,13 +1270,18 @@ export function stageOpeningStockRow(
     errors.push(`Unit "${mapped.unitCode}" was not recognised — confirm it manually.`);
   }
 
-  const itemMatch = classifyExisting(
-    matchCatalogItem(
-      { barcode: mapped.itemBarcode, sku: mapped.itemSku, name: mapped.itemName },
-      inventoryItemCandidates(ref.inventoryItems),
-    ),
-    `Item "${mapped.itemName ?? mapped.itemSku ?? mapped.itemBarcode ?? "?"}"`,
-  );
+  const itemById = mapped.itemSku
+    ? ref.inventoryItems.find((item) => item.id === mapped.itemSku)
+    : undefined;
+  const itemMatch = itemById
+    ? { status: "exact_match" as MatchStatus, id: itemById.id, confidence: 1, evidence: ["Exact tenant-scoped inventory item ID matched."] }
+    : classifyExisting(
+        matchCatalogItem(
+          { barcode: mapped.itemBarcode, sku: mapped.itemSku, name: mapped.itemName },
+          inventoryItemCandidates(ref.inventoryItems),
+        ),
+        `Item "${mapped.itemName ?? mapped.itemSku ?? mapped.itemBarcode ?? "?"}"`,
+      );
   if (itemMatch.error) errors.push(required(itemMatch.error));
 
   return {
