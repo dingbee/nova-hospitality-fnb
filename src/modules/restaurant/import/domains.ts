@@ -350,6 +350,18 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       required: false,
       aliases: alias("Shelf Life", "Shelf Life Days", "Shelf Life (Days)", "shelf_life_days"),
     },
+    {
+      field: "allowNegative",
+      label: "Allow negative stock",
+      required: false,
+      aliases: alias("Allow Negative", "allow_negative"),
+    },
+    {
+      field: "trackBatches",
+      label: "Track batches",
+      required: false,
+      aliases: alias("Track Batches", "track_batches"),
+    },
   ],
   supplier_product: [
     {
@@ -360,13 +372,13 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       // that references suppliers only by their code, like Suppliers'
       // own natural key, is a legitimate, matchable source.
       required: false,
-      aliases: alias("Supplier", "Supplier Name", "Vendor", "Supplier ID", "supplier_id"),
+      aliases: alias("Supplier", "Supplier Name", "Vendor"),
     },
     {
       field: "supplierCode",
       label: "Supplier code (to match)",
       required: false,
-      aliases: alias("Supplier Code", "Vendor Code"),
+      aliases: alias("Supplier Code", "Vendor Code", "Supplier ID", "supplier_id"),
     },
     {
       field: "itemName",
@@ -378,7 +390,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "itemSku",
       label: "Item SKU (to match)",
       required: false,
-      aliases: alias("SKU", "Item Code", "Item SKU", "Inventory SKU"),
+      aliases: alias("SKU", "Item Code", "Item SKU", "Inventory SKU", "Inventory Item ID", "inventory_item_id"),
     },
     {
       field: "itemBarcode",
@@ -435,7 +447,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "minOrderQuantity",
       label: "Min order quantity",
       required: false,
-      aliases: alias("MOQ", "Min Order", "Minimum Order Quantity"),
+      aliases: alias("MOQ", "Min Order", "Minimum Order Quantity", "min_order_quantity"),
     },
     {
       field: "leadTimeDays",
@@ -481,6 +493,12 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       required: false,
       aliases: alias("Description", "Details"),
     },
+    {
+      field: "allergens",
+      label: "Allergens",
+      required: false,
+      aliases: alias("Allergens", "Allergen"),
+    },
   ],
   category: [
     {
@@ -524,13 +542,13 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "menuCode",
       label: "Menu code (to match)",
       required: false,
-      aliases: alias("Menu Code", "Menu"),
+      aliases: alias("Menu Code", "Menu", "Menu ID", "menu_id"),
     },
     {
       field: "categoryCode",
       label: "Category code (to match)",
       required: false,
-      aliases: alias("Category Code"),
+      aliases: alias("Category Code", "Slug"),
     },
     {
       field: "categoryName",
@@ -868,7 +886,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "itemName",
       label: "Item name (to match)",
       required: true,
-      aliases: alias("Item Name", "Name", "Product Name"),
+      aliases: alias("Item Name", "Name", "Product Name", "Item"),
     },
     {
       field: "itemSku",
@@ -905,7 +923,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "unitCost",
       label: "Unit cost",
       required: false,
-      aliases: alias("Cost", "Unit Cost", "Value"),
+      aliases: alias("Cost", "Unit Cost", "Value", "Unit Cost TZS", "unit_cost_tzs"),
     },
     {
       field: "currency",
