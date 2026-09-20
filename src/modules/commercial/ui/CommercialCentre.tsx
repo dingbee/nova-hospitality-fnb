@@ -78,9 +78,11 @@ import {
   upsertCommercialSubscriptionFn,
   whoAmICommercialFn,
   listCommercialProvidersFn,
+  listCommercialAiProvidersFn,
 } from "../commercial.functions";
 import { BillingOverviewPanel, CustomerWorkspacePanel } from "./CommercialLifecycle";
 import { ProvidersIntegrationsPanel } from "./ProvidersIntegrations";
+import { AIProvidersPanel } from "./AIProvidersPanel";
 import {
   CollectionsPanel,
   CommercialOverviewPanel,
@@ -114,6 +116,7 @@ function useCommercialData() {
     administrators: useServerFn(listCommercialAdministratorsFn),
     whoAmI: useServerFn(whoAmICommercialFn),
     providerList: useServerFn(listCommercialProvidersFn),
+    aiProviderList: useServerFn(listCommercialAiProvidersFn),
     tenants: useServerFn(listCommercialTenantsFn),
   };
   const plans = useQuery({
@@ -176,6 +179,10 @@ function useCommercialData() {
     queryKey: ["commercial.providers"],
     queryFn: () => fns.providerList({ data: {} }),
   });
+  const aiProviderList = useQuery({
+    queryKey: ["commercial.aiProviders"],
+    queryFn: () => fns.aiProviderList({ data: {} }),
+  });
   const tenants = useQuery({
     queryKey: ["commercial.tenants"],
     queryFn: () => fns.tenants({ data: {} }),
@@ -197,6 +204,7 @@ function useCommercialData() {
     administrators,
     whoAmI,
     providerList,
+    aiProviderList,
     tenants,
   };
 }
@@ -224,7 +232,8 @@ export function CommercialCentre() {
     data.capabilities.isLoading ||
     data.programmes.isLoading ||
     data.pricing.isLoading ||
-    data.providerList.isLoading;
+    data.providerList.isLoading ||
+    data.aiProviderList.isLoading;
   if (loading) return <LoadingState />;
 
   const plans = data.plans.data ?? [];
@@ -275,7 +284,8 @@ export function CommercialCentre() {
           <TabsTrigger value="ops-renewals">Renewals</TabsTrigger>
           <TabsTrigger value="ops-collections">Collections</TabsTrigger>
           <TabsTrigger value="intelligence">Intelligence</TabsTrigger>
-          <TabsTrigger value="providers">Providers &amp; Integrations</TabsTrigger>
+          <TabsTrigger value="providers">Platform Providers</TabsTrigger>
+          <TabsTrigger value="ai-providers">AI / LLM</TabsTrigger>
           <TabsTrigger value="overview">Governance</TabsTrigger>
           <TabsTrigger value="plans">Plans</TabsTrigger>
           <TabsTrigger value="capabilities">Capabilities</TabsTrigger>
@@ -308,6 +318,9 @@ export function CommercialCentre() {
         </TabsContent>
         <TabsContent value="providers">
           <ProvidersIntegrationsPanel providers={data.providerList.data ?? []} onSaved={() => invalidate("commercial.providers")} />
+        </TabsContent>
+        <TabsContent value="ai-providers">
+          <AIProvidersPanel providers={data.aiProviderList.data ?? []} onSaved={() => invalidate("commercial.aiProviders")} />
         </TabsContent>
         <TabsContent value="intelligence">
           <div className="space-y-6">
