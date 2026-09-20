@@ -3,7 +3,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
 import { presentUserFacingError } from "@/lib/errors/present-error";
 
-function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
+function DefaultErrorComponent({ error, reset }: { error: unknown; reset: () => void }) {
   const router = useRouter();
   // ME-16 remediation (ME16-03): a correlation reference is shown even in
   // production, without ever showing the raw message/stack there — the
@@ -34,7 +34,7 @@ function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => vo
         </div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Something went wrong</h1>
         <p className="mt-2 text-sm text-muted-foreground">{presented.message}</p>
-        {import.meta.env.DEV && error.message && (
+        {import.meta.env.DEV && error instanceof Error && error.message && (
           <pre className="mt-4 max-h-40 overflow-auto rounded-md bg-muted p-3 text-left font-mono text-xs text-destructive">
             {error.message}
           </pre>
