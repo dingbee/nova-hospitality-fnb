@@ -49,9 +49,15 @@ function buildStartHereSheet(): XLSX.WorkSheet {
       "All other operational sheets. Leave them with only the header row if you do not use them.",
     ],
     ["Stable codes", "Use short, unique, stable codes. Cross-sheet references must match exactly."],
-    ["Numbers", "Enter quantities/prices as numbers. Do not add currency symbols to numeric cells."],
+    [
+      "Numbers",
+      "Enter quantities/prices as numbers. Do not add currency symbols to numeric cells.",
+    ],
     ["Units", "Use only the LexiBite unit codes listed below: KG, G, L, ML, PC, BTL, CTN."],
-    ["Pack Size", "For an item bought and stocked in the same unit, use 1. Do not leave a deliberate zero."],
+    [
+      "Pack Size",
+      "For an item bought and stocked in the same unit, use 1. Do not leave a deliberate zero.",
+    ],
     [
       "Bottle contents",
       "For a 750ml bottle: Stock Unit = BTL, Purchase Unit = CTN, Pack Size = 12, Content per Stock Unit = 750, Content Unit = ML.",
@@ -64,7 +70,10 @@ function buildStartHereSheet(): XLSX.WorkSheet {
       "Relationships",
       "MENU ITEMS Item Code is referenced by VARIANTS, ITEM MODIFIERS and RECIPES. Inventory SKU is referenced by RECIPES and SUPPLIER PRODUCTS.",
     ],
-    ["Stations", "Do not create a separate station sheet. MENU ITEMS → Station is the canonical input."],
+    [
+      "Stations",
+      "Do not create a separate station sheet. MENU ITEMS → Station is the canonical input.",
+    ],
     ["Modifiers", "If Effect = Inventory, provide Inventory SKU, Quantity and Unit."],
     [
       "Upload",
@@ -189,18 +198,31 @@ export function buildLexibiteTemplateWorkbook(): XLSX.WorkBook {
 }
 
 function xmlEscape(value: unknown): string {
-  return String(value).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&apos;");
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
 }
 function colName(index: number): string {
-  let n=index+1,s=""; while(n>0){const r=(n-1)%26;s=String.fromCharCode(65+r)+s;n=Math.floor((n-1)/26);} return s;
+  let n = index + 1,
+    s = "";
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
 }
 function cellValue(cell: XLSX.CellObject | undefined): string | number | null {
-  if(!cell || cell.v===undefined || cell.v===null || cell.v==="") return null;
-  return typeof cell.v==="number" ? cell.v : String(cell.v);
+  if (!cell || cell.v === undefined || cell.v === null || cell.v === "") return null;
+  return typeof cell.v === "number" ? cell.v : String(cell.v);
 }
 function styledCell(cell: XLSX.CellObject | undefined, ref: string, style: number): string {
-  const value=cellValue(cell); if(value===null) return "";
-  if(typeof value==="number") return `<c r="${ref}" s="${style}"><v>${value}</v></c>`;
+  const value = cellValue(cell);
+  if (value === null) return "";
+  if (typeof value === "number") return `<c r="${ref}" s="${style}"><v>${value}</v></c>`;
   return `<c r="${ref}" s="${style}" t="inlineStr"><is><t>${xmlEscape(value)}</t></is></c>`;
 }
 function stylesXml(): string {
@@ -212,51 +234,196 @@ function stylesXml(): string {
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 }
 function styledSheetXml(ws: XLSX.WorkSheet, definition: TemplateSheetDef | undefined): string {
-  const cols=definition?.columns.length ?? 3, maxRows=definition ? 1000 : 32;
-  const widths=definition ? definition.columns.map(c=>columnWidth(c.header,definition.exampleRows.map(r=>r[c.header]??""))) : [46,30,40];
-  let x=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="A1:${colName(cols-1)}${maxRows}"/><sheetViews><sheetView workbookViewId="0">`;
-  if(definition)x+=`<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/>`;
-  x+="</sheetView></sheetViews><sheetFormatPr defaultRowHeight=\"18\"/><cols>";
-  widths.forEach((w,i)=>{x+=`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`;});
-  x+="</cols><sheetData>";
-  const rows=definition ? Math.min(maxRows,definition.exampleRows.length+1) : 32;
-  for(let r=0;r<rows;r++){let cells="";for(let c=0;c<cols;c++){const ref=`${colName(c)}${r+1}`;const style=definition?(r===0?1:(r<=definition.exampleRows.length?2:0)):(r===0?3:(r===19?4:0));cells+=styledCell(ws[ref],ref,style);}if(cells)x+=`<row r="${r+1}">${cells}</row>`;}
-  x+="</sheetData>";
-  if(definition){
-    x+=`<autoFilter ref="A1:${colName(cols-1)}${maxRows}"/>`;
-    const validations=definition.columns.map((c,i)=>({c,i})).filter(v=>v.c.choices?.length);
-    if(validations.length){x+=`<dataValidations count="${validations.length}">`;for(const {c,i} of validations){const formula=`"${c.choices!.join(",")}"`,letter=colName(i);x+=`<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${letter}2:${letter}${maxRows}"><formula1>${xmlEscape(formula)}</formula1></dataValidation>`;}x+="</dataValidations>";}
+  const cols = definition?.columns.length ?? 3,
+    maxRows = definition ? 1000 : 32;
+  const widths = definition
+    ? definition.columns.map((c) =>
+        columnWidth(
+          c.header,
+          definition.exampleRows.map((r) => r[c.header] ?? ""),
+        ),
+      )
+    : [46, 30, 40];
+  let x = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="A1:${colName(cols - 1)}${maxRows}"/><sheetViews><sheetView workbookViewId="0">`;
+  if (definition)
+    x += `<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/>`;
+  x += '</sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>';
+  widths.forEach((w, i) => {
+    x += `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`;
+  });
+  x += "</cols><sheetData>";
+  const rows = definition ? Math.min(maxRows, definition.exampleRows.length + 1) : 32;
+  for (let r = 0; r < rows; r++) {
+    let cells = "";
+    for (let c = 0; c < cols; c++) {
+      const ref = `${colName(c)}${r + 1}`;
+      const style = definition
+        ? r === 0
+          ? 1
+          : r <= definition.exampleRows.length
+            ? 2
+            : 0
+        : r === 0
+          ? 3
+          : r === 19
+            ? 4
+            : 0;
+      cells += styledCell(ws[ref], ref, style);
+    }
+    if (cells) x += `<row r="${r + 1}">${cells}</row>`;
   }
-  const merges=ws["!merges"] as XLSX.Range[] | undefined;
-  if(merges?.length){x+=`<mergeCells count="${merges.length}">`;for(const m of merges)x+=`<mergeCell ref="${XLSX.utils.encode_range(m)}"/>`;x+="</mergeCells>";}
-  return x+"</worksheet>";
+  x += "</sheetData>";
+  if (definition) {
+    x += `<autoFilter ref="A1:${colName(cols - 1)}${maxRows}"/>`;
+    const validations = definition.columns
+      .map((c, i) => ({ c, i }))
+      .filter((v) => v.c.choices?.length);
+    if (validations.length) {
+      x += `<dataValidations count="${validations.length}">`;
+      for (const { c, i } of validations) {
+        const formula = `"${c.choices!.join(",")}"`,
+          letter = colName(i);
+        x += `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${letter}2:${letter}${maxRows}"><formula1>${xmlEscape(formula)}</formula1></dataValidation>`;
+      }
+      x += "</dataValidations>";
+    }
+  }
+  const merges = ws["!merges"] as XLSX.Range[] | undefined;
+  if (merges?.length) {
+    x += `<mergeCells count="${merges.length}">`;
+    for (const m of merges) x += `<mergeCell ref="${XLSX.utils.encode_range(m)}"/>`;
+    x += "</mergeCells>";
+  }
+  return x + "</worksheet>";
 }
 function crc32(bytes: Uint8Array): number {
-  let crc=0xffffffff;for(const b of bytes){crc^=b;for(let i=0;i<8;i++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);}return (crc^0xffffffff)>>>0;
+  let crc = 0xffffffff;
+  for (const b of bytes) {
+    crc ^= b;
+    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
-function u16(n:number):Uint8Array{return new Uint8Array([n&255,(n>>>8)&255]);}
-function u32(n:number):Uint8Array{return new Uint8Array([n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255]);}
-function joinBytes(parts:readonly Uint8Array[]):Uint8Array{const out=new Uint8Array(parts.reduce((n,p)=>n+p.length,0));let o=0;for(const p of parts){out.set(p,o);o+=p.length;}return out;}
-function zipStore(entries:readonly {name:string;data:string}[]):Uint8Array {
-  const enc=new TextEncoder(),local:Uint8Array[]=[],central:Uint8Array[]=[];let offset=0;
-  for(const e of entries){const name=enc.encode(e.name),data=enc.encode(e.data),crc=crc32(data);
-    const h=joinBytes([u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0),name]);local.push(h,data);
-    central.push(joinBytes([u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(offset),name]));offset+=h.length+data.length;}
-  const body=joinBytes(local),cd=joinBytes(central);return joinBytes([body,cd,u32(0x06054b50),u16(0),u16(0),u16(entries.length),u16(entries.length),u32(cd.length),u32(body.length),u16(0)]);
+function u16(n: number): Uint8Array {
+  return new Uint8Array([n & 255, (n >>> 8) & 255]);
 }
-function styledWorkbookBytes(wb:XLSX.WorkBook):Uint8Array {
-  const names=wb.SheetNames,entries:{name:string;data:string}[]=[];
-  const workbook=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${names.map((n,i)=>`<sheet name="${xmlEscape(n)}" sheetId="${i+1}" state="${n===META_SHEET_NAME?"hidden":"visible"}" r:id="rId${i+1}"/>`).join("")}</sheets></workbook>`;
-  const rels=names.map((_,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join("");
-  const workbookRels=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}<Relationship Id="rId${names.length+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
-  const overrides=`<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${names.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}`;
-  entries.push({name:"[Content_Types].xml",data:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${overrides}</Types>`});
-  entries.push({name:"_rels/.rels",data:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`});
-  entries.push({name:"xl/workbook.xml",data:workbook},{name:"xl/_rels/workbook.xml.rels",data:workbookRels},{name:"xl/styles.xml",data:stylesXml()});
-  names.forEach((name,i)=>entries.push({name:`xl/worksheets/sheet${i+1}.xml`,data:styledSheetXml(wb.Sheets[name]!,LEXIBITE_TEMPLATE_SHEETS.find(s=>s.name===name))}));
+function u32(n: number): Uint8Array {
+  return new Uint8Array([n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255]);
+}
+function joinBytes(parts: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+function zipStore(entries: readonly { name: string; data: string }[]): Uint8Array {
+  const enc = new TextEncoder(),
+    local: Uint8Array[] = [],
+    central: Uint8Array[] = [];
+  let offset = 0;
+  for (const e of entries) {
+    const name = enc.encode(e.name),
+      data = enc.encode(e.data),
+      crc = crc32(data);
+    const h = joinBytes([
+      u32(0x04034b50),
+      u16(20),
+      u16(0),
+      u16(0),
+      u16(0),
+      u16(0),
+      u32(crc),
+      u32(data.length),
+      u32(data.length),
+      u16(name.length),
+      u16(0),
+      name,
+    ]);
+    local.push(h, data);
+    central.push(
+      joinBytes([
+        u32(0x02014b50),
+        u16(20),
+        u16(20),
+        u16(0),
+        u16(0),
+        u16(0),
+        u16(0),
+        u32(crc),
+        u32(data.length),
+        u32(data.length),
+        u16(name.length),
+        u16(0),
+        u16(0),
+        u16(0),
+        u16(0),
+        u32(0),
+        u32(offset),
+        name,
+      ]),
+    );
+    offset += h.length + data.length;
+  }
+  const body = joinBytes(local),
+    cd = joinBytes(central);
+  return joinBytes([
+    body,
+    cd,
+    u32(0x06054b50),
+    u16(0),
+    u16(0),
+    u16(entries.length),
+    u16(entries.length),
+    u32(cd.length),
+    u32(body.length),
+    u16(0),
+  ]);
+}
+function styledWorkbookBytes(wb: XLSX.WorkBook): Uint8Array {
+  const names = wb.SheetNames,
+    entries: { name: string; data: string }[] = [];
+  const workbook = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${names.map((n, i) => `<sheet name="${xmlEscape(n)}" sheetId="${i + 1}" state="${n === META_SHEET_NAME ? "hidden" : "visible"}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`;
+  const rels = names
+    .map(
+      (_, i) =>
+        `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`,
+    )
+    .join("");
+  const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}<Relationship Id="rId${names.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
+  const overrides = `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${names.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}`;
+  entries.push({
+    name: "[Content_Types].xml",
+    data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${overrides}</Types>`,
+  });
+  entries.push({
+    name: "_rels/.rels",
+    data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+  });
+  entries.push(
+    { name: "xl/workbook.xml", data: workbook },
+    { name: "xl/_rels/workbook.xml.rels", data: workbookRels },
+    { name: "xl/styles.xml", data: stylesXml() },
+  );
+  names.forEach((name, i) =>
+    entries.push({
+      name: `xl/worksheets/sheet${i + 1}.xml`,
+      data: styledSheetXml(
+        wb.Sheets[name]!,
+        LEXIBITE_TEMPLATE_SHEETS.find((s) => s.name === name),
+      ),
+    }),
+  );
   return zipStore(entries);
 }
-function bytesToBase64(bytes:Uint8Array):string{let binary="";for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,Math.min(i+0x8000,bytes.length)));return btoa(binary);}
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + 0x8000, bytes.length)));
+  return btoa(binary);
+}
 
 /** Base64-encoded feature-complete XLSX package. */
 export function lexibiteTemplateBase64(): string {
@@ -265,11 +432,19 @@ export function lexibiteTemplateBase64(): string {
 
 /** Browser-only: builds the feature-complete workbook and triggers a download. */
 export function downloadLexibiteTemplate(filename: string = LEXIBITE_TEMPLATE_FILENAME): void {
-  const bytes=styledWorkbookBytes(buildLexibiteTemplateWorkbook());
+  const bytes = styledWorkbookBytes(buildLexibiteTemplateWorkbook());
   // TypeScript 5.9+ models Uint8Array buffers as ArrayBufferLike; create a concrete ArrayBuffer-backed copy for Blob.
   const blobBytes = new Uint8Array(bytes.byteLength);
   blobBytes.set(bytes);
-  const blob=new Blob([blobBytes],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
-  const url=URL.createObjectURL(blob);const anchor=document.createElement("a");
-  anchor.href=url;anchor.download=filename;document.body.appendChild(anchor);anchor.click();anchor.remove();URL.revokeObjectURL(url);
+  const blob = new Blob([blobBytes], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }

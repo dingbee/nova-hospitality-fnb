@@ -2159,111 +2159,112 @@ function AskNovaDrawer({
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-2">
           <div className="space-y-3">
-          {turns.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              Tell me what you're in the mood for, or tap a suggestion below.
-            </p>
-          )}
-          {turns.map((t) => {
-            if (t.role === "user") {
-              return (
-                <div
-                  key={t.id}
-                  className="ml-auto max-w-[85%] rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-sm text-primary-foreground"
-                >
-                  {t.content}
-                </div>
-              );
-            }
-            if (t.role === "assistant") {
-              return (
-                <div key={t.id} className="mr-auto max-w-[90%] space-y-2">
-                  <div className="rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm">
+            {turns.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                Tell me what you're in the mood for, or tap a suggestion below.
+              </p>
+            )}
+            {turns.map((t) => {
+              if (t.role === "user") {
+                return (
+                  <div
+                    key={t.id}
+                    className="ml-auto max-w-[85%] rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-sm text-primary-foreground"
+                  >
                     {t.content}
                   </div>
-                  {t.recommendedItems.map((r) => {
-                    const full = findItem(r.id);
-                    return (
-                      <div
-                        key={r.id}
-                        className="flex items-center gap-2 rounded-xl border bg-card px-3 py-2"
-                      >
-                        <button
-                          type="button"
-                          disabled={!full}
-                          onClick={() => full && onPickItem(full)}
-                          className="flex min-h-9 min-w-0 flex-1 flex-col items-start text-left disabled:opacity-50"
+                );
+              }
+              if (t.role === "assistant") {
+                return (
+                  <div key={t.id} className="mr-auto max-w-[90%] space-y-2">
+                    <div className="rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm">
+                      {t.content}
+                    </div>
+                    {t.recommendedItems.map((r) => {
+                      const full = findItem(r.id);
+                      return (
+                        <div
+                          key={r.id}
+                          className="flex items-center gap-2 rounded-xl border bg-card px-3 py-2"
                         >
-                          <span className="truncate text-sm font-medium">{r.name}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {money(r.price, r.currency)}
-                          </span>
-                        </button>
-                        {full && (
-                          <Button
+                          <button
                             type="button"
-                            size="sm"
-                            variant="outline"
-                            className="min-h-9 shrink-0 rounded-full text-xs"
-                            onClick={() => quickAdd(full)}
+                            disabled={!full}
+                            onClick={() => full && onPickItem(full)}
+                            className="flex min-h-9 min-w-0 flex-1 flex-col items-start text-left disabled:opacity-50"
                           >
-                            Add to my order
-                          </Button>
+                            <span className="truncate text-sm font-medium">{r.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {money(r.price, r.currency)}
+                            </span>
+                          </button>
+                          {full && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="min-h-9 shrink-0 rounded-full text-xs"
+                              onClick={() => quickAdd(full)}
+                            >
+                              Add to my order
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {/* GEP2 — the ground truth for this turn's basket changes, computed from what the server actually resolved, never from the reply text alone. */}
+                    {t.operations.length > 0 && (
+                      <div className="space-y-1 pl-1">
+                        {t.operations.map((op, i) =>
+                          op.status === "applied" ? (
+                            <p key={i} className="text-xs font-medium text-primary">
+                              ✓ {describeAppliedOperation(op)}
+                            </p>
+                          ) : (
+                            <div key={i} className="flex items-center gap-2">
+                              <p className="text-xs text-muted-foreground">
+                                {describeUnresolvedOperation(op)}
+                              </p>
+                              {op.status === "needs_modifier" && findItem(op.itemId) && (
+                                <button
+                                  type="button"
+                                  className="text-xs font-medium text-primary underline underline-offset-2"
+                                  onClick={() => onPickItem(findItem(op.itemId)!)}
+                                >
+                                  Choose
+                                </button>
+                              )}
+                            </div>
+                          ),
                         )}
                       </div>
-                    );
-                  })}
-                  {/* GEP2 — the ground truth for this turn's basket changes, computed from what the server actually resolved, never from the reply text alone. */}
-                  {t.operations.length > 0 && (
-                    <div className="space-y-1 pl-1">
-                      {t.operations.map((op, i) =>
-                        op.status === "applied" ? (
-                          <p key={i} className="text-xs font-medium text-primary">
-                            ✓ {describeAppliedOperation(op)}
-                          </p>
-                        ) : (
-                          <div key={i} className="flex items-center gap-2">
-                            <p className="text-xs text-muted-foreground">
-                              {describeUnresolvedOperation(op)}
-                            </p>
-                            {op.status === "needs_modifier" && findItem(op.itemId) && (
-                              <button
-                                type="button"
-                                className="text-xs font-medium text-primary underline underline-offset-2"
-                                onClick={() => onPickItem(findItem(op.itemId)!)}
-                              >
-                                Choose
-                              </button>
-                            )}
-                          </div>
-                        ),
-                      )}
-                    </div>
-                  )}
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <div key={t.id} className="mr-auto max-w-[90%] space-y-2">
+                  <div className="rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
+                    {PRODUCT.aiName} isn't available right now — here's the menu by category
+                    instead.
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {t.categories.map((c) => (
+                      <Badge key={c.id} variant="outline" className="rounded-full">
+                        {c.name}
+                      </Badge>
+                    ))}
+                  </div>
                 </div>
               );
-            }
-            return (
-              <div key={t.id} className="mr-auto max-w-[90%] space-y-2">
-                <div className="rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
-                  {PRODUCT.aiName} isn't available right now — here's the menu by category instead.
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {t.categories.map((c) => (
-                    <Badge key={c.id} variant="outline" className="rounded-full">
-                      {c.name}
-                    </Badge>
-                  ))}
-                </div>
+            })}
+            {ask.isPending && (
+              <div className="mr-auto max-w-[90%] rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
+                Thinking…
               </div>
-            );
-          })}
-          {ask.isPending && (
-            <div className="mr-auto max-w-[90%] rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
-              Thinking…
-            </div>
-          )}
-          <div ref={messagesEndRef} aria-hidden="true" className="h-px" />
+            )}
+            <div ref={messagesEndRef} aria-hidden="true" className="h-px" />
           </div>
         </div>
 
