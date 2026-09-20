@@ -38,6 +38,7 @@ export interface AiDomainSuggestion {
  * "no suggestion" rather than surfaced.
  */
 export async function suggestDomainViaAi(
+  sheetName: string,
   headers: readonly string[],
   sampleRows: readonly Record<string, string>[],
 ): Promise<AiDomainSuggestion | null> {
@@ -48,7 +49,7 @@ export async function suggestDomainViaAi(
         "You classify one spreadsheet sheet from a restaurant/hospitality data import into exactly one of a fixed list of canonical domains, or none. " +
         `Respond with strict JSON only: {"domain": one of [${IMPORT_DOMAINS.join(", ")}] or null, "confidence": number 0-1, "reason": short string}. ` +
         "Never invent a domain name outside that list. If genuinely unsure, return domain: null.",
-      user: JSON.stringify({ headers, sampleRows: sampleRows.slice(0, 3) }),
+      user: JSON.stringify({ sheetName, headers, sampleRows: sampleRows.slice(0, 5) }),
     });
     const parsed = parseAiJson<{ domain?: unknown; confidence?: unknown; reason?: unknown }>(
       content,
