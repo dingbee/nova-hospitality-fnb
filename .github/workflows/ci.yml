@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   CI: true
@@ -51,6 +51,24 @@ jobs:
 
       - name: Typecheck
         run: pnpm run typecheck
+
+      - name: Auto-format release changes
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_sha="$(git merge-base origin/main HEAD)"
+          files="$(git diff --name-only "$base_sha" "$GITHUB_SHA" -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
+          if [ -n "$files" ]; then
+            pnpm exec eslint $files --fix
+            if ! git diff --quiet; then
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add $files
+              git commit -m "style: format release changes"
+              git push origin "HEAD:${GITHUB_REF_NAME}"
+            fi
+          fi
 
       - name: Lint changed source
         shell: bash
