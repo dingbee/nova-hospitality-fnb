@@ -171,6 +171,10 @@ function useCommercialData() {
     queryKey: ["commercial.whoAmI"],
     queryFn: () => fns.whoAmI({ data: {} }),
   });
+  const providerList = useQuery({
+    queryKey: ["commercial.providers"],
+    queryFn: () => fns.providerList({ data: {} }),
+  });
   const tenants = useQuery({
     queryKey: ["commercial.tenants"],
     queryFn: () => fns.tenants({ data: {} }),
