@@ -82,7 +82,7 @@ const KNOWN_SHEET_IDENTITIES: Array<{
   { pattern: /^(?:\d+_)?TABLES$/, kind: "unsupported", label: "Restaurant tables", reason: "Table configuration is not an importable domain yet." },
   { pattern: /^(?:\d+_)?MENU_CATEGORIES$/, kind: "supported", label: "Menu categories", domain: "category", reason: "The sheet name is an exact supported LexiBite category identity." },
   { pattern: /^(?:\d+_)?MENU_ITEMS$/, kind: "supported", label: "Menu items", domain: "menu_item", reason: "The sheet name is an exact supported LexiBite menu-item identity." },
-  { pattern: /^(?:\d+_)?PRODUCTS$/, kind: "unsupported", label: "Products", reason: "The source product table uses technical product IDs/relationships not represented by the current import contract." },
+  { pattern: /^(?:\d+_)?PRODUCTS$/, kind: "supported", label: "Products / station links", domain: "product_station", reason: "The product export maps to LexiBite's existing menu-item ↔ station product bridge." },
   { pattern: /^(?:\d+_)?INVENTORY_CATEGORIES$/, kind: "unsupported", label: "Inventory categories", reason: "Inventory-category master data is not an importable domain yet." },
   { pattern: /^(?:\d+_)?INVENTORY_ITEMS$/, kind: "supported", label: "Inventory items", domain: "inventory_item", reason: "The sheet name is an exact supported LexiBite inventory identity." },
   { pattern: /^(?:\d+_)?RECIPES$/, kind: "unsupported", label: "Recipes", reason: "The current importer writes recipe components; this source recipe header/version table is not the same import contract." },
@@ -276,6 +276,8 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
         "Buy Price",
         "Buying Price",
         "Rate",
+        "Average Cost TZS",
+        "average_cost_tzs",
       ),
     },
     {
@@ -298,6 +300,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
         "Balance",
         "On Hand",
         "Physical Count",
+        "opening_quantity",
       ),
     },
     {
@@ -435,6 +438,8 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
         "Buy Price",
         "Buying Price",
         "Rate",
+        "Unit Price TZS",
+        "unit_price_tzs",
       ),
     },
     {
@@ -561,6 +566,12 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       label: "Description",
       required: false,
       aliases: alias("Description", "Details"),
+    },
+    {
+      field: "allergens",
+      label: "Allergens",
+      required: false,
+      aliases: alias("Allergens", "Allergen"),
     },
     {
       field: "price",
