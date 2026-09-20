@@ -38,10 +38,13 @@ export interface AiDomainSuggestion {
  * "no suggestion" rather than surfaced.
  */
 export async function suggestDomainViaAi(
-  sheetName: string,
-  headers: readonly string[],
-  sampleRows: readonly Record<string, string>[],
+  sheetNameOrHeaders: string | readonly string[],
+  headersOrRows: readonly string[] | readonly Record<string, string>[],
+  maybeRows?: readonly Record<string, string>[],
 ): Promise<AiDomainSuggestion | null> {
+  const sheetName = typeof sheetNameOrHeaders === "string" ? sheetNameOrHeaders : "";
+  const headers = (typeof sheetNameOrHeaders === "string" ? headersOrRows : sheetNameOrHeaders) as readonly string[];
+  const sampleRows = (typeof sheetNameOrHeaders === "string" ? maybeRows : headersOrRows) as readonly Record<string, string>[];
   try {
     const { content } = await callAiGateway({
       jsonMode: true,
