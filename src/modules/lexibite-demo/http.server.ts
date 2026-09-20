@@ -55,8 +55,6 @@ export async function handleDemoPublicApi(request: Request): Promise<Response | 
   const cors = corsHeaders(request);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
 
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-
   if (url.pathname === "/api/public/demo/register" && request.method === "POST") {
     let parsed;
     try {
@@ -64,6 +62,7 @@ export async function handleDemoPublicApi(request: Request): Promise<Response | 
     } catch {
       return json({ status: "error", message: "Invalid registration payload." }, 400, cors);
     }
+    const { supabaseAdmin } = await import("../../integrations/supabase/client.server");
     const mod = await import("./registration.server");
     try {
       const result = await mod.registerDemoProspect(supabaseAdmin, parsed, {
@@ -88,6 +87,7 @@ export async function handleDemoPublicApi(request: Request): Promise<Response | 
     } catch {
       return json({ status: "error", message: "Invalid request." }, 400, cors);
     }
+    const { supabaseAdmin } = await import("../../integrations/supabase/client.server");
     const mod = await import("./registration.server");
     try {
       const result = await mod.resendDemoVerification(supabaseAdmin, parsed.workEmail, {
@@ -109,6 +109,7 @@ export async function handleDemoPublicApi(request: Request): Promise<Response | 
 
   const statusMatch = url.pathname.match(/^\/api\/public\/demo\/registration\/([0-9a-f-]{36})$/i);
   if (statusMatch && request.method === "GET") {
+    const { supabaseAdmin } = await import("../../integrations/supabase/client.server");
     const mod = await import("./registration.server");
     const result = await mod.getDemoRegistrationStatus(supabaseAdmin, statusMatch[1]!);
     if (!result) return json({ status: "error", message: "Not found." }, 404, cors);
