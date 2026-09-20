@@ -56,7 +56,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base_sha="${{ github.event.pull_request.base.sha || github.event.before }}"
+          base_sha="$(git merge-base origin/main HEAD)"
           files="$(git diff --name-only "$base_sha" "$GITHUB_SHA" -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
           if [ -n "$files" ]; then
             printf '%s\n' "$files"
