@@ -630,7 +630,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "price",
       label: "Price",
       required: false,
-      aliases: alias("Price", "Product Price"),
+      aliases: alias("Price", "Product Price", "Price TZS", "price_tzs"),
     },
     {
       field: "active",
@@ -903,7 +903,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "itemSku",
       label: "Item SKU (to match)",
       required: false,
-      aliases: alias("SKU", "Item Code"),
+      aliases: alias("SKU", "Item Code", "Inventory Item ID", "inventory_item_id"),
     },
     {
       field: "itemBarcode",
@@ -926,7 +926,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
         "Opening Qty",
         "Opening Quantity",
         "Opening Balance",
-        "Qty On Hand",
+        "Qty On Hand", "opening_quantity",
       ),
     },
     { field: "unitCode", label: "Unit", required: false, aliases: alias("Unit", "UOM", "Uom") },
