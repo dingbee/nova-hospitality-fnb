@@ -45,7 +45,7 @@ latest_create as (
   where s.statement ~* (
     'create[[:space:]]+or[[:space:]]+replace[[:space:]]+function[[:space:]]+public[.]'
     || e.name
-    || '([[:space:]]|\\()'
+    || '([[:space:]]|[(])'
   )
   order by e.name, m.version desc
 )
