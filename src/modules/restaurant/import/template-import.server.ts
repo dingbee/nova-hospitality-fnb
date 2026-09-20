@@ -434,13 +434,6 @@ export async function commitLexibiteTemplateImport(
       severity: "new_entity",
       decision: "approved",
     });
-    await bulkDecideStagedRecords(sb, userId, {
-      tenantId: input.tenantId,
-      workspaceId: workspace.id,
-      severity: "missing_field",
-      decision: "approved",
-    });
-
     const outcome = await commitImportWorkspace(sb, userId, {
       tenantId: input.tenantId,
       workspaceId: workspace.id,
