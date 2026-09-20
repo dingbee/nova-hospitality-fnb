@@ -30,6 +30,7 @@ import {
   CANONICAL_FIELDS,
   IMPORT_DOMAIN_COMMIT_ORDER,
   detectDomains,
+  isIgnoredSourceColumn,
   suggestFieldMapping,
   type DomainGuess,
   type ImportDomain,
@@ -193,7 +194,7 @@ export async function getImportWorkspace(
         sheetName: m.sheet_name,
         domain: m.domain,
         columns: (m.mapping as Array<{ sourceColumn: string; canonicalField: string | null }>)
-          .filter((f) => !f.canonicalField)
+          .filter((f) => !f.canonicalField && !isIgnoredSourceColumn(m.domain as ImportDomain, f.sourceColumn))
           .map((f) => f.sourceColumn),
       }))
       .filter((m) => m.columns.length > 0);
@@ -707,6 +708,48 @@ function stageRow(
   }
 }
 
+function normalizeSourceReferences(
+  parsed: ParsedSource,
+  domain: ImportDomain,
+  mappedRaw: Record<string, string>,
+): Record<string, string> {
+  const rowsBySheet = new Map(
+    parsed.sheets.map((sheet) => [sheet.sheetName.toUpperCase(), sheet.rows]),
+  );
+  const findById = (sheetNames: string[], sourceId: string | undefined) => {
+    if (!sourceId) return undefined;
+    for (const name of sheetNames) {
+      const row = rowsBySheet.get(name)?.find((candidate) => String(candidate.id ?? "") === String(sourceId));
+      if (row) return row;
+    }
+    return undefined;
+  };
+
+  const next = { ...mappedRaw };
+
+  if (domain === "supplier_product") {
+    const supplier = findById(["13_SUPPLIERS"], mappedRaw.supplierCode);
+    if (supplier?.code) next.supplierCode = String(supplier.code);
+    const item = findById(["10_INVENTORY_ITEMS"], mappedRaw.itemSku);
+    if (item?.sku) next.itemSku = String(item.sku);
+    else if (item?.name) next.itemName = String(item.name);
+  }
+
+  if (domain === "opening_stock") {
+    const item = findById(["10_INVENTORY_ITEMS"], mappedRaw.itemSku);
+    if (item?.sku) next.itemSku = String(item.sku);
+    else if (item?.name) next.itemName = String(item.name);
+  }
+
+  if (domain === "product_station") {
+    const station = findById(["15_STATIONS", "STATIONS"], mappedRaw.stationCode);
+    if (station?.code) next.stationCode = String(station.code);
+    else if (station?.name) next.stationCode = String(station.name);
+  }
+
+  return next;
+}
+
 export async function confirmImportMapping(
   sb: Sb,
   userId: string,
@@ -761,7 +804,11 @@ export async function confirmImportMapping(
       return;
     }
 
-    const mappedRaw = applyMapping(input.mapping, rawRow);
+    const mappedRaw = normalizeSourceReferences(
+      parsed,
+      input.domain,
+      applyMapping(input.mapping, rawRow),
+    );
     const result = stageRow(input.domain, mappedRaw, ref);
     const autoApprove = result.severity === "auto_ok";
 
