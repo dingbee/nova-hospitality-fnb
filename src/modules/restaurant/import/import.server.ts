@@ -480,7 +480,7 @@ export async function parseImportSource(
     const sheetSummaries = await Promise.all(
       parsed.sheets.map(async (s) => {
         const heuristicGuesses = detectDomains(s.headers);
-        const detectedDomains = await withAiDomainAssist(s.headers, s.rows, heuristicGuesses);
+        const detectedDomains = await withAiDomainAssist(s.sheetName, s.headers, s.rows, heuristicGuesses);
         return {
           sheetName: s.sheetName,
           headers: s.headers,
