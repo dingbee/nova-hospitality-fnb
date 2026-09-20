@@ -1134,7 +1134,7 @@ async function commitProductStationRow(
     active: m.active ?? true,
     servicePeriodIds: [],
     sortOrder: 0,
-    taxRate: 0,
+    taxRate: Number(m.taxRate ?? 0),
   });
   return result.id as string;
 }

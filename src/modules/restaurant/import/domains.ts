@@ -640,6 +640,12 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       required: false,
       aliases: alias("Active", "Available"),
     },
+    {
+      field: "taxRate",
+      label: "Tax rate",
+      required: false,
+      aliases: alias("Tax Rate", "tax_rate"),
+    },
   ],
   variant: [
     {

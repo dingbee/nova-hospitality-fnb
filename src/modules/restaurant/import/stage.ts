@@ -685,7 +685,9 @@ export function stageProductStationRow(
     errors.push(required("Dish/drink to attach this product to is missing."));
   if (!mapped.stationCode) errors.push(required("Station is missing."));
   const price = numField(mapped.price, "Price", errors);
+  const taxRate = numField(mapped.taxRate, "Tax rate", errors);
   if (price !== undefined && price < 0) errors.push(required("Price cannot be negative."));
+  if (taxRate !== undefined && (taxRate < 0 || taxRate > 100)) errors.push(required("Tax rate must be between 0 and 100."));
 
   const menuItemById = mapped.menuItemName
     ? ref.menuItems.find((item) => item.id === mapped.menuItemName)
@@ -739,6 +741,7 @@ export function stageProductStationRow(
       stationId: stationMatch.id,
       sku: mapped.sku ?? null,
       price: price ?? null,
+      taxRate: taxRate ?? null,
       active: parseBoolean(mapped.active) ?? true,
     },
     matchStatus: finalStatus,
