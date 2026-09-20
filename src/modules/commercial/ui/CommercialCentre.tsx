@@ -80,6 +80,7 @@ import {
   listCommercialProvidersFn,
 } from "../commercial.functions";
 import { BillingOverviewPanel, CustomerWorkspacePanel } from "./CommercialLifecycle";
+import { ProvidersIntegrationsPanel } from "./ProvidersIntegrations";
 import {
   CollectionsPanel,
   CommercialOverviewPanel,
