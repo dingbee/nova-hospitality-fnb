@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectDomains, suggestFieldMapping } from "./domains";
+import { classifySheetIdentity, detectDomains, suggestFieldMapping } from "./domains";
 
 describe("detectDomains", () => {
   it("detects an inventory sheet from its headers", () => {
