@@ -47,7 +47,6 @@ import {
   IMPORT_DOMAINS,
   IMPORT_DOMAIN_LABELS,
   type ImportDomain,
-  type SheetIdentity,
 } from "../domains";
 import { downloadLexibiteTemplate } from "../template-xlsx";
 import type { TemplateIssue } from "../template-import.server";
@@ -769,7 +768,6 @@ function SourceRow({
               sourceId={source.id}
               sheetName={s.sheetName}
               guesses={s.guesses}
-              identity={s.identity}
               onStaged={onChanged}
             />
           ))}
@@ -790,7 +788,6 @@ function SheetStager({
   sourceId: string;
   sheetName: string;
   guesses: Array<{ domain: ImportDomain; confidence: number }>;
-  identity?: SheetIdentity;
   onStaged: () => void;
 }) {
   const suggestFn = useServerFn(suggestImportMappingFn);
@@ -802,7 +799,7 @@ function SheetStager({
   // staged under whatever domain happened to be first in the list,
   // misreporting every one of its rows as that domain's required field
   // being "missing").
-  const [domain, setDomain] = useState<ImportDomain | "">(identity?.domain ?? guesses[0]?.domain ?? "");
+  const [domain, setDomain] = useState<ImportDomain | "">(guesses[0]?.domain ?? "");
   const [mapping, setMapping] = useState<Array<{
     sourceColumn: string;
     canonicalField: string | null;
@@ -812,7 +809,6 @@ function SheetStager({
   const [open, setOpen] = useState(false);
   const [overrideNonOperational, setOverrideNonOperational] = useState(false);
   const flaggedNonOperational = guesses.length === 0 && looksNonOperational(sheetName);
-  const unsupported = identity?.kind === "unsupported";
 
   const suggest = useAdminMutation({
     mutationFn: () =>
@@ -838,23 +834,6 @@ function SheetStager({
       onStaged();
     },
   });
-
-  if (unsupported) {
-    return (
-      <div className="rounded-md border border-dashed p-3 text-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="font-medium">{sheetName}</span>
-          <StatusChip tone="neutral">Recognised · not importable yet</StatusChip>
-        </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {identity?.label}: {identity?.reason}
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          The source remains preserved. No rows will be staged under another domain.
-        </p>
-      </div>
-    );
-  }
 
   if (flaggedNonOperational && !overrideNonOperational) {
     return (
@@ -882,11 +861,7 @@ function SheetStager({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="font-medium">{sheetName}</span>
         <span className="flex flex-wrap items-center gap-1">
-          {identity?.kind === "supported" && identity.domain ? (
-            <StatusChip tone="success">
-              {identity.label} · exact sheet identity
-            </StatusChip>
-          ) : guesses.length === 0 ? (
+          {guesses.length === 0 ? (
             <StatusChip tone="warning">No confident domain match — choose one</StatusChip>
           ) : (
             guesses.map((g) => (
