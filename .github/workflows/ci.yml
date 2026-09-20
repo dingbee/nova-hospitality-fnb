@@ -41,7 +41,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+          # No pnpm-lock.yaml is committed yet; dependency caching is intentionally disabled.
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
