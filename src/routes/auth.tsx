@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowRight, Loader2, ShieldCheck } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { PRODUCT } from "@/config/product";
@@ -21,6 +21,7 @@ function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -132,15 +133,26 @@ function AuthPage() {
                       Forgot password?
                     </Link>
                   </div>
-                  <input
-                    type="password"
-                    required
-                    autoComplete="current-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter your password"
-                    className="mt-2 h-12 w-full rounded-lg border border-[#d5dbd6] bg-white px-4 text-sm text-[#172019] outline-none transition placeholder:text-[#9aa39d] focus:border-[#2f7139] focus:ring-4 focus:ring-[#2f7139]/10"
-                  />
+                  <div className="relative mt-2">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      required
+                      autoComplete="current-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter your password"
+                      className="h-12 w-full rounded-lg border border-[#d5dbd6] bg-white px-4 pr-12 text-sm text-[#172019] outline-none transition placeholder:text-[#9aa39d] focus:border-[#2f7139] focus:ring-4 focus:ring-[#2f7139]/10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((visible) => !visible)}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      aria-pressed={showPassword}
+                      className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-[#78817b] transition hover:text-[#2f7139] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[#2f7139]/20"
+                    >
+                      {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
                 </label>
               </div>
 
