@@ -290,13 +290,22 @@ class ExtractionUnavailableError extends Error {}
  * to land on a domain the heuristic already suggested (nothing to add).
  */
 async function withAiDomainAssist(
+  sheetName: string,
   headers: readonly string[],
   rows: readonly Record<string, string>[],
   heuristicGuesses: DomainGuess[],
 ): Promise<DomainGuess[]> {
-  const topConfidence = heuristicGuesses[0]?.confidence ?? 0;
-  if (topConfidence >= 0.5) return heuristicGuesses;
-  const ai = await suggestDomainViaAi(headers, rows);
+  // Intelligence is a challenger, not a replacement for deterministic
+  // evidence. But a merely "good enough" heuristic score must not suppress
+  // the challenger: mixed restaurant sheets can legitimately share aliases
+  // (e.g. Item, Product, Price, Station). Ask AI when the heuristic is weak
+  // OR when the top two candidates are close enough that the distinction is
+  // materially ambiguous. A single confident heuristic remains untouched.
+  const top = heuristicGuesses[0]?.confidence ?? 0;
+  const second = heuristicGuesses[1]?.confidence ?? 0;
+  const ambiguous = heuristicGuesses.length > 1 && top - second < 0.15;
+  if (top >= 0.85 && !ambiguous) return heuristicGuesses;
+  const ai = await suggestDomainViaAi(sheetName, headers, rows);
   if (!ai || heuristicGuesses.some((g) => g.domain === ai.domain)) return heuristicGuesses;
   return [
     ...heuristicGuesses,
