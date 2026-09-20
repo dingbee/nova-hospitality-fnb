@@ -46,6 +46,7 @@ import {
   CANONICAL_FIELDS,
   IMPORT_DOMAINS,
   IMPORT_DOMAIN_LABELS,
+  classifySheetIdentity,
   type ImportDomain,
 } from "../domains";
 import { downloadLexibiteTemplate } from "../template-xlsx";
@@ -808,7 +809,9 @@ function SheetStager({
   }> | null>(null);
   const [open, setOpen] = useState(false);
   const [overrideNonOperational, setOverrideNonOperational] = useState(false);
+  const sheetIdentity = classifySheetIdentity(sheetName);
   const flaggedNonOperational = guesses.length === 0 && looksNonOperational(sheetName);
+  const unsupportedSheet = sheetIdentity.kind === "unsupported";
 
   const suggest = useAdminMutation({
     mutationFn: () =>
@@ -834,6 +837,18 @@ function SheetStager({
       onStaged();
     },
   });
+
+  if (unsupportedSheet) {
+    return (
+      <div className="rounded-md border border-dashed p-3 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-medium">{sheetName}</span>
+          <StatusChip tone="neutral">Not importable</StatusChip>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">{sheetIdentity.reason}</p>
+      </div>
+    );
+  }
 
   if (flaggedNonOperational && !overrideNonOperational) {
     return (
