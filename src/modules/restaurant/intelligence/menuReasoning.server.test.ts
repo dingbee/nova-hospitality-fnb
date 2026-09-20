@@ -55,7 +55,7 @@ function commercialCatalogueRows(quotaDefinitions: any[] = []) {
 function makeFakeSupabase(
   overrides: { commercial?: Record<string, any[]>; usageCounters?: any[] } = {},
 ) {
-  const commercial = { ...commercialCatalogueRows(), ...overrides.commercial };
+  const commercial: Record<string, any[]> = { ...commercialCatalogueRows(), ...overrides.commercial };
   const usageCounters: any[] = overrides.usageCounters ?? [];
 
   function parseOrExpr(expr: string) {
