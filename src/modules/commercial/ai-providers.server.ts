@@ -4,16 +4,13 @@ import { writeCommercialAudit } from "./audit.server";
 
 type Sb = any;
 
-const ENV_KEYS: Record<string, string> = {
-  openai: "NOVA_AI_API_KEY",
-  gemini: "NOVA_GEMINI_API_KEY",
-};
+
 
 export async function listAiProviders(sb: Sb, userId: string) {
   await assertCommercialAdmin(sb, userId);
   const { data: providers, error } = await sb
     .from("commercial_ai_providers")
-    .select("id,code,name,status,priority,default_model,configured_env_key,description,created_at,updated_at,commercial_ai_models(id,code,name,status,priority,capabilities)")
+    .select("id,code,name,status,priority,default_model,configured_env_key,endpoint_url,protocol,description,created_at,updated_at,commercial_ai_models(id,code,name,status,priority,capabilities)")
     .order("priority", { ascending: true })
     .order("name", { ascending: true });
   if (error) throw new Error(error.message);
@@ -36,7 +33,7 @@ export async function listAiProviders(sb: Sb, userId: string) {
 
   return (providers ?? []).map((provider: any) => {
     const usage = usageByProvider.get(provider.code) ?? { requests: 0, input: 0, output: 0, cost: 0, currency: "USD" };
-    const configured = Boolean(process.env[ENV_KEYS[provider.code] ?? provider.configured_env_key]);
+    const configured = Boolean(process.env[provider.configured_env_key]);
     return {
       ...provider,
       configured,
@@ -102,6 +99,67 @@ export async function updateAiProviderPriority(sb: Sb, userId: string, id: strin
     entityType: "commercial_ai_provider",
     entityId: id,
     after: { code: data.code, priority: data.priority },
+  });
+  return data;
+}
+
+export async function createAiProvider(
+  sb: Sb,
+  userId: string,
+  input: {
+    code: string;
+    name: string;
+    configuredEnvKey: string;
+    endpointUrl: string;
+    protocol: "chat-completions" | "responses";
+    defaultModel: string;
+    description?: string;
+  },
+) {
+  await assertCommercialAdmin(sb, userId);
+  const { data, error } = await sb.from("commercial_ai_providers").insert({
+    code: input.code.trim().toLowerCase(),
+    name: input.name.trim(),
+    configured_env_key: input.configuredEnvKey.trim(),
+    endpoint_url: input.endpointUrl.trim(),
+    protocol: input.protocol,
+    default_model: input.defaultModel.trim(),
+    description: input.description?.trim() ?? "",
+    status: "disabled",
+    priority: 100,
+  }).select("id,code,name,status,priority,default_model,configured_env_key,endpoint_url,protocol,description").single();
+  if (error) throw new Error(error.message);
+  await writeCommercialAudit(sb, {
+    actorId: userId,
+    action: "commercial_ai_provider.created",
+    entityType: "commercial_ai_provider",
+    entityId: data.id,
+    after: data,
+  });
+  return data;
+}
+
+export async function createAiModel(
+  sb: Sb,
+  userId: string,
+  input: { providerId: string; code: string; name: string; capabilities?: string[]; priority?: number },
+) {
+  await assertCommercialAdmin(sb, userId);
+  const { data, error } = await sb.from("commercial_ai_models").insert({
+    provider_id: input.providerId,
+    code: input.code.trim(),
+    name: input.name.trim(),
+    status: "enabled",
+    priority: input.priority ?? 100,
+    capabilities: input.capabilities ?? [],
+  }).select("id,provider_id,code,name,status,priority,capabilities").single();
+  if (error) throw new Error(error.message);
+  await writeCommercialAudit(sb, {
+    actorId: userId,
+    action: "commercial_ai_model.created",
+    entityType: "commercial_ai_model",
+    entityId: data.id,
+    after: data,
   });
   return data;
 }
