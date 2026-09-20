@@ -59,6 +59,55 @@ export const IMPORT_DOMAINS = [
 ] as const;
 export type ImportDomain = (typeof IMPORT_DOMAINS)[number];
 
+export type SheetIdentityKind = "supported" | "unsupported" | "unknown";
+
+export interface SheetIdentity {
+  kind: SheetIdentityKind;
+  label: string;
+  domain?: ImportDomain;
+  reason: string;
+}
+
+const KNOWN_SHEET_IDENTITIES: Array<{
+  pattern: RegExp;
+  kind: SheetIdentityKind;
+  label: string;
+  domain?: ImportDomain;
+  reason: string;
+}> = [
+  { pattern: /^(?:\\d+_)?BUSINESS$/, kind: "unsupported", label: "Business settings", reason: "Business/tenant configuration is not an importable restaurant data domain yet." },
+  { pattern: /^(?:\\d+_)?LOCATIONS$/, kind: "unsupported", label: "Locations", reason: "Location master data is not an importable domain yet." },
+  { pattern: /^(?:\\d+_)?SERVICE_PERIODS$/, kind: "unsupported", label: "Service periods", reason: "Service-period configuration is not an importable domain yet." },
+  { pattern: /^(?:\\d+_)?STATIONS$/, kind: "unsupported", label: "Production stations", reason: "Station master data is not an importable domain yet." },
+  { pattern: /^(?:\\d+_)?TABLES$/, kind: "unsupported", label: "Restaurant tables", reason: "Table configuration is not an importable domain yet." },
+  { pattern: /^(?:\\d+_)?MENU_CATEGORIES$/, kind: "supported", label: "Menu categories", domain: "category", reason: "The sheet name is an exact supported LexiBite category identity." },
+  { pattern: /^(?:\\d+_)?MENU_ITEMS$/, kind: "supported", label: "Menu items", domain: "menu_item", reason: "The sheet name is an exact supported LexiBite menu-item identity." },
+  { pattern: /^(?:\\d+_)?PRODUCTS$/, kind: "unsupported", label: "Products", reason: "The source product table uses technical product IDs/relationships not represented by the current import contract." },
+  { pattern: /^(?:\\d+_)?INVENTORY_CATEGORIES$/, kind: "unsupported", label: "Inventory categories", reason: "Inventory-category master data is not an importable domain yet." },
+  { pattern: /^(?:\\d+_)?INVENTORY_ITEMS$/, kind: "supported", label: "Inventory items", domain: "inventory_item", reason: "The sheet name is an exact supported LexiBite inventory identity." },
+  { pattern: /^(?:\\d+_)?RECIPES$/, kind: "unsupported", label: "Recipes", reason: "The current importer writes recipe components; this source recipe header/version table is not the same import contract." },
+  { pattern: /^(?:\\d+_)?RECIPE_LINES$/, kind: "supported", label: "Recipe ingredients", domain: "recipe_component", reason: "The sheet name is an exact supported LexiBite recipe-component identity." },
+  { pattern: /^(?:\\d+_)?SUPPLIERS$/, kind: "supported", label: "Suppliers", domain: "supplier", reason: "The sheet name is an exact supported LexiBite supplier identity." },
+  { pattern: /^(?:\\d+_)?SUPPLIER_PRODUCTS$/, kind: "supported", label: "Supplier products", domain: "supplier_product", reason: "The sheet name is an exact supported LexiBite supplier-product identity." },
+  { pattern: /^(?:\\d+_)?TAX_SERVICE$/, kind: "unsupported", label: "Tax service", reason: "Tax-service configuration is not an importable domain yet." },
+  { pattern: /^(?:\\d+_)?OPENING_STOCK$/, kind: "supported", label: "Opening stock", domain: "opening_stock", reason: "The sheet name is an exact supported LexiBite opening-stock identity." },
+  { pattern: /^(?:\\d+_)?MENUS$/, kind: "supported", label: "Menus", domain: "menu", reason: "The sheet name is an exact supported LexiBite menu identity." },
+  { pattern: /^(?:\\d+_)?CATEGORIES$/, kind: "supported", label: "Categories", domain: "category", reason: "The sheet name is an exact supported LexiBite category identity." },
+];
+
+export function classifySheetIdentity(sheetName: string): SheetIdentity {
+  const normalized = sheetName.trim().toUpperCase().replace(/\\.XLSX?$/i, "").replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const hit = KNOWN_SHEET_IDENTITIES.find((entry) => entry.pattern.test(normalized));
+  if (!hit) {
+    return {
+      kind: "unknown",
+      label: "Unclassified sheet",
+      reason: "The sheet name does not identify a known LexiBite domain; headers and sample rows must establish the meaning.",
+    };
+  }
+  return { kind: hit.kind, label: hit.label, domain: hit.domain, reason: hit.reason };
+}
+
 export const IMPORT_DOMAIN_LABELS: Record<ImportDomain, string> = {
   supplier: "Suppliers",
   inventory_item: "Inventory items",
@@ -928,7 +977,12 @@ export interface DomainGuess {
  * DOMAIN_SIGNAL_WORDS in sync with every alias ever added to CANONICAL_
  * FIELDS would otherwise be a second, easily-forgotten place to update.
  */
-export function detectDomains(headers: readonly string[]): DomainGuess[] {
+export function detectDomains(headers: readonly string[], sheetName?: string): DomainGuess[] {
+  const identity = sheetName ? classifySheetIdentity(sheetName) : null;
+  if (identity?.kind === "unsupported") return [];
+  if (identity?.kind === "supported" && identity.domain) {
+    return [{ domain: identity.domain, confidence: 1, matchedHeaders: [sheetName!] }];
+  }
   const normalized = headers.map(normalizeHeader);
   const guesses: DomainGuess[] = [];
   for (const domain of IMPORT_DOMAINS) {
