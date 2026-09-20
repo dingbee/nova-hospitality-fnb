@@ -40,6 +40,11 @@ function healthResponse(): Response {
     version: API_VERSION,
     appVersion: identity.appVersion,
     buildId: identity.buildId,
+    environment: identity.vercelEnv,
+    deploymentId: identity.deploymentId,
+    deploymentUrl: identity.deploymentUrl,
+    buildTimestamp: identity.buildTimestamp,
+    schemaVersion: identity.schemaVersion,
     timestamp: new Date().toISOString(),
   });
   return new Response(body, {
