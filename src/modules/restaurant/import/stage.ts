@@ -711,7 +711,13 @@ export function stageProductStationRow(
         `Station "${mapped.stationCode ?? "?"}"`,
       );
   if (menuItemMatch.error) errors.push(required(menuItemMatch.error));
-  if (stationMatch.error) errors.push(required(stationMatch.error));
+
+  const existingProduct = menuItemMatch.id
+    ? ref.existingProducts.find((p) => p.menu_item_id === menuItemMatch.id)
+    : undefined;
+  if (stationMatch.error && !existingProduct) {
+    errors.push(required(stationMatch.error));
+  }
 
   let productStatus: Classified = {
     status: "new_entity",
@@ -726,8 +732,14 @@ export function stageProductStationRow(
         status: "exact_match",
         id: existing.id,
         confidence: 1,
-        evidence: ["A product already links this dish to a station."],
+        evidence: ["Existing product/station link matched; source station identifier treated as an external reference."],
       };
+      if (!stationMatch.id && existing.station_id) {
+        stationMatch.id = existing.station_id;
+        stationMatch.status = "exact_match";
+        stationMatch.confidence = 1;
+        stationMatch.evidence = ["Existing product/station link supplied the canonical tenant station."];
+      }
     }
   }
   const finalStatus = worse(worse(menuItemMatch.status, stationMatch.status), productStatus.status);
