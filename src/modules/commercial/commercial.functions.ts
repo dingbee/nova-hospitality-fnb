@@ -621,3 +621,43 @@ export const updateCommercialProviderStatusFn = createServerFn({ method: "POST" 
     const mod = await import("./providers.server");
     return mod.updateProviderStatus(context.supabase, context.userId, data);
   });
+
+
+/* -------------------------------------------------------- AI providers */
+export const listCommercialAiProvidersFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => empty.parse(d))
+  .handler(async ({ context }) => {
+    const mod = await import("./ai-providers.server");
+    return mod.listAiProviders(context.supabase, context.userId);
+  });
+
+export const updateCommercialAiProviderStatusFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ id: z.string().uuid(), status: z.enum(["enabled", "disabled"]) }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const mod = await import("./ai-providers.server");
+    return mod.updateAiProviderStatus(context.supabase, context.userId, data.id, data.status);
+  });
+
+export const updateCommercialAiProviderPriorityFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ id: z.string().uuid(), priority: z.number().int().min(0).max(10000) }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const mod = await import("./ai-providers.server");
+    return mod.updateAiProviderPriority(context.supabase, context.userId, data.id, data.priority);
+  });
+
+export const updateCommercialAiModelStatusFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ id: z.string().uuid(), status: z.enum(["enabled", "disabled"]) }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const mod = await import("./ai-providers.server");
+    return mod.updateAiModelStatus(context.supabase, context.userId, data.id, data.status);
+  });
