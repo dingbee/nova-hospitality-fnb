@@ -2073,7 +2073,7 @@ function AskNovaDrawer({
       messagesEndRef.current?.scrollIntoView({ block: "end" });
     });
     return () => cancelAnimationFrame(frame);
-  }, [open, turns, ask.isPending]);
+  }, [open, turns]);
 
   const ask = useMutation({
     mutationFn: (message: string) => {
