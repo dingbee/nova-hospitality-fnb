@@ -1,7 +1,5 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import { VitePWA } from "vite-plugin-pwa";
-import "vitest/config";
-
 /**
  * LexiBite — Restaurant & Bar OS.
  *
@@ -20,10 +18,6 @@ export default defineConfig({
 
   tanstackStart: {
     server: { entry: "server" },
-  },
-
-  test: {
-    exclude: ["**/node_modules/**", "e2e/**"],
   },
 
   plugins: [
