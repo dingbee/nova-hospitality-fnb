@@ -791,13 +791,7 @@ export function PosWorkspace({
           direct items of THIS grid at lg+, landing in columns 2 and 3 by
           normal auto-placement — while below lg that same wrapper is a real
           flex column holding the tab-switcher behavior unchanged. */}
-      <div
-        className={cn(
-          "min-h-0 flex-1",
-          mobileFloorExpanded ? "overflow-y-auto" : "overflow-hidden",
-          "lg:grid lg:grid-cols-[minmax(200px,22fr)_minmax(0,45fr)_minmax(300px,33fr)] lg:grid-rows-[minmax(0,1fr)] lg:gap-3 lg:overflow-hidden xl:gap-4",
-        )}
-      >
+      <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(200px,22fr)_minmax(0,45fr)_minmax(300px,33fr)] lg:grid-rows-[minmax(0,1fr)] lg:gap-3 lg:overflow-hidden xl:gap-4">
         {!mobileFloorExpanded && (
           <div className="os-card z-40 flex shrink-0 items-center gap-2 overflow-x-auto px-3 py-2 lg:hidden">
             <button type="button" onClick={() => setMobileFloorExpanded(true)} className="shrink-0 rounded-md border px-2 py-1 text-xs font-medium">
@@ -955,7 +949,7 @@ export function PosWorkspace({
             }
             className={cn(
               mobileRightTab === "menu" ? "flex" : "hidden",
-              "min-h-0 flex-1 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:min-h-0 lg:p-4",
+              "min-h-[calc(100dvh-15rem)] flex-1 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:min-h-0 lg:p-4",
             )}
           >
             <div className="shrink-0">
@@ -988,7 +982,7 @@ export function PosWorkspace({
                 ))}
               </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y">
               {filtered.length === 0 ? (
                 <EmptyState
                   title={catalogSearch ? "No matches" : isBar ? "No drinks" : "No items"}
@@ -1039,7 +1033,7 @@ export function PosWorkspace({
             }
             className={cn(
               mobileRightTab === "bill" ? "flex" : "hidden",
-              "min-h-0 flex-1 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:min-h-0 lg:p-4",
+              "min-h-[calc(100dvh-15rem)] flex-1 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:min-h-0 lg:p-4",
             )}
           >
             {!orderId && queuedOrder ? (
