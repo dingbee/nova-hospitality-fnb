@@ -31,7 +31,10 @@ function AuthPage() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
     setLoading(false);
     if (error) {
       toast.error(presentUserFacingError(error, "Sign-in failed.").message);
@@ -118,9 +121,17 @@ function AuthPage() {
                 </label>
 
                 <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#59645d]">
-                    Password
-                  </span>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#59645d]">
+                      Password
+                    </span>
+                    <Link
+                      to="/auth/forgot-password"
+                      className="text-xs font-semibold text-[#2f7139] transition hover:text-[#275f30] hover:underline"
+                    >
+                      Forgot password?
+                    </Link>
+                  </div>
                   <input
                     type="password"
                     required
@@ -143,13 +154,15 @@ function AuthPage() {
                 {!loading ? <ArrowRight className="size-4" /> : null}
               </button>
 
-              <div className="mt-6 flex items-center justify-between gap-4 border-t border-[#edf0ed] pt-5">
-                <p className="text-xs text-[#78817b]">New restaurant?</p>
+              <div className="mt-6 border-t border-[#edf0ed] pt-5">
+                <p className="text-xs text-[#78817b]">
+                  New restaurant owner?
+                </p>
                 <Link
                   to="/auth/sign-up"
-                  className="text-xs font-semibold text-[#2f7139] transition hover:text-[#275f30] hover:underline"
+                  className="mt-1 inline-block text-sm font-semibold text-[#2f7139] transition hover:text-[#275f30] hover:underline"
                 >
-                  Create an account
+                  Create your restaurant account
                 </Link>
               </div>
             </form>
