@@ -979,8 +979,8 @@ async function commitInventoryItemRow(
     reorderPoint: m.reorderPoint ?? undefined,
     averageCost: Number(m.averageCost ?? 0),
     currency: propertyCurrency,
-    trackBatches: false,
-    allowNegative: false,
+    trackBatches: m.trackBatches ?? false,
+    allowNegative: m.allowNegative ?? false,
     packSize: Number(m.packSize),
     purchaseUnitId: m.purchaseUnitId ?? undefined,
     consumptionUnitId: m.consumptionUnitId ?? undefined,
@@ -1097,7 +1097,7 @@ async function commitMenuItemRow(
     currency: m.currency ?? propertyCurrency,
     available: m.available ?? true,
     tags: [],
-    allergens: [],
+    allergens: m.allergens ? String(m.allergens).split(/[,;|]/).map((v: string) => v.trim()).filter(Boolean) : [],
     sortOrder: Number(m.sortOrder ?? 0),
   });
   return result.id as string;
