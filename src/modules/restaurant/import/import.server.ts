@@ -29,6 +29,7 @@ import { parseCsv, parseJson, parsePasted, parseXlsxBase64, type ParsedSource } 
 import {
   CANONICAL_FIELDS,
   IMPORT_DOMAIN_COMMIT_ORDER,
+  classifySheetIdentity,
   detectDomains,
   suggestFieldMapping,
   type DomainGuess,

@@ -1,7 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { detectDomains, suggestFieldMapping } from "./domains";
+import { classifySheetIdentity, detectDomains, suggestFieldMapping } from "./domains";
 
 describe("detectDomains", () => {
+  it("uses exact sheet identity before generic headers", () => {
+    expect(classifySheetIdentity("07_MENU_ITEMS")).toMatchObject({
+      kind: "supported",
+      domain: "menu_item",
+    });
+    expect(detectDomains(["id", "menu_id", "price_tzs"], "07_MENU_ITEMS")[0]?.domain).toBe("menu_item");
+  });
+
+  it("does not force known unsupported LexiBite sheets into another domain", () => {
+    expect(classifySheetIdentity("04_STATIONS")).toMatchObject({
+      kind: "unsupported",
+      label: "Production stations",
+    });
+    expect(detectDomains(["id", "station_type", "location_id"], "04_STATIONS")).toEqual([]);
+  });
+
+  it("leaves unknown sheets available for structural/AI classification", () => {
+    expect(classifySheetIdentity("My Weird Export")).toMatchObject({
+      kind: "unknown",
+    });
+  });
+
   it("detects an inventory sheet from its headers", () => {
     const guesses = detectDomains([
       "Item Name",
