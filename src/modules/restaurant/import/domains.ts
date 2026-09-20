@@ -75,6 +75,7 @@ const KNOWN_SHEET_IDENTITIES: Array<{
   domain?: ImportDomain;
   reason: string;
 }> = [
+  { pattern: /^(?:\d+_)?(?:READ ?ME|DEMO_SCENARIOS)$/, kind: "unsupported", label: "Documentation / demo scenarios", reason: "This sheet is documentation or demonstration material, not operational restaurant data." },
   { pattern: /^(?:\d+_)?BUSINESS$/, kind: "unsupported", label: "Business settings", reason: "Business/tenant configuration is not an importable restaurant data domain yet." },
   { pattern: /^(?:\d+_)?LOCATIONS$/, kind: "unsupported", label: "Locations", reason: "Location master data is not an importable domain yet." },
   { pattern: /^(?:\d+_)?SERVICE_PERIODS$/, kind: "unsupported", label: "Service periods", reason: "Service-period configuration is not an importable domain yet." },
@@ -91,6 +92,7 @@ const KNOWN_SHEET_IDENTITIES: Array<{
   { pattern: /^(?:\d+_)?SUPPLIER_PRODUCTS$/, kind: "supported", label: "Supplier products", domain: "supplier_product", reason: "The sheet name is an exact supported LexiBite supplier-product identity." },
   { pattern: /^(?:\d+_)?TAX_SERVICE$/, kind: "unsupported", label: "Tax service", reason: "Tax-service configuration is not an importable domain yet." },
   { pattern: /^(?:\d+_)?OPENING_STOCK$/, kind: "supported", label: "Opening stock", domain: "opening_stock", reason: "The sheet name is an exact supported LexiBite opening-stock identity." },
+  { pattern: /^(?:\d+_)?PRICING$/, kind: "unsupported", label: "Pricing configuration", reason: "Pricing exports are preserved but pricing configuration is managed by the Pricing Centre, not the current Import Studio write contract." },
   { pattern: /^(?:\d+_)?MENUS$/, kind: "supported", label: "Menus", domain: "menu", reason: "The sheet name is an exact supported LexiBite menu identity." },
   { pattern: /^(?:\d+_)?CATEGORIES$/, kind: "supported", label: "Categories", domain: "category", reason: "The sheet name is an exact supported LexiBite category identity." },
 ];
