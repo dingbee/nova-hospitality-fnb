@@ -244,7 +244,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "unitCode",
       label: "Stock unit",
       required: false,
-      aliases: alias("Unit", "UOM", "Stock Unit", "Uom", "Unit Of Measure", "Measure"),
+      aliases: alias("Unit", "UOM", "Stock Unit", "Uom", "Unit Of Measure", "Measure", "Purchase Unit", "purchase_unit"),
     },
     {
       field: "packSize",
@@ -256,13 +256,13 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "reorderPoint",
       label: "Reorder point",
       required: false,
-      aliases: alias("Reorder Point", "Reorder Level", "Min Level", "Minimum"),
+      aliases: alias("Reorder Point", "Reorder Level", "Min Level", "Minimum", "reorder_point"),
     },
     {
       field: "parLevel",
       label: "Par level",
       required: false,
-      aliases: alias("Par Level", "Par", "Max Level"),
+      aliases: alias("Par Level", "Par", "Max Level", "par_level"),
     },
     {
       field: "averageCost",
@@ -348,7 +348,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "shelfLifeDays",
       label: "Shelf life (days)",
       required: false,
-      aliases: alias("Shelf Life", "Shelf Life Days", "Shelf Life (Days)"),
+      aliases: alias("Shelf Life", "Shelf Life Days", "Shelf Life (Days)", "shelf_life_days"),
     },
   ],
   supplier_product: [
@@ -360,7 +360,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       // that references suppliers only by their code, like Suppliers'
       // own natural key, is a legitimate, matchable source.
       required: false,
-      aliases: alias("Supplier", "Supplier Name", "Vendor"),
+      aliases: alias("Supplier", "Supplier Name", "Vendor", "Supplier ID", "supplier_id"),
     },
     {
       field: "supplierCode",
@@ -402,7 +402,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "unitCode",
       label: "Purchase unit (how the supplier sells it)",
       required: false,
-      aliases: alias("Purchase Unit", "Unit", "UOM"),
+      aliases: alias("Purchase Unit", "Unit", "UOM", "purchase_unit"),
     },
     {
       field: "packSize",
@@ -492,13 +492,13 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       // "declared for a different menu" advisory in stage.ts.
       label: "Menu code (to cross-check)",
       required: false,
-      aliases: alias("Menu Code", "Menu"),
+      aliases: alias("Menu Code", "Menu", "Menu ID", "menu_id"),
     },
     {
       field: "code",
       label: "Category code",
       required: true,
-      aliases: alias("Category Code", "Code"),
+      aliases: alias("Category Code", "Code", "Slug"),
     },
     {
       field: "name",
@@ -510,7 +510,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "sortOrder",
       label: "Sort order",
       required: false,
-      aliases: alias("Sort Order", "Order", "Position"),
+      aliases: alias("Sort Order", "Order", "Position", "sort_order"),
     },
   ],
   menu_item: [
@@ -536,7 +536,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "categoryName",
       label: "Menu category",
       required: false,
-      aliases: alias("Category", "Category Name", "Section", "Menu Section", "Group"),
+      aliases: alias("Category", "Category Name", "Section", "Menu Section", "Group", "category"),
     },
     {
       field: "description",
@@ -555,6 +555,8 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
         "Sell Price",
         "Menu Price",
         "Retail Price",
+        "Price TZS",
+        "amount_tzs",
       ),
     },
     {
@@ -567,7 +569,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "available",
       label: "Available",
       required: false,
-      aliases: alias("Available", "Active", "In Stock", "On Menu"),
+      aliases: alias("Available", "Active", "In Stock", "On Menu", "Lifecycle Status"),
     },
     {
       field: "sortOrder",
@@ -581,13 +583,13 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "menuItemName",
       label: "Dish/drink (to match)",
       required: true,
-      aliases: alias("Menu Item", "Item Name", "Dish", "Name", "Product"),
+      aliases: alias("Menu Item", "Item Name", "Dish", "Name", "Product", "Menu Item ID", "menu_item_id"),
     },
     {
       field: "stationCode",
       label: "Station (to match)",
       required: true,
-      aliases: alias("Station", "Station Code", "Production Station", "Destination"),
+      aliases: alias("Station", "Station Code", "Production Station", "Destination", "Station ID", "station_id"),
     },
     {
       field: "sku",
@@ -818,7 +820,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "menuItemName",
       label: "Dish/drink (to match)",
       required: false,
-      aliases: alias("Recipe", "Dish", "Menu Item", "Menu Item Name", "Item Name", "Product"),
+      aliases: alias("Recipe", "Dish", "Menu Item", "Menu Item Name", "Item Name", "Product", "Recipe Name", "recipe_name"),
     },
     {
       field: "ingredientName",
@@ -827,7 +829,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       // name, SKU or barcode — see the "Ingredient to link is missing" check)
       // so a SKU-only recipe sheet is a legitimate, matchable source.
       required: false,
-      aliases: alias("Ingredient", "Ingredient Name", "Component"),
+      aliases: alias("Ingredient", "Ingredient Name", "Component", "Inventory Item", "inventory_item"),
     },
     {
       field: "ingredientSku",
