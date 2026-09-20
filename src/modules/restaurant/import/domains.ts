@@ -961,6 +961,33 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
  * itself: a row scoring high here is still just *evidence* of being a
  * header row, exactly like a signal word is only ever evidence of a domain.
  */
+
+/**
+ * Source columns that are useful in an operational export but are not part of
+ * the current LexiBite write contract. They remain in raw_data and are not
+ * surfaced as operator exceptions.
+ */
+export const IGNORED_SOURCE_COLUMNS_BY_DOMAIN: Partial<Record<ImportDomain, readonly string[]>> = {
+  category: ["id", "active"],
+  menu_item: ["id", "cost_tzs", "food_cost_pct", "station_id"],
+  product_station: ["id", "menu_item_id", "recipe_id", "service_periods"],
+  inventory_item: ["id", "inventory_category", "content_per_purchase_unit"],
+  recipe_component: ["recipe_id", "line_no"],
+  supplier: ["id", "scope", "status"],
+  supplier_product: ["active"],
+  opening_stock: ["sku", "opening_value_tzs"],
+};
+
+function normalizedSourceColumn(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+export function isIgnoredSourceColumn(domain: ImportDomain, column: string): boolean {
+  const ignored = IGNORED_SOURCE_COLUMNS_BY_DOMAIN[domain] ?? [];
+  const normalized = normalizedSourceColumn(column);
+  return ignored.some((candidate) => normalizedSourceColumn(candidate) === normalized);
+}
+
 export const ALL_CANONICAL_ALIASES: ReadonlySet<string> = new Set(
   Object.values(CANONICAL_FIELDS).flatMap((fields) => fields.flatMap((f) => f.aliases)),
 );
