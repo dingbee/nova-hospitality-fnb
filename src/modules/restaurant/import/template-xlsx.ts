@@ -266,7 +266,7 @@ export function lexibiteTemplateBase64(): string {
 /** Browser-only: builds the feature-complete workbook and triggers a download. */
 export function downloadLexibiteTemplate(filename: string = LEXIBITE_TEMPLATE_FILENAME): void {
   const bytes=styledWorkbookBytes(buildLexibiteTemplateWorkbook());
-  const blob=new Blob([bytes],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  // TypeScript 5.9+ models Uint8Array buffers as ArrayBufferLike; create a concrete ArrayBuffer-backed copy for Blob.\n  const blobBytes = new Uint8Array(bytes.byteLength);\n  blobBytes.set(bytes);\n  const blob=new Blob([blobBytes],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
   const url=URL.createObjectURL(blob);const anchor=document.createElement("a");
   anchor.href=url;anchor.download=filename;document.body.appendChild(anchor);anchor.click();anchor.remove();URL.revokeObjectURL(url);
 }
