@@ -661,3 +661,37 @@ export const updateCommercialAiModelStatusFn = createServerFn({ method: "POST" }
     const mod = await import("./ai-providers.server");
     return mod.updateAiModelStatus(context.supabase, context.userId, data.id, data.status);
   });
+
+export const createCommercialAiProviderFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({
+      code: z.string().min(2).max(50).regex(/^[a-z0-9_]+$/),
+      name: z.string().min(2).max(100),
+      configuredEnvKey: z.string().min(2).max(100).regex(/^[A-Z][A-Z0-9_]*$/),
+      endpointUrl: z.string().url(),
+      protocol: z.enum(["chat-completions", "responses"]),
+      defaultModel: z.string().min(1).max(150),
+      description: z.string().max(500).optional(),
+    }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const mod = await import("./ai-providers.server");
+    return mod.createAiProvider(context.supabase, context.userId, data);
+  });
+
+export const createCommercialAiModelFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({
+      providerId: z.string().uuid(),
+      code: z.string().min(1).max(150),
+      name: z.string().min(1).max(150),
+      capabilities: z.array(z.string().max(50)).max(20).optional(),
+      priority: z.number().int().min(0).max(10000).optional(),
+    }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const mod = await import("./ai-providers.server");
+    return mod.createAiModel(context.supabase, context.userId, data);
+  });
