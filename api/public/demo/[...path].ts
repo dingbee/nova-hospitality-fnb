@@ -433,7 +433,7 @@ async function registrationStatus(request: Request, registrationId: string): Pro
   return json({ status: data.status });
 }
 
-export default async function handler(request: Request): Promise<Response> {
+async function webHandler(request: Request): Promise<Response> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/public/demo/")) {
     return json({ status: "error", message: "Not found." }, 404);
@@ -482,4 +482,82 @@ function withHeaders(response: Response, headers: Record<string, string>): Respo
     statusText: response.statusText,
     headers: merged,
   });
+}
+
+
+/**
+ * Vercel Node runtime adapter.
+ *
+ * Vercel invokes standalone /api functions with Node's IncomingMessage/
+ * ServerResponse objects. Normalize that request into the Fetch API Request
+ * used by the implementation above, then write the Fetch API Response back
+ * through the Node response object.
+ */
+async function readNodeBody(request: any): Promise<unknown> {
+  if (request.body !== undefined && request.body !== null) {
+    if (typeof request.body === "string") {
+      return request.body ? JSON.parse(request.body) : undefined;
+    }
+    return request.body;
+  }
+
+  if (request.method === "GET" || request.method === "HEAD") return undefined;
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const raw = Buffer.concat(chunks).toString("utf8");
+  if (!raw) return undefined;
+
+  const contentType = String(request.headers?.["content-type"] ?? "").toLowerCase();
+  return contentType.includes("application/json") ? JSON.parse(raw) : raw;
+}
+
+function nodeHeadersToHeaders(headers: Record<string, unknown>): Headers {
+  const output = new Headers();
+  for (const [key, value] of Object.entries(headers ?? {})) {
+    if (value === undefined) continue;
+    output.set(key, Array.isArray(value) ? value.join(", ") : String(value));
+  }
+  return output;
+}
+
+export default async function handler(request: any, response: any): Promise<void> {
+  try {
+    const protocol = String(request.headers?.["x-forwarded-proto"] ?? "https").split(",")[0];
+    const host = String(request.headers?.host ?? "localhost");
+    const requestUrl = new URL(String(request.url ?? "/"), `${protocol}://${host}`);
+    const body = await readNodeBody(request);
+
+    const webRequest = new Request(requestUrl, {
+      method: String(request.method ?? "GET"),
+      headers: nodeHeadersToHeaders(request.headers ?? {}),
+      body:
+        body === undefined ||
+        request.method === "GET" ||
+        request.method === "HEAD"
+          ? undefined
+          : typeof body === "string"
+            ? body
+            : JSON.stringify(body),
+    });
+
+    const webResponse = await webHandler(webRequest);
+    response.statusCode = webResponse.status;
+    webResponse.headers.forEach((value, key) => response.setHeader(key, value));
+    const payload = Buffer.from(await webResponse.arrayBuffer());
+    response.end(payload);
+  } catch (error) {
+    console.error("[LexiBite Demo API adapter]", error);
+    response.statusCode = 500;
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    response.end(
+      JSON.stringify({
+        status: "error",
+        registrationId: null,
+        message: "Couldn't complete your LexiBite demo request.",
+      }),
+    );
+  }
 }
