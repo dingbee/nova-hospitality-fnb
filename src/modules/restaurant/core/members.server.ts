@@ -185,7 +185,7 @@ export async function setMemberStationAssignment(
 
   const { data: station, error: stationError } = await sb
     .from("restaurant_stations")
-    .select("id, tenant_id, property_id, location_id, active")
+    .select("id, tenant_id, property_id, location_id, active, station_type")
     .eq("id", input.stationId)
     .eq("tenant_id", input.tenantId)
     .maybeSingle();
@@ -193,6 +193,17 @@ export async function setMemberStationAssignment(
   if (!station) throw new Error("That station was not found in this tenant.");
   if (member.property_id && station.property_id !== member.property_id) {
     throw new Error("That station is outside the staff member's property scope.");
+  }
+
+  const isBarStation = ["bar", "cocktail", "coffee", "service_bar", "beverage"].includes(
+    String(station.station_type ?? "").trim().toLowerCase(),
+  );
+  if (member.role === "bartender" ? !isBarStation : isBarStation) {
+    throw new Error(
+      member.role === "bartender"
+        ? "Bartenders can only be assigned to bar stations."
+        : "Kitchen staff can only be assigned to kitchen stations.",
+    );
   }
 
   const { data: existing } = await sb
