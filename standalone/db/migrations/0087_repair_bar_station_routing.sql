@@ -13,10 +13,38 @@ begin;
 
 do $$
 declare
-  v_tenant uuid := 'cebda97b-33b1-43bf-932e-d7fee992a6c3';
-  v_bar_location uuid := 'eeaea7da-efb8-49eb-b3b3-c1fed9a0823f';
+  v_tenant uuid;
+  v_bar_location uuid;
   v_bar_station uuid;
 begin
+  -- Discover the demo tenant from its existing catalogue fixture rather than
+  -- embedding generated tenant/location UUIDs in the migration.
+  select tenant_id
+    into v_tenant
+  from public.restaurant_products
+  where sku = 'KILI-029'
+    and name = 'Coca-Cola'
+    and active = true
+  order by created_at
+  limit 1;
+
+  if v_tenant is null then
+    raise exception 'Unable to identify the UAT tenant from Coca-Cola (KILI-029).';
+  end if;
+
+  select id
+    into v_bar_location
+  from public.restaurant_locations
+  where tenant_id = v_tenant
+    and location_type = 'bar'
+    and lower(name) = 'uat bar'
+  order by name
+  limit 1;
+
+  if v_bar_location is null then
+    raise exception 'Unable to identify the UAT bar location for tenant %.', v_tenant;
+  end if;
+
   select id
     into v_bar_station
   from public.restaurant_stations
