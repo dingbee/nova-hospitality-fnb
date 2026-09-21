@@ -19,7 +19,7 @@ with candidates as (
   select
     mi.id as menu_item_id,
     mi.tenant_id,
-    mi.property_id as menu_property_id,
+    m.property_id as menu_property_id,
     m.location_id as menu_location_id,
     mi.category_id,
     mi.name,
