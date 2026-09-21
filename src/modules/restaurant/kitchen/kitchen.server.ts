@@ -648,17 +648,26 @@ export async function stationPerformance(sb: Sb, userId: string, tenantId: strin
   await assertCapability(sb, userId, tenantId, "kitchen.manage");
   if (allowedLocationIds !== null && allowedLocationIds.length === 0) return [];
   const from = since ?? new Date(Date.now() - 7 * 864e5).toISOString();
+  let ticketsQuery = sb
+    .from("restaurant_kitchen_tickets")
+    .select("station_id, prep_seconds, delay_seconds, is_delayed, status")
+    .eq("tenant_id", tenantId)
+    .gte("queued_at", from);
+  if (allowedLocationIds !== null) {
+    ticketsQuery = ticketsQuery.in("location_id", allowedLocationIds);
+  }
+
+  let stationsQuery = sb
+    .from("restaurant_stations")
+    .select("id, name, target_prep_minutes, property_id, location_id")
+    .eq("tenant_id", tenantId);
+  if (allowedLocationIds !== null) {
+    stationsQuery = stationsQuery.in("location_id", allowedLocationIds);
+  }
+
   const [{ data: tickets }, { data: stations }] = await Promise.all([
-    sb
-      .from("restaurant_kitchen_tickets")
-      .select("station_id, prep_seconds, delay_seconds, is_delayed, status")
-      .eq("tenant_id", tenantId)
-      .gte("queued_at", from)
-      .in("location_id", allowedLocationIds ?? []),
-    sb
-      .from("restaurant_stations")
-      .select("id, name, target_prep_minutes, property_id, location_id")
-      .eq("tenant_id", tenantId),
+    ticketsQuery,
+    stationsQuery,
   ]);
 
   const byStation = new Map<string, { total: number; delayed: number; prep: number[] }>();
