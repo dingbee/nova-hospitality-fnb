@@ -12,6 +12,7 @@ import { IntelligenceModule } from "@/components/os/IntelligenceModule";
 import { Button } from "@/components/ui/button";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
+import { hasRestaurantCapability } from "@/modules/restaurant/core/permissions";
 import {
   advanceRestaurantTicketFn,
   listRestaurantKitchenTicketsFn,
@@ -149,6 +150,9 @@ function KitchenTicketCard({
 function KitchenPage() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
+  const roles = ws.data?.roles ?? [];
+  const platformAdmin = ws.data?.platformAdmin ?? false;
+  const canManageKitchen = hasRestaurantCapability(roles, "kitchen.manage", platformAdmin);
   const qc = useQueryClient();
   const [stationFilter, setStationFilter] = useState<string | null>(null);
 
@@ -160,7 +164,7 @@ function KitchenPage() {
   const stations = useQuery({
     queryKey: ["restaurant.stations", tenantId],
     queryFn: () => stationsFn({ data: { tenantId: tenantId! } }),
-    enabled: Boolean(tenantId),
+    enabled: Boolean(tenantId) && canManageKitchen,
     staleTime: 60_000,
   });
   // The Kitchen board's own scope — every non-bar station — the same
@@ -185,13 +189,13 @@ function KitchenPage() {
       ticketsFn({
         data: { tenantId: tenantId!, stationIds: kitchenStationIdList, openOnly: true, limit: 100 },
       }),
-    enabled: Boolean(tenantId) && stations.data !== undefined,
+    enabled: Boolean(tenantId) && canManageKitchen && stations.data !== undefined,
     refetchInterval: 15_000,
   });
   const perf = useQuery({
     queryKey: ["restaurant.stationPerf", tenantId],
     queryFn: () => perfFn({ data: { tenantId: tenantId! } }),
-    enabled: Boolean(tenantId),
+    enabled: Boolean(tenantId) && canManageKitchen,
   });
 
   const advance = useAdminMutation({
@@ -209,6 +213,17 @@ function KitchenPage() {
       <EmptyState
         title="No restaurant tenant"
         description="You are not a member of a Restaurant & Bar OS tenant."
+      />
+    );
+  }
+
+
+
+  if (!ws.isLoading && ws.data?.tenant && !canManageKitchen) {
+    return (
+      <EmptyState
+        title="Kitchen access restricted"
+        description="Your restaurant role does not include kitchen operations for this workspace."
       />
     );
   }
