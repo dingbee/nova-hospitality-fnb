@@ -134,6 +134,9 @@ export async function listMemberStationAssignments(
     .eq("active", true);
   if (error) throw new Error(error.message);
 
+  const isBartender = member.role === "bartender";
+  const barStationTypes = ["bar", "cocktail", "coffee", "service_bar", "beverage"];
+
   let stationQuery = sb
     .from("restaurant_stations")
     .select("id, code, name, station_type, production_area, parent_station_id, property_id, location_id, active, sort_order")
@@ -145,6 +148,13 @@ export async function listMemberStationAssignments(
   const { data: stations, error: stationError } = await stationQuery;
   if (stationError) throw new Error(stationError.message);
 
+  const compatibleStations = ((stations ?? []) as any[]).filter((station) => {
+    const isBar = barStationTypes.includes(
+      String(station.station_type ?? "").trim().toLowerCase(),
+    );
+    return isBartender ? isBar : !isBar;
+  });
+
   return {
     member: {
       id: member.id,
@@ -153,7 +163,7 @@ export async function listMemberStationAssignments(
       propertyId: member.property_id,
     },
     assignments: (data ?? []) as any[],
-    stations: (stations ?? []) as any[],
+    stations: compatibleStations,
   };
 }
 
