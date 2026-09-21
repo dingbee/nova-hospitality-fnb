@@ -202,13 +202,11 @@ relies on — no new authorization system, no per-table policy changes.
 - Nolmark is treated as an untrusted public client throughout. It never
   receives a Supabase key of any kind (publishable or service-role), a
   LexiBite credential, or a session token.
-- `POST /api/public/demo/register` and `/resend` accept CORS from an
-  explicit allow-list only: set `NOLMARK_ALLOWED_ORIGIN` (comma-separated)
-  to enable direct browser calls from Nolmark's site. With it unset, no
-  `Access-Control-Allow-Origin` header is added — a server-to-server call
-  from Nolmark's backend still works (no browser CORS enforcement applies),
-  but a browser-direct call from an unlisted origin is refused by the
-  browser itself. **Preferred integration**: call `/register` from
+- `POST /api/public/demo/register` and `/resend` accept CORS from an explicit
+  allow-list. The production defaults include `https://nolmark.co` and
+  `https://www.nolmark.co`; `NOLMARK_ALLOWED_ORIGIN` (comma-separated) may
+  add additional explicitly approved origins. Browser-direct calls from an
+  unlisted origin remain refused by the browser. **Preferred integration**: call `/register` from
   Nolmark's own server, not its client bundle.
 - Every request body is treated as untrusted and validated with the same
   zod schemas used everywhere else in this codebase
