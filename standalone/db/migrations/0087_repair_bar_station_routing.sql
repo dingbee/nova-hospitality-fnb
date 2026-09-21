@@ -85,10 +85,9 @@ begin
   set
     station_id = v_bar_station,
     updated_at = now()
-  from public.restaurant_menu_items mi
-  join public.restaurant_categories c
-    on c.id = coalesce(p.category_id, mi.category_id)
-  where p.tenant_id = v_tenant
+  from public.restaurant_menu_items mi, public.restaurant_categories c
+  where c.id = coalesce(p.category_id, mi.category_id)
+    and p.tenant_id = v_tenant
     and p.menu_item_id = mi.id
     and p.active = true
     and (
@@ -123,9 +122,9 @@ begin
   set
     station_id = v_bar_station,
     updated_at = now()
-  from public.restaurant_menu_items mi
-  join public.restaurant_categories c on c.id = mi.category_id
-  where oi.tenant_id = v_tenant
+  from public.restaurant_menu_items mi, public.restaurant_categories c
+  where c.id = mi.category_id
+    and oi.tenant_id = v_tenant
     and oi.menu_item_id = mi.id
     and oi.status = 'ordered'
     and (
