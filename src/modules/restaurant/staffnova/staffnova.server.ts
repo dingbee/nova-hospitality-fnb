@@ -151,18 +151,23 @@ function logStageFailure(
  * is ever serialized toward the model.
  */
 /** I16: authoritative recipe economics and deterministic production-capacity evidence. */
-async function buildRecipeProcurementEvidence(sb: Sb, tenantId: string) {
+async function buildRecipeProcurementEvidence(sb: Sb, tenantId: string, propertyId?: string) {
   const recentStart = new Date(Date.now() - 30 * DAY).toISOString().slice(0, 10);
   const [recipesRes, productsRes, linesRes, itemsRes, unitsRes, poRes] = await Promise.all([
-    sb.from("restaurant_recipes").select("id, code, name, version, status, lineage_id, yield_quantity, currency, computed_cost, updated_at").eq("tenant_id", tenantId).eq("status", "active").order("name").limit(40),
+    sb.from("restaurant_recipes").select("id, code, name, version, status, lineage_id, yield_quantity, currency, computed_cost, updated_at, property_id").eq("tenant_id", tenantId).eq("status", "active").order("name").limit(40),
     sb.from("restaurant_products").select("recipe_id, menu_item_id, active").eq("tenant_id", tenantId).eq("active", true),
     sb.from("restaurant_recipe_lines").select("recipe_id, component_kind, inventory_item_id, sub_recipe_id, quantity, unit_id, yield_percent, is_optional, sort_order").eq("tenant_id", tenantId).order("sort_order"),
-    sb.from("restaurant_inventory_items").select("id, name, unit_id, current_quantity, average_cost, currency, content_per_stock_unit, content_unit_id").eq("tenant_id", tenantId),
+    sb.from("restaurant_inventory_items").select("id, name, unit_id, current_quantity, average_cost, currency, content_per_stock_unit, content_unit_id, property_id").eq("tenant_id", tenantId),
     sb.from("restaurant_inventory_units").select("id, code, name, dimension, factor, base_unit_id").eq("tenant_id", tenantId),
-    sb.from("restaurant_purchase_orders").select("id, order_date, status, supplier_id").eq("tenant_id", tenantId).gte("order_date", recentStart).order("order_date", { ascending: false }).limit(50),
+    sb.from("restaurant_purchase_orders").select("id, order_date, status, supplier_id, property_id").eq("tenant_id", tenantId).gte("order_date", recentStart).order("order_date", { ascending: false }).limit(50),
   ]);
-  const recipes=(recipesRes.data??[]) as any[], products=(productsRes.data??[]) as any[], lines=(linesRes.data??[]) as any[];
-  const items=(itemsRes.data??[]) as any[], units=(unitsRes.data??[]) as any[], orders=(poRes.data??[]) as any[];
+  let recipes=(recipesRes.data??[]) as any[], products=(productsRes.data??[]) as any[], lines=(linesRes.data??[]) as any[];
+  let items=(itemsRes.data??[]) as any[], units=(unitsRes.data??[]) as any[], orders=(poRes.data??[]) as any[];
+  if (propertyId) {
+    recipes = recipes.filter((r) => r.property_id == null || r.property_id === propertyId);
+    items = items.filter((i) => i.property_id == null || i.property_id === propertyId);
+    orders = orders.filter((o) => o.property_id == null || o.property_id === propertyId);
+  }
   const orderIds=orders.map(o=>o.id);
   const poLines=orderIds.length ? ((await sb.from("restaurant_purchase_order_items").select("purchase_order_id, inventory_item_id, unit_id, description, quantity, received_quantity").in("purchase_order_id", orderIds)).data??[]) as any[] : [];
   const itemMap=new Map(items.map(i=>[i.id,i])), unitMap=new Map(units.map(u=>[u.id,u]));
@@ -179,6 +184,7 @@ async function buildRecipeProcurementEvidence(sb: Sb, tenantId: string) {
   const capacity=(recipeLines:any[],source:Map<string,number>)=>{
     const parts:any[]=[];
     for(const l of recipeLines){
+      if(l.component_kind==="sub_recipe") return {capacity:null,limitingIngredient:null,unresolved:true,parts};
       if(l.component_kind!=="inventory_item"||!l.inventory_item_id||l.is_optional)continue;
       const item=itemMap.get(l.inventory_item_id); if(!item)return {capacity:null,limitingIngredient:null,unresolved:true,parts};
       const yp=Number(l.yield_percent??100), effective=yp>0?Number(l.quantity??0)/(yp/100):Number(l.quantity??0);
@@ -355,7 +361,7 @@ async function buildStaffNovaContext(
         source: m.source,
       }));
     }),
-    tryLoad("recipe_procurement_evidence", async () => buildRecipeProcurementEvidence(sb, tenantId)),
+    tryLoad("recipe_procurement_evidence", async () => buildRecipeProcurementEvidence(sb, tenantId, propertyId)),
   ]);
 
   // I14 — every input below is already-loaded data from the six calls
@@ -419,7 +425,10 @@ async function buildStaffNovaContext(
     // correctly per-caller; every entry is DATA, never an instruction —
     // see the system prompt's memory rule below.
     memory,
-    recipeProcurement,
+    recipeProcurement:
+      roles.some((r) => ["owner", "general_manager", "restaurant_manager", "chef", "kitchen_manager", "inventory_manager", "purchasing_officer", "accountant"].includes(r))
+        ? recipeProcurement
+        : { unavailable: true, reason: "Recipe and procurement evidence is not available for this role." },
   };
 
   return trimContextForRoles(fullContext, roles);
