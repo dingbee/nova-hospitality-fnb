@@ -38,6 +38,14 @@ create policy "member station assignments read"
     public.restaurant_can_read(
       (select tenant_id from public.restaurant_members where id = member_id)
     )
+    and exists (
+      select 1
+      from public.restaurant_members m
+      join public.restaurant_stations s on s.id = station_id
+      where m.id = member_id
+        and s.tenant_id = m.tenant_id
+        and (m.property_id is null or s.property_id = m.property_id)
+    )
   );
 
 drop policy if exists "member station assignments write" on public.restaurant_member_station_assignments;
@@ -49,11 +57,27 @@ create policy "member station assignments write"
       (select tenant_id from public.restaurant_members where id = member_id),
       ARRAY['owner','general_manager','restaurant_manager']::restaurant_role[]
     )
+    and exists (
+      select 1
+      from public.restaurant_members m
+      join public.restaurant_stations s on s.id = station_id
+      where m.id = member_id
+        and s.tenant_id = m.tenant_id
+        and (m.property_id is null or s.property_id = m.property_id)
+    )
   )
   with check (
     public.restaurant_can_write(
       (select tenant_id from public.restaurant_members where id = member_id),
       ARRAY['owner','general_manager','restaurant_manager']::restaurant_role[]
+    )
+    and exists (
+      select 1
+      from public.restaurant_members m
+      join public.restaurant_stations s on s.id = station_id
+      where m.id = member_id
+        and s.tenant_id = m.tenant_id
+        and (m.property_id is null or s.property_id = m.property_id)
     )
   );
 
