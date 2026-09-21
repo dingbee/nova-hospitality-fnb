@@ -32,15 +32,19 @@ export function resolveCataloguedLineStation(
   stations: readonly StationRow[],
   barStationTypes: readonly string[],
 ): string | null {
-  // 1. Product station wins outright — but only if it still belongs to this
-  //    tenant's own station list (a stale or foreign id falls through).
+  // 1. Product station is authoritative only when it is compatible with
+  //    the product's lane. A stale/misconfigured kitchen station on a beverage
+  //    product must not override the beverage→bar invariant.
+  const barTypes = new Set(barStationTypes);
   if (product?.stationId) {
     const configured = stations.find((s) => s.id === product.stationId);
-    if (configured) return configured.id;
+    if (configured) {
+      const configuredIsBar = Boolean(configured.stationType && barTypes.has(configured.stationType));
+      if (!product.isBeverage || configuredIsBar) return configured.id;
+    }
   }
 
   // 2. Category/beverage classification → the tenant's lane default.
-  const barTypes = new Set(barStationTypes);
   const lane = product?.isBeverage
     ? stations.find((s) => s.stationType && barTypes.has(s.stationType))
     : stations.find((s) => !s.stationType || !barTypes.has(s.stationType));
