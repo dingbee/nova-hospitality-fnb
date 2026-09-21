@@ -1,15 +1,4 @@
-/**
- * Staff & roles — list current team members, change their role or property
- * scope, remove access. Every write goes through the same capability-gated
- * `members.server.ts` functions the rest of the app uses — this panel adds
- * no new authorization logic.
- *
- * Adding a brand-new teammate isn't available from here yet: `upsertMember`
- * takes an existing auth user id, and there's no invite-by-email flow built
- * — that's a real, disclosed gap, not something this panel papers over.
- */
-import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Fragment, useState } from "react";import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Loader2, MapPin, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/os/PageHeader";
@@ -154,7 +143,8 @@ export function StaffPanel() {
               </thead>
               <tbody>
                 {rows.map((m) => (
-                  <tr key={m.id} className="border-b last:border-0">
+                  <Fragment key={m.id}>
+                  <tr className="border-b last:border-0">
                     <td className="py-3 pr-4 font-mono text-xs text-muted-foreground">
                       {m.user_id}
                     </td>
@@ -297,6 +287,7 @@ export function StaffPanel() {
                       </td>
                     </tr>
                   )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
