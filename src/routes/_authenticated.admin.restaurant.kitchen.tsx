@@ -169,7 +169,15 @@ function KitchenPage() {
   // station_id (confirmed against live data: one ticket, one station, no
   // duplication); it was showing here anyway because this read carried no
   // station filter at all, unlike the Bar board's own scoped read.
-  const kitchenStationIdList = kitchenStationIds((stations.data ?? []) as any[], BAR_STATION_TYPES);
+  // listStations returns database-shaped rows (station_type). Normalize to
+  // the routing model's camelCase contract before calculating the kitchen scope.
+  // Without this adapter, stationType is undefined and every station is
+  // incorrectly treated as non-bar.
+  const routingStations = ((stations.data ?? []) as any[]).map((s) => ({
+    id: s.id,
+    stationType: s.station_type ?? null,
+  }));
+  const kitchenStationIdList = kitchenStationIds(routingStations, BAR_STATION_TYPES);
 
   const tickets = useQuery({
     queryKey: ["restaurant.tickets", tenantId, kitchenStationIdList],
