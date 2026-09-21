@@ -79,7 +79,8 @@
     "vite-tsconfig-paths": "^6.0.2",
     "xlsx": "^0.18.5",
     "zod": "^3.24.2",
-    "@tanstack/query-core": "^5.103.1"
+    "@tanstack/query-core": "^5.103.1",
+    "@radix-ui/react-scroll-area": "^1.2.10"
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
