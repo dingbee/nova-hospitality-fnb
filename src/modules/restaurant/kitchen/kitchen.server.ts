@@ -86,7 +86,28 @@ export async function listTickets(
     .limit(input.limit);
   if (input.locationId) q = q.eq("location_id", input.locationId);
   if (input.stationId) q = q.eq("station_id", input.stationId);
-  if (input.stationIds && input.stationIds.length > 0) q = q.in("station_id", input.stationIds);
+
+  // Defense in depth: the Kitchen board must never read a bar station even
+  // if a stale client sends a mixed/incorrect stationIds list. The routing
+  // classifier is server-authoritative here, not just a UI convention.
+  if (input.stationIds) {
+    const { data: scopedStations, error: stationError } = await sb
+      .from("restaurant_stations")
+      .select("id, station_type")
+      .eq("tenant_id", input.tenantId)
+      .in("id", input.stationIds);
+
+    if (stationError) throw new Error(stationError.message);
+
+    const barTypes = new Set(BAR_STATION_TYPES.map((t) => t.trim().toLowerCase()));
+    const kitchenStationIds = ((scopedStations ?? []) as any[])
+      .filter((s) => !barTypes.has(String(s.station_type ?? "").trim().toLowerCase()))
+      .map((s) => s.id);
+
+    if (kitchenStationIds.length === 0) return [];
+    q = q.in("station_id", kitchenStationIds);
+  }
+
   if (input.status) q = q.eq("status", input.status);
   if (input.openOnly) q = q.in("status", ["queued", "preparing", "ready"]);
   const { data, error } = await q;
