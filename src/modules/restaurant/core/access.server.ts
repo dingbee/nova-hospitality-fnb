@@ -168,6 +168,26 @@ export async function canAccessResource(
  * locationId): resolve once via getTenantScope, then use this instead of
  * fetching every tenant row and filtering client-side.
  */
+
+
+/**
+ * Property ids covered by the caller's restaurant grants.
+ * Returns null for tenant-wide/platform scope and [] for a member with no
+ * property grants. Callers use this for list/aggregate reads so the query
+ * itself is narrowed instead of relying on client-side filtering.
+ */
+export function accessiblePropertyIds(scope: TenantScope): string[] | null {
+  if (scope.platformAdmin) return null;
+  if (scope.grants.some((g) => g.propertyId === null)) return null;
+  return [
+    ...new Set(
+      scope.grants
+        .map((g) => g.propertyId)
+        .filter((p): p is string => p !== null),
+    ),
+  ];
+}
+
 export async function accessibleLocationIds(
   supabase: Sb,
   scope: TenantScope,
