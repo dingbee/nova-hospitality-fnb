@@ -295,7 +295,6 @@ const CAPABILITY_ROLES: Record<RestaurantCapability, readonly RestaurantRole[]> 
     "restaurant_manager",
     "chef",
     "kitchen_manager",
-    "bartender",
   ],
   "stock.manage": [
     "owner",
