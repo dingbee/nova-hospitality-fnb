@@ -24,6 +24,13 @@ describe("resolveCataloguedLineStation — server authority over the product's o
     expect(tenantStations.find((s) => s.id === result)?.stationType).toBe("bar");
   });
 
+  it("repairs a beverage product whose stale catalogue station points to KITCHEN — beverage classification takes precedence", () => {
+    const product = { stationId: kitchenStation.id, isBeverage: true };
+    const result = resolveCataloguedLineStation(product, tenantStations, BAR_STATION_TYPES);
+    expect(result).toBe(barStation.id);
+    expect(result).not.toBe(kitchenStation.id);
+  });
+
   it("routes a food product to KITCHEN", () => {
     const product = { stationId: kitchenStation.id, isBeverage: false };
     const result = resolveCataloguedLineStation(product, tenantStations, BAR_STATION_TYPES);
