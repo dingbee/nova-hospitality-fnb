@@ -20,6 +20,7 @@ import {
   assertTenantRead,
   accessibleLocationIds,
   accessiblePropertyIds,
+  accessibleStationIds,
   getTenantScope,
 } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
@@ -41,6 +42,7 @@ export async function listStations(
   const scope = await getTenantScope(sb, userId, input.tenantId);
   const allowedLocationIds = await accessibleLocationIds(sb, scope);
   const allowedPropertyIds = accessiblePropertyIds(scope);
+  const assignedStationIds = await accessibleStationIds(sb, userId, scope);
 
   let q = sb
     .from("restaurant_stations")
@@ -58,6 +60,7 @@ export async function listStations(
   // narrowing makes the operational workspace deterministic as well: a
   // property-scoped chef/manager never receives another property's stations.
   return ((data ?? []) as any[]).filter((s) => {
+    if (assignedStationIds !== null && !assignedStationIds.includes(s.id)) return false;
     if (allowedPropertyIds === null) return true;
     if (allowedPropertyIds.length === 0) return false;
     if (s.property_id && allowedPropertyIds.includes(s.property_id)) return true;
@@ -123,6 +126,7 @@ export async function listTickets(
 
   const scope = await getTenantScope(sb, userId, input.tenantId);
   const allowedLocationIds = await accessibleLocationIds(sb, scope);
+  const assignedStationIds = await accessibleStationIds(sb, userId, scope);
   if (allowedLocationIds !== null && allowedLocationIds.length === 0) return [];
 
   // An explicit empty list ("scope to these stations" with none given, e.g.
@@ -152,7 +156,13 @@ export async function listTickets(
   } else if (allowedLocationIds !== null) {
     q = q.in("location_id", allowedLocationIds);
   }
-  if (input.stationId) q = q.eq("station_id", input.stationId);
+  if (input.stationId) {
+    if (assignedStationIds !== null && !assignedStationIds.includes(input.stationId)) return [];
+    q = q.eq("station_id", input.stationId);
+  } else if (assignedStationIds !== null) {
+    if (assignedStationIds.length === 0) return [];
+    q = q.in("station_id", assignedStationIds);
+  }
 
   // Defense in depth: the Kitchen board must never read a bar station even
   // if a stale client sends a mixed/incorrect stationIds list. The routing
@@ -167,10 +177,13 @@ export async function listTickets(
     if (stationError) throw new Error(stationError.message);
 
     const barTypes = new Set(BAR_STATION_TYPES.map((t) => t.trim().toLowerCase()));
-    const kitchenStationIds = ((scopedStations ?? []) as any[])
+    let kitchenStationIds = ((scopedStations ?? []) as any[])
       .filter((s) => !barTypes.has(String(s.station_type ?? "").trim().toLowerCase()))
       .map((s) => s.id);
 
+    if (assignedStationIds !== null) {
+      kitchenStationIds = kitchenStationIds.filter((id: string) => assignedStationIds.includes(id));
+    }
     if (kitchenStationIds.length === 0) return [];
     q = q.in("station_id", kitchenStationIds);
   }
