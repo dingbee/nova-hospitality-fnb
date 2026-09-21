@@ -188,6 +188,51 @@ export function accessiblePropertyIds(scope: TenantScope): string[] | null {
   ];
 }
 
+/**
+ * Production-station scope for operational workspaces.
+ *
+ * Broad operational grants (owner/GM/restaurant_manager) remain tenant/property
+ * scoped and therefore return null. For staff roles that support station
+ * assignment, an active assignment set narrows the station ids. Until a member
+ * has at least one active assignment, legacy property/location scope is retained
+ * so rollout can populate assignments without blanking existing workspaces.
+ */
+export async function accessibleStationIds(
+  supabase: Sb,
+  userId: string,
+  scope: TenantScope,
+  restrictedRoles: readonly RestaurantRole[] = ["chef", "kitchen_manager", "bartender"],
+): Promise<string[] | null> {
+  if (scope.platformAdmin) return null;
+
+  const grants = scope.grants.filter((g) => restrictedRoles.includes(g.role));
+  if (grants.length === 0) return null;
+
+  const { data: members } = await supabase
+    .from("restaurant_members")
+    .select("id, role, property_id")
+    .eq("tenant_id", scope.tenantId)
+    .eq("user_id", userId);
+
+  const memberIds = ((members ?? []) as any[])
+    .filter((m) => restrictedRoles.includes(m.role as RestaurantRole))
+    .filter((m) => grants.some((g) => g.role === m.role && (g.propertyId === null || g.propertyId === m.property_id)))
+    .map((m) => m.id as string);
+
+  if (memberIds.length === 0) return null;
+
+  const { data: assignments } = await supabase
+    .from("restaurant_member_station_assignments")
+    .select("member_id, station_id")
+    .in("member_id", memberIds)
+    .eq("active", true);
+
+  const rows = (assignments ?? []) as any[];
+  if (rows.length === 0) return null;
+
+  return [...new Set(rows.map((r) => r.station_id as string))];
+}
+
 export async function accessibleLocationIds(
   supabase: Sb,
   scope: TenantScope,
