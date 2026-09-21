@@ -133,7 +133,28 @@ export async function listMemberStationAssignments(
     .eq("member_id", input.memberId)
     .eq("active", true);
   if (error) throw new Error(error.message);
-  return (data ?? []) as any[];
+
+  let stationQuery = sb
+    .from("restaurant_stations")
+    .select("id, code, name, station_type, production_area, parent_station_id, property_id, location_id, active, sort_order")
+    .eq("tenant_id", input.tenantId)
+    .eq("active", true)
+    .order("sort_order")
+    .order("name");
+  if (member.property_id) stationQuery = stationQuery.eq("property_id", member.property_id);
+  const { data: stations, error: stationError } = await stationQuery;
+  if (stationError) throw new Error(stationError.message);
+
+  return {
+    member: {
+      id: member.id,
+      userId: member.user_id,
+      role: member.role,
+      propertyId: member.property_id,
+    },
+    assignments: (data ?? []) as any[],
+    stations: (stations ?? []) as any[],
+  };
 }
 
 export async function setMemberStationAssignment(
