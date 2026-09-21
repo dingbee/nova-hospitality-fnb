@@ -54,8 +54,8 @@ export default defineConfig({
               request.mode === "navigate" && !url.pathname.startsWith("/_serverFn"),
             handler: "NetworkFirst",
             options: {
-              cacheName: "lexibite-guest-pages-v2",
-              networkTimeoutSeconds: 4,
+              cacheName: "lexibite-guest-pages-v3",
+              networkTimeoutSeconds: 12,
               expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 7 },
               cacheableResponse: { statuses: [0, 200] },
             },
