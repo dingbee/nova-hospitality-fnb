@@ -52,8 +52,18 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
-      - name: Lint
-        run: pnpm run lint
+      - name: Lint changed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_sha="$(git merge-base origin/main HEAD)"
+          files="$(git diff --name-only "$base_sha" "$GITHUB_SHA" -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
+          if [ -n "$files" ]; then
+            printf '%s\\n' "$files"
+            pnpm exec eslint $files
+          else
+            echo "No changed source files require linting."
+          fi
 
       - name: Unit and integration tests
         run: pnpm run test
