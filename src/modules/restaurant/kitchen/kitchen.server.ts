@@ -70,10 +70,28 @@ export async function upsertStation(
   userId: string,
   input: z.infer<typeof upsertStationSchema>,
 ) {
+  // On update, authorize both the station's existing scope and the proposed
+  // destination. This prevents a property-scoped operator from editing a
+  // station they do not own simply by omitting/changing the scope fields.
+  if (input.id) {
+    const { data: existing } = await sb
+      .from("restaurant_stations")
+      .select("property_id, location_id")
+      .eq("tenant_id", input.tenantId)
+      .eq("id", input.id)
+      .maybeSingle();
+    if (!existing) throw new Error("Station not found.");
+    await assertCapability(sb, userId, input.tenantId, "kitchen.manage", {
+      propertyId: existing.property_id,
+      locationId: existing.location_id,
+    });
+  }
+
   await assertCapability(sb, userId, input.tenantId, "kitchen.manage", {
     propertyId: input.propertyId,
     locationId: input.locationId,
   });
+
   const row = {
     tenant_id: input.tenantId,
     property_id: input.propertyId ?? null,
