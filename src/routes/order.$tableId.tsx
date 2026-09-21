@@ -2063,18 +2063,6 @@ function AskNovaDrawer({
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Keep the guest's conversation anchored to the newest content. This is
-  // intentionally a layout-level scroll, not window scrolling: long NOVA
-  // replies, recommendation cards, and basket confirmations must never leave
-  // the guest looking at the beginning of an older response.
-  useEffect(() => {
-    if (!open || turns.length === 0) return;
-    const frame = requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ block: "end" });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [open, turns, ask.isPending]);
-
   const ask = useMutation({
     mutationFn: (message: string) => {
       // Only real prior chat turns become history — a fallback notice was
@@ -2106,6 +2094,18 @@ function AskNovaDrawer({
       ]);
     },
   });
+
+  // Keep the guest's conversation anchored to the newest content. This is
+  // intentionally a layout-level scroll, not window scrolling: long NOVA
+  // replies, recommendation cards, and basket confirmations must never leave
+  // the guest looking at the beginning of an older response.
+  useEffect(() => {
+    if (!open || turns.length === 0) return;
+    const frame = requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ block: "end" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open, turns, ask.isPending]);
 
   const send = (message: string) => {
     const text = message.trim();
