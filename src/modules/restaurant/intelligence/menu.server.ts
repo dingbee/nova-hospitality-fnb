@@ -46,7 +46,7 @@ export async function getMenuIntelligence(
   if (input.propertyId) ordersQuery = ordersQuery.eq("property_id", input.propertyId);
   if (input.locationId) ordersQuery = ordersQuery.eq("location_id", input.locationId);
 
-  const [ordersRes, itemsRes, costsRes] = await Promise.all([
+  const [ordersRes, itemsRes, costsRes, productRecipesRes, recipesRes] = await Promise.all([
     ordersQuery,
     sb
       .from("restaurant_menu_items")
@@ -58,6 +58,17 @@ export async function getMenuIntelligence(
         "menu_item_id, total_cost, computed_at, food_cost_percent, suggested_price, target_margin",
       )
       .eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_products")
+      .select("menu_item_id, recipe_id, active")
+      .eq("tenant_id", tenantId)
+      .eq("active", true)
+      .not("recipe_id", "is", null),
+    sb
+      .from("restaurant_recipes")
+      .select("id, lineage_id, version, status, computed_cost, updated_at")
+      .eq("tenant_id", tenantId)
+      .eq("status", "active"),
   ]);
 
   const orders = ((ordersRes.data ?? []) as any[]).filter((o) => o.status !== "voided");
@@ -80,10 +91,28 @@ export async function getMenuIntelligence(
 
   const menuItems = (itemsRes.data ?? []) as any[];
   const costRows = (costsRes.data ?? []) as any[];
+  const productRecipes = (productRecipesRes.data ?? []) as any[];
+  const recipeRows = (recipesRes.data ?? []) as any[];
+  const recipeById = new Map(recipeRows.map((r) => [r.id, r]));
   const latestCost = new Map<string, any>();
   for (const c of costRows) {
     const prev = latestCost.get(c.menu_item_id);
     if (!prev || c.computed_at > prev.computed_at) latestCost.set(c.menu_item_id, c);
+  }
+  // The versioned recipe system is the authoritative source for current
+  // recipe economics. Keep legacy cost rows for suggested-price metadata,
+  // but source total_cost from the active versioned recipe.
+  for (const p of productRecipes) {
+    const recipe = recipeById.get(p.recipe_id);
+    if (!recipe) continue;
+    const prev = latestCost.get(p.menu_item_id) ?? {};
+    latestCost.set(p.menu_item_id, {
+      ...prev,
+      total_cost: recipe.computed_cost,
+      computed_at: recipe.updated_at,
+      recipe_id: recipe.id,
+      recipe_version: recipe.version,
+    });
   }
 
   type Agg = { qty: number; revenue: number; cost: number; prevQty: number; name: string };
@@ -114,8 +143,8 @@ export async function getMenuIntelligence(
     const recipe = latestCost.get(mi.id);
     const actualUnitCost = a.qty > 0 ? a.cost / a.qty : null;
     let costReviewReason: string | null = null;
-    if (!recipe) {
-      costReviewReason = "No recipe cost recorded";
+    if (!recipe || recipe.total_cost == null) {
+      costReviewReason = "No current recipe cost recorded";
     } else if (Date.now() - new Date(recipe.computed_at).getTime() > STALE_COST_DAYS * DAY) {
       costReviewReason = `Recipe cost last computed over ${STALE_COST_DAYS} days ago`;
     } else if (actualUnitCost != null && Number(recipe.total_cost) > 0) {
