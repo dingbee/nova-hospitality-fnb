@@ -197,6 +197,25 @@ export function accessiblePropertyIds(scope: TenantScope): string[] | null {
  * has at least one active assignment, legacy property/location scope is retained
  * so rollout can populate assignments without blanking existing workspaces.
  */
+const BROAD_OPERATIONAL_ROLES: readonly RestaurantRole[] = [
+  "owner",
+  "general_manager",
+  "restaurant_manager",
+];
+
+const BAR_STATION_TYPES = new Set(["bar", "cocktail", "coffee", "service_bar", "beverage"]);
+
+function stationMatchesRole(stationType: unknown, role: RestaurantRole): boolean {
+  const isBar = BAR_STATION_TYPES.has(String(stationType ?? "").trim().toLowerCase());
+  return role === "bartender" ? isBar : !isBar;
+}
+
+/**
+ * Resolves the caller's active production-station assignments.
+ * Broad operational roles are never narrowed by station assignments.
+ * Restricted roles are narrowed only to stations compatible with that role:
+ * bartender -> bar stations; chef/kitchen_manager -> kitchen stations.
+ */
 export async function accessibleStationIds(
   supabase: Sb,
   userId: string,
@@ -204,6 +223,10 @@ export async function accessibleStationIds(
   restrictedRoles: readonly RestaurantRole[] = ["chef", "kitchen_manager", "bartender"],
 ): Promise<string[] | null> {
   if (scope.platformAdmin) return null;
+
+  if (scope.grants.some((g) => BROAD_OPERATIONAL_ROLES.includes(g.role))) {
+    return null;
+  }
 
   const grants = scope.grants.filter((g) => restrictedRoles.includes(g.role));
   if (grants.length === 0) return null;
@@ -214,9 +237,17 @@ export async function accessibleStationIds(
     .eq("tenant_id", scope.tenantId)
     .eq("user_id", userId);
 
-  const memberIds = ((members ?? []) as any[])
-    .filter((m) => restrictedRoles.includes(m.role as RestaurantRole))
-    .filter((m) => grants.some((g) => g.role === m.role && (g.propertyId === null || g.propertyId === m.property_id)))
+  const memberRows = ((members ?? []) as any[]).filter((m) =>
+    restrictedRoles.includes(m.role as RestaurantRole),
+  );
+  const memberIds = memberRows
+    .filter((m) =>
+      grants.some(
+        (g) =>
+          g.role === m.role &&
+          (g.propertyId === null || g.propertyId === m.property_id),
+      ),
+    )
     .map((m) => m.id as string);
 
   if (memberIds.length === 0) return null;
@@ -230,7 +261,30 @@ export async function accessibleStationIds(
   const rows = (assignments ?? []) as any[];
   if (rows.length === 0) return null;
 
-  return [...new Set(rows.map((r) => r.station_id as string))];
+  const stationIds = [...new Set(rows.map((r) => r.station_id as string))];
+  const { data: stations } = await supabase
+    .from("restaurant_stations")
+    .select("id, station_type")
+    .in("id", stationIds)
+    .eq("tenant_id", scope.tenantId);
+
+  const roleByMemberId = new Map(
+    memberRows.map((m) => [m.id as string, m.role as RestaurantRole]),
+  );
+  const stationTypeById = new Map(
+    ((stations ?? []) as any[]).map((s) => [s.id as string, s.station_type]),
+  );
+
+  return [
+    ...new Set(
+      rows
+        .filter((r) => {
+          const role = roleByMemberId.get(r.member_id as string);
+          return role ? stationMatchesRole(stationTypeById.get(r.station_id as string), role) : false;
+        })
+        .map((r) => r.station_id as string),
+    ),
+  ];
 }
 
 export async function accessibleLocationIds(
