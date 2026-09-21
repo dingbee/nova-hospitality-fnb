@@ -22,9 +22,6 @@ export default defineConfig({
     server: { entry: "server" },
   },
 
-  test: {
-    exclude: ["**/node_modules/**", "e2e/**"],
-  },
 
   plugins: [
     VitePWA({
