@@ -15,7 +15,13 @@ import type {
   listTicketsSchema,
   upsertStationSchema,
 } from "../core/contracts";
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import {
+  assertCapability,
+  assertTenantRead,
+  accessibleLocationIds,
+  accessiblePropertyIds,
+  getTenantScope,
+} from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { BAR_STATION_TYPES } from "../bar/contracts";
 import { groupItemsByStation } from "./grouping";
@@ -27,16 +33,36 @@ export async function listStations(
   userId: string,
   input: z.infer<typeof listStationsSchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  await assertCapability(sb, userId, input.tenantId, "kitchen.manage", {
+    propertyId: input.propertyId,
+    locationId: input.locationId,
+  });
+
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  const allowedLocationIds = await accessibleLocationIds(sb, scope);
+  const allowedPropertyIds = accessiblePropertyIds(scope);
+
   let q = sb
     .from("restaurant_stations")
-    .select("id, code, name, station_type, target_prep_minutes, sort_order, active, location_id")
+    .select(
+      "id, code, name, station_type, target_prep_minutes, sort_order, active, location_id, property_id",
+    )
     .eq("tenant_id", input.tenantId)
     .order("sort_order");
   if (input.locationId) q = q.eq("location_id", input.locationId);
+  if (input.propertyId) q = q.eq("property_id", input.propertyId);
   const { data, error } = await q;
   if (error) throw new Error(error.message);
-  return data ?? [];
+
+  // The DB/RLS layer remains the security boundary. This application-layer
+  // narrowing makes the operational workspace deterministic as well: a
+  // property-scoped chef/manager never receives another property's stations.
+  return ((data ?? []) as any[]).filter((s) => {
+    if (allowedPropertyIds === null) return true;
+    if (allowedPropertyIds.length === 0) return false;
+    if (s.property_id && allowedPropertyIds.includes(s.property_id)) return true;
+    return Boolean(s.location_id && allowedLocationIds?.includes(s.location_id));
+  });
 }
 
 export async function upsertStation(
@@ -44,7 +70,10 @@ export async function upsertStation(
   userId: string,
   input: z.infer<typeof upsertStationSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "kitchen.manage");
+  await assertCapability(sb, userId, input.tenantId, "kitchen.manage", {
+    propertyId: input.propertyId,
+    locationId: input.locationId,
+  });
   const row = {
     tenant_id: input.tenantId,
     property_id: input.propertyId ?? null,
@@ -69,7 +98,15 @@ export async function listTickets(
   userId: string,
   input: z.infer<typeof listTicketsSchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  await assertCapability(sb, userId, input.tenantId, "kitchen.manage", {
+    propertyId: input.propertyId,
+    locationId: input.locationId,
+  });
+
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  const allowedLocationIds = await accessibleLocationIds(sb, scope);
+  if (allowedLocationIds !== null && allowedLocationIds.length === 0) return [];
+
   // An explicit empty list ("scope to these stations" with none given, e.g.
   // a tenant with no kitchen-type stations configured yet) means "match no
   // station", not "no filter" — falling through to unfiltered here would
@@ -85,6 +122,18 @@ export async function listTickets(
     .order("queued_at")
     .limit(input.limit);
   if (input.locationId) q = q.eq("location_id", input.locationId);
+  if (input.propertyId) {
+    const { data: propertyLocations } = await sb
+      .from("restaurant_locations")
+      .select("id")
+      .eq("tenant_id", input.tenantId)
+      .eq("property_id", input.propertyId);
+    const ids = ((propertyLocations ?? []) as any[]).map((r) => r.id);
+    if (ids.length === 0) return [];
+    q = q.in("location_id", ids);
+  } else if (allowedLocationIds !== null) {
+    q = q.in("location_id", allowedLocationIds);
+  }
   if (input.stationId) q = q.eq("station_id", input.stationId);
 
   // Defense in depth: the Kitchen board must never read a bar station even
@@ -306,7 +355,19 @@ async function fireOrderItemsCore(
 
 /** Staff-invoked: fires an order's un-fired lines to the kitchen/bar. */
 export async function fireOrder(sb: Sb, userId: string, input: FireOrderInput) {
-  await assertCapability(sb, userId, input.tenantId, "kitchen.manage");
+  // The order carries the authoritative property/location. A property-scoped
+  // operator may fire only an order belonging to their own operational scope.
+  const { data: orderScope } = await sb
+    .from("restaurant_orders")
+    .select("property_id, location_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .maybeSingle();
+  if (!orderScope) throw new Error("Order not found.");
+  await assertCapability(sb, userId, input.tenantId, "kitchen.manage", {
+    propertyId: orderScope.property_id,
+    locationId: orderScope.location_id,
+  });
   const result = await fireOrderItemsCore(sb, input);
 
   if (result.fired > 0) {
@@ -429,9 +490,30 @@ export async function advanceTicket(sb: Sb, userId: string, input: AdvanceTicket
   if (!ticket) throw new Error("Ticket not found.");
   // Scoped by the ticket's own location — a kitchen.manage grant limited to
   // one property must not be able to advance another property's ticket.
-  await assertCapability(sb, userId, input.tenantId, "kitchen.manage", {
-    locationId: ticket.location_id,
-  });
+  const { data: ticketStation } = ticket.station_id
+    ? await sb
+        .from("restaurant_stations")
+        .select("station_type")
+        .eq("tenant_id", input.tenantId)
+        .eq("id", ticket.station_id)
+        .maybeSingle()
+    : { data: null };
+
+  const isBarStation = (BAR_STATION_TYPES as readonly string[]).includes(
+    String(ticketStation?.station_type ?? "").trim().toLowerCase(),
+  );
+
+  // Bar staff use the same ticket lifecycle endpoint, but their authority is
+  // sales.manage rather than kitchen.manage. The ticket's own station type
+  // determines which capability is required; scope still comes from the
+  // ticket's location.
+  await assertCapability(
+    sb,
+    userId,
+    input.tenantId,
+    isBarStation ? "sales.manage" : "kitchen.manage",
+    { locationId: ticket.location_id },
+  );
 
   if (input.status === ticket.status) {
     // Double click / client retry re-sending the status it already reached:
@@ -561,17 +643,21 @@ export async function advanceTicket(sb: Sb, userId: string, input: AdvanceTicket
 
 /** Station-level service performance over a window. Read-only. */
 export async function stationPerformance(sb: Sb, userId: string, tenantId: string, since?: string) {
-  await assertTenantRead(sb, userId, tenantId);
+  const scope = await getTenantScope(sb, userId, tenantId);
+  const allowedLocationIds = await accessibleLocationIds(sb, scope);
+  await assertCapability(sb, userId, tenantId, "kitchen.manage");
+  if (allowedLocationIds !== null && allowedLocationIds.length === 0) return [];
   const from = since ?? new Date(Date.now() - 7 * 864e5).toISOString();
   const [{ data: tickets }, { data: stations }] = await Promise.all([
     sb
       .from("restaurant_kitchen_tickets")
       .select("station_id, prep_seconds, delay_seconds, is_delayed, status")
       .eq("tenant_id", tenantId)
-      .gte("queued_at", from),
+      .gte("queued_at", from)
+      .in("location_id", allowedLocationIds ?? []),
     sb
       .from("restaurant_stations")
-      .select("id, name, target_prep_minutes")
+      .select("id, name, target_prep_minutes, property_id, location_id")
       .eq("tenant_id", tenantId),
   ]);
 
@@ -586,7 +672,12 @@ export async function stationPerformance(sb: Sb, userId: string, tenantId: strin
     byStation.set(key, agg);
   }
 
-  return ((stations ?? []) as any[]).map((s) => {
+  const visibleStations = ((stations ?? []) as any[]).filter((s) => {
+    if (allowedLocationIds === null) return true;
+    return Boolean(s.location_id && allowedLocationIds.includes(s.location_id));
+  });
+
+  return visibleStations.map((s) => {
     const agg = byStation.get(s.id) ?? { total: 0, delayed: 0, prep: [] };
     const avg = agg.prep.length > 0 ? agg.prep.reduce((a, b) => a + b, 0) / agg.prep.length : 0;
     return {
