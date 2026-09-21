@@ -22,11 +22,14 @@ function json(body: unknown, status = 200, extraHeaders?: Record<string, string>
   });
 }
 
+const DEFAULT_NOLMARK_ORIGINS = ["https://nolmark.co", "https://www.nolmark.co"];
+
 function corsHeaders(request: Request): Record<string, string> {
-  const allowed = (process.env.NOLMARK_ALLOWED_ORIGIN ?? "")
+  const configured = (process.env.NOLMARK_ALLOWED_ORIGIN ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  const allowed = [...new Set([...DEFAULT_NOLMARK_ORIGINS, ...configured])];
   const origin = request.headers.get("origin");
   if (!origin || !allowed.includes(origin)) return {};
   return {
@@ -43,8 +46,8 @@ function clientIp(request: Request): string | null {
   return request.headers.get("x-real-ip");
 }
 
-function appOrigin(request: Request): string {
-  return process.env.LEXIBITE_APP_ORIGIN ?? new URL(request.url).origin;
+function appOrigin(_request: Request): string {
+  return process.env.LEXIBITE_APP_ORIGIN ?? "https://lexibite.nolmark.co";
 }
 
 /** Returns a Response if this request was handled, or null if the path doesn't match. */
