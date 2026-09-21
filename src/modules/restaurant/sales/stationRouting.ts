@@ -64,8 +64,13 @@ export function kitchenStationIds(
   stations: readonly StationRow[],
   barStationTypes: readonly string[],
 ): string[] {
-  const barTypes = new Set(barStationTypes);
-  return stations.filter((s) => !s.stationType || !barTypes.has(s.stationType)).map((s) => s.id);
+  const barTypes = new Set(barStationTypes.map((t) => t.trim().toLowerCase()));
+  return stations
+    .filter((s) => {
+      const stationType = s.stationType?.trim().toLowerCase() ?? "";
+      return !barTypes.has(stationType);
+    })
+    .map((s) => s.id);
 }
 
 /**
