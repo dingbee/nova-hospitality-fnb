@@ -109,6 +109,14 @@ export function createDemoFakeSupabase(
     from: (table: string) => builder(table),
     auth: {
       admin: {
+        createUser: async (_args: any) => {
+          const handler = rpcHandlers["__createUser"];
+          if (handler) {
+            const result = handler(_args);
+            return { data: result, error: null };
+          }
+          return { data: { user: { id: genId() } }, error: null };
+        },
         generateLink: async (_args: any) => {
           const handler = rpcHandlers["__generateLink"];
           if (handler) return { data: handler(_args), error: null };
