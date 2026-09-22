@@ -11,7 +11,13 @@
  * No balance is ever written here. No parallel POS, ledger, recipe or costing
  * engine exists in this file.
  */
-import {\n  assertCapability,\n  assertTenantRead,\n  accessibleLocationIds,\n  getTenantScope,\n} from "../core/access.server";
+import {
+  assertCapability,
+  assertTenantRead,
+  accessibleLocationIds,
+  accessibleStationIds,
+  getTenantScope,
+} from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import type { UnitRow } from "../inventory/units";
 import { pourCost as computePourCost, pourMaths, poursAvailable, round6 } from "./pour";
