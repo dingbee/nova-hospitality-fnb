@@ -23,8 +23,9 @@ import { buildSync } from "esbuild";
 import { mkdirSync, writeFileSync, copyFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import buildGuestSwHarness from "./build-guest-sw-harness";
 
-export default function buildHarness() {
+export default async function buildHarness() {
   const here = dirname(fileURLToPath(import.meta.url));
   const repoRoot = join(here, "..", "..");
   const outDir = join(repoRoot, "e2e", ".generated");
@@ -56,4 +57,6 @@ export * as contracts from "@/modules/restaurant/offline/contracts";
   copyFileSync(join(here, "harness.html"), join(outDir, "harness.html"));
 
   console.log(`Real-browser offline harness built at ${outDir}`);
+
+  await buildGuestSwHarness();
 }
