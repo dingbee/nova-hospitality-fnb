@@ -122,17 +122,35 @@ export async function getBarSnapshot(
       ? scope.locationIds
       : scope.locationIds.filter((id) => allowedLocationIds.includes(id));
   const assignedStationIds = await accessibleStationIds(sb, userId, accessScope, ["bartender"]);
-  const stationIds = (allowedLocationIds === null
-    ? scope.stationIds
-    : scope.stations
-        .filter((s) => s.locationId && allowedLocationIds.includes(s.locationId))
-        .map((s) => s.id))
-    .filter((id) => assignedStationIds === null || assignedStationIds.includes(id));
+  const stationIds = (
+    allowedLocationIds === null
+      ? scope.stationIds
+      : scope.stations
+          .filter((s) => s.locationId && allowedLocationIds.includes(s.locationId))
+          .map((s) => s.id)
+  ).filter((id) => assignedStationIds === null || assignedStationIds.includes(id));
   if (allowedLocationIds !== null && allowedLocationIds.length === 0) {
     return {
-      locations: [], stations: [], tickets: [], openTicketCount: 0, delayedTicketCount: 0,
-      pendingRequisitions: [], openTransfers: [], lowStock: [], expiring: [],
-      sales: { currency: "TZS", net: 0, quantity: 0, theoreticalCost: 0, grossProfit: 0, costPercent: null, compCount: 0, compValue: 0, voidCount: 0 },
+      locations: [],
+      stations: [],
+      tickets: [],
+      openTicketCount: 0,
+      delayedTicketCount: 0,
+      pendingRequisitions: [],
+      openTransfers: [],
+      lowStock: [],
+      expiring: [],
+      sales: {
+        currency: "TZS",
+        net: 0,
+        quantity: 0,
+        theoreticalCost: 0,
+        grossProfit: 0,
+        costPercent: null,
+        compCount: 0,
+        compValue: 0,
+        voidCount: 0,
+      },
     };
   }
   const stationName = new Map(scope.stations.map((s) => [s.id, s.name]));

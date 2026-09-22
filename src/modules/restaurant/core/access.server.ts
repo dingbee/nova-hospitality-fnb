@@ -169,7 +169,6 @@ export async function canAccessResource(
  * fetching every tenant row and filtering client-side.
  */
 
-
 /**
  * Property ids covered by the caller's restaurant grants.
  * Returns null for tenant-wide/platform scope and [] for a member with no
@@ -179,13 +178,7 @@ export async function canAccessResource(
 export function accessiblePropertyIds(scope: TenantScope): string[] | null {
   if (scope.platformAdmin) return null;
   if (scope.grants.some((g) => g.propertyId === null)) return null;
-  return [
-    ...new Set(
-      scope.grants
-        .map((g) => g.propertyId)
-        .filter((p): p is string => p !== null),
-    ),
-  ];
+  return [...new Set(scope.grants.map((g) => g.propertyId).filter((p): p is string => p !== null))];
 }
 
 /**
@@ -206,7 +199,11 @@ const BROAD_OPERATIONAL_ROLES: readonly RestaurantRole[] = [
 const BAR_STATION_TYPES = new Set(["bar", "cocktail", "coffee", "service_bar", "beverage"]);
 
 function stationMatchesRole(stationType: unknown, role: RestaurantRole): boolean {
-  const isBar = BAR_STATION_TYPES.has(String(stationType ?? "").trim().toLowerCase());
+  const isBar = BAR_STATION_TYPES.has(
+    String(stationType ?? "")
+      .trim()
+      .toLowerCase(),
+  );
   return role === "bartender" ? isBar : !isBar;
 }
 
@@ -243,9 +240,7 @@ export async function accessibleStationIds(
   const memberIds = memberRows
     .filter((m) =>
       grants.some(
-        (g) =>
-          g.role === m.role &&
-          (g.propertyId === null || g.propertyId === m.property_id),
+        (g) => g.role === m.role && (g.propertyId === null || g.propertyId === m.property_id),
       ),
     )
     .map((m) => m.id as string);
@@ -268,9 +263,7 @@ export async function accessibleStationIds(
     .in("id", stationIds)
     .eq("tenant_id", scope.tenantId);
 
-  const roleByMemberId = new Map(
-    memberRows.map((m) => [m.id as string, m.role as RestaurantRole]),
-  );
+  const roleByMemberId = new Map(memberRows.map((m) => [m.id as string, m.role as RestaurantRole]));
   const stationTypeById = new Map(
     ((stations ?? []) as any[]).map((s) => [s.id as string, s.station_type]),
   );
@@ -280,7 +273,9 @@ export async function accessibleStationIds(
       rows
         .filter((r) => {
           const role = roleByMemberId.get(r.member_id as string);
-          return role ? stationMatchesRole(stationTypeById.get(r.station_id as string), role) : false;
+          return role
+            ? stationMatchesRole(stationTypeById.get(r.station_id as string), role)
+            : false;
         })
         .map((r) => r.station_id as string),
     ),

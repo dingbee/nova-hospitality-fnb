@@ -178,7 +178,14 @@ export async function listTickets(
 
     const barTypes = new Set(BAR_STATION_TYPES.map((t) => t.trim().toLowerCase()));
     let kitchenStationIds = ((scopedStations ?? []) as any[])
-      .filter((s) => !barTypes.has(String(s.station_type ?? "").trim().toLowerCase()))
+      .filter(
+        (s) =>
+          !barTypes.has(
+            String(s.station_type ?? "")
+              .trim()
+              .toLowerCase(),
+          ),
+      )
       .map((s) => s.id);
 
     if (assignedStationIds !== null) {
@@ -531,7 +538,9 @@ export async function advanceTicket(sb: Sb, userId: string, input: AdvanceTicket
     : { data: null };
 
   const isBarStation = (BAR_STATION_TYPES as readonly string[]).includes(
-    String(ticketStation?.station_type ?? "").trim().toLowerCase(),
+    String(ticketStation?.station_type ?? "")
+      .trim()
+      .toLowerCase(),
   );
 
   // Bar staff use the same ticket lifecycle endpoint, but their authority is
@@ -696,10 +705,7 @@ export async function stationPerformance(sb: Sb, userId: string, tenantId: strin
     stationsQuery = stationsQuery.in("location_id", allowedLocationIds);
   }
 
-  const [{ data: tickets }, { data: stations }] = await Promise.all([
-    ticketsQuery,
-    stationsQuery,
-  ]);
+  const [{ data: tickets }, { data: stations }] = await Promise.all([ticketsQuery, stationsQuery]);
 
   const byStation = new Map<string, { total: number; delayed: number; prep: number[] }>();
   for (const t of (tickets ?? []) as any[]) {

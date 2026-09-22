@@ -108,7 +108,6 @@ export async function removeMember(
   return { ok: true };
 }
 
-
 export async function listMemberStationAssignments(
   sb: Sb,
   userId: string,
@@ -139,7 +138,9 @@ export async function listMemberStationAssignments(
 
   let stationQuery = sb
     .from("restaurant_stations")
-    .select("id, code, name, station_type, production_area, parent_station_id, property_id, location_id, active, sort_order")
+    .select(
+      "id, code, name, station_type, production_area, parent_station_id, property_id, location_id, active, sort_order",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("active", true)
     .order("sort_order")
@@ -150,7 +151,9 @@ export async function listMemberStationAssignments(
 
   const compatibleStations = ((stations ?? []) as any[]).filter((station) => {
     const isBar = barStationTypes.includes(
-      String(station.station_type ?? "").trim().toLowerCase(),
+      String(station.station_type ?? "")
+        .trim()
+        .toLowerCase(),
     );
     return isBartender ? isBar : !isBar;
   });
@@ -196,7 +199,9 @@ export async function setMemberStationAssignment(
   }
 
   const isBarStation = ["bar", "cocktail", "coffee", "service_bar", "beverage"].includes(
-    String(station.station_type ?? "").trim().toLowerCase(),
+    String(station.station_type ?? "")
+      .trim()
+      .toLowerCase(),
   );
   if (member.role === "bartender" ? !isBarStation : isBarStation) {
     throw new Error(
@@ -224,7 +229,8 @@ export async function setMemberStationAssignment(
     return data;
   }
 
-  if (!input.active) return { id: null, member_id: input.memberId, station_id: input.stationId, active: false };
+  if (!input.active)
+    return { id: null, member_id: input.memberId, station_id: input.stationId, active: false };
 
   const { data, error } = await sb
     .from("restaurant_member_station_assignments")
