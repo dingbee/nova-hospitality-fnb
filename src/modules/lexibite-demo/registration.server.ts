@@ -63,23 +63,43 @@ async function issueVerificationLink(
   email: string,
   origin: string,
   hasExistingUser: boolean,
-): Promise<{ actionLink: string; userId: string }> {
+) {
   const redirectTo = activateRedirectUrl(origin);
-  const { data, error } = await admin.auth.admin.generateLink(
-    hasExistingUser
-      ? { type: "magiclink", email, options: { redirectTo } }
-      : {
-          type: "invite",
-          email,
-          options: { redirectTo, data: { demo: true, source: DEMO_SOURCE } },
-        },
-  );
+
+  // Establish the Auth identity explicitly before generating the one-time
+  // link. This makes retries/races safe when an Auth user was created by
+  // an earlier attempt but the demo registration row has not been linked.
+  if (!hasExistingUser) {
+    const { error: createError } = await admin.auth.admin.createUser({
+      email,
+      user_metadata: { demo: true, source: DEMO_SOURCE },
+    });
+
+    if (
+      createError &&
+      !/already been registered|already exists|email_exists|duplicate.*email/i.test(
+        createError.message,
+      )
+    ) {
+      throw new Error(createError.message);
+    }
+  }
+
+  const { data, error } = await admin.auth.admin.generateLink({
+    type: "magiclink",
+    email,
+    options: {
+      redirectTo,
+      data: { demo: true, source: DEMO_SOURCE },
+    },
+  });
+
   if (error || !data?.properties?.action_link || !data?.user?.id) {
     throw new Error(error?.message ?? "Could not generate a verification link.");
   }
+
   return { actionLink: data.properties.action_link as string, userId: data.user.id as string };
 }
-
 export async function registerDemoProspect(
   admin: Sb,
   input: z.infer<typeof registerDemoProspectSchema>,
