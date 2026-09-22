@@ -493,6 +493,50 @@ function withHeaders(response: Response, headers: Record<string, string>): Respo
  * used by the implementation above, then write the Fetch API Response back
  * through the Node response object.
  */
+
+/**
+ * Resolves the absolute URL of an incoming request, whichever shape it
+ * arrives in.
+ *
+ * Production runtime errors ("TypeError: Invalid URL" for both
+ * /api/public/demo/register and /api/public/demo/resend) came from the
+ * naive version of this: `new URL(request.url, \`${protocol}://${host}\`)`
+ * built its base with `?? "localhost"` fallbacks, which only guards
+ * against a *missing* (`undefined`/`null`) header — an *empty-string*
+ * `host` header (which nullish coalescing does not catch) collapses the
+ * base to the bare string `"https://"`, and `new URL()` throws
+ * constructing anything against that. The fix only needs to be robust,
+ * not exact: `webHandler` below uses nothing but `url.pathname` for
+ * routing, so the reconstructed origin is never load-bearing — it only
+ * has to be *some* syntactically valid absolute URL.
+ */
+export function resolveRequestUrl(request: any): URL {
+  const rawUrl = String(request.url ?? "/");
+  // A genuine Web Standard Request (the shape every sibling handler in
+  // this directory — pesapal-ipn.ts, mobile-money-webhook.ts — is invoked
+  // with) always reports an absolute URL already; resolving that against
+  // a base is unnecessary and, unlike a relative path, would be ignored
+  // anyway per the URL spec, so this is just the fast, direct path.
+  if (/^https?:\/\//i.test(rawUrl)) {
+    try {
+      return new URL(rawUrl);
+    } catch {
+      // fall through to the header-derived base below
+    }
+  }
+  const protocol =
+    String(request.headers?.["x-forwarded-proto"] ?? "https").split(",")[0]?.trim() || "https";
+  const host = String(request.headers?.host ?? "").trim() || "localhost";
+  try {
+    return new URL(rawUrl, `${protocol}://${host}`);
+  } catch {
+    // Whatever is wrong with the derived protocol/host, routing only ever
+    // reads `url.pathname` — a guaranteed-valid fallback base keeps this
+    // function from ever throwing instead of serving the request.
+    return new URL(rawUrl, "http://localhost");
+  }
+}
+
 async function readNodeBody(request: any): Promise<unknown> {
   if (request.body !== undefined && request.body !== null) {
     if (typeof request.body === "string") {
@@ -525,9 +569,7 @@ function nodeHeadersToHeaders(headers: Record<string, unknown>): Headers {
 
 export default async function handler(request: any, response: any): Promise<void> {
   try {
-    const protocol = String(request.headers?.["x-forwarded-proto"] ?? "https").split(",")[0];
-    const host = String(request.headers?.host ?? "localhost");
-    const requestUrl = new URL(String(request.url ?? "/"), `${protocol}://${host}`);
+    const requestUrl = resolveRequestUrl(request);
     const body = await readNodeBody(request);
 
     const webRequest = new Request(requestUrl, {
