@@ -157,6 +157,9 @@ async function sendEmail(input: {
         subject: input.subject,
         html: input.html,
         text: input.text,
+        ...(env("NOVA_EMAIL_REPLY_TO")
+          ? { reply_to: env("NOVA_EMAIL_REPLY_TO") }
+          : {}),
       }),
       signal: controller.signal,
     });
