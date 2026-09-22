@@ -15,6 +15,11 @@ export interface ReadinessResult {
   service: string;
   version: string;
   buildId: string;
+  environment: string | null;
+  deploymentId: string | null;
+  deploymentUrl: string | null;
+  buildTimestamp: string | null;
+  schemaVersion: string;
   checkedAt: string;
   reason?: "database_unreachable";
 }
@@ -24,7 +29,17 @@ const READINESS_TIMEOUT_MS = 3000;
 export async function checkReadiness(service: string): Promise<ReadinessResult> {
   const identity = resolveBuildIdentity();
   const checkedAt = new Date().toISOString();
-  const base = { service, version: identity.appVersion, buildId: identity.buildId, checkedAt };
+  const base = {
+    service,
+    version: identity.appVersion,
+    buildId: identity.buildId,
+    environment: identity.vercelEnv,
+    deploymentId: identity.deploymentId,
+    deploymentUrl: identity.deploymentUrl,
+    buildTimestamp: identity.buildTimestamp,
+    schemaVersion: identity.schemaVersion,
+    checkedAt,
+  };
 
   try {
     // Loaded lazily: constructing the admin client throws synchronously
