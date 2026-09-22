@@ -107,3 +107,140 @@ export async function removeMember(
   });
   return { ok: true };
 }
+
+export async function listMemberStationAssignments(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof import("./contracts").listMemberStationAssignmentsSchema>,
+) {
+  const { data: member, error: memberError } = await sb
+    .from("restaurant_members")
+    .select("id, user_id, role, property_id")
+    .eq("id", input.memberId)
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+  if (memberError) throw new Error(memberError.message);
+  if (!member) throw new Error("That member was not found in this tenant.");
+
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: member.property_id,
+  });
+
+  const { data, error } = await sb
+    .from("restaurant_member_station_assignments")
+    .select("id, station_id, active, created_at, updated_at")
+    .eq("member_id", input.memberId)
+    .eq("active", true);
+  if (error) throw new Error(error.message);
+
+  const isBartender = member.role === "bartender";
+  const barStationTypes = ["bar", "cocktail", "coffee", "service_bar", "beverage"];
+
+  let stationQuery = sb
+    .from("restaurant_stations")
+    .select(
+      "id, code, name, station_type, production_area, parent_station_id, property_id, location_id, active, sort_order",
+    )
+    .eq("tenant_id", input.tenantId)
+    .eq("active", true)
+    .order("sort_order")
+    .order("name");
+  if (member.property_id) stationQuery = stationQuery.eq("property_id", member.property_id);
+  const { data: stations, error: stationError } = await stationQuery;
+  if (stationError) throw new Error(stationError.message);
+
+  const compatibleStations = ((stations ?? []) as any[]).filter((station) => {
+    const isBar = barStationTypes.includes(
+      String(station.station_type ?? "")
+        .trim()
+        .toLowerCase(),
+    );
+    return isBartender ? isBar : !isBar;
+  });
+
+  return {
+    member: {
+      id: member.id,
+      userId: member.user_id,
+      role: member.role,
+      propertyId: member.property_id,
+    },
+    assignments: (data ?? []) as any[],
+    stations: compatibleStations,
+  };
+}
+
+export async function setMemberStationAssignment(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof import("./contracts").setMemberStationAssignmentSchema>,
+) {
+  const { data: member, error: memberError } = await sb
+    .from("restaurant_members")
+    .select("id, user_id, role, property_id")
+    .eq("id", input.memberId)
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+  if (memberError) throw new Error(memberError.message);
+  if (!member) throw new Error("That member was not found in this tenant.");
+
+  await assertCanManageMembership(sb, input.tenantId, member.property_id ?? null);
+
+  const { data: station, error: stationError } = await sb
+    .from("restaurant_stations")
+    .select("id, tenant_id, property_id, location_id, active, station_type")
+    .eq("id", input.stationId)
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+  if (stationError) throw new Error(stationError.message);
+  if (!station) throw new Error("That station was not found in this tenant.");
+  if (member.property_id && station.property_id !== member.property_id) {
+    throw new Error("That station is outside the staff member's property scope.");
+  }
+
+  const isBarStation = ["bar", "cocktail", "coffee", "service_bar", "beverage"].includes(
+    String(station.station_type ?? "")
+      .trim()
+      .toLowerCase(),
+  );
+  if (member.role === "bartender" ? !isBarStation : isBarStation) {
+    throw new Error(
+      member.role === "bartender"
+        ? "Bartenders can only be assigned to bar stations."
+        : "Kitchen staff can only be assigned to kitchen stations.",
+    );
+  }
+
+  const { data: existing } = await sb
+    .from("restaurant_member_station_assignments")
+    .select("id")
+    .eq("member_id", input.memberId)
+    .eq("station_id", input.stationId)
+    .maybeSingle();
+
+  if (existing) {
+    const { data, error } = await sb
+      .from("restaurant_member_station_assignments")
+      .update({ active: input.active, updated_at: new Date().toISOString() })
+      .eq("id", existing.id)
+      .select("id, member_id, station_id, active")
+      .single();
+    if (error) throw new Error(error.message);
+    return data;
+  }
+
+  if (!input.active)
+    return { id: null, member_id: input.memberId, station_id: input.stationId, active: false };
+
+  const { data, error } = await sb
+    .from("restaurant_member_station_assignments")
+    .insert({
+      member_id: input.memberId,
+      station_id: input.stationId,
+      active: true,
+    })
+    .select("id, member_id, station_id, active")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}

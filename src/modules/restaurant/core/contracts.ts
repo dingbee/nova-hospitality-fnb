@@ -657,3 +657,19 @@ export const upsertMemberSchema = z.object({
 });
 
 export const removeMemberSchema = z.object({ tenantId: uuid, memberId: uuid });
+
+/* ---------------- Production station assignments ---------------- */
+
+export const listMemberStationAssignmentsSchema = z.object({
+  tenantId: uuid,
+  memberId: uuid,
+});
+
+export const setMemberStationAssignmentSchema = z.object({
+  tenantId: uuid,
+  memberId: uuid,
+  stationId: uuid,
+  active: z.boolean(),
+});
+
+export type SetMemberStationAssignmentInput = z.infer<typeof setMemberStationAssignmentSchema>;

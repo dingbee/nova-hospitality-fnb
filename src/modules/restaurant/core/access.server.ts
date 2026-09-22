@@ -169,7 +169,6 @@ export async function canAccessResource(
  * fetching every tenant row and filtering client-side.
  */
 
-
 /**
  * Property ids covered by the caller's restaurant grants.
  * Returns null for tenant-wide/platform scope and [] for a member with no
@@ -179,11 +178,106 @@ export async function canAccessResource(
 export function accessiblePropertyIds(scope: TenantScope): string[] | null {
   if (scope.platformAdmin) return null;
   if (scope.grants.some((g) => g.propertyId === null)) return null;
+  return [...new Set(scope.grants.map((g) => g.propertyId).filter((p): p is string => p !== null))];
+}
+
+/**
+ * Production-station scope for operational workspaces.
+ *
+ * Broad operational grants (owner/GM/restaurant_manager) remain tenant/property
+ * scoped and therefore return null. For staff roles that support station
+ * assignment, an active assignment set narrows the station ids. Until a member
+ * has at least one active assignment, legacy property/location scope is retained
+ * so rollout can populate assignments without blanking existing workspaces.
+ */
+const BROAD_OPERATIONAL_ROLES: readonly RestaurantRole[] = [
+  "owner",
+  "general_manager",
+  "restaurant_manager",
+];
+
+const BAR_STATION_TYPES = new Set(["bar", "cocktail", "coffee", "service_bar", "beverage"]);
+
+function stationMatchesRole(stationType: unknown, role: RestaurantRole): boolean {
+  const isBar = BAR_STATION_TYPES.has(
+    String(stationType ?? "")
+      .trim()
+      .toLowerCase(),
+  );
+  return role === "bartender" ? isBar : !isBar;
+}
+
+/**
+ * Resolves the caller's active production-station assignments.
+ * Broad operational roles are never narrowed by station assignments.
+ * Restricted roles are narrowed only to stations compatible with that role:
+ * bartender -> bar stations; chef/kitchen_manager -> kitchen stations.
+ */
+export async function accessibleStationIds(
+  supabase: Sb,
+  userId: string,
+  scope: TenantScope,
+  restrictedRoles: readonly RestaurantRole[] = ["chef", "kitchen_manager", "bartender"],
+): Promise<string[] | null> {
+  if (scope.platformAdmin) return null;
+
+  if (scope.grants.some((g) => BROAD_OPERATIONAL_ROLES.includes(g.role))) {
+    return null;
+  }
+
+  const grants = scope.grants.filter((g) => restrictedRoles.includes(g.role));
+  if (grants.length === 0) return null;
+
+  const { data: members } = await supabase
+    .from("restaurant_members")
+    .select("id, role, property_id")
+    .eq("tenant_id", scope.tenantId)
+    .eq("user_id", userId);
+
+  const memberRows = ((members ?? []) as any[]).filter((m) =>
+    restrictedRoles.includes(m.role as RestaurantRole),
+  );
+  const memberIds = memberRows
+    .filter((m) =>
+      grants.some(
+        (g) => g.role === m.role && (g.propertyId === null || g.propertyId === m.property_id),
+      ),
+    )
+    .map((m) => m.id as string);
+
+  if (memberIds.length === 0) return null;
+
+  const { data: assignments } = await supabase
+    .from("restaurant_member_station_assignments")
+    .select("member_id, station_id")
+    .in("member_id", memberIds)
+    .eq("active", true);
+
+  const rows = (assignments ?? []) as any[];
+  if (rows.length === 0) return null;
+
+  const stationIds = [...new Set(rows.map((r) => r.station_id as string))];
+  const { data: stations } = await supabase
+    .from("restaurant_stations")
+    .select("id, station_type")
+    .in("id", stationIds)
+    .eq("tenant_id", scope.tenantId);
+
+  const roleByMemberId = new Map(memberRows.map((m) => [m.id as string, m.role as RestaurantRole]));
+  const stationTypeById = new Map(
+    ((stations ?? []) as any[]).map((s) => [s.id as string, s.station_type]),
+  );
+
   return [
     ...new Set(
-      scope.grants
-        .map((g) => g.propertyId)
-        .filter((p): p is string => p !== null),
+      rows
+        .filter((r) => {
+          const role = roleByMemberId.get(r.member_id as string);
+          return role
+            ? stationMatchesRole(stationTypeById.get(r.station_id as string), role)
+            : false;
+        })
+        .map((r) => r.station_id as string),
     ),
   ];
 }

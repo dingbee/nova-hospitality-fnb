@@ -11,7 +11,13 @@
  * No balance is ever written here. No parallel POS, ledger, recipe or costing
  * engine exists in this file.
  */
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import {
+  assertCapability,
+  assertTenantRead,
+  accessibleLocationIds,
+  accessibleStationIds,
+  getTenantScope,
+} from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import type { UnitRow } from "../inventory/units";
 import { pourCost as computePourCost, pourMaths, poursAvailable, round6 } from "./pour";
@@ -103,10 +109,50 @@ export async function getBarSnapshot(
   userId: string,
   input: BarSnapshotInput,
 ): Promise<BarSnapshot> {
-  await assertTenantRead(sb, userId, input.tenantId);
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", {
+    propertyId: input.propertyId,
+    locationId: input.locationId,
+  });
+  const accessScope = await getTenantScope(sb, userId, input.tenantId);
+  const allowedLocationIds = await accessibleLocationIds(sb, accessScope);
   const scope = await resolveBarScope(sb, input.tenantId, input.propertyId);
-  const stationIds = scope.stationIds;
-  const locationIds = input.locationId ? [input.locationId] : scope.locationIds;
+  const locationIds = input.locationId
+    ? [input.locationId]
+    : allowedLocationIds === null
+      ? scope.locationIds
+      : scope.locationIds.filter((id) => allowedLocationIds.includes(id));
+  const assignedStationIds = await accessibleStationIds(sb, userId, accessScope, ["bartender"]);
+  const stationIds = (
+    allowedLocationIds === null
+      ? scope.stationIds
+      : scope.stations
+          .filter((s) => s.locationId && allowedLocationIds.includes(s.locationId))
+          .map((s) => s.id)
+  ).filter((id) => assignedStationIds === null || assignedStationIds.includes(id));
+  if (allowedLocationIds !== null && allowedLocationIds.length === 0) {
+    return {
+      locations: [],
+      stations: [],
+      tickets: [],
+      openTicketCount: 0,
+      delayedTicketCount: 0,
+      pendingRequisitions: [],
+      openTransfers: [],
+      lowStock: [],
+      expiring: [],
+      sales: {
+        currency: "TZS",
+        net: 0,
+        quantity: 0,
+        theoreticalCost: 0,
+        grossProfit: 0,
+        costPercent: null,
+        compCount: 0,
+        compValue: 0,
+        voidCount: 0,
+      },
+    };
+  }
   const stationName = new Map(scope.stations.map((s) => [s.id, s.name]));
 
   /* Tickets — existing kitchen/service ticket architecture, bar stations only. */
