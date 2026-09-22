@@ -190,22 +190,41 @@ async function issueVerificationLink(
   hasExistingUser: boolean,
 ) {
   const redirectTo = `${PRODUCTION_ORIGIN}/lexibite/demo/activate`;
-  const { data, error } = await admin.auth.admin.generateLink(
-    hasExistingUser
-      ? {
-          type: "magiclink",
-          email,
-          options: { redirectTo },
-        }
-      : {
-          type: "invite",
-          email,
-          options: {
-            redirectTo,
-            data: { demo: true, source: DEMO_SOURCE },
-          },
-        },
-  );
+
+
+  // Create the Auth identity explicitly before generating the link. This
+  // avoids a known race/edge case where generateLink({ type: "invite" })
+  // creates the Auth user and a concurrent/retried request then receives
+  // "A user with this email address has already been registered". It also
+  // makes magiclink generation deterministic for a brand-new user.
+  //
+  // createUser() is idempotent for this flow: an existing Auth identity is
+  // not an error for demo access; the visitor still has to prove control of
+  // that email by consuming the one-time magic link.
+  if (!hasExistingUser) {
+    const { error: createError } = await admin.auth.admin.createUser({
+      email,
+      user_metadata: { demo: true, source: DEMO_SOURCE },
+    });
+
+    if (
+      createError &&
+      !/already been registered|already exists|email_exists|duplicate.*email/i.test(
+        createError.message,
+      )
+    ) {
+      throw new Error(createError.message);
+    }
+  }
+
+  const { data, error } = await admin.auth.admin.generateLink({
+    type: "magiclink",
+    email,
+    options: {
+      redirectTo,
+      data: { demo: true, source: DEMO_SOURCE },
+    },
+  });
 
   if (error || !data?.properties?.action_link || !data?.user?.id) {
     throw new Error(error?.message ?? "Could not generate a verification link.");
@@ -216,7 +235,6 @@ async function issueVerificationLink(
     userId: data.user.id,
   };
 }
-
 async function registerDemo(request: Request): Promise<Response> {
   let input: z.infer<typeof registerSchema>;
   try {
