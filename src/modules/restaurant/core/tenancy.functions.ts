@@ -1,6 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { listMembersSchema, removeMemberSchema, upsertMemberSchema, workspaceSchema } from "./contracts";
+import {
+  listMemberStationAssignmentsSchema,
+  listMembersSchema,
+  removeMemberSchema,
+  setMemberStationAssignmentSchema,
+  upsertMemberSchema,
+  workspaceSchema,
+} from "./contracts";
 
 export const getRestaurantWorkspaceFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -31,4 +38,20 @@ export const removeRestaurantMemberFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./members.server");
     return mod.removeMember(context.supabase, context.userId, data);
+  });
+
+export const listMemberStationAssignmentsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => listMemberStationAssignmentsSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./members.server");
+    return mod.listMemberStationAssignments(context.supabase, context.userId, data);
+  });
+
+export const setMemberStationAssignmentFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => setMemberStationAssignmentSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./members.server");
+    return mod.setMemberStationAssignment(context.supabase, context.userId, data);
   });

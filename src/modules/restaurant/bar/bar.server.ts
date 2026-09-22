@@ -115,11 +115,13 @@ export async function getBarSnapshot(
     : allowedLocationIds === null
       ? scope.locationIds
       : scope.locationIds.filter((id) => allowedLocationIds.includes(id));
-  const stationIds = allowedLocationIds === null
+  const assignedStationIds = await accessibleStationIds(sb, userId, accessScope, ["bartender"]);
+  const stationIds = (allowedLocationIds === null
     ? scope.stationIds
     : scope.stations
         .filter((s) => s.locationId && allowedLocationIds.includes(s.locationId))
-        .map((s) => s.id);
+        .map((s) => s.id))
+    .filter((id) => assignedStationIds === null || assignedStationIds.includes(id));
   if (allowedLocationIds !== null && allowedLocationIds.length === 0) {
     return {
       locations: [], stations: [], tickets: [], openTicketCount: 0, delayedTicketCount: 0,
