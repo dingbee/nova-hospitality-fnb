@@ -1,0 +1,69 @@
+name: One-off POS mobile scroll fix
+
+on:
+  push:
+    branches:
+      - fix/pos-mobile-menu-scroll
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message != 'fix: mobile POS menu scroll containment'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch POS workspace layout
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path("src/modules/restaurant/sales/ui/PosWorkspace.tsx")
+          s = p.read_text()
+
+          replacements = [
+              (
+                  'className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(200px,22fr)_minmax(0,45fr)_minmax(300px,33fr)] lg:grid-rows-[minmax(0,1fr)] lg:gap-3 lg:overflow-hidden xl:gap-4"',
+                  '''className={cn(
+            "min-h-0 flex-1 overflow-hidden",
+            mobileFloorExpanded ? "flex flex-col gap-3" : "flex flex-col",
+            "lg:grid lg:grid-cols-[minmax(200px,22fr)_minmax(0,45fr)_minmax(300px,33fr)] lg:grid-rows-[minmax(0,1fr)] lg:gap-3 lg:overflow-hidden xl:gap-4",
+          )}''',
+              ),
+              (
+                  '''mobileFloorExpanded ? "flex" : "hidden",
+            "min-h-0 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:p-4",''',
+                  '''mobileFloorExpanded ? "flex flex-[2] min-h-0" : "hidden",
+            "min-h-0 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:p-4",''',
+              ),
+              (
+                  'className="flex min-h-0 flex-col gap-2 lg:contents"',
+                  'className="flex min-h-0 flex-[3] flex-col gap-2 lg:contents"',
+              ),
+              (
+                  '"min-h-[calc(100dvh-15rem)] flex-1 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:min-h-0 lg:p-4",',
+                  '"min-h-0 flex-1 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:min-h-0 lg:p-4",',
+              ),
+          ]
+
+          for old, new in replacements:
+              if old not in s:
+                  raise SystemExit(f"Expected source fragment not found: {old[:100]}")
+              s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+      - name: Verify
+        run: |
+          grep -n "overflow-hidden" src/modules/restaurant/sales/ui/PosWorkspace.tsx | head
+          grep -n 'flex-\[3\]' src/modules/restaurant/sales/ui/PosWorkspace.tsx
+          grep -n 'min-h-0 flex-1 flex-col overflow-hidden' src/modules/restaurant/sales/ui/PosWorkspace.tsx
+      - name: Commit and remove one-off workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/modules/restaurant/sales/ui/PosWorkspace.tsx
+          git rm .github/workflows/one-off-pos-mobile-fix.yml
+          git commit -m "fix: mobile POS menu scroll containment"
+          git push origin HEAD
