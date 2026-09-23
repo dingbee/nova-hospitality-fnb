@@ -10,7 +10,7 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4 sm:flex sm:flex-wrap sm:items-end sm:justify-between">
+    <header className="grid grid-cols-1 items-start gap-4 sm:flex sm:flex-wrap sm:items-end sm:justify-between">
       <div className="min-w-0">
         <h1 className="truncate font-display text-2xl leading-tight text-foreground lg:text-3xl">
           {title}
