@@ -1,10 +1,56 @@
 import { createRouter, useRouter } from "@tanstack/react-router";
 import { QueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { routeTree } from "./routeTree.gen";
 import { presentUserFacingError } from "@/lib/errors/present-error";
 
+const STALE_CHUNK_ERROR =
+  /Failed to fetch dynamically imported module|Importing a module script failed|Loading chunk [^ ]+ failed/i;
+const DYNAMIC_IMPORT_RECOVERY_KEY = "lexibite:dynamic-import-recovery";
+const DYNAMIC_IMPORT_RECOVERY_COOLDOWN_MS = 30_000;
+
+function recoverFromStaleDynamicImport(error: Error): boolean {
+  if (typeof window === "undefined" || !STALE_CHUNK_ERROR.test(error.message)) {
+    return false;
+  }
+
+  try {
+    const lastRecovery = Number(
+      window.sessionStorage.getItem(DYNAMIC_IMPORT_RECOVERY_KEY) ?? "0",
+    );
+    const now = Date.now();
+
+    // Prevent a broken deployment or persistent client failure from causing
+    // an infinite reload loop. A later manual refresh can retry recovery.
+    if (now - lastRecovery < DYNAMIC_IMPORT_RECOVERY_COOLDOWN_MS) {
+      return false;
+    }
+
+    window.sessionStorage.setItem(DYNAMIC_IMPORT_RECOVERY_KEY, String(now));
+
+    // A route can retain an older application shell after a deployment. The
+    // changed query string forces a fresh document/module resolution without
+    // changing application routing, authentication, or persisted data.
+    const url = new URL(window.location.href);
+    url.searchParams.set("_lexibite_reload", String(now));
+    window.location.replace(url.toString());
+    return true;
+  } catch {
+    // Storage can be unavailable in restricted browser contexts. Keep the
+    // normal error boundary usable rather than allowing recovery to throw.
+    return false;
+  }
+}
+
 function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   const router = useRouter();
+
+  // Recover automatically from the stale application-shell/chunk mismatch
+  // that can occur immediately after a new production deployment.
+  useEffect(() => {
+    recoverFromStaleDynamicImport(error);
+  }, [error]);
+
   // ME-16 remediation (ME16-03): a correlation reference is shown even in
   // production, without ever showing the raw message/stack there — the
   // DEV-only panel below still carries the full detail for local debugging.
