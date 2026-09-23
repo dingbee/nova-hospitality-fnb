@@ -982,7 +982,7 @@ export function PosWorkspace({
                 ))}
               </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y">
+            <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y">
               {filtered.length === 0 ? (
                 <EmptyState
                   title={catalogSearch ? "No matches" : isBar ? "No drinks" : "No items"}
