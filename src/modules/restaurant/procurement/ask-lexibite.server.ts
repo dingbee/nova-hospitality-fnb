@@ -112,6 +112,7 @@ export async function createAskLexiBitePurchaseOrder(
   const po = await createPurchaseOrder(sb, userId, {
     tenantId,
     propertyId: propertyId ?? undefined,
+    supplierId: supplierId!,
     currency,
     directReason: "Prepared by Ask LexiBite from an explicit purchase-order request.",
     notes: "Created through Ask LexiBite after live supplier and inventory validation.",
