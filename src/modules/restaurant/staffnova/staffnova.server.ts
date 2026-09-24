@@ -107,6 +107,76 @@ function take<T>(rows: T[] | undefined, n = MAX_ROWS_PER_LIST): T[] {
 }
 
 /**
+ * Expiry evidence is part of the inventory system's intelligence surface,
+ * but it was previously only exposed through Inventory -> Menu Opportunities.
+ * Ask LexiBite must see the same operational fact directly, otherwise the
+ * system can visibly know "Cheddar Cheese expires in 2 days" while the
+ * assistant cannot answer a manager asking what is likely to go bad.
+ *
+ * This read is property-scoped so a multi-property manager never receives
+ * expiry data from another property. It returns the earliest positive-
+ * quantity batch per item within the next 14 days.
+ */
+async function buildExpiryRiskEvidence(sb: Sb, tenantId: string, propertyId?: string) {
+  let itemsQuery = sb
+    .from("restaurant_inventory_items")
+    .select("id, name, current_quantity, average_cost, property_id")
+    .eq("tenant_id", tenantId);
+
+  let batchesQuery = sb
+    .from("restaurant_inventory_batches")
+    .select("id, inventory_item_id, batch_number, expiry_date, quantity, unit_cost, property_id")
+    .eq("tenant_id", tenantId)
+    .gt("quantity", 0)
+    .not("expiry_date", "is", null)
+    .lte("expiry_date", new Date(Date.now() + 14 * DAY).toISOString().slice(0, 10))
+    .order("expiry_date", { ascending: true })
+    .limit(100);
+
+  if (propertyId) {
+    itemsQuery = itemsQuery.eq("property_id", propertyId);
+    batchesQuery = batchesQuery.eq("property_id", propertyId);
+  }
+
+  const [itemsRes, batchesRes] = await Promise.all([itemsQuery, batchesQuery]);
+  const items = (itemsRes.data ?? []) as any[];
+  const batches = (batchesRes.data ?? []) as any[];
+  const itemMap = new Map(items.map((item) => [item.id, item]));
+
+  const earliestByItem = new Map<string, any>();
+  for (const batch of batches) {
+    if (!itemMap.has(batch.inventory_item_id)) continue;
+    if (!earliestByItem.has(batch.inventory_item_id)) {
+      earliestByItem.set(batch.inventory_item_id, batch);
+    }
+  }
+
+  return [...earliestByItem.values()].map((batch) => {
+    const item = itemMap.get(batch.inventory_item_id);
+    const daysToExpiry = Math.floor(
+      (new Date(batch.expiry_date).getTime() - Date.now()) / DAY,
+    );
+    return {
+      item: item.name,
+      currentQuantity: Number(item.current_quantity ?? 0),
+      batchQuantity: Number(batch.quantity ?? 0),
+      batchNumber: batch.batch_number,
+      expiryDate: batch.expiry_date,
+      daysToExpiry,
+      valueAtBatchCost: Number(
+        (Number(batch.quantity ?? 0) * Number(batch.unit_cost ?? item.average_cost ?? 0)).toFixed(2),
+      ),
+      status:
+        daysToExpiry < 0
+          ? "expired"
+          : daysToExpiry === 0
+            ? "expires today"
+            : "expires in " + daysToExpiry + " day(s)",
+    };
+  });
+}
+
+/**
  * Structured, server-only diagnostics for a failure at a named pre-answer
  * stage. Never sent to the browser — the boundary in staffnova.functions.ts
  * always degrades to a generic message regardless of what's logged here.
@@ -262,6 +332,7 @@ async function buildStaffNovaContext(
         windowDays: WINDOW_DAYS,
         propertyId,
       });
+      const expiryRisks = await buildExpiryRiskEvidence(sb, tenantId, propertyId);
       return {
         currency: i.currency,
         atRisk: take(i.atRisk).map((r) => ({
@@ -270,6 +341,7 @@ async function buildStaffNovaContext(
           daysOfCover: r.daysOfCover,
           belowReorder: r.belowReorder,
         })),
+        expiryRisks: take(expiryRisks, 8),
         wastage: i.wastage,
         priceThreats: take(i.priceThreats, 5),
         insights: take(i.insights, 6),
@@ -444,6 +516,8 @@ Hard rules:
 - Answer ONLY using facts present in CONTEXT. Never invent, estimate, or guess a number, name, or fact that is not in CONTEXT.
 - Never output an incomplete quantitative phrase. A sentence must never end with "about .", "approximately .", "at .", "of .", "by .", or any other empty numeric/value slot. If the required value is absent, say "the exact figure is not available in the current data" instead.
 - Never use a filler word such as "about", "approximately", "roughly", "around", "at", or "by" unless the value immediately following it is explicitly present in CONTEXT.
+- For "what is likely to go bad", "what will expire", "what is at risk of spoilage", or similar questions, check inventory.expiryRisks FIRST. These are authoritative batch-level expiry records from the inventory system. Name the item and state its exact daysToExpiry/status. Do not substitute daysOfCover for expiry risk: stock runway and expiry are different signals.
+- If inventory.expiryRisks is empty, say that no expiring batch is present in the available 14-day expiry window; do not infer spoilage from stock runway alone.
 - For inventory runway, use inventory.atRisk.daysOfCover when it is present and state the exact value in days. If daysOfCover is null, do NOT invent a forecast or convert another field into days; say that the stock-out timeframe is not available from the current data.
 - For wastage, use inventory.wastage.currentCost and inventory.wastage.changePercent when present. Do not write "wastage is currently" without immediately supplying the actual currentCost or explicitly stating that the figure is unavailable.
 - recipeProcurement is authoritative operational evidence for recipe-cost and production-capacity questions. Use recipeCost, currentStockCapacity, recentOrderedCapacity, recentOutstandingCapacity, and the supplied limiting ingredient exactly as provided; do not recalculate them from raw component quantities.
