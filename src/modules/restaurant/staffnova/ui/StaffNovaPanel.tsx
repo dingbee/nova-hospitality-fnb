@@ -9,6 +9,11 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { askStaffNovaFn } from "../staffnova.functions";
 import { commitNovaPreparationFn } from "../../prepare/prepare.functions";
+import {
+  createAskLexiBitePurchaseOrderFn,
+  transitionAskLexiBitePurchaseOrderFn,
+  receiveAskLexiBitePurchaseOrderFn,
+} from "../../procurement/ask-lexibite.functions";
 import { executeNovaPreparationFn, previewNovaExecutionFn } from "../../act/act.functions";
 import { forgetRestaurantMemoryFn, recallRestaurantMemoryFn } from "../../memory/memory.functions";
 import type { NovaIntentContract } from "../../understand/intent.contracts";
@@ -388,6 +393,36 @@ function PreparationActions({
   const label = WORKFLOW_LABEL[preparation.workflow];
   const route = WORKFLOW_ROUTE[preparation.workflow];
 
+  if (preparation.action === "prepare_purchase_order") {
+    if (preparation.readiness !== "ready" && preparation.readiness !== "ready_with_warnings") {
+      return <p className="mt-2 text-xs text-muted-foreground">{preparation.message}</p>;
+    }
+    return (
+      <div className="space-y-2">
+        <PurchaseOrderActions tenantId={tenantId} contract={contract} />
+        <div className="rounded-md border border-dashed px-2.5 py-2">
+          <p className="text-[11px] text-muted-foreground">
+            Need the request stage instead? You can still create a governed purchase request.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={commit.isPending}
+            onClick={() => commit.mutate()}
+          >
+            {commit.isPending ? "Preparing request…" : "Prepare purchase request instead"}
+          </Button>
+          {commit.isError && (
+            <p className="text-xs text-destructive">
+              Something went wrong preparing the request — please try again.
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (committed) {
     return (
       <div className="mt-2 space-y-1.5">
@@ -435,6 +470,191 @@ function PreparationActions({
 }
 
 const EXECUTABLE_WORKFLOWS: readonly NovaPreparationWorkflow[] = ["stock_transfer"];
+
+/**
+ * Procurement actions are deliberately separate from I12 preparation.
+ * Creating the PO is an explicit human confirmation, then each lifecycle
+ * transition is independently governed by the real purchasing/receiving
+ * services. Ask LexiBite never bypasses separation of duties.
+ */
+function PurchaseOrderActions({
+  tenantId,
+  contract,
+}: {
+  tenantId: string;
+  contract: NovaIntentContract;
+}) {
+  const navigate = useNavigate();
+  const createFn = useServerFn(createAskLexiBitePurchaseOrderFn);
+  const transitionFn = useServerFn(transitionAskLexiBitePurchaseOrderTransitionFn);
+  const receiveFn = useServerFn(receiveAskLexiBitePurchaseOrderFn);
+  const [order, setOrder] = useState<{
+    id: string;
+    documentNumber: string;
+    status: string;
+  } | null>(null);
+  const [receiveReview, setReceiveReview] = useState(false);
+
+  const create = useMutation({
+    mutationFn: () => createFn({ data: { tenantId, contract } }),
+    networkMode: "always",
+    onSuccess: (result) => {
+      setOrder({
+        id: result.id,
+        documentNumber: result.documentNumber,
+        status: result.status,
+      });
+    },
+  });
+
+  const transition = useMutation({
+    mutationFn: (status: "submitted" | "approved") =>
+      transitionFn({ data: { tenantId, purchaseOrderId: order!.id, status } }),
+    networkMode: "always",
+    onSuccess: (result) => {
+      setOrder((current) => (current ? { ...current, status: result.status } : current));
+    },
+  });
+
+  const receive = useMutation({
+    mutationFn: (confirm: boolean) =>
+      receiveFn({ data: { tenantId, purchaseOrderId: order!.id, confirm } }),
+    networkMode: "always",
+    onSuccess: (result) => {
+      if (result.orderStatus) {
+        setOrder((current) => (current ? { ...current, status: result.orderStatus! } : current));
+      }
+      if (!result.preview) setReceiveReview(false);
+    },
+  });
+
+  if (!order) {
+    return (
+      <div className="mt-2 space-y-1.5">
+        <p className="text-xs text-muted-foreground">
+          This creates a real draft purchase order using live supplier prices. It is not submitted
+          or approved until an explicit lifecycle action is confirmed.
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          disabled={create.isPending}
+          onClick={() => create.mutate()}
+        >
+          {create.isPending ? "Preparing PO…" : "Prepare Purchase Order"}
+        </Button>
+        {create.isError && (
+          <p className="text-xs text-destructive">{create.error.message}</p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 space-y-2 rounded-md border px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold">Purchase Order {order.documentNumber}</p>
+          <p className="text-[11px] text-muted-foreground">Status: {order.status}</p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() =>
+            navigate({
+              to: "/admin/restaurant/procurement",
+              search: { tab: "orders" },
+            })
+          }
+        >
+          Open PO
+        </Button>
+      </div>
+
+      {order.status === "draft" && (
+        <Button
+          type="button"
+          size="sm"
+          disabled={transition.isPending}
+          onClick={() => transition.mutate("submitted")}
+        >
+          {transition.isPending ? "Submitting…" : "Submit PO"}
+        </Button>
+      )}
+
+      {order.status === "submitted" && (
+        <Button
+          type="button"
+          size="sm"
+          disabled={transition.isPending}
+          onClick={() => transition.mutate("approved")}
+        >
+          {transition.isPending ? "Approving…" : "Approve PO"}
+        </Button>
+      )}
+
+      {["approved", "partially_received"].includes(order.status) && !receiveReview && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={receive.isPending}
+          onClick={() => {
+            setReceiveReview(true);
+            receive.mutate(false);
+          }}
+        >
+          Review & receive stock
+        </Button>
+      )}
+
+      {receiveReview && receive.data?.preview && (
+        <div className="space-y-1.5 rounded-md border bg-muted/20 px-2 py-2">
+          <p className="text-xs font-medium">Receive all outstanding quantities</p>
+          <ul className="text-xs text-muted-foreground">
+            {receive.data.lines.map((line) => (
+              <li key={line.purchaseOrderItemId}>
+                • {line.description} — {line.quantity}
+              </li>
+            ))}
+          </ul>
+          <p className="text-[11px] text-amber-600">
+            Confirm only if the physical delivery matches these quantities.
+          </p>
+          {receive.data.message && (
+            <p className="text-xs text-muted-foreground">{receive.data.message}</p>
+          )}
+          <div className="flex gap-1.5 pt-1">
+            <Button type="button" size="sm" variant="ghost" onClick={() => setReceiveReview(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={receive.isPending}
+              onClick={() => receive.mutate(true)}
+            >
+              {receive.isPending ? "Receiving…" : "Confirm & receive"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {receive.data && !receive.data.preview && (
+        <div className="rounded-md border border-green-600/30 bg-green-600/10 px-2 py-1.5 text-xs whitespace-pre-line">
+          {receive.data.message}
+        </div>
+      )}
+
+      {(transition.isError || receive.isError) && (
+        <p className="text-xs text-destructive">
+          {(transition.error ?? receive.error)?.message}
+        </p>
+      )}
+    </div>
+  );
+}
 
 /**
  * I13 — the "Execute" confirmation boundary. Only rendered once I12 has
