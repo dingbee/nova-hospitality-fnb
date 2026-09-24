@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Brain, Sparkles, Wand2, X } from "lucide-react";
+import { AlertCircle, Brain, CircleAlert, Info, Sparkles, Wand2, X } from "lucide-react";
 import { PRODUCT } from "@/config/product";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,176 @@ const STARTER_PROMPTS = [
   "Which items need replenishment?",
   "What happened to kitchen performance today?",
 ];
+
+type BriefTone = "critical" | "action" | "warning" | "info";
+
+type BriefItem = {
+  title: string;
+  detail: string;
+  tone: BriefTone;
+};
+
+const BRIEF_TONE_META: Record<
+  BriefTone,
+  { label: string; className: string; icon: typeof AlertCircle }
+> = {
+  critical: {
+    label: "Immediate",
+    className: "border-l-destructive bg-destructive/5",
+    icon: CircleAlert,
+  },
+  action: {
+    label: "Action",
+    className: "border-l-primary bg-primary/5",
+    icon: AlertCircle,
+  },
+  warning: {
+    label: "Watch",
+    className: "border-l-amber-500 bg-amber-500/5",
+    icon: AlertCircle,
+  },
+  info: {
+    label: "Insight",
+    className: "border-l-muted-foreground bg-muted/30",
+    icon: Info,
+  },
+};
+
+function cleanBriefText(value: string) {
+  return value
+    .replace(/^\s*(?:#{1,6}\s+|[-*•]\s+|\d+[.)]\s+)/, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]*)`/g, "$1")
+    .trim();
+}
+
+function inferBriefTone(text: string): BriefTone {
+  const value = text.toLowerCase();
+
+  if (/\b(critical|urgent|immediately|severe|stockout|out of stock|overdue)\b/.test(value)) {
+    return "critical";
+  }
+  if (/\b(action|reorder|prepare|review|follow up|address|resolve|needs? attention)\b/.test(value)) {
+    return "action";
+  }
+  if (
+    /\b(risk|at risk|shortage|exposure|increase|decrease|declin|below|above|delay|variance|unreliable|over target|threat)\b/.test(
+      value,
+    )
+  ) {
+    return "warning";
+  }
+  return "info";
+}
+
+function briefTitle(text: string) {
+  const cleaned = cleanBriefText(text);
+  const colon = cleaned.indexOf(":");
+  if (colon > 0 && colon < 72) {
+    return cleaned.slice(0, colon).trim();
+  }
+
+  const words = cleaned.split(/\s+/);
+  if (words.length <= 8) return cleaned;
+  return `${words.slice(0, 8).join(" ")}…`;
+}
+
+function extractBriefItems(content: string): BriefItem[] {
+  const normalized = content.replace(/\r/g, "").trim();
+  if (!normalized) return [];
+
+  const lines = normalized.split("\n");
+  const items: string[] = [];
+  let current = "";
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      if (current) {
+        items.push(current.trim());
+        current = "";
+      }
+      continue;
+    }
+
+    const bullet = line.match(/^(?:[-*•]|\d+[.)])\s+(.+)$/);
+    if (bullet) {
+      if (current) items.push(current.trim());
+      current = bullet[1];
+      continue;
+    }
+
+    if (current) {
+      current += ` ${line}`;
+    } else {
+      current = line;
+    }
+  }
+
+  if (current) items.push(current.trim());
+
+  const sourceItems =
+    items.length > 1
+      ? items
+      : normalized.split(/(?<=[.!?])\s+(?=[A-Z0-9])/);
+
+  return sourceItems
+    .map((item) => cleanBriefText(item))
+    .filter(Boolean)
+    .slice(0, 8)
+    .map((detail) => ({
+      title: briefTitle(detail),
+      detail,
+      tone: inferBriefTone(detail),
+    }));
+}
+
+function shouldUseManagerBrief(message: string) {
+  return /\b(attention|pay attention|what needs attention|what should (?:we|i|the manager) focus|brief(?:ing)?|what(?:'s| is) important|what to watch|right now|today(?:'s)? priorities)\b/i.test(
+    message,
+  );
+}
+
+function ManagerBrief({ content }: { content: string }) {
+  const items = extractBriefItems(content);
+
+  if (items.length <= 1) {
+    return <p className="whitespace-pre-wrap">{content}</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <Sparkles className="size-3.5 text-primary" aria-hidden />
+        Manager brief
+      </div>
+      {items.map((item, index) => {
+        const meta = BRIEF_TONE_META[item.tone];
+        const Icon = meta.icon;
+        return (
+          <div
+            key={`${index}-${item.title}`}
+            className={`rounded-lg border border-l-2 px-3 py-2.5 ${meta.className}`}
+          >
+            <div className="flex items-start gap-2">
+              <Icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <p className="text-sm font-medium">{item.title}</p>
+                  <span className="rounded-full border px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {meta.label}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.detail}</p>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 type StaffNovaTurn =
   | { id: string; role: "user"; content: string }
@@ -77,7 +247,7 @@ function PreparationActions({
   const commit = useMutation({
     mutationFn: () => commitFn({ data: { tenantId, contract } }),
     networkMode: "always",
-    onSuccess: (result) => {
+    onSuccess: (result, message) => {
       if (result.createdRecordId) {
         setCommitted({
           createdRecordId: result.createdRecordId,
