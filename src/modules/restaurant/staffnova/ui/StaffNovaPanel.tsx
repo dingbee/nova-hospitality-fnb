@@ -27,6 +27,7 @@ type BriefTone = "critical" | "action" | "warning" | "info";
 type BriefItem = {
   title: string;
   detail: string;
+  action?: string;
   tone: BriefTone;
 };
 
@@ -61,21 +62,28 @@ function cleanBriefText(value: string) {
     .replace(/^\s*(?:#{1,6}\s+|[-*•]\s+|\d+[.)]\s+)/, "")
     .replace(/\*\*(.*?)\*\*/g, "$1")
     .replace(/__(.*?)__/g, "$1")
-    .replace(/`([^`]*)`/g, "$1")
     .trim();
 }
 
 function inferBriefTone(text: string): BriefTone {
   const value = text.toLowerCase();
 
-  if (/\b(critical|urgent|immediately|severe|stockout|out of stock|overdue)\b/.test(value)) {
+  if (
+    /\b(critical|urgent|immediately|severe|stockout|out of stock|overdue)\b/.test(
+      value,
+    )
+  ) {
     return "critical";
   }
-  if (/\b(action|reorder|prepare|review|follow up|address|resolve|needs? attention)\b/.test(value)) {
+  if (
+    /\b(action|reorder|prepare|review|follow up|address|resolve|needs? attention|priority)\b/.test(
+      value,
+    )
+  ) {
     return "action";
   }
   if (
-    /\b(risk|at risk|shortage|exposure|increase|decrease|declin|below|above|delay|variance|unreliable|over target|threat)\b/.test(
+    /\b(risk|at risk|shortage|exposure|increase|decrease|declin|below|above|delay|variance|unreliable|over target|threat|conflict)\b/.test(
       value,
     )
   ) {
@@ -91,13 +99,30 @@ function briefTitle(text: string) {
     return cleaned.slice(0, colon).trim();
   }
 
-  const words = cleaned.split(/\s+/);
-  if (words.length <= 8) return cleaned;
-  return `${words.slice(0, 8).join(" ")}…`;
+  const firstSentence = cleaned.split(/(?<=[.!?])\s+/)[0] ?? cleaned;
+  if (firstSentence.length <= 64) return firstSentence;
+
+  const words = firstSentence.split(/\s+/);
+  return words.slice(0, 8).join(" ") + "…";
+}
+
+function extractBriefAction(text: string) {
+  const sentence = text.match(
+    /(?:approved guidance is|approved recommendation is|the priority is|action is|recommendation is|should|needs? to|need to)\s+(.+?)(?:[.!?](?:\s|$)|$)/i,
+  )?.[1];
+
+  return sentence ? sentence.trim().replace(/[.!?]+$/, "") : undefined;
 }
 
 function extractBriefItems(content: string): BriefItem[] {
-  const normalized = content.replace(/\r/g, "").trim();
+  // The model can return numbered findings on one physical line.
+  // Normalize those boundaries before parsing so "1. ... 2. ... 3. ..."
+  // becomes five independent findings instead of one paragraph.
+  const normalized = content
+    .replace(/\r/g, "")
+    .replace(/\s+(?=\d+[.)]\s+)/g, "\n")
+    .trim();
+
   if (!normalized) return [];
 
   const lines = normalized.split("\n");
@@ -121,11 +146,7 @@ function extractBriefItems(content: string): BriefItem[] {
       continue;
     }
 
-    if (current) {
-      current += ` ${line}`;
-    } else {
-      current = line;
-    }
+    current = current ? current + " " + line : line;
   }
 
   if (current) items.push(current.trim());
@@ -133,7 +154,7 @@ function extractBriefItems(content: string): BriefItem[] {
   const sourceItems =
     items.length > 1
       ? items
-      : normalized.split(/(?<=[.!?])\s+(?=[A-Z0-9])/);
+      : normalized.split(/(?<=[.!?])\s+(?=[A-Z])/);
 
   return sourceItems
     .map((item) => cleanBriefText(item))
@@ -142,8 +163,28 @@ function extractBriefItems(content: string): BriefItem[] {
     .map((detail) => ({
       title: briefTitle(detail),
       detail,
+      action: extractBriefAction(detail),
       tone: inferBriefTone(detail),
     }));
+}
+
+function highlightBriefDetail(text: string) {
+  const metric =
+    /(?:TZS\s?[\d,]+(?:\.\d+)?|[+-]?\d+(?:\.\d+)?%|\b\d+(?:\.\d+)?\s*(?:days?|hours?|minutes?|mins?|tickets?|covers?|units?)\b)/gi;
+  const parts = text.split(metric);
+
+  return parts.map((part, index) => {
+    if (index % 2 === 0) return part;
+
+    return (
+      <span
+        key={part + "-" + index}
+        className="font-semibold text-foreground tabular-nums"
+      >
+        {part}
+      </span>
+    );
+  });
 }
 
 function shouldUseManagerBrief(message: string) {
@@ -165,29 +206,52 @@ function ManagerBrief({ content }: { content: string }) {
         <Sparkles className="size-3.5 text-primary" aria-hidden />
         Manager brief
       </div>
-      {items.map((item, index) => {
-        const meta = BRIEF_TONE_META[item.tone];
-        const Icon = meta.icon;
-        return (
-          <div
-            key={`${index}-${item.title}`}
-            className={`rounded-lg border border-l-2 px-3 py-2.5 ${meta.className}`}
-          >
-            <div className="flex items-start gap-2">
-              <Icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <p className="text-sm font-medium">{item.title}</p>
-                  <span className="rounded-full border px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
-                    {meta.label}
-                  </span>
+
+      <div className="space-y-2">
+        {items.map((item, index) => {
+          const meta = BRIEF_TONE_META[item.tone];
+          const Icon = meta.icon;
+
+          return (
+            <article
+              key={String(index) + "-" + item.title}
+              className={"rounded-lg border border-l-2 px-3 py-2.5 " + meta.className}
+            >
+              <div className="flex items-start gap-2">
+                <Icon
+                  className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+                  aria-hidden
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-semibold leading-5">
+                      {item.title}
+                    </p>
+                    <span className="shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {meta.label}
+                    </span>
+                  </div>
+
+                  <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                    {highlightBriefDetail(item.detail)}
+                  </p>
+
+                  {item.action && (
+                    <div className="mt-2 border-t pt-2 text-xs">
+                      <span className="font-semibold text-foreground">
+                        Action:
+                      </span>{" "}
+                      <span className="text-muted-foreground">
+                        {item.action}
+                      </span>
+                    </div>
+                  )}
                 </div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.detail}</p>
               </div>
-            </div>
-          </div>
-        );
-      })}
+            </article>
+          );
+        })}
+      </div>
     </div>
   );
 }
