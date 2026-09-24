@@ -107,3 +107,43 @@ describe("over-receipt authorisation", () => {
     ).toBe(true);
   });
 });
+
+
+describe("Ask LexiBite PO lifecycle action contracts", () => {
+  it("accepts only governed transition targets", () => {
+    const base = {
+      tenantId: "11111111-1111-1111-1111-111111111111",
+      purchaseOrderId: "22222222-2222-2222-2222-222222222222",
+    };
+    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "submitted" }).success).toBe(true);
+    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "approved" }).success).toBe(true);
+    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "received" }).success).toBe(false);
+  });
+
+  it("requires explicit confirmation for receiving", async () => {
+    const { receiveAskLexiBitePurchaseOrderSchema } = await import("./ask-lexibite.server");
+    const base = {
+      tenantId: "11111111-1111-1111-1111-111111111111",
+      purchaseOrderId: "22222222-2222-2222-2222-222222222222",
+    };
+    expect(receiveAskLexiBitePurchaseOrderSchema.safeParse({ ...base, confirm: false }).success).toBe(true);
+    expect(receiveAskLexiBitePurchaseOrderSchema.safeParse({ ...base, confirm: true }).success).toBe(true);
+    expect(receiveAskLexiBitePurchaseOrderSchema.safeParse(base).success).toBe(false);
+  });
+
+  it("requires an idempotency key for intelligent PO creation", async () => {
+    const { intelligentPurchaseOrderPlanInputSchema } = await import("./ask-lexibite.server");
+    const base = {
+      tenantId: "11111111-1111-1111-1111-111111111111",
+      inventoryItemIds: [],
+      supplierId: null,
+    };
+    expect(intelligentPurchaseOrderPlanInputSchema.safeParse(base).success).toBe(false);
+    expect(
+      intelligentPurchaseOrderPlanInputSchema.safeParse({
+        ...base,
+        idempotencyKey: "33333333-3333-3333-3333-333333333333",
+      }).success,
+    ).toBe(true);
+  });
+});

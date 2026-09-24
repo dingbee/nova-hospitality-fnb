@@ -21,6 +21,7 @@ import type { NovaIntentContract } from "../../understand/intent.contracts";
 import type { NovaPreparation, NovaPreparationWorkflow } from "../../prepare/prepare.contracts";
 import type { IntelligentPurchaseOrderPlan } from "../../procurement/ask-lexibite.server";
 import type { NovaExecutableWorkflow } from "../../act/act.contracts";
+import { shouldRenderManagerBrief } from "./manager-brief";
 
 const STARTER_PROMPTS = [
   "What should we prepare for tomorrow?",
@@ -362,6 +363,85 @@ const WORKFLOW_LABEL: Record<NovaPreparationWorkflow, string> = {
  * workflow page — that page remains the authoritative place to review,
  * edit, and eventually submit/approve/dispatch it.
  */
+function PurchaseOrderLifecycleActions({
+  tenantId,
+  contract,
+}: {
+  tenantId: string;
+  contract: NovaIntentContract;
+}) {
+  const transitionFn = useServerFn(transitionAskLexiBitePurchaseOrderFn);
+  const receiveFn = useServerFn(receiveAskLexiBitePurchaseOrderFn);
+  const po = contract.purchaseOrder;
+  const [receiving, setReceiving] = useState(false);
+
+  const transition = useMutation({
+    mutationFn: (status: "submitted" | "approved") =>
+      transitionFn({ data: { tenantId, purchaseOrderId: po!.resolvedId!, status } }),
+  });
+
+  const receive = useMutation({
+    mutationFn: (confirm: boolean) =>
+      receiveFn({ data: { tenantId, purchaseOrderId: po!.resolvedId!, confirm } }),
+  });
+
+  if (!po?.resolvedId || po.status !== "exact") return null;
+
+  if (contract.action === "approve_purchase_order" || contract.action === "submit_purchase_order") {
+    const target = contract.action === "approve_purchase_order" ? "approved" : "submitted";
+    const label = target === "approved" ? "Confirm approval" : "Confirm submission";
+    const verb = target === "approved" ? "approve" : "submit";
+    return (
+      <div className="mt-2 space-y-2 rounded-md border px-2.5 py-2">
+        <p className="text-xs font-medium">
+          {target === "approved" ? "Approval" : "Submission"} requested for{" "}
+          <span className="font-semibold">{po.documentNumber ?? po.reference ?? po.raw}</span>.
+        </p>
+        <p className="text-[11px] text-muted-foreground">
+          Current status: {po.orderStatus}. Confirm to {verb} this purchase order.
+        </p>
+        <Button type="button" size="sm" disabled={transition.isPending} onClick={() => transition.mutate(target)}>
+          {transition.isPending ? (target === "approved" ? "Approving…" : "Submitting…") : label}
+        </Button>
+        {transition.data && <p className="text-xs text-foreground">{transition.data.message}</p>}
+        {transition.isError && <p className="text-xs text-destructive">{transition.error.message}</p>}
+      </div>
+    );
+  }
+
+  if (contract.action === "receive_purchase_order") {
+    if (receiving && receive.data?.preview) {
+      return (
+        <div className="mt-2 space-y-1.5 rounded-md border bg-muted/20 px-2 py-2">
+          <p className="text-xs font-medium">Review outstanding receiving quantities</p>
+          <ul className="text-xs text-muted-foreground">
+            {receive.data.lines.map((line) => <li key={line.purchaseOrderItemId}>• {line.description} — {line.quantity}</li>)}
+          </ul>
+          <p className="text-[11px] text-amber-600">Confirm only if the physical delivery matches these quantities.</p>
+          <div className="flex gap-1.5">
+            <Button type="button" size="sm" variant="ghost" onClick={() => setReceiving(false)}>Cancel</Button>
+            <Button type="button" size="sm" disabled={receive.isPending} onClick={() => receive.mutate(true)}>
+              {receive.isPending ? "Receiving…" : "Confirm & receive"}
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="mt-2 space-y-2 rounded-md border px-2.5 py-2">
+        <p className="text-xs font-medium">Receive stock against {po.documentNumber ?? po.reference ?? po.raw}.</p>
+        <p className="text-[11px] text-muted-foreground">Ask LexiBite will re-check outstanding quantities first. Nothing is posted until you confirm.</p>
+        <Button type="button" size="sm" variant="outline" disabled={receive.isPending} onClick={() => { setReceiving(true); receive.mutate(false); }}>
+          {receive.isPending ? "Checking…" : "Review receiving"}
+        </Button>
+        {receive.data && !receive.data.preview && <p className="text-xs text-foreground">{receive.data.message}</p>}
+        {receive.isError && <p className="text-xs text-destructive">{receive.error.message}</p>}
+      </div>
+    );
+  }
+  return null;
+}
+
 function PreparationActions({
   preparation,
   contract,
@@ -483,6 +563,7 @@ function IntelligentPurchaseOrderActions({
   const navigate = useNavigate();
   const createFn = useServerFn(createIntelligentPurchaseOrdersFn);
   const [reviewing, setReviewing] = useState(false);
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   const create = useMutation({
     mutationFn: () => createFn({
@@ -492,6 +573,7 @@ function IntelligentPurchaseOrderActions({
           group.lines.map((line) => line.inventoryItemId),
         ),
         supplierId: null,
+        idempotencyKey,
       },
     }),
     networkMode: "always",
@@ -1004,7 +1086,7 @@ export function StaffNovaPanel({
       return askFn({ data: { tenantId, message, history } });
     },
     networkMode: "always",
-    onSuccess: (result) => {
+    onSuccess: (result, message) => {
       setTurns((t) => [
         ...t,
         {
@@ -1015,8 +1097,8 @@ export function StaffNovaPanel({
           understanding: result.understanding,
           preparation: result.preparation,
           intelligentPurchaseOrder: result.intelligentPurchaseOrder,
-          managerBrief: true,
-        },
+          managerBrief: shouldRenderManagerBrief(message),
+          },
       ]);
     },
     onError: () => {
@@ -1096,6 +1178,9 @@ export function StaffNovaPanel({
                   <ManagerBrief content={t.content} />
                 ) : (
                   <p className="whitespace-pre-wrap">{t.content}</p>
+                )}
+                {t.understanding && ["approve_purchase_order", "submit_purchase_order", "receive_purchase_order"].includes(t.understanding.action) && (
+                  <PurchaseOrderLifecycleActions tenantId={tenantId} contract={t.understanding} />
                 )}
                 {t.intelligentPurchaseOrder && (
                   <IntelligentPurchaseOrderActions

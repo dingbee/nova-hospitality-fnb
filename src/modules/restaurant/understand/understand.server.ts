@@ -33,6 +33,7 @@ import {
   type NovaIntentContract,
   type NovaLocationReference,
   type NovaQuantityMention,
+  type NovaPurchaseOrderReference,
   type NovaSupplierReference,
   type NovaTemporalReference,
   type UnderstandNovaInstructionInput,
@@ -154,6 +155,55 @@ async function resolveSupplier(
   };
 }
 
+async function resolvePurchaseOrder(
+  sb: Sb,
+  tenantId: string,
+  raw: string | null,
+): Promise<NovaPurchaseOrderReference | null> {
+  if (!raw) return null;
+  const normalized = raw.trim();
+  const byReference = await sb
+    .from("restaurant_purchase_orders")
+    .select("id, reference, document_number, status")
+    .eq("tenant_id", tenantId)
+    .eq("reference", normalized)
+    .maybeSingle();
+  if (byReference.data) {
+    return {
+      raw: normalized,
+      status: "exact",
+      resolvedId: byReference.data.id,
+      reference: byReference.data.reference,
+      documentNumber: byReference.data.document_number,
+      orderStatus: byReference.data.status,
+    };
+  }
+  const byDocument = await sb
+    .from("restaurant_purchase_orders")
+    .select("id, reference, document_number, status")
+    .eq("tenant_id", tenantId)
+    .eq("document_number", normalized)
+    .maybeSingle();
+  if (byDocument.data) {
+    return {
+      raw: normalized,
+      status: "exact",
+      resolvedId: byDocument.data.id,
+      reference: byDocument.data.reference,
+      documentNumber: byDocument.data.document_number,
+      orderStatus: byDocument.data.status,
+    };
+  }
+  return {
+    raw: normalized,
+    status: "unresolved",
+    resolvedId: null,
+    reference: null,
+    documentNumber: null,
+    orderStatus: null,
+  };
+}
+
 function locationLabel(ref: NovaLocationReference | null): string {
   if (!ref) return "an unspecified location";
   if (ref.resolvedName) return ref.resolvedName;
@@ -191,6 +241,9 @@ export function buildUnderstandingSummary(c: NovaIntentContract): string {
       break;
     case "submit_purchase_order":
       lines.push("I understand this as a request to submit a purchase order.");
+      break;
+    case "receive_purchase_order":
+      lines.push("I understand this as a request to receive stock against a purchase order.");
       break;
     case "query_inventory":
     case "query_sales":
@@ -311,9 +364,12 @@ export async function understandNovaInstruction(
     entities.push({ ...mention, quantity: null });
   }
 
-  const supplier = classified.supplier
-    ? await resolveSupplier(sb, userId, input.tenantId, classified.supplier)
-    : null;
+  const [supplier, purchaseOrder] = await Promise.all([
+    classified.supplier
+      ? resolveSupplier(sb, userId, input.tenantId, classified.supplier)
+      : Promise.resolve(null),
+    resolvePurchaseOrder(sb, input.tenantId, classified.purchaseOrderReferenceRaw),
+  ]);
 
   const temporal: NovaTemporalReference | null = classified.temporal
     ? {
@@ -337,9 +393,16 @@ export async function understandNovaInstruction(
   }
   if (
     classified.action === "approve_purchase_order" ||
-    classified.action === "submit_purchase_order"
+    classified.action === "submit_purchase_order" ||
+    classified.action === "receive_purchase_order"
   ) {
-    missingInformation.push("purchase order reference (number or id)");
+    if (!classified.purchaseOrderReferenceRaw) {
+      missingInformation.push("purchase order reference (number or id)");
+    } else if (purchaseOrder?.status === "unresolved") {
+      missingInformation.push(
+        `could not find purchase order "${classified.purchaseOrderReferenceRaw}"`,
+      );
+    }
   }
 
   entities.forEach((e, i) => {
@@ -393,6 +456,7 @@ export async function understandNovaInstruction(
     action: classified.action,
     entities,
     locations: { source: sourceLocation, destination: destinationLocation },
+    purchaseOrder,
     supplier,
     temporal,
     constraints,
