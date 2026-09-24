@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { requireSupabaseAuth } from "@/middleware/supabase-auth";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   askLexiBitePurchaseOrderInputSchema,
   askLexiBitePurchaseOrderTransitionSchema,
