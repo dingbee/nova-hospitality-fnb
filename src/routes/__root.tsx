@@ -6,9 +6,68 @@ import shellCss from "../components/shell/NovaShell.css?url";
 import { Toaster } from "@/components/ui/sonner";
 import { PRODUCT } from "@/config/product";
 import { installGlobalErrorCapture } from "@/lib/observability/client-error-capture";
+
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 60 * 1000, refetchOnWindowFocus: false } },
 });
+
+const ASSET_RECOVERY_KEY = "lexibite:asset-recovery";
+const ASSET_RECOVERY_COOLDOWN_MS = 60_000;
+
+async function recoverStaleClientAssets() {
+  if (typeof window === "undefined") return;
+
+  const isOrderRoute = window.location.pathname === "/order" || window.location.pathname.startsWith("/order/");
+  if (isOrderRoute) return;
+
+  const probe = document.createElement("ul");
+  probe.style.position = "fixed";
+  probe.style.left = "-9999px";
+  probe.style.top = "0";
+  probe.innerHTML = "<li><a href=\"#\">asset-check</a></li>";
+  document.body.appendChild(probe);
+
+  const li = probe.firstElementChild as HTMLElement | null;
+  const link = probe.querySelector("a") as HTMLAnchorElement | null;
+  const cssLoaded =
+    li != null &&
+    link != null &&
+    getComputedStyle(li).listStyleType === "none" &&
+    getComputedStyle(link).textDecorationLine === "none";
+
+  probe.remove();
+
+  if (cssLoaded) return;
+
+  const now = Date.now();
+  const lastRecovery = Number(sessionStorage.getItem(ASSET_RECOVERY_KEY) ?? "0");
+  if (now - lastRecovery < ASSET_RECOVERY_COOLDOWN_MS) return;
+
+  sessionStorage.setItem(ASSET_RECOVERY_KEY, String(now));
+
+  try {
+    const registrations = await navigator.serviceWorker?.getRegistrations();
+    await Promise.all(
+      (registrations ?? [])
+        .filter((registration) => !registration.scope.endsWith("/order/"))
+        .map((registration) => registration.unregister()),
+    );
+  } catch {
+    // Recovery must still proceed if service-worker APIs are unavailable.
+  }
+
+  try {
+    const cacheNames = await caches.keys();
+    await Promise.all(cacheNames.map((name) => caches.delete(name)));
+  } catch {
+    // Cache access can be unavailable in restricted browser contexts.
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set("_lexibite_asset_recovery", String(now));
+  window.location.replace(url.toString());
+}
+
 export const Route = createRootRoute({
   head: () => ({
     meta: [
@@ -22,11 +81,6 @@ export const Route = createRootRoute({
       { name: "robots", content: "noindex,nofollow" },
       { name: "theme-color", content: "#2A7C13" },
       { name: "application-name", content: PRODUCT.name },
-      // No PWA manifest linked here: this app serves two different installable
-      // experiences (the staff terminal and the guest ordering PWA) and each
-      // must declare its own manifest at its own route layout — never a shared
-      // one whose start_url could point a guest at an admin route (spec: "Do
-      // not use admin routes as PWA entry points").
     ],
     links: [
       { rel: "stylesheet", href: appCss },
@@ -50,11 +104,13 @@ export const Route = createRootRoute({
     </div>
   ),
 });
+
 function RootComponent() {
-  // ME-16 remediation (ME16-01): install once, client-side only.
   useEffect(() => {
     installGlobalErrorCapture();
+    void recoverStaleClientAssets();
   }, []);
+
   return (
     <html lang="en" data-os-theme="dark">
       <head>
