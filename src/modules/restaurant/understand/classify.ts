@@ -49,6 +49,7 @@ export interface ClassifiedInstruction {
   bareSubjectRaw: string | null;
   sourceLocationRaw: string | null;
   destinationLocationRaw: string | null;
+  purchaseOrderReferenceRaw: string | null;
   supplier: RawSupplierReference | null;
   temporal: RawTemporalReference | null;
   guestCount: { raw: string; count: number } | null;
@@ -88,6 +89,16 @@ function readActionFor(domain: NovaDomain): NovaAction {
 function classifyDomainAction(lower: string): DomainActionGuess {
   const has = (re: RegExp) => re.test(lower);
   const wantsPrepare = has(/\b(prepare|create|draft)\b/);
+
+  if (has(/\b(receive|receiving|book in|goods received)\b/) && has(/purchase order|\bpo\b/)) {
+    return {
+      intent: "operational_command",
+      domain: "procurement",
+      action: "receive_purchase_order",
+      requestedExecution: "execute",
+      confidence: 0.9,
+    };
+  }
 
   if (has(/\bapprove\b/)) {
     if (has(/purchase order|\bpo\b/)) {
@@ -222,6 +233,12 @@ function extractQualifiers(text: string): { constraints: string[]; matches: Qual
   return { constraints: matches.map((m) => `${m.label}: ${m.raw}`), matches };
 }
 
+function extractPurchaseOrderReference(text: string): { raw: string; remaining: string } | null {
+  const match = /\b(?:purchase\s+order|po)\s*(?:#|number|no\.?|ref(?:erence)?)?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9._/-]{0,39})/i.exec(text);
+  if (!match) return null;
+  return { raw: match[1], remaining: text.replace(match[0], " ") };
+}
+
 function extractSupplierReference(
   text: string,
   domain: NovaDomain,
@@ -343,6 +360,9 @@ export function classifyInstruction(message: string): ClassifiedInstruction {
   const supplierResult = extractSupplierReference(working, guess.domain);
   if (supplierResult) working = supplierResult.remaining;
 
+  const purchaseOrderResult = extractPurchaseOrderReference(working);
+  if (purchaseOrderResult) working = purchaseOrderResult.remaining;
+
   const { sourceRaw, destinationRaw, remaining } = extractLocationClause(working, guess.domain);
   working = remaining;
 
@@ -365,6 +385,7 @@ export function classifyInstruction(message: string): ClassifiedInstruction {
     bareSubjectRaw,
     sourceLocationRaw: sourceRaw,
     destinationLocationRaw: destinationRaw,
+    purchaseOrderReferenceRaw: purchaseOrderResult?.raw ?? null,
     supplier: supplierResult?.supplier ?? null,
     temporal,
     guestCount,

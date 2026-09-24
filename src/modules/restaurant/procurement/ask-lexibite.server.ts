@@ -131,6 +131,7 @@ export const intelligentPurchaseOrderPlanInputSchema = z.object({
   tenantId: uuid,
   inventoryItemIds: z.array(uuid).max(25).default([]),
   supplierId: uuid.nullable().optional(),
+  idempotencyKey: uuid,
 });
 export type IntelligentPurchaseOrderPlanInput = z.infer<typeof intelligentPurchaseOrderPlanInputSchema>;
 
@@ -255,21 +256,96 @@ export async function previewIntelligentPurchaseOrders(
   };
 }
 
+function intelligentPurchaseOrderReference(idempotencyKey: string, groupKey: string) {
+  let hash = 2166136261;
+  for (const char of groupKey) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return "LEXI-INT-" + idempotencyKey + "-" + (hash >>> 0).toString(16).padStart(8, "0");
+}
+
 export async function createIntelligentPurchaseOrders(sb: Sb, userId: string, input: IntelligentPurchaseOrderPlanInput) {
   const plan = await previewIntelligentPurchaseOrders(sb, userId, input);
-  if (plan.groups.length === 0) throw new Error(plan.skipped.length > 0 ? "No safe purchase-order draft can be created from the current replenishment recommendations." : "Purchasing Intelligence has no current replenishment recommendations.");
+  if (plan.groups.length === 0) {
+    throw new Error(
+      plan.skipped.length > 0
+        ? "No safe purchase-order draft can be created from the current replenishment recommendations."
+        : "Purchasing Intelligence has no current replenishment recommendations.",
+    );
+  }
+
   const created = [];
   for (const group of plan.groups) {
+    const reference = intelligentPurchaseOrderReference(input.idempotencyKey, group.key);
+    const { data: existing } = await sb
+      .from("restaurant_purchase_orders")
+      .select("id, document_number, reference, status, supplier_id, property_id, location_id, total, currency")
+      .eq("tenant_id", input.tenantId)
+      .eq("reference", reference)
+      .maybeSingle();
+
+    if (existing) {
+      const { data: existingLines } = await sb
+        .from("restaurant_purchase_order_items")
+        .select("id")
+        .eq("tenant_id", input.tenantId)
+        .eq("purchase_order_id", existing.id);
+
+      if ((existingLines ?? []).length !== group.lines.length || existing.supplier_id !== group.supplierId) {
+        throw new Error(
+          "An incomplete intelligent PO already exists for this request. Review the Procurement Centre before retrying.",
+        );
+      }
+
+      created.push({
+        id: existing.id as string,
+        documentNumber: existing.document_number as string,
+        status: existing.status as string,
+        supplierName: group.supplierName,
+        total: Number(existing.total),
+        currency: existing.currency,
+        lineCount: group.lines.length,
+      });
+      continue;
+    }
+
     const po = await createPurchaseOrder(sb, userId, {
-      tenantId: input.tenantId, propertyId: group.propertyId ?? undefined, locationId: group.locationId ?? undefined,
-      supplierId: group.supplierId, currency: group.currency,
+      tenantId: input.tenantId,
+      propertyId: group.propertyId ?? undefined,
+      locationId: group.locationId ?? undefined,
+      supplierId: group.supplierId,
+      reference,
+      currency: group.currency,
       directReason: "Prepared by Ask LexiBite from Purchasing Intelligence replenishment recommendations.",
       notes: "Draft generated from live Purchasing Intelligence. Quantities come from its replenishment recommendation; supplier prices were revalidated against the live supplier catalogue.",
-      lines: group.lines.map((line) => ({ inventoryItemId: line.inventoryItemId, supplierProductId: line.supplierProductId, unitId: line.unitId, description: line.description, quantity: line.quantity, unitPrice: line.unitPrice })),
+      lines: group.lines.map((line) => ({
+        inventoryItemId: line.inventoryItemId,
+        supplierProductId: line.supplierProductId,
+        unitId: line.unitId,
+        description: line.description,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+      })),
     });
-    created.push({ id: po.id as string, documentNumber: po.document_number as string, status: po.status as string, supplierName: group.supplierName, total: Number(po.total), currency: po.currency, lineCount: group.lines.length });
+
+    created.push({
+      id: po.id as string,
+      documentNumber: po.document_number as string,
+      status: po.status as string,
+      supplierName: group.supplierName,
+      total: Number(po.total),
+      currency: po.currency,
+      lineCount: group.lines.length,
+    });
   }
-  return { created, total: created.reduce((sum, po) => sum + po.total, 0), currency: plan.currency, skipped: plan.skipped };
+
+  return {
+    created,
+    total: created.reduce((sum, po) => sum + po.total, 0),
+    currency: plan.currency,
+    skipped: plan.skipped,
+  };
 }
 export const askLexiBitePurchaseOrderTransitionSchema = z.object({
   tenantId: uuid,

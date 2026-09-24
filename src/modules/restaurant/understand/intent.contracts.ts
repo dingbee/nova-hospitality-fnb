@@ -56,6 +56,7 @@ export const NOVA_ACTIONS = [
   "query_kitchen",
   "approve_purchase_order",
   "submit_purchase_order",
+  "receive_purchase_order",
   "execute_stock_movement",
   "unknown",
 ] as const;
@@ -156,6 +157,18 @@ export const novaSupplierReferenceSchema = z
   .strict();
 export type NovaSupplierReference = z.infer<typeof novaSupplierReferenceSchema>;
 
+export const novaPurchaseOrderReferenceSchema = z
+  .object({
+    raw: z.string(),
+    status: z.enum(NOVA_ENTITY_MATCH_STATUSES),
+    resolvedId: z.string().nullable(),
+    reference: z.string().nullable(),
+    documentNumber: z.string().nullable(),
+    orderStatus: z.string().nullable(),
+  })
+  .strict();
+export type NovaPurchaseOrderReference = z.infer<typeof novaPurchaseOrderReferenceSchema>;
+
 export const novaLocationReferenceSchema = z
   .object({
     raw: z.string(),
@@ -220,6 +233,7 @@ export const novaIntentContractSchema = z
         destination: novaLocationReferenceSchema.nullable(),
       })
       .strict(),
+    purchaseOrder: novaPurchaseOrderReferenceSchema.nullable(),
     supplier: novaSupplierReferenceSchema.nullable(),
     temporal: novaTemporalReferenceSchema.nullable(),
     /** Verbatim qualifier/negation clauses ("except the beer", "only for tomorrow") — never dropped, even when not further interpreted. */

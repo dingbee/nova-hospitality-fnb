@@ -164,3 +164,30 @@ describe("classifyInstruction — adversarial: deterministic, not persuadable", 
     expect(c.lines.every((l) => l.entityRaw !== "beef fillet")).toBe(true);
   });
 });
+
+
+describe("classifyInstruction — natural-language PO lifecycle references", () => {
+  it("extracts a document number for approval", () => {
+    const c = classifyInstruction("Approve PO-1042");
+    expect(c.action).toBe("approve_purchase_order");
+    expect(c.purchaseOrderReferenceRaw).toBe("1042");
+  });
+
+  it("extracts a reference for submission without confusing it with an item", () => {
+    const c = classifyInstruction("Submit purchase order PO-1042");
+    expect(c.action).toBe("submit_purchase_order");
+    expect(c.purchaseOrderReferenceRaw).toBe("1042");
+  });
+
+  it("classifies receiving as its own governed procurement action", () => {
+    const c = classifyInstruction("Receive goods against PO-1042");
+    expect(c.action).toBe("receive_purchase_order");
+    expect(c.requestedExecution).toBe("execute");
+    expect(c.purchaseOrderReferenceRaw).toBe("1042");
+  });
+
+  it("keeps missing PO references explicit", () => {
+    expect(classifyInstruction("Approve the purchase order").purchaseOrderReferenceRaw).toBeNull();
+    expect(classifyInstruction("Receive the purchase order").purchaseOrderReferenceRaw).toBeNull();
+  });
+});
