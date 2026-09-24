@@ -37,23 +37,45 @@ const BRIEF_TONE_META: Record<
 > = {
   critical: {
     label: "Immediate",
-    className: "border-l-destructive bg-destructive/5",
+    className: "border-red-200 bg-red-50/70 dark:border-red-900/60 dark:bg-red-950/20",
     icon: CircleAlert,
   },
   action: {
-    label: "Action",
-    className: "border-l-primary bg-primary/5",
+    label: "Action due",
+    className: "border-orange-200 bg-orange-50/70 dark:border-orange-900/60 dark:bg-orange-950/20",
     icon: AlertCircle,
   },
   warning: {
-    label: "Watch",
-    className: "border-l-amber-500 bg-amber-500/5",
+    label: "Warning",
+    className: "border-amber-200 bg-amber-50/70 dark:border-amber-900/60 dark:bg-amber-950/20",
     icon: AlertCircle,
   },
   info: {
     label: "Insight",
-    className: "border-l-muted-foreground bg-muted/30",
+    className: "border-sky-200 bg-sky-50/70 dark:border-sky-900/60 dark:bg-sky-950/20",
     icon: Info,
+  },
+};
+
+const BRIEF_SECTION_META: Record<
+  BriefTone,
+  { title: string; subtitle: string }
+> = {
+  critical: {
+    title: "Immediate attention",
+    subtitle: "These require action now.",
+  },
+  action: {
+    title: "Actions due",
+    subtitle: "Take action soon to avoid disruption.",
+  },
+  warning: {
+    title: "Financial / data warning",
+    subtitle: "Review before making consequential decisions.",
+  },
+  info: {
+    title: "Other observations",
+    subtitle: "Informational — no immediate action required.",
   },
 };
 
@@ -71,24 +93,30 @@ function inferBriefTone(text: string): BriefTone {
   if (
     /\b(critical|urgent|immediately|severe|stockout|out of stock|overdue)\b/.test(
       value,
+    ) ||
+    /\b100%\s+of\s+\d+\s+(?:analysed\s+)?tickets?\s+(?:were\s+)?delayed\b/.test(
+      value,
     )
   ) {
     return "critical";
   }
+
   if (
-    /\b(action|reorder|prepare|review|follow up|address|resolve|needs? attention|priority)\b/.test(
+    /\b(action|reorder|prepare|review|follow up|address|resolve|needs? attention|priority|approved recommendation|approved guidance|run out in|replenishment|remove .* specials|up-sell)\b/.test(
       value,
     )
   ) {
     return "action";
   }
+
   if (
-    /\b(risk|at risk|shortage|exposure|increase|decrease|declin|below|above|delay|variance|unreliable|over target|threat|conflict)\b/.test(
+    /\b(risk|at risk|shortage|exposure|increase|decrease|declin|below|above|delay|variance|unreliable|over target|threat|conflict|margin|cost)\b/.test(
       value,
     )
   ) {
     return "warning";
   }
+
   return "info";
 }
 
@@ -107,17 +135,14 @@ function briefTitle(text: string) {
 }
 
 function extractBriefAction(text: string) {
-  const sentence = text.match(
-    /(?:approved guidance is|approved recommendation is|the priority is|action is|recommendation is|should|needs? to|need to)\s+(.+?)(?:[.!?](?:\s|$)|$)/i,
-  )?.[1];
+  const match = text.match(
+    /(?:approved recommendation calls for|approved guidance is|approved recommendation is|the priority is|action is|recommendation is|should|needs? to|need to|review|confirm|investigate|complete|remove|order(?:ing)?|replenish(?:ment)?)\s+(.+?)(?:[.!?](?:\s|$)|$)/i,
+  );
 
-  return sentence ? sentence.trim().replace(/[.!?]+$/, "") : undefined;
+  return match?.[1]?.trim().replace(/[.!?]+$/, "") || undefined;
 }
 
 function extractBriefItems(content: string): BriefItem[] {
-  // The model can return numbered findings on one physical line.
-  // Normalize those boundaries before parsing so "1. ... 2. ... 3. ..."
-  // becomes five independent findings instead of one paragraph.
   const normalized = content
     .replace(/\r/g, "")
     .replace(/\s+(?=\d+[.)]\s+)/g, "\n")
@@ -200,58 +225,97 @@ function ManagerBrief({ content }: { content: string }) {
     return <p className="whitespace-pre-wrap">{content}</p>;
   }
 
+  const groups = (["critical", "action", "warning", "info"] as BriefTone[])
+    .map((tone) => ({
+      tone,
+      items: items.filter((item) => item.tone === tone),
+    }))
+    .filter((group) => group.items.length > 0);
+
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="w-full space-y-3">
+      <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
         <Sparkles className="size-3.5 text-primary" aria-hidden />
         Manager brief
       </div>
 
-      <div className="space-y-2">
-        {items.map((item, index) => {
-          const meta = BRIEF_TONE_META[item.tone];
-          const Icon = meta.icon;
-
-          return (
-            <article
-              key={String(index) + "-" + item.title}
-              className={"rounded-lg border border-l-2 px-3 py-2.5 " + meta.className}
-            >
-              <div className="flex items-start gap-2">
-                <Icon
-                  className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
-                  aria-hidden
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-semibold leading-5">
-                      {item.title}
-                    </p>
-                    <span className="shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
-                      {meta.label}
-                    </span>
-                  </div>
-
-                  <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-                    {highlightBriefDetail(item.detail)}
-                  </p>
-
-                  {item.action && (
-                    <div className="mt-2 border-t pt-2 text-xs">
-                      <span className="font-semibold text-foreground">
-                        Action:
-                      </span>{" "}
-                      <span className="text-muted-foreground">
-                        {item.action}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </article>
-          );
-        })}
+      <div className="rounded-lg border bg-muted/20 px-3 py-2.5 text-xs leading-5 text-muted-foreground">
+        Here is what needs the manager&apos;s attention right now, based on the
+        latest operational, financial, and inventory data.
       </div>
+
+      {groups.map(({ tone, items: sectionItems }) => {
+        const section = BRIEF_SECTION_META[tone];
+
+        return (
+          <section key={tone} className="space-y-2">
+            <div className="flex items-center justify-between gap-3 px-0.5">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">
+                  {section.title}{" "}
+                  <span className="text-muted-foreground">
+                    ({sectionItems.length})
+                  </span>
+                </h3>
+                <p className="text-[11px] text-muted-foreground">
+                  {section.subtitle}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-2 md:grid-cols-2">
+              {sectionItems.map((item, index) => {
+                const meta = BRIEF_TONE_META[item.tone];
+                const Icon = meta.icon;
+
+                return (
+                  <article
+                    key={String(index) + "-" + item.title}
+                    className={
+                      "rounded-xl border px-3 py-3 shadow-sm " + meta.className
+                    }
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-background/80">
+                        <Icon
+                          className="size-3.5 text-foreground"
+                          aria-hidden
+                        />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-semibold leading-5 text-foreground">
+                            {item.title}
+                          </p>
+                          <span className="shrink-0 rounded-full border bg-background/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            {meta.label}
+                          </span>
+                        </div>
+
+                        <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                          {highlightBriefDetail(item.detail)}
+                        </p>
+
+                        {item.action && (
+                          <div className="mt-2.5 rounded-md border bg-background/70 px-2.5 py-2 text-xs leading-4">
+                            <span className="font-semibold text-foreground">
+                              Action:
+                            </span>{" "}
+                            <span className="text-muted-foreground">
+                              {item.action}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -265,6 +329,7 @@ type StaffNovaTurn =
       degraded: boolean;
       understanding?: NovaIntentContract;
       preparation?: NovaPreparation;
+      managerBrief?: boolean;
     };
 
 /** I12: the existing route + tab each preparable workflow's draft is reviewed in — never a new NOVA-specific page. */
@@ -610,7 +675,7 @@ export function StaffNovaPanel({
       return askFn({ data: { tenantId, message, history } });
     },
     networkMode: "always",
-    onSuccess: (result) => {
+    onSuccess: (result, message) => {
       setTurns((t) => [
         ...t,
         {
@@ -620,6 +685,7 @@ export function StaffNovaPanel({
           degraded: result.degraded,
           understanding: result.understanding,
           preparation: result.preparation,
+          managerBrief: shouldUseManagerBrief(message),
         },
       ]);
     },
@@ -631,6 +697,7 @@ export function StaffNovaPanel({
           role: "assistant",
           content: `Something went wrong reaching ${PRODUCT.aiName}. Please try again.`,
           degraded: true,
+          managerBrief: false,
         },
       ]);
     },
@@ -646,7 +713,7 @@ export function StaffNovaPanel({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col sm:max-w-md">
+      <SheetContent side="right" className="flex w-full flex-col sm:max-w-xl">
         <SheetHeader>
           <SheetTitle className="flex items-center justify-between gap-1.5">
             <span className="flex items-center gap-1.5">
@@ -684,14 +751,22 @@ export function StaffNovaPanel({
             ) : (
               <div
                 key={t.id}
-                className={`mr-auto max-w-[90%] rounded-2xl rounded-tl-sm border px-3 py-2 text-sm ${
-                  t.degraded ? "bg-muted text-muted-foreground" : "bg-card"
-                }`}
+                className={
+                  t.managerBrief && !t.understanding
+                    ? "mr-auto w-full text-sm"
+                    : \`mr-auto max-w-[90%] rounded-2xl rounded-tl-sm border px-3 py-2 text-sm \${
+                        t.degraded ? "bg-muted text-muted-foreground" : "bg-card"
+                      }\`
+                }
               >
                 {t.understanding && (
                   <UnderstandingBadgeAndCandidates understanding={t.understanding} />
                 )}
-                {t.content}
+                {t.managerBrief && !t.understanding ? (
+                  <ManagerBrief content={t.content} />
+                ) : (
+                  <p className="whitespace-pre-wrap">{t.content}</p>
+                )}
                 {t.preparation && t.understanding && (
                   <PreparationActions
                     preparation={t.preparation}
