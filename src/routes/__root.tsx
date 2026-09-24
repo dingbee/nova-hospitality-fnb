@@ -63,9 +63,11 @@ async function recoverStaleClientAssets() {
     // Cache access can be unavailable in restricted browser contexts.
   }
 
-  const url = new URL(window.location.href);
-  url.searchParams.set("_lexibite_asset_recovery", String(now));
-  window.location.replace(url.toString());
+  // Force a fresh document request after clearing stale client assets, but
+  // keep the canonical route URL clean. The previous implementation added a
+  // recovery query parameter to the visible URL, which made a normal
+  // production route look like a special recovery endpoint to users.
+  window.location.reload();
 }
 
 export const Route = createRootRoute({
