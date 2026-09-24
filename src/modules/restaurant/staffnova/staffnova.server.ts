@@ -78,6 +78,7 @@ type Sb = any;
 const WINDOW_DAYS = 30;
 /** Mirrors guest Ask NOVA's MAX_CATALOG_ITEMS_FOR_AI discipline — bound every list handed to the model so the prompt stays small and cheap regardless of tenant size. */
 const MAX_ROWS_PER_LIST = 8;
+const DAY = 86_400_000;
 
 export interface StaffNovaAnswer {
   answer: string;
@@ -139,6 +140,8 @@ async function buildExpiryRiskEvidence(sb: Sb, tenantId: string, propertyId?: st
   }
 
   const [itemsRes, batchesRes] = await Promise.all([itemsQuery, batchesQuery]);
+  if (itemsRes.error) throw new Error(`Inventory items expiry query failed: ${itemsRes.error.message}`);
+  if (batchesRes.error) throw new Error(`Inventory batch expiry query failed: ${batchesRes.error.message}`);
   const items = (itemsRes.data ?? []) as any[];
   const batches = (batchesRes.data ?? []) as any[];
   const itemMap = new Map(items.map((item) => [item.id, item]));
