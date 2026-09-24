@@ -486,7 +486,7 @@ function PurchaseOrderActions({
 }) {
   const navigate = useNavigate();
   const createFn = useServerFn(createAskLexiBitePurchaseOrderFn);
-  const transitionFn = useServerFn(transitionAskLexiBitePurchaseOrderTransitionFn);
+  const transitionFn = useServerFn(transitionAskLexiBitePurchaseOrderFn);
   const receiveFn = useServerFn(receiveAskLexiBitePurchaseOrderFn);
   const [order, setOrder] = useState<{
     id: string;
