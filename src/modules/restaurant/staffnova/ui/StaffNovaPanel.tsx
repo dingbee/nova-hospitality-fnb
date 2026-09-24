@@ -483,6 +483,7 @@ function IntelligentPurchaseOrderActions({
   const navigate = useNavigate();
   const createFn = useServerFn(createIntelligentPurchaseOrdersFn);
   const [reviewing, setReviewing] = useState(false);
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   const create = useMutation({
     mutationFn: () => createFn({
@@ -492,6 +493,7 @@ function IntelligentPurchaseOrderActions({
           group.lines.map((line) => line.inventoryItemId),
         ),
         supplierId: null,
+        idempotencyKey,
       },
     }),
     networkMode: "always",
