@@ -13,11 +13,13 @@ import {
   createAskLexiBitePurchaseOrderFn,
   transitionAskLexiBitePurchaseOrderFn,
   receiveAskLexiBitePurchaseOrderFn,
+  createIntelligentPurchaseOrdersFn,
 } from "../../procurement/ask-lexibite.functions";
 import { executeNovaPreparationFn, previewNovaExecutionFn } from "../../act/act.functions";
 import { forgetRestaurantMemoryFn, recallRestaurantMemoryFn } from "../../memory/memory.functions";
 import type { NovaIntentContract } from "../../understand/intent.contracts";
 import type { NovaPreparation, NovaPreparationWorkflow } from "../../prepare/prepare.contracts";
+import type { IntelligentPurchaseOrderPlan } from "../../procurement/ask-lexibite.server";
 import type { NovaExecutableWorkflow } from "../../act/act.contracts";
 
 const STARTER_PROMPTS = [
@@ -471,6 +473,115 @@ function PreparationActions({
 
 const EXECUTABLE_WORKFLOWS: readonly NovaPreparationWorkflow[] = ["stock_transfer"];
 
+function IntelligentPurchaseOrderActions({
+  tenantId,
+  plan,
+}: {
+  tenantId: string;
+  plan: IntelligentPurchaseOrderPlan;
+}) {
+  const navigate = useNavigate();
+  const createFn = useServerFn(createIntelligentPurchaseOrdersFn);
+  const [reviewing, setReviewing] = useState(false);
+
+  const create = useMutation({
+    mutationFn: () => createFn({
+      data: {
+        tenantId,
+        inventoryItemIds: plan.groups.flatMap((group) =>
+          group.lines.map((line) => line.inventoryItemId),
+        ),
+        supplierId: null,
+      },
+    }),
+    networkMode: "always",
+  });
+
+  if (create.data) {
+    return (
+      <div className="mt-2 space-y-2 rounded-xl border border-green-600/30 bg-green-600/10 px-3 py-2.5">
+        <p className="text-xs font-semibold text-foreground">
+          {create.data.created.length} draft PO{create.data.created.length === 1 ? "" : "s"} created.
+        </p>
+        <div className="space-y-1">
+          {create.data.created.map((po) => (
+            <div key={po.id} className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-muted-foreground">
+                {po.documentNumber} · {po.supplierName} · {po.currency} {po.total.toLocaleString()}
+              </span>
+              <Button type="button" size="sm" variant="outline" onClick={() =>
+                navigate({ to: "/admin/restaurant/procurement", search: { tab: "orders" } })
+              }>
+                Open POs
+              </Button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!plan.groups.length) {
+    return (
+      <div className="mt-2 rounded-xl border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+        Purchasing Intelligence has no safe PO draft from the current replenishment recommendations.
+        {plan.skipped.length > 0 && <div className="mt-1.5 space-y-1">{plan.skipped.slice(0, 4).map((reason) => <p key={reason}>• {reason}</p>)}</div>}
+      </div>
+    );
+  }
+
+  if (!reviewing) {
+    return (
+      <div className="mt-2 space-y-2 rounded-xl border bg-card px-3 py-2.5">
+        <p className="text-xs font-semibold text-foreground">Intelligent PO plan</p>
+        <p className="text-[11px] leading-4 text-muted-foreground">
+          {plan.suggestionCount} replenishment recommendation{plan.suggestionCount === 1 ? "" : "s"}
+          {" "}→ {plan.groups.length} draft PO{plan.groups.length === 1 ? "" : "s"} · {plan.currency} {plan.totalEstimatedSpend.toLocaleString()}
+        </p>
+        <Button type="button" size="sm" onClick={() => setReviewing(true)}>Review intelligent PO</Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 space-y-2 rounded-xl border bg-card px-3 py-2.5">
+      <div>
+        <p className="text-xs font-semibold text-foreground">Purchasing Intelligence</p>
+        <p className="text-[11px] text-muted-foreground">Quantities come from the live replenishment engine. Supplier prices are revalidated now.</p>
+      </div>
+      <div className="space-y-2">
+        {plan.groups.map((group) => (
+          <section key={group.key} className="rounded-lg border bg-muted/20 p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-foreground">{group.supplierName}</p>
+              <span className="text-[11px] font-semibold tabular-nums text-foreground">{group.currency} {group.subtotal.toLocaleString()}</span>
+            </div>
+            <div className="mt-1.5 space-y-1.5">
+              {group.lines.map((line) => (
+                <div key={line.inventoryItemId} className="flex items-start justify-between gap-3 text-xs">
+                  <div className="min-w-0">
+                    <p className="font-medium text-foreground">{line.description}</p>
+                    <p className="text-[11px] text-muted-foreground">{line.quantity} · {group.currency} {line.unitPrice.toLocaleString()} each · {line.currentQuantity} on hand · {line.leadTimeDays}d lead</p>
+                  </div>
+                  <span className="shrink-0 font-semibold tabular-nums text-foreground">{group.currency} {line.estimatedCost.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+      {plan.skipped.length > 0 && <div className="rounded-lg border border-amber-300/50 bg-amber-50/50 px-2.5 py-2 text-[11px] text-amber-700 dark:bg-amber-950/20 dark:text-amber-300"><p className="font-semibold">Not included</p>{plan.skipped.slice(0, 4).map((reason) => <p key={reason}>• {reason}</p>)}</div>}
+      <p className="text-[11px] text-muted-foreground">Nothing has been submitted or approved. Confirming below creates draft POs only.</p>
+      {create.isError && <p className="text-xs text-destructive">{create.error.message}</p>}
+      <div className="flex gap-1.5 pt-1">
+        <Button type="button" size="sm" variant="ghost" onClick={() => setReviewing(false)}>Cancel</Button>
+        <Button type="button" size="sm" disabled={create.isPending} onClick={() => create.mutate()}>
+          {create.isPending ? "Creating draft POs…" : "Create " + plan.groups.length + " draft PO" + (plan.groups.length === 1 ? "" : "s")}
+        </Button>
+      </div>
+    </div>
+  );
+}
 /**
  * Procurement actions are deliberately separate from I12 preparation.
  * Creating the PO is an explicit human confirmation, then each lifecycle
@@ -903,6 +1014,7 @@ export function StaffNovaPanel({
           degraded: result.degraded,
           understanding: result.understanding,
           preparation: result.preparation,
+          intelligentPurchaseOrder: result.intelligentPurchaseOrder,
           managerBrief: true,
         },
       ]);
@@ -984,6 +1096,12 @@ export function StaffNovaPanel({
                   <ManagerBrief content={t.content} />
                 ) : (
                   <p className="whitespace-pre-wrap">{t.content}</p>
+                )}
+                {t.intelligentPurchaseOrder && (
+                  <IntelligentPurchaseOrderActions
+                    tenantId={tenantId}
+                    plan={t.intelligentPurchaseOrder}
+                  />
                 )}
                 {t.preparation && t.understanding && (
                   <PreparationActions

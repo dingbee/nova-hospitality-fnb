@@ -70,6 +70,7 @@ import {
 } from "../intelligence/attention";
 import type { NovaIntentContract } from "../understand/intent.contracts";
 import type { NovaPreparation } from "../prepare/prepare.contracts";
+import type { IntelligentPurchaseOrderPlan } from "../procurement/ask-lexibite.server";
 import type { StaffNovaAskInput } from "./staffnova.contracts";
 import { componentToStock } from "../inventory/units";
 
@@ -89,8 +90,23 @@ export interface StaffNovaAnswer {
   understanding?: NovaIntentContract;
   /** I12: computed read-only alongside `understanding` — never a write. See prepare/prepare.server.ts. */
   preparation?: NovaPreparation;
+  /** Purchasing Intelligence-backed PO plan, read-only until the human confirms draft creation. */
+  intelligentPurchaseOrder?: IntelligentPurchaseOrderPlan;
 }
 
+function shouldOfferIntelligentPurchaseOrder(message: string, contract: NovaIntentContract) {
+  const lower = message.toLowerCase();
+  if (contract.action === "prepare_purchase_order") {
+    const hasExplicitQuantity = contract.entities.some(
+      (entity) =>
+        (entity.status === "exact" || entity.status === "high") &&
+        entity.quantity?.quantity != null,
+    );
+    return !hasExplicitQuantity;
+  }
+  return /\b(low[- ]stock|replenish(?:ment)?|reorder|restock|purchase suggestions?|what should we order|what needs ordering|items? to order)\b/.test(lower)
+    && contract.action === "query_inventory";
+}
 /** Best-effort loader: a single engine's failure never takes down the whole answer — it's simply marked unavailable in the context, and the system prompt tells the model to say so rather than guess. */
 async function tryLoad<T>(
   label: string,
@@ -634,12 +650,43 @@ export async function askStaffNova(
         preparation = undefined;
       }
 
+      let intelligentPurchaseOrder: IntelligentPurchaseOrderPlan | undefined;
+      if (shouldOfferIntelligentPurchaseOrder(input.message, contract)) {
+        const namedSupplierUnresolved = contract.supplier
+          && contract.supplier.kind === "named"
+          && contract.supplier.status !== "exact"
+          && contract.supplier.status !== "high";
+        if (!namedSupplierUnresolved) {
+          try {
+            const { previewIntelligentPurchaseOrders } = await import("../procurement/ask-lexibite.server");
+            intelligentPurchaseOrder = await previewIntelligentPurchaseOrders(sb, userId, {
+              tenantId: input.tenantId,
+              inventoryItemIds: contract.entities
+                .filter((entity) =>
+                  (entity.status === "exact" || entity.status === "high")
+                  && entity.entityDomain === "inventory_item"
+                  && Boolean(entity.resolvedId),
+                )
+                .map((entity) => entity.resolvedId!),
+              supplierId:
+                contract.supplier
+                && (contract.supplier.status === "exact" || contract.supplier.status === "high")
+                  ? contract.supplier.resolvedId
+                  : null,
+            });
+          } catch (err) {
+            logStageFailure("intelligent_po_preview", err, { tenantId: input.tenantId, userId, propertyId });
+          }
+        }
+      }
+
       return {
         answer: summary,
         degraded: false,
         generatedAt,
         understanding: contract,
         preparation,
+        intelligentPurchaseOrder,
       };
     } catch {
       // Same "fail closed to a plain apology, never fabricate" discipline
@@ -729,7 +776,18 @@ export async function askStaffNova(
       outputUsage: result.outputTokens,
     });
 
-    return { answer, degraded: false, generatedAt };
+    let intelligentPurchaseOrder: IntelligentPurchaseOrderPlan | undefined;
+    if (shouldOfferIntelligentPurchaseOrder(input.message, { action: "query_inventory" } as NovaIntentContract)) {
+      try {
+        const { previewIntelligentPurchaseOrders } = await import("../procurement/ask-lexibite.server");
+        intelligentPurchaseOrder = await previewIntelligentPurchaseOrders(sb, userId, {
+          tenantId: input.tenantId, inventoryItemIds: [], supplierId: null,
+        });
+      } catch (err) {
+        logStageFailure("intelligent_po_preview", err, { tenantId: input.tenantId, userId, propertyId });
+      }
+    }
+    return { answer, degraded: false, generatedAt, intelligentPurchaseOrder };
   } catch (err) {
     logStageFailure("reasoning_provider", err, { tenantId: input.tenantId, userId, propertyId });
     // Never fabricate on an AI failure — degrade to an honest, static
