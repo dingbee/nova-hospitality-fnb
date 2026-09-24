@@ -7,8 +7,24 @@ import {
   createAskLexiBitePurchaseOrder,
   transitionAskLexiBitePurchaseOrder,
   receiveAskLexiBitePurchaseOrder,
+  intelligentPurchaseOrderPlanInputSchema,
+  previewIntelligentPurchaseOrders,
+  createIntelligentPurchaseOrders,
 } from "./ask-lexibite.server";
 
+export const previewIntelligentPurchaseOrdersFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => intelligentPurchaseOrderPlanInputSchema.parse(d))
+  .handler(async ({ data, context }) =>
+    previewIntelligentPurchaseOrders(context.supabase, context.userId, data),
+  );
+
+export const createIntelligentPurchaseOrdersFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => intelligentPurchaseOrderPlanInputSchema.parse(d))
+  .handler(async ({ data, context }) =>
+    createIntelligentPurchaseOrders(context.supabase, context.userId, data),
+  );
 export const createAskLexiBitePurchaseOrderFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => askLexiBitePurchaseOrderInputSchema.parse(d))
