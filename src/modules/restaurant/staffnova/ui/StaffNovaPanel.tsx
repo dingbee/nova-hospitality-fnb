@@ -212,17 +212,15 @@ function highlightBriefDetail(text: string) {
   });
 }
 
-function shouldUseManagerBrief(message: string) {
-  return /\b(attention|pay attention|what needs attention|what should (?:we|i|the manager) focus|brief(?:ing)?|what(?:'s| is) important|what to watch|right now|today(?:'s)? priorities)\b/i.test(
-    message,
-  );
-}
-
 function ManagerBrief({ content }: { content: string }) {
   const items = extractBriefItems(content);
 
-  if (items.length <= 1) {
-    return <p className="whitespace-pre-wrap">{content}</p>;
+  if (items.length === 0) {
+    return (
+      <div className="w-full rounded-xl border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
+        {content}
+      </div>
+    );
   }
 
   const groups = (["critical", "action", "warning", "info"] as BriefTone[])
@@ -675,7 +673,7 @@ export function StaffNovaPanel({
       return askFn({ data: { tenantId, message, history } });
     },
     networkMode: "always",
-    onSuccess: (result, message) => {
+    onSuccess: (result) => {
       setTurns((t) => [
         ...t,
         {
@@ -685,7 +683,7 @@ export function StaffNovaPanel({
           degraded: result.degraded,
           understanding: result.understanding,
           preparation: result.preparation,
-          managerBrief: shouldUseManagerBrief(message),
+          managerBrief: true,
         },
       ]);
     },
