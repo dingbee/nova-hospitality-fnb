@@ -754,9 +754,9 @@ export function StaffNovaPanel({
                 className={
                   t.managerBrief && !t.understanding
                     ? "mr-auto w-full text-sm"
-                    : \`mr-auto max-w-[90%] rounded-2xl rounded-tl-sm border px-3 py-2 text-sm \${
+                    : `mr-auto max-w-[90%] rounded-2xl rounded-tl-sm border px-3 py-2 text-sm ${
                         t.degraded ? "bg-muted text-muted-foreground" : "bg-card"
-                      }\`
+                      }`
                 }
               >
                 {t.understanding && (
