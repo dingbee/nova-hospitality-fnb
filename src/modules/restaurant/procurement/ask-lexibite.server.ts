@@ -314,11 +314,16 @@ export async function createIntelligentPurchaseOrders(sb: Sb, userId: string, in
       continue;
     }
 
-    const override = input.lineOverrides.find((item) => item.inventoryItemId === line.inventoryItemId);
-    const finalQuantity = override?.quantity ?? line.quantity;
-    if (!Number.isFinite(finalQuantity) || finalQuantity <= 0) {
-      throw new Error("Every intelligent PO line must have a positive quantity.");
-    }
+    const finalLines = group.lines.map((line) => {
+      const override = input.lineOverrides.find(
+        (item) => item.inventoryItemId === line.inventoryItemId,
+      );
+      const finalQuantity = override?.quantity ?? line.quantity;
+      if (!Number.isFinite(finalQuantity) || finalQuantity <= 0) {
+        throw new Error("Every intelligent PO line must have a positive quantity.");
+      }
+      return { ...line, quantity: finalQuantity };
+    });
 
     const po = await createPurchaseOrder(sb, userId, {
       tenantId: input.tenantId,
@@ -329,7 +334,7 @@ export async function createIntelligentPurchaseOrders(sb: Sb, userId: string, in
       currency: group.currency,
       directReason: "Prepared by Ask LexiBite from Purchasing Intelligence replenishment recommendations.",
       notes: "Draft generated from live Purchasing Intelligence. Quantities come from its replenishment recommendation; supplier prices were revalidated against the live supplier catalogue.",
-      lines: group.lines.map((line) => ({
+      lines: finalLines.map((line) => ({
         inventoryItemId: line.inventoryItemId,
         supplierProductId: line.supplierProductId,
         unitId: line.unitId,

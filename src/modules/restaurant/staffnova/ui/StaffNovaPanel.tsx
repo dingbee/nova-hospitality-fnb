@@ -98,6 +98,69 @@ const BRIEF_SECTION_META: Record<
   },
 };
 
+
+function renderInlineAssistantText(value: string) {
+  const parts = value.split(/(\*\*[^*]+\*\*|__[^_]+__)/g);
+  return parts.map((part, index) => {
+    const bold = /^\*\*[^*]+\*\*$/.test(part) || /^__[^_]+__$/.test(part);
+    const text = bold ? part.slice(2, -2) : part;
+    return bold ? (
+      <strong key={index} className="font-semibold text-foreground">
+        {text}
+      </strong>
+    ) : (
+      <span key={index}>{text}</span>
+    );
+  });
+}
+
+function AssistantAnswer({ content }: { content: string }) {
+  const lines = content.replace(/\r/g, "").split("\n");
+  const blocks: Array<{ type: "paragraph" | "bullet"; text: string }> = [];
+  let paragraph = "";
+
+  const flushParagraph = () => {
+    if (paragraph.trim()) {
+      blocks.push({ type: "paragraph", text: paragraph.trim() });
+      paragraph = "";
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      continue;
+    }
+
+    const bullet = line.match(/^[-*•]\s+(.+)$/);
+    const numbered = line.match(/^\d+[.)]\s+(.+)$/);
+    if (bullet || numbered) {
+      flushParagraph();
+      blocks.push({ type: "bullet", text: (bullet ?? numbered)![1] });
+      continue;
+    }
+
+    paragraph = paragraph ? paragraph + " " + line : line;
+  }
+  flushParagraph();
+
+  return (
+    <div className="space-y-2.5 leading-6">
+      {blocks.map((block, index) =>
+        block.type === "bullet" ? (
+          <div key={index} className="flex items-start gap-2">
+            <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
+            <p className="min-w-0 flex-1">{renderInlineAssistantText(block.text)}</p>
+          </div>
+        ) : (
+          <p key={index}>{renderInlineAssistantText(block.text)}</p>
+        ),
+      )}
+    </div>
+  );
+}
+
 function cleanBriefText(value: string) {
   return value
     .replace(/^\s*(?:#{1,6}\s+|[-*•]\s+|\d+[.)]\s+)/, "")
@@ -1401,7 +1464,7 @@ export function StaffNovaPanel({
                 {t.managerBrief && !t.understanding ? (
                   <ManagerBrief content={t.content} />
                 ) : (
-                  <p className="whitespace-pre-wrap">{t.content}</p>
+                  <AssistantAnswer content={t.content} />
                 )}
                 {t.sourceMessage && /\b(adjust|adjustment|correct|correction|reconcile)\b.{0,80}\b(stock|inventory|quantity|balance)\b/i.test(t.sourceMessage) && (
                   <ActionWorkspace
