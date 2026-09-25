@@ -16,6 +16,8 @@ export function shouldRenderManagerBrief(message: string): boolean {
     /\bwhat\s+(?:needs?|requires?)\s+(?:my|the manager(?:'s)?)\s+attention\b/.test(value) ||
     /\b(?:top|main|key)\s+priorit(?:y|ies)\b/.test(value) ||
     /\bwhat\s+should\s+i\s+focus\s+on\s+(?:right now|today|now)\b/.test(value) ||
-    /\bsummar(?:ize|ise)\s+(?:what\s+)?(?:needs?|requires?)\s+attention\b/.test(value)
+    /\bsummar(?:ize|ise)\s+(?:what\s+)?(?:needs?|requires?)\s+attention\b/.test(value) ||
+    /\bwhat\s+should\s+(?:a|the|my)\s+manager\s+(?:know|see|understand)\s+about\b/.test(value) ||
+    /\bwhat\s+(?:is|has\s+been|happened)\s+with\s+(?:the\s+)?(?:kitchen|inventory|purchasing|sales|menu|food\s+cost|service)\b/.test(value)
   );
 }
