@@ -132,6 +132,10 @@ export const intelligentPurchaseOrderPlanInputSchema = z.object({
   inventoryItemIds: z.array(uuid).max(25).default([]),
   supplierId: uuid.nullable().optional(),
   idempotencyKey: uuid,
+  lineOverrides: z
+    .array(z.object({ inventoryItemId: uuid, quantity: z.number().positive().max(100000) }))
+    .max(25)
+    .default([]),
 });
 export type IntelligentPurchaseOrderPlanInput = z.infer<typeof intelligentPurchaseOrderPlanInputSchema>;
 
@@ -310,6 +314,12 @@ export async function createIntelligentPurchaseOrders(sb: Sb, userId: string, in
       continue;
     }
 
+    const override = input.lineOverrides.find((item) => item.inventoryItemId === line.inventoryItemId);
+    const finalQuantity = override?.quantity ?? line.quantity;
+    if (!Number.isFinite(finalQuantity) || finalQuantity <= 0) {
+      throw new Error("Every intelligent PO line must have a positive quantity.");
+    }
+
     const po = await createPurchaseOrder(sb, userId, {
       tenantId: input.tenantId,
       propertyId: group.propertyId ?? undefined,
@@ -324,7 +334,7 @@ export async function createIntelligentPurchaseOrders(sb: Sb, userId: string, in
         supplierProductId: line.supplierProductId,
         unitId: line.unitId,
         description: line.description,
-        quantity: line.quantity,
+        quantity: finalQuantity,
         unitPrice: line.unitPrice,
       })),
     });
