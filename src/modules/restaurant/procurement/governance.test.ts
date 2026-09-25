@@ -131,6 +131,38 @@ describe("Ask LexiBite PO lifecycle action contracts", () => {
     expect(receiveAskLexiBitePurchaseOrderSchema.safeParse(base).success).toBe(false);
   });
 
+  it("accepts validated line quantity overrides for intelligent PO review", async () => {
+    const { intelligentPurchaseOrderPlanInputSchema } = await import("./ask-lexibite.server");
+    const base = {
+      tenantId: "11111111-1111-1111-1111-111111111111",
+      inventoryItemIds: [],
+      supplierId: null,
+      idempotencyKey: "33333333-3333-3333-3333-333333333333",
+    };
+    expect(
+      intelligentPurchaseOrderPlanInputSchema.safeParse({
+        ...base,
+        lineOverrides: [
+          {
+            inventoryItemId: "44444444-4444-4444-4444-444444444444",
+            quantity: 12,
+          },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      intelligentPurchaseOrderPlanInputSchema.safeParse({
+        ...base,
+        lineOverrides: [
+          {
+            inventoryItemId: "44444444-4444-4444-4444-444444444444",
+            quantity: 0,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   it("requires an idempotency key for intelligent PO creation", async () => {
     const { intelligentPurchaseOrderPlanInputSchema } = await import("./ask-lexibite.server");
     const base = {
