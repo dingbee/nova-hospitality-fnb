@@ -53,6 +53,20 @@ export function rankByAttention<T extends { riskLevel: Decision["riskLevel"]; co
   });
 }
 
+export interface ContextualNextAction {
+  /** Human-readable action shown beside the signal. */
+  label: string;
+  /** Stable destination for the owning workflow; never an invented mutation endpoint. */
+  route: "/admin/restaurant/decisions" | "/admin/restaurant/inventory-control" | "/admin/restaurant/purchasing" | "/admin/restaurant/menu" | "/admin/restaurant/kitchen";
+  /** Why this is the appropriate next action for this signal. */
+  reason: string;
+  /** Existing governance state that determines what the user should do next. */
+  stage: "review" | "execute" | "verify" | "investigate";
+  /** Existing decision/action identifiers, when the signal is already governed. */
+  decisionId?: string;
+  actionId?: string;
+}
+
 export interface PriorityItem {
   key: string;
   title: string;
@@ -69,8 +83,103 @@ export interface PriorityItem {
   impact: string;
   /** Decision.reasoning.whatHappensNext[0] when a recommended option exists. */
   recommendedNextStep: string | null;
+  /** A concrete next action derived from the decision's existing governance state. */
+  nextAction: ContextualNextAction | null;
   /** True only when this decision already has an action beyond "proposed" — I14 must never re-recommend what's already in motion (spec section 30/31). */
   hasExistingAction: boolean;
+}
+
+function actionRouteForType(actionType: string | undefined): ContextualNextAction["route"] {
+  if (actionType === "restaurant.purchase.suggest") return "/admin/restaurant/purchasing";
+  if (actionType === "restaurant.inventory.replenish_review") return "/admin/restaurant/inventory-control";
+  if (actionType === "restaurant.menu.reprice_review") return "/admin/restaurant/menu";
+  if (
+    actionType === "restaurant.kitchen.workflow_review" ||
+    actionType === "restaurant.kitchen.staffing_review"
+  ) {
+    return "/admin/restaurant/kitchen";
+  }
+  return "/admin/restaurant/decisions";
+}
+
+function actionLabelForType(actionType: string | undefined): string {
+  if (actionType === "restaurant.purchase.suggest") return "Review purchasing action";
+  if (actionType === "restaurant.inventory.replenish_review") return "Review inventory action";
+  if (actionType === "restaurant.menu.reprice_review") return "Review menu action";
+  if (actionType === "restaurant.kitchen.workflow_review") return "Review kitchen workflow";
+  if (actionType === "restaurant.kitchen.staffing_review") return "Review staffing evidence";
+  return "Review decision";
+}
+
+function contextualNextActionForDecision(
+  decision: RestaurantStoredDecision,
+): ContextualNextAction | null {
+  const recommended = decision.options?.find((option) => option.option.key === decision.recommendedOptionKey);
+  if (!recommended && decision.status === "proposed") return null;
+
+  if (decision.action?.status === "failed" || decision.action?.status === "verification_failed") {
+    return {
+      label: "Review failed action",
+      route: "/admin/restaurant/decisions",
+      reason: decision.action.failureReason ?? "The last action did not complete verification.",
+      stage: "review",
+      decisionId: decision.id,
+      actionId: decision.action.id,
+    };
+  }
+
+  if (decision.action?.status === "executed" || decision.action?.status === "completed") {
+    return {
+      label: "Verify action outcome",
+      route: "/admin/restaurant/decisions",
+      reason: "The owning action has executed; verify the recorded outcome before closing the signal.",
+      stage: "verify",
+      decisionId: decision.id,
+      actionId: decision.action.id,
+    };
+  }
+
+  if (decision.status === "approved" && decision.actionId) {
+    return {
+      label: "Execute approved action",
+      route: "/admin/restaurant/decisions",
+      reason: "This signal has an approved action waiting for execution.",
+      stage: "execute",
+      decisionId: decision.id,
+      actionId: decision.actionId,
+    };
+  }
+
+  if (decision.status === "proposed" && recommended) {
+    const actionType = recommended.option.actionType;
+    return {
+      label: actionLabelForType(actionType),
+      route: actionRouteForType(actionType),
+      reason: decision.reasoning?.whatHappensNext?.[0] ?? "Review the recommended option and its evidence before approving it.",
+      stage: "review",
+      decisionId: decision.id,
+    };
+  }
+
+  if (decision.status === "completed") {
+    return {
+      label: "Review recorded outcome",
+      route: "/admin/restaurant/decisions",
+      reason: "The decision is complete; review the recorded outcome and learning signal.",
+      stage: "verify",
+      decisionId: decision.id,
+      actionId: decision.actionId ?? undefined,
+    };
+  }
+
+  return {
+    label: "Review decision",
+    route: "/admin/restaurant/decisions",
+    reason: "Review the current decision state and its evidence.",
+    stage: "review",
+    decisionId: decision.id,
+    actionId: decision.actionId ?? undefined,
+  };
 }
 
 /**
@@ -99,6 +208,7 @@ export function topPriorities(decisions: RestaurantStoredDecision[], limit = 5):
       evidence: d.evidence ?? [],
       impact: d.reasoning?.whatIsLikely ?? "",
       recommendedNextStep: d.reasoning?.whatHappensNext?.[0] ?? null,
+      nextAction: contextualNextActionForDecision(d),
       hasExistingAction: d.action != null,
     }));
 }
@@ -111,6 +221,33 @@ export interface ChangeItem {
   changePercent: number;
   direction: "up" | "down";
   statement: string;
+  /** Every material change is paired with a contextual investigation destination. */
+  nextAction: ContextualNextAction;
+}
+
+function contextualActionForChange(domain: ChangeItem["domain"]): ContextualNextAction {
+  const route =
+    domain === "menu"
+      ? "/admin/restaurant/menu"
+      : domain === "inventory"
+        ? "/admin/restaurant/inventory-control"
+        : domain === "kitchen"
+          ? "/admin/restaurant/kitchen"
+          : "/admin/restaurant/purchasing";
+  const label =
+    domain === "menu"
+      ? "Investigate menu change"
+      : domain === "inventory"
+        ? "Investigate inventory change"
+        : domain === "kitchen"
+          ? "Investigate kitchen change"
+          : "Investigate purchasing change";
+  return {
+    label,
+    route,
+    reason: "Open the owning module with the observed change as the investigation context.",
+    stage: "investigate",
+  };
 }
 
 /**
@@ -151,6 +288,7 @@ export function detectMaterialChanges(engines: {
       changePercent: item.trendPercent,
       direction: item.trendPercent >= 0 ? "up" : "down",
       statement: `${item.name} sales are ${item.trendPercent >= 0 ? "up" : "down"} ${Math.abs(item.trendPercent)}% vs the prior window.`,
+      nextAction: contextualActionForChange("menu"),
     });
   }
 
@@ -166,6 +304,7 @@ export function detectMaterialChanges(engines: {
       changePercent: wastage.changePercent,
       direction: wastage.changePercent >= 0 ? "up" : "down",
       statement: `Wastage cost is ${wastage.changePercent >= 0 ? "up" : "down"} ${Math.abs(wastage.changePercent)}% vs the previous period.`,
+      nextAction: contextualActionForChange("inventory"),
     });
   }
 
@@ -178,6 +317,7 @@ export function detectMaterialChanges(engines: {
       changePercent: kitchenTrend,
       direction: kitchenTrend >= 0 ? "up" : "down",
       statement: `Average kitchen prep time is ${kitchenTrend >= 0 ? "up" : "down"} ${Math.abs(kitchenTrend)}% vs the prior window.`,
+      nextAction: contextualActionForChange("kitchen"),
     });
   }
 
@@ -190,6 +330,7 @@ export function detectMaterialChanges(engines: {
       changePercent: spendChange,
       direction: spendChange >= 0 ? "up" : "down",
       statement: `Expected monthly purchasing spend is ${spendChange >= 0 ? "up" : "down"} ${Math.abs(spendChange)}% vs the previous month.`,
+      nextAction: contextualActionForChange("purchasing"),
     });
   }
 
