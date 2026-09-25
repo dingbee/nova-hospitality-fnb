@@ -287,7 +287,8 @@ function RestaurantIntelligencePage() {
   const inventoryFn = useServerFn(getRestaurantInventoryIntelligenceFn);
   const kitchenFn = useServerFn(getRestaurantKitchenIntelligenceFn);
   const purchasingFn = useServerFn(getRestaurantPurchasingIntelligenceFn);
-  const opportunitiesFn = useServerFn(getInventoryMenuOpportunitiesFn);\n  const decisionBoardFn = useServerFn(getRestaurantDecisionBoardFn);
+  const opportunitiesFn = useServerFn(getInventoryMenuOpportunitiesFn);
+  const decisionBoardFn = useServerFn(getRestaurantDecisionBoardFn);
 
   const args = { data: { tenantId: tenantId as string, windowDays } };
   const enabled = Boolean(tenantId);
@@ -394,7 +395,9 @@ function RestaurantIntelligencePage() {
         }
       />
 
-      <ContextualActionBar actions={visibleActions} />\n\n      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <ContextualActionBar actions={visibleActions} />
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Gross profit"
           value={m ? money(m.totals.grossProfit) : "—"}
