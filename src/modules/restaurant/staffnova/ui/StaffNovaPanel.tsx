@@ -16,6 +16,16 @@ import {
   createIntelligentPurchaseOrdersFn,
 } from "../../procurement/ask-lexibite.functions";
 import { executeNovaPreparationFn, previewNovaExecutionFn } from "../../act/act.functions";
+import {
+  approveRequisitionFn,
+  getRequisitionFn,
+  issueRequisitionFn,
+  submitRequisitionFn,
+} from "../../requisitions/requisitions.functions";
+import {
+  getRestaurantPurchaseRequestFn,
+  transitionRestaurantPurchaseRequestFn,
+} from "../../procurement/procurement.functions";
 import { forgetRestaurantMemoryFn, recallRestaurantMemoryFn } from "../../memory/memory.functions";
 import type { NovaIntentContract } from "../../understand/intent.contracts";
 import type { NovaPreparation, NovaPreparationWorkflow } from "../../prepare/prepare.contracts";
@@ -334,6 +344,7 @@ type StaffNovaTurn =
       role: "assistant";
       content: string;
       degraded: boolean;
+      sourceMessage?: string;
       understanding?: NovaIntentContract;
       preparation?: NovaPreparation;
       managerBrief?: boolean;
@@ -500,11 +511,30 @@ function PreparationActions({
     }
     return (
       <div className="space-y-2">
-        <PurchaseOrderActions tenantId={tenantId} contract={contract} />
+        <PurchaseOrderActions tenantId={tenantId} contract={reviewedContract} />
+        <div className="rounded-md border border-dashed px-2.5 py-2">
+          <p className="text-[11px] text-muted-foreground">
+            Prefer the approval-request stage? LexiBite can create a governed purchase request instead.
+          </p>
+          <Button type="button" size="sm" variant="ghost" disabled={commit.isPending} onClick={() => commit.mutate()}>
+            {commit.isPending ? "Preparing request…" : "Prepare purchase request instead"}
+          </Button>
+          {commit.isError && <p className="text-xs text-destructive">Something went wrong preparing the request — please try again.</p>}
+        </div>
+      </div>
+    );
+  }
+
+  if (preparation.workflow === "stock_transfer" || preparation.workflow === "requisition") {
+    if (preparation.readiness !== "ready" && preparation.readiness !== "ready_with_warnings") {
+      return <p className="mt-2 text-xs text-muted-foreground">{preparation.message}</p>;
+    }
+    return (
+      <div className="space-y-2">
         <div className="rounded-md border bg-muted/20 px-2.5 py-2">
-          <p className="text-xs font-semibold text-foreground">Review transfer quantities</p>
+          <p className="text-xs font-semibold text-foreground">Review {label} quantities</p>
           <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
-            Adjust the requested quantities before LexiBite creates the governed transfer draft.
+            Adjust the requested quantities before LexiBite creates the governed draft. Nothing moves yet.
           </p>
           <div className="mt-2 space-y-1.5">
             {contract.entities
@@ -518,66 +548,42 @@ function PreparationActions({
                       <p className="text-[10px] text-muted-foreground">Requested {entity.quantity!.quantity} {entity.quantity!.unitText}</p>
                     </div>
                     <Input
-                      type="number"
-                      min="0.01"
-                      step="0.01"
+                      type="number" min="0.01" step="0.01"
                       value={quantities[id] ?? entity.quantity!.quantity}
                       onChange={(event) => {
                         const value = Number(event.target.value);
                         setQuantities((current) => ({ ...current, [id]: value }));
                       }}
                       className="h-8 w-20 text-xs"
-                      aria-label={"Transfer quantity for " + (entity.resolvedName ?? entity.raw)}
+                      aria-label={label + " quantity for " + (entity.resolvedName ?? entity.raw)}
                     />
                   </div>
                 );
               })}
           </div>
-          <p className="mt-2 text-[11px] text-muted-foreground">
-            LexiBite re-validates the edited quantities when the transfer is created. No stock moves at this stage.
-          </p>
         </div>
-        <div className="rounded-md border border-dashed px-2.5 py-2">
-          <p className="text-[11px] text-muted-foreground">
-            Need the request stage instead? You can still create a governed purchase request.
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled={commit.isPending}
-            onClick={() => commit.mutate()}
-          >
-            {commit.isPending ? "Preparing request…" : "Prepare purchase request instead"}
-          </Button>
-          {commit.isError && (
-            <p className="text-xs text-destructive">
-              Something went wrong preparing the request — please try again.
-            </p>
-          )}
-        </div>
+        <Button type="button" size="sm" disabled={commit.isPending} onClick={() => commit.mutate()}>
+          {commit.isPending ? "Preparing…" : `Prepare & open ${label}`}
+        </Button>
+        {commit.isError && <p className="text-xs text-destructive">Something went wrong preparing this — please try again.</p>}
       </div>
     );
   }
 
   if (committed) {
     return (
-      <div className="mt-2 space-y-1.5">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => navigate({ to: route.to, search: route.search })}
-        >
-          Open {label}
-          {committed.documentNumber ? ` (${committed.documentNumber})` : ""}
+      <div className="space-y-2">
+        <Button type="button" size="sm" variant="outline" onClick={() => navigate({ to: route.to, search: route.search })}>
+          Open {label}{committed.documentNumber ? ` (${committed.documentNumber})` : ""}
         </Button>
+        {preparation.workflow === "purchase_request" && (
+          <PurchaseRequestLifecycleActions tenantId={tenantId} requestId={committed.createdRecordId} />
+        )}
+        {preparation.workflow === "requisition" && (
+          <RequisitionLifecycleActions tenantId={tenantId} requisitionId={committed.createdRecordId} />
+        )}
         {EXECUTABLE_WORKFLOWS.includes(preparation.workflow) && (
-          <ExecutionActions
-            workflow={preparation.workflow as NovaExecutableWorkflow}
-            recordId={committed.createdRecordId}
-            tenantId={tenantId}
-          />
+          <ExecutionActions workflow={preparation.workflow as NovaExecutableWorkflow} recordId={committed.createdRecordId} tenantId={tenantId} />
         )}
       </div>
     );
@@ -604,6 +610,125 @@ function PreparationActions({
       )}
     </div>
   );
+}
+
+function PurchaseRequestLifecycleActions({ tenantId, requestId }: { tenantId: string; requestId: string }) {
+  const navigate = useNavigate();
+  const getFn = useServerFn(getRestaurantPurchaseRequestFn);
+  const transitionFn = useServerFn(transitionRestaurantPurchaseRequestFn);
+  const request = useQuery({
+    queryKey: ["ask-lexibite", "purchase-request", tenantId, requestId],
+    queryFn: () => getFn({ data: { tenantId, id: requestId } }),
+  });
+  const transition = useMutation({
+    mutationFn: (action: "submit" | "approve" | "cancel") =>
+      transitionFn({ data: { tenantId, id: requestId, action } }),
+    onSuccess: () => request.refetch(),
+  });
+  const status = request.data?.request?.status;
+  if (request.isLoading) return <p className="text-[11px] text-muted-foreground">Checking request status…</p>;
+  if (!request.data) return <p className="text-xs text-destructive">The purchase request could not be reloaded.</p>;
+  const next =
+    status === "draft" ? { action: "submit" as const, label: "Submit request" } :
+    status === "submitted" ? { action: "approve" as const, label: "Approve request" } : null;
+  if (!next) {
+    return <p className="text-[11px] text-muted-foreground">Request status: <span className="font-semibold">{status}</span>. Open the request for the next workflow stage.</p>;
+  }
+  return (
+    <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
+      <p className="text-xs font-medium">Next action: {next.label}</p>
+      <p className="mt-0.5 text-[11px] text-muted-foreground">This changes the real purchase-request record and is checked again server-side.</p>
+      <Button type="button" size="sm" className="mt-2" disabled={transition.isPending} onClick={() => transition.mutate(next.action)}>
+        {transition.isPending ? "Updating…" : next.label}
+      </Button>
+      {transition.data && <p className="mt-1.5 text-xs text-foreground">Status: {transition.data.status}</p>}
+      {transition.isError && <p className="mt-1.5 text-xs text-destructive">{transition.error.message}</p>}
+      {status === "approved" && (
+        <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => navigate({ to: "/admin/restaurant/procurement", search: { tab: "requests" } })}>
+          Open approved request
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function RequisitionLifecycleActions({ tenantId, requisitionId }: { tenantId: string; requisitionId: string }) {
+  const getFn = useServerFn(getRequisitionFn);
+  const submitFn = useServerFn(submitRequisitionFn);
+  const approveFn = useServerFn(approveRequisitionFn);
+  const issueFn = useServerFn(issueRequisitionFn);
+  const requisition = useQuery({
+    queryKey: ["ask-lexibite", "requisition", tenantId, requisitionId],
+    queryFn: () => getFn({ data: { tenantId, id: requisitionId } }),
+  });
+  const [confirming, setConfirming] = useState(false);
+  const submit = useMutation({ mutationFn: () => submitFn({ data: { tenantId, requisitionId } }), onSuccess: () => requisition.refetch() });
+  const approve = useMutation({
+    mutationFn: () => approveFn({
+      data: {
+        tenantId,
+        requisitionId,
+        lines: (requisition.data?.lines ?? []).map((line) => ({
+          lineId: line.id,
+          approvedQuantity: Number(line.approved_quantity ?? line.requested_quantity ?? 0),
+        })),
+      },
+    }),
+    onSuccess: () => requisition.refetch(),
+  });
+  const issue = useMutation({
+    mutationFn: () => issueFn({
+      data: {
+        tenantId,
+        requisitionId,
+        lines: (requisition.data?.lines ?? []).map((line) => ({
+          lineId: line.id,
+          issueQuantity: Math.max(0, Number(line.approved_quantity ?? line.requested_quantity ?? 0) - Number(line.issued_quantity ?? 0)),
+        })),
+      },
+    }),
+    onSuccess: () => requisition.refetch(),
+  });
+  if (requisition.isLoading) return <p className="text-[11px] text-muted-foreground">Checking requisition status…</p>;
+  if (!requisition.data) return <p className="text-xs text-destructive">The requisition could not be reloaded.</p>;
+  const status = requisition.data.requisition.status;
+  if (status === "draft") return (
+    <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
+      <p className="text-xs font-medium">Next action: submit requisition</p>
+      <Button type="button" size="sm" className="mt-2" disabled={submit.isPending} onClick={() => submit.mutate()}>
+        {submit.isPending ? "Submitting…" : "Submit requisition"}
+      </Button>
+      {submit.isError && <p className="mt-1.5 text-xs text-destructive">{submit.error.message}</p>}
+    </div>
+  );
+  if (status === "submitted") return (
+    <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
+      <p className="text-xs font-medium">Next action: approve requisition</p>
+      <Button type="button" size="sm" className="mt-2" disabled={approve.isPending} onClick={() => approve.mutate()}>
+        {approve.isPending ? "Approving…" : "Approve requisition"}
+      </Button>
+      {approve.isError && <p className="mt-1.5 text-xs text-destructive">{approve.error.message}</p>}
+    </div>
+  );
+  if (status === "approved" || status === "partially_issued") return (
+    <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
+      <p className="text-xs font-medium">Next action: issue stock</p>
+      <p className="text-[11px] text-muted-foreground">LexiBite will issue only the outstanding approved quantities through the existing inventory ledger path.</p>
+      {!confirming ? (
+        <Button type="button" size="sm" className="mt-2" onClick={() => setConfirming(true)}>Review issue</Button>
+      ) : (
+        <div className="mt-2 flex gap-1.5">
+          <Button type="button" size="sm" variant="ghost" onClick={() => setConfirming(false)}>Cancel</Button>
+          <Button type="button" size="sm" disabled={issue.isPending} onClick={() => issue.mutate()}>
+            {issue.isPending ? "Issuing…" : "Confirm & issue"}
+          </Button>
+        </div>
+      )}
+      {issue.data && <p className="mt-1.5 text-xs text-foreground">Status: {issue.data.status}</p>}
+      {issue.isError && <p className="mt-1.5 text-xs text-destructive">{issue.error.message}</p>}
+    </div>
+  );
+  return <p className="text-[11px] text-muted-foreground">Requisition status: <span className="font-semibold">{status}</span>. No further Ask LexiBite action is available from this state.</p>;
 }
 
 const EXECUTABLE_WORKFLOWS: readonly NovaPreparationWorkflow[] = ["stock_transfer"];
@@ -1192,6 +1317,7 @@ export function StaffNovaPanel({
           role: "assistant",
           content: result.answer,
           degraded: result.degraded,
+          sourceMessage: message,
           understanding: result.understanding,
           preparation: result.preparation,
           intelligentPurchaseOrder: result.intelligentPurchaseOrder,
@@ -1276,6 +1402,25 @@ export function StaffNovaPanel({
                   <ManagerBrief content={t.content} />
                 ) : (
                   <p className="whitespace-pre-wrap">{t.content}</p>
+                )}
+                {t.sourceMessage && /\b(adjust|adjustment|correct|correction|reconcile)\b.{0,80}\b(stock|inventory|quantity|balance)\b/i.test(t.sourceMessage) && (
+                  <ActionWorkspace
+                    stage="review"
+                    title="Inventory adjustment"
+                    summary="Stock corrections must be reviewed and posted through Inventory Control with a reason."
+                  >
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => navigate({ to: "/admin/restaurant/inventory-control", search: { tab: "waste" } })}
+                    >
+                      Open stock adjustments
+                    </Button>
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                      LexiBite does not silently post a stock correction from chat. The existing inventory form remains the authoritative adjustment workflow.
+                    </p>
+                  </ActionWorkspace>
                 )}
                 {t.understanding && ["approve_purchase_order", "submit_purchase_order", "receive_purchase_order"].includes(t.understanding.action) && (
                   <ActionWorkspace
