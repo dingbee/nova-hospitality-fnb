@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- server function rows are untyped at this boundary. */
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { Brain, ChefHat, Boxes, ShoppingCart, Sparkles, Utensils } from "lucide-react";
+import { ArrowRight, Brain, ChefHat, Boxes, ShoppingCart, Sparkles, Utensils } from "lucide-react";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { PRODUCT } from "@/config/product";
 import { PageHeader } from "@/components/os/PageHeader";
@@ -30,6 +30,8 @@ import {
 import { runMenuIntelligenceReasoningFn } from "@/modules/restaurant/intelligence/menuReasoning.functions";
 import { MENU_INTELLIGENCE_STARTER_QUESTIONS } from "@/modules/restaurant/intelligence/menuReasoning.contracts";
 import { confidenceBand } from "@/modules/restaurant/intelligence/confidence";
+import { detectMaterialChanges, topPriorities } from "@/modules/restaurant/intelligence/attention";
+import { getRestaurantDecisionBoardFn } from "@/modules/restaurant/decisions/decisions.functions";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/intelligence")({
   head: () => ({
@@ -227,6 +229,55 @@ function MenuReasoningPanel({
   );
 }
 
+function ContextualActionBar({ actions }: { actions: any[] }) {
+  const navigate = useNavigate();
+  if (actions.length === 0) return null;
+
+  return (
+    <section className="rounded-xl border border-primary/20 bg-primary/5 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-foreground">Next actions</p>
+          <p className="text-[11px] text-muted-foreground">
+            These actions are derived from the existing decision state and operational signals.
+          </p>
+        </div>
+        <StatusChip tone="info">{actions.length} available</StatusChip>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        {actions.map((item, index) => {
+          const action = item.nextAction;
+          if (!action) return null;
+          return (
+            <div key={item.key ?? `change-${index}`} className="rounded-lg border bg-background/70 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-foreground">{item.title ?? item.subject}</p>
+                  {item.riskLevel ? (
+                    <p className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                      {item.riskLevel} risk · {item.status}
+                    </p>
+                  ) : null}
+                  <p className="mt-1 text-[11px] leading-4 text-muted-foreground">{action.reason}</p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => navigate({ to: action.route })}
+                >
+                  {action.label}
+                  <ArrowRight className="ml-1.5 size-3.5" aria-hidden />
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function RestaurantIntelligencePage() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id as string | undefined;
@@ -236,7 +287,7 @@ function RestaurantIntelligencePage() {
   const inventoryFn = useServerFn(getRestaurantInventoryIntelligenceFn);
   const kitchenFn = useServerFn(getRestaurantKitchenIntelligenceFn);
   const purchasingFn = useServerFn(getRestaurantPurchasingIntelligenceFn);
-  const opportunitiesFn = useServerFn(getInventoryMenuOpportunitiesFn);
+  const opportunitiesFn = useServerFn(getInventoryMenuOpportunitiesFn);\n  const decisionBoardFn = useServerFn(getRestaurantDecisionBoardFn);
 
   const args = { data: { tenantId: tenantId as string, windowDays } };
   const enabled = Boolean(tenantId);
@@ -265,6 +316,18 @@ function RestaurantIntelligencePage() {
     queryKey: ["restaurant", "intel", "opportunities", tenantId, windowDays],
     queryFn: () =>
       opportunitiesFn({ data: { tenantId: tenantId as string, windowDays, targetCoverDays: 7 } }),
+    enabled,
+  });
+
+  // The recent contextual-action work was producing action metadata server-side,
+  // but this Intelligence surface never consumed it. Load the same governed
+  // decision board and project its existing action state into visible buttons.
+  const decisions = useQuery({
+    queryKey: ["restaurant", "intel", "decisions", tenantId, windowDays],
+    queryFn: () =>
+      decisionBoardFn({
+        data: { tenantId: tenantId as string, windowDays, includeStored: true },
+      }),
     enabled,
   });
 
@@ -331,7 +394,7 @@ function RestaurantIntelligencePage() {
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <ContextualActionBar actions={visibleActions} />\n\n      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Gross profit"
           value={m ? money(m.totals.grossProfit) : "—"}
