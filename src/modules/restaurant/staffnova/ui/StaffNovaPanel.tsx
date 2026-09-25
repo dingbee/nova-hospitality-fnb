@@ -344,6 +344,7 @@ type StaffNovaTurn =
       role: "assistant";
       content: string;
       degraded: boolean;
+      sourceMessage?: string;
       understanding?: NovaIntentContract;
       preparation?: NovaPreparation;
       managerBrief?: boolean;
@@ -1316,6 +1317,7 @@ export function StaffNovaPanel({
           role: "assistant",
           content: result.answer,
           degraded: result.degraded,
+          sourceMessage: message,
           understanding: result.understanding,
           preparation: result.preparation,
           intelligentPurchaseOrder: result.intelligentPurchaseOrder,
@@ -1400,6 +1402,25 @@ export function StaffNovaPanel({
                   <ManagerBrief content={t.content} />
                 ) : (
                   <p className="whitespace-pre-wrap">{t.content}</p>
+                )}
+                {t.sourceMessage && /\b(adjust|adjustment|correct|correction|reconcile)\b.{0,80}\b(stock|inventory|quantity|balance)\b/i.test(t.sourceMessage) && (
+                  <ActionWorkspace
+                    stage="review"
+                    title="Inventory adjustment"
+                    summary="Stock corrections must be reviewed and posted through Inventory Control with a reason."
+                  >
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => navigate({ to: "/admin/restaurant/inventory-control", search: { tab: "waste" } })}
+                    >
+                      Open stock adjustments
+                    </Button>
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                      LexiBite does not silently post a stock correction from chat. The existing inventory form remains the authoritative adjustment workflow.
+                    </p>
+                  </ActionWorkspace>
                 )}
                 {t.understanding && ["approve_purchase_order", "submit_purchase_order", "receive_purchase_order"].includes(t.understanding.action) && (
                   <ActionWorkspace
