@@ -22,6 +22,7 @@ import type { NovaPreparation, NovaPreparationWorkflow } from "../../prepare/pre
 import type { IntelligentPurchaseOrderPlan } from "../../procurement/ask-lexibite.server";
 import type { NovaExecutableWorkflow } from "../../act/act.contracts";
 import { shouldRenderManagerBrief } from "./manager-brief";
+import { ActionWorkspace } from "./action-workspace";
 
 const STARTER_PROMPTS = [
   "What should we prepare for tomorrow?",
@@ -1180,20 +1181,38 @@ export function StaffNovaPanel({
                   <p className="whitespace-pre-wrap">{t.content}</p>
                 )}
                 {t.understanding && ["approve_purchase_order", "submit_purchase_order", "receive_purchase_order"].includes(t.understanding.action) && (
-                  <PurchaseOrderLifecycleActions tenantId={tenantId} contract={t.understanding} />
+                  <ActionWorkspace
+                    stage={t.understanding.action === "approve_purchase_order" ? "approve" : t.understanding.action === "submit_purchase_order" ? "submit" : "receive"}
+                    title="Purchase order action"
+                    summary="Review the current state before LexiBite changes procurement records."
+                  >
+                    <PurchaseOrderLifecycleActions tenantId={tenantId} contract={t.understanding} />
+                  </ActionWorkspace>
                 )}
                 {t.intelligentPurchaseOrder && (
-                  <IntelligentPurchaseOrderActions
-                    tenantId={tenantId}
-                    plan={t.intelligentPurchaseOrder}
-                  />
+                  <ActionWorkspace
+                    stage="recommend"
+                    title="Recommended replenishment"
+                    summary="Purchasing Intelligence has produced a governed action plan. Review it before creating drafts."
+                  >
+                    <IntelligentPurchaseOrderActions
+                      tenantId={tenantId}
+                      plan={t.intelligentPurchaseOrder}
+                    />
+                  </ActionWorkspace>
                 )}
                 {t.preparation && t.understanding && (
-                  <PreparationActions
-                    preparation={t.preparation}
-                    contract={t.understanding}
-                    tenantId={tenantId}
-                  />
+                  <ActionWorkspace
+                    stage={t.preparation.readiness === "ready" || t.preparation.readiness === "ready_with_warnings" ? "preview" : "review"}
+                    title={WORKFLOW_LABEL[t.preparation.workflow] ?? "Operational action"}
+                    summary="LexiBite has translated the instruction into a governed operational preparation."
+                  >
+                    <PreparationActions
+                      preparation={t.preparation}
+                      contract={t.understanding}
+                      tenantId={tenantId}
+                    />
+                  </ActionWorkspace>
                 )}
               </div>
             ),
