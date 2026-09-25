@@ -374,6 +374,23 @@ function RestaurantIntelligencePage() {
         : undefined,
   };
 
+  // Project the already-governed decision state and observed material changes into
+  // the contextual action bar. No new action logic or mutation path is introduced.
+  const storedDecisions = ((decisions.data as any)?.stored ?? []) as any[];
+  const decisionActions = topPriorities(storedDecisions, 5);
+  const materialChanges = detectMaterialChanges({
+    menu: m?.declining ? { declining: m.declining } : undefined,
+    inventory: inv?.wastage ? { wastage: inv.wastage } : undefined,
+    kitchen: kit?.trendPercent != null ? { trendPercent: kit.trendPercent } : undefined,
+    purchasing:
+      pur?.spendChangePercent != null
+        ? { spendChangePercent: pur.spendChangePercent }
+        : undefined,
+  });
+  const visibleActions = [...decisionActions, ...materialChanges].filter(
+    (item) => item.nextAction != null,
+  );
+
   return (
     <div className="space-y-4">
       <PageHeader
