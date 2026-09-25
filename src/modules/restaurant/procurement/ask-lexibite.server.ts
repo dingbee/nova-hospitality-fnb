@@ -4,7 +4,7 @@ import { assertCapability, getTenantScope, resolveMultiPropertyScope } from "../
 import type { NovaIntentContract } from "../understand/intent.contracts";
 import { getPurchasingIntelligence } from "../intelligence/purchasing.server";
 import { resolveTenantCurrency } from "../prepare/resolve.server";
-import { createPurchaseOrder, transitionPurchaseOrder } from "./purchasing.server";
+import { createPurchaseOrder, transitionPurchaseOrder } from "../purchasing/purchasing.server";
 import { createGoodsReceipt } from "./receiving.server";
 
 type Sb = any;
