@@ -48,7 +48,7 @@ export async function getBill(sb: Sb, userId: string, input: GetBillInput) {
       .order("created_at"),
     sb
       .from("restaurant_payments")
-      .select("id, method, state, amount, tendered, change_due, reference, refund_of, refund_reason, captured_at")
+      .select("id, method, state, amount, tendered, change_due, reference, refund_of, refund_reason, captured_at, split_bill_id")
       .eq("tenant_id", input.tenantId)
       .eq("order_id", input.orderId)
       .order("captured_at"),
