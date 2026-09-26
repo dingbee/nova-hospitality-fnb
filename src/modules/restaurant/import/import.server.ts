@@ -940,6 +940,12 @@ export async function decideStagedRecord(sb: Sb, userId: string, input: DecideSt
     const ref = { ...(await fetchRefData(sb, input.tenantId)), propertyCurrency };
     const restaged = stageRow(existing.domain as ImportDomain, stagingMappedData, ref);
 
+    // A catalog edit is a re-evaluation, not an approval. Put the row
+    // back into review so its newly calculated severity is authoritative and
+    // the user can explicitly approve it once it is Ready/Needs review.
+    patch.decision = "pending";
+    patch.decided_by = null;
+    patch.decided_at = null;
     patch.mapped_data = restaged.mappedData;
     patch.matched_entity_id = restaged.matchedEntityId;
     patch.matched_entity_table = restaged.matchedEntityTable;
