@@ -46,14 +46,16 @@ import {
   decideStagedRecordFn,
   getImportWorkspaceFn,
   listImportWorkspacesFn,
-  listRestaurantInventoryCategoriesFn,
-  listRestaurantMenuItemsFn,
-  listRestaurantMenusFn,
   listStagedRecordsFn,
   parseImportSourceFn,
   suggestImportMappingFn,
   uploadImportSourceFn,
 } from "../import.functions";
+import { listRestaurantInventoryCategoriesFn } from "../../masterdata/masterdata.functions";
+import {
+  listRestaurantMenuItemsFn,
+  listRestaurantMenusFn,
+} from "../../menu/menu.functions";
 import {
   CANONICAL_FIELDS,
   IMPORT_DOMAINS,
