@@ -1587,7 +1587,7 @@ function PosWorkspaceBody({
             const rows = (created ?? []) as any[];
             if (value.splitBillId) resolvedSplitId = value.splitBillId;
             else if (value.amount != null) {
-              const match = rows.find((row) => Math.abs(Number(row.amount ?? 0) - Number(value.amount)) < 0.01);
+              const match = rows.find((row) => Number(row.split_no) === Number(value.splitNo));
               resolvedSplitId = match?.id ?? null;
             }
             void qc.invalidateQueries({ queryKey: ["restaurant.pos.bill", tenantId, orderId] });
