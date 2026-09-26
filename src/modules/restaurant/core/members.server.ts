@@ -20,7 +20,7 @@ export async function listMembers(
   await assertTenantRead(sb, userId, input.tenantId);
   const { data, error } = await sb
     .from("restaurant_members")
-    .select("id, user_id, role, property_id, created_at")
+    .select("id, user_id, role, property_id, created_at, pos_pin_enabled")
     .eq("tenant_id", input.tenantId)
     .order("created_at");
   if (error) throw new Error(error.message);
