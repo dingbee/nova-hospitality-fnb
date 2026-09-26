@@ -82,6 +82,16 @@ export function PosBillDialog({
 
   const localShares = useMemo<Share[]>(() => {
     if (!bill || splitMode === "none") return [];
+    if (persisted.length > 0 && persisted.every((s) => s.mode === splitMode)) {
+      return persisted.map((s) => ({
+        key: s.id,
+        label: s.label,
+        amount: Number(s.balance ?? s.amount ?? 0),
+        splitBillId: s.id,
+        splitNo: Number(s.split_no ?? 0),
+        allocation: s.allocation ?? [],
+      }));
+    }
     if (splitMode === "even") {
       const per = Number((balance / ways).toFixed(2));
       const shares = Array.from({ length: ways }, (_, i) => ({ key: `new-${i + 1}`, label: `Bill ${i + 1}`, amount: per, splitNo: i + 1 }));
