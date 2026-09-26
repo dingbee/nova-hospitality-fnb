@@ -21,6 +21,7 @@ import type {
   GetBillInput,
   ListReceiptsInput,
   RefundPaymentInput,
+  SaveBillSplitInput,
 } from "./bill.contracts";
 
 type Sb = any;
@@ -34,7 +35,7 @@ export type BillShare = { key: string; label: string; amount: number; lineIds: s
 export async function getBill(sb: Sb, userId: string, input: GetBillInput) {
   await assertTenantRead(sb, userId, input.tenantId);
 
-  const [{ data: order }, { data: items }, { data: payments }, { data: receipt }] = await Promise.all([
+  const [{ data: order }, { data: items }, { data: payments }, { data: receipt }, { data: splitRows }] = await Promise.all([
     sb.from("restaurant_orders").select("*").eq("tenant_id", input.tenantId).eq("id", input.orderId).single(),
     sb
       .from("restaurant_order_items")
@@ -56,6 +57,13 @@ export async function getBill(sb: Sb, userId: string, input: GetBillInput) {
       .eq("tenant_id", input.tenantId)
       .eq("order_id", input.orderId)
       .maybeSingle(),
+    sb
+      .from("restaurant_bill_splits")
+      .select("id, split_no, label, mode, amount, allocation, status, created_at, updated_at")
+      .eq("tenant_id", input.tenantId)
+      .eq("order_id", input.orderId)
+      .neq("status", "voided")
+      .order("split_no"),
   ]);
   if (!order) throw new Error("Order not found.");
 
@@ -63,6 +71,21 @@ export async function getBill(sb: Sb, userId: string, input: GetBillInput) {
   const lines = all.filter((i) => i.status !== "voided");
   const voided = all.filter((i) => i.status === "voided");
   const pays = (payments ?? []) as any[];
+  const persistedSplits = ((splitRows ?? []) as any[]).map((split) => {
+    const paidAmount = money(
+      pays
+        .filter((p) => p.split_bill_id === split.id && p.state !== "refunded")
+        .reduce((sum, p) => add(sum, num(p.amount)), 0),
+    );
+    const amount = money(num(split.amount));
+    return {
+      ...split,
+      amount,
+      paidAmount,
+      balance: money(Math.max(0, sub(amount, paidAmount))),
+      status: paidAmount >= amount && amount > 0 ? "paid" : paidAmount > 0 ? "partially_paid" : split.status,
+    };
+  });
 
   const total = money(num(order.total));
   const paid = money(
@@ -93,6 +116,7 @@ export async function getBill(sb: Sb, userId: string, input: GetBillInput) {
       changeGiven,
     },
     split: buildSplit(lines, total, balance, input.splitMode, input.ways),
+    splitBills: persistedSplits,
     settled: balance <= 0 && ["paid", "comped", "room_charged"].includes(String(order.payment_state)),
     partiallyPaid: paid > 0 && balance > 0,
   };
@@ -139,6 +163,125 @@ export function buildSplit(
 
   const sum = money(shares.reduce((s, x) => add(s, x.amount), 0));
   return { mode, shares, reconciles: mode === "amount" || shares.length === 0 || sum === total };
+}
+
+/** Creates/replaces the child bills for one parent order without changing the parent order total. */
+export async function saveBillSplit(sb: Sb, userId: string, input: SaveBillSplitInput) {
+  await assertCapability(sb, userId, input.tenantId, "sales.manage");
+
+  const [{ data: order }, { data: lines }] = await Promise.all([
+    sb.from("restaurant_orders").select("id, property_id, location_id, total, paid_total, status, currency").eq("tenant_id", input.tenantId).eq("id", input.orderId).single(),
+    sb.from("restaurant_order_items")
+      .select("id, description, quantity, line_total, seat_number, status")
+      .eq("tenant_id", input.tenantId).eq("order_id", input.orderId).neq("status", "voided")
+      .order("created_at"),
+  ]);
+  if (!order) throw new Error("Order not found.");
+  if (!OPEN_STATES.includes(String(order.status))) throw new Error("Only an open bill can be split.");
+
+  const paid = money(num(order.paid_total));
+  const total = money(num(order.total));
+  const balance = money(Math.max(0, sub(total, paid)));
+  if (balance <= 0) throw new Error("There is no outstanding balance to split.");
+
+  const { data: existing } = await sb.from("restaurant_bill_splits")
+    .select("id")
+    .eq("tenant_id", input.tenantId).eq("order_id", input.orderId);
+  const existingIds = ((existing ?? []) as any[]).map((x) => x.id);
+  if (existingIds.length) {
+    const { data: splitPayments } = await sb.from("restaurant_payments")
+      .select("id").eq("tenant_id", input.tenantId).in("split_bill_id", existingIds).neq("state", "refunded").limit(1);
+    if ((splitPayments ?? []).length) throw new Error("Paid split bills cannot be reconfigured. Recombine only before the first split payment.");
+    await sb.from("restaurant_bill_splits").delete().eq("tenant_id", input.tenantId).eq("order_id", input.orderId);
+  }
+
+  const liveLines = (lines ?? []) as any[];
+  const billRows: Array<{ splitNo:number; label:string; amount:number; allocation:any[] }> = [];
+
+  if (input.mode === "even") {
+    const ways = input.ways ?? 2;
+    const per = money(balance / ways);
+    for (let i=0; i<ways; i++) billRows.push({ splitNo:i+1,label:`Bill ${i+1}`,amount:per,allocation:[]});
+    const drift = money(sub(balance, money(per * ways)));
+    if (drift !== 0) billRows[0]!.amount = money(add(billRows[0]!.amount, drift));
+  } else if (input.mode === "percentage") {
+    const percentages = input.percentages ?? [];
+    if (percentages.length < 2 || percentages.length > 24) throw new Error("Percentage split needs 2 to 24 bills.");
+    const pctTotal = percentages.reduce((a,b)=>a+b,0);
+    if (Math.abs(pctTotal - 100) > 0.001) throw new Error("Percentages must total 100%.");
+    let remaining = balance;
+    percentages.forEach((pct,i) => {
+      const amount = i === percentages.length - 1 ? money(remaining) : money(balance * pct / 100);
+      remaining = money(sub(remaining, amount));
+      billRows.push({splitNo:i+1,label:`Bill ${i+1} · ${pct}%`,amount,allocation:[]});
+    });
+  } else if (input.mode === "amount") {
+    const amounts = (input.amounts ?? []).map(money);
+    if (amounts.length < 2 || amounts.length > 24) throw new Error("Amount split needs 2 to 24 bills.");
+    const amountTotal = money(amounts.reduce((a,b)=>add(a,b),0));
+    if (amountTotal !== balance) throw new Error(`Split amounts must equal the outstanding balance of ${balance}.`);
+    amounts.forEach((amount,i)=>billRows.push({splitNo:i+1,label:`Bill ${i+1}`,amount,allocation:[]}));
+  } else if (input.mode === "seat") {
+    const groups = new Map<string,{label:string;amount:number;allocation:any[]}>();
+    for (const line of liveLines) {
+      const key = line.seat_number ? `seat-${line.seat_number}` : "shared";
+      const label = line.seat_number ? `Seat ${line.seat_number}` : "Shared items";
+      const existingGroup = groups.get(key) ?? {label,amount:0,allocation:[]};
+      existingGroup.amount = add(existingGroup.amount, num(line.line_total));
+      existingGroup.allocation.push({lineId:line.id,quantity:num(line.quantity)});
+      groups.set(key, existingGroup);
+    }
+    let i=0;
+    for (const group of groups.values()) billRows.push({splitNo:++i,label:group.label,amount:money(group.amount),allocation:group.allocation});
+  } else if (input.mode === "items") {
+    const allocations = input.allocations ?? [];
+    if (allocations.length === 0) throw new Error("Assign at least one item to a bill.");
+    const byLine = new Map<string, any[]>();
+    for (const a of allocations) {
+      const line = liveLines.find((l) => l.id === a.lineId);
+      if (!line) throw new Error("One or more split items no longer exist.");
+      const list = byLine.get(a.lineId) ?? [];
+      list.push(a);
+      byLine.set(a.lineId, list);
+    }
+    for (const line of liveLines) {
+      const assigned = (byLine.get(line.id) ?? []).reduce((sum,a)=>sum+Number(a.quantity),0);
+      if (Math.abs(assigned - Number(line.quantity)) > 0.0001) throw new Error(`Allocate all of "${line.description}" before paying.`);
+    }
+    const groups = new Map<number,{amount:number;allocation:any[]}>();
+    for (const a of allocations) {
+      const line = liveLines.find((l) => l.id === a.lineId)!;
+      const amount = money((Number(line.line_total) / Number(line.quantity)) * Number(a.quantity));
+      const group = groups.get(a.splitNo) ?? {amount:0,allocation:[]};
+      group.amount = add(group.amount, amount);
+      group.allocation.push({lineId:a.lineId,quantity:Number(a.quantity)});
+      groups.set(a.splitNo, group);
+    }
+    let i=0;
+    for (const [splitNo,group] of [...groups.entries()].sort((a,b)=>a[0]-b[0])) {
+      if (splitNo < 1 || splitNo > 24) throw new Error("Invalid split number.");
+      billRows.push({splitNo:++i,label:`Bill ${i}`,amount:money(group.amount),allocation:group.allocation});
+    }
+    const allocatedTotal = money(billRows.reduce((sum,b)=>add(sum,b.amount),0));
+    if (allocatedTotal !== balance) {
+      const drift = money(sub(balance, allocatedTotal));
+      if (billRows[0]) billRows[0].amount = money(add(billRows[0].amount, drift));
+    }
+  }
+
+  if (billRows.length < 2) throw new Error("A split requires at least two bills.");
+  const finalTotal = money(billRows.reduce((sum,b)=>add(sum,b.amount),0));
+  if (finalTotal !== balance) throw new Error("Split bills do not reconcile with the outstanding balance.");
+
+  const { data: inserted, error } = await sb.from("restaurant_bill_splits").insert(
+    billRows.map((b) => ({
+      tenant_id: input.tenantId, order_id: input.orderId, split_no: b.splitNo,
+      label: b.label, mode: input.mode, amount: b.amount, allocation: b.allocation,
+      created_by: userId, updated_by: userId,
+    })),
+  ).select("id, split_no, label, mode, amount, allocation, status");
+  if (error) throw new Error(error.message);
+  return inserted ?? [];
 }
 
 /** The guest has asked for the bill. Recorded, so "we asked ages ago" is answerable. */
