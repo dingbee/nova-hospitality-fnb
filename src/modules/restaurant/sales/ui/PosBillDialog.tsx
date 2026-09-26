@@ -37,6 +37,8 @@ export function PosBillDialog({
   onWays,
   onClose,
   onPresent,
+  onRecombine,
+  recombining,
   onPayShare,
   presenting,
 }: {
@@ -50,6 +52,8 @@ export function PosBillDialog({
   onWays: (n: number) => void;
   onClose: () => void;
   onPresent: () => void;
+  onRecombine: () => void;
+  recombining: boolean;
   onPayShare: (value: { amount: number | null; splitBillId?: string; splitNo?: number; splitPlan?: SaveBillSplitInput }) => void;
   presenting: boolean;
 }) {
@@ -61,6 +65,7 @@ export function PosBillDialog({
   const totals = bill?.totals;
   const lines = (bill?.lines ?? []) as any[];
   const persisted = (bill?.splitBills ?? []) as any[];
+  const hasPaidSplit = persisted.some((s) => Number(s.paidAmount ?? 0) > 0);
   const balance = Number(totals?.balance ?? 0);
 
   useEffect(() => {
@@ -72,13 +77,20 @@ export function PosBillDialog({
   useEffect(() => {
     const next: Record<string, number[]> = {};
     lines.forEach((line, index) => {
-      const q = Number(line.quantity ?? 0);
-      const arr = Array.from({ length: ways }, () => 0);
-      arr[index % ways] = q;
-      next[line.id] = arr;
+      const persistedAllocations = persisted.flatMap((split) => (split.allocation ?? []).map((a: any) => ({ ...a, splitNo: Number(split.split_no) }))).filter((a: any) => a.lineId === line.id);
+      if (persistedAllocations.length > 0) {
+        const arr = Array.from({ length: ways }, () => 0);
+        for (const a of persistedAllocations) if (a.splitNo >= 1 && a.splitNo <= ways) arr[a.splitNo - 1] = Number(a.quantity ?? 0);
+        next[line.id] = arr;
+      } else {
+        const q = Number(line.quantity ?? 0);
+        const arr = Array.from({ length: ways }, () => 0);
+        arr[index % ways] = q;
+        next[line.id] = arr;
+      }
     });
     setItemQty(next);
-  }, [lines.map((l) => l.id).join("|"), ways]);
+  }, [lines.map((l) => l.id).join("|"), ways, persisted.map((s) => s.id).join("|")]);
 
   const localShares = useMemo<Share[]>(() => {
     if (!bill || splitMode === "none") return [];
@@ -323,6 +335,11 @@ export function PosBillDialog({
         )}
 
         <DialogFooter className="flex-wrap gap-2">
+          {persisted.length > 0 && !hasPaidSplit && (
+            <Button variant="outline" className="min-h-12" disabled={recombining} onClick={onRecombine}>
+              {recombining ? "Recombining…" : "Recombine bills"}
+            </Button>
+          )}
           <Button variant="outline" className="min-h-12" onClick={onClose}>Close</Button>
           <Button variant="secondary" className="min-h-12" disabled={presenting} onClick={onPresent}>
             {presenting ? "Printing…" : "Print & present"}
