@@ -51,6 +51,7 @@ export const posLineSchema = z.object({
 export type PosLineInput = z.infer<typeof posLineSchema>;
 
 export const openPosOrderSchema = tenantScopeSchema.extend({
+  posSessionId: uuid.optional(),
   tableId: uuid.optional(),
   servicePeriodId: uuid.optional(),
   orderType: z.enum(ORDER_TYPES).default("dine_in"),
@@ -66,6 +67,7 @@ export const openPosOrderSchema = tenantScopeSchema.extend({
 export type OpenPosOrderInput = z.infer<typeof openPosOrderSchema>;
 
 export const addPosLinesSchema = z.object({
+  posSessionId: uuid.optional(),
   tenantId: uuid,
   orderId: uuid,
   lines: z.array(posLineSchema).min(1),
@@ -83,6 +85,7 @@ export const addPosLinesSchema = z.object({
 export type AddPosLinesInput = z.infer<typeof addPosLinesSchema>;
 
 export const voidPosLineSchema = z.object({
+  posSessionId: uuid.optional(),
   tenantId: uuid,
   orderId: uuid,
   orderItemId: uuid,
@@ -91,6 +94,7 @@ export const voidPosLineSchema = z.object({
 export type VoidPosLineInput = z.infer<typeof voidPosLineSchema>;
 
 export const transferPosOrderSchema = z.object({
+  posSessionId: uuid.optional(),
   tenantId: uuid,
   orderId: uuid,
   tableId: uuid.nullable().optional(),
@@ -100,6 +104,7 @@ export const transferPosOrderSchema = z.object({
 export type TransferPosOrderInput = z.infer<typeof transferPosOrderSchema>;
 
 export const posPaymentSchema = z.object({
+  posSessionId: uuid.optional(),
   tenantId: uuid,
   orderId: uuid,
   clientRequestId: z.string().min(6).max(80),
@@ -115,6 +120,7 @@ export const posPaymentSchema = z.object({
 export type PosPaymentInput = z.infer<typeof posPaymentSchema>;
 
 export const reopenPosOrderSchema = z.object({
+  posSessionId: uuid.optional(),
   tenantId: uuid,
   orderId: uuid,
   reason: z.string().min(3).max(300),
@@ -123,17 +129,20 @@ export type ReopenPosOrderInput = z.infer<typeof reopenPosOrderSchema>;
 
 /** Whole-order cancellation. A reason is mandatory: cancellation is auditable. */
 export const cancelOrderSchema = z.object({
+  posSessionId: uuid.optional(),
   tenantId: uuid,
   orderId: uuid,
   reason: z.string().min(3).max(300),
 });
 export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
 
-export const posBoardSchema = tenantScopeSchema;
+export const posBoardSchema = tenantScopeSchema.extend({ posSessionId: uuid.optional() });
 export const posCatalogSchema = tenantScopeSchema.extend({
+  posSessionId: uuid.optional(),
   menuId: uuid.optional(),
 });
 export const posReceiptSchema = z.object({
+  posSessionId: uuid.optional(),
   tenantId: uuid,
   orderId: uuid,
   reprint: z.boolean().default(false),
