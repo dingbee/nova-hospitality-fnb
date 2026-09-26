@@ -220,7 +220,7 @@ export function StaffPanel() {
                             onClick={() => {
                               const pin = window.prompt(m.pos_pin_enabled ? "Enter a new 4–6 digit POS PIN" : "Enter a 4–6 digit POS PIN");
                               if (pin === null) return;
-                              if (!/^\\d{4,6}$/.test(pin)) { window.alert("PIN must contain 4 to 6 digits."); return; }
+                              if (!/^\d{4,6}$/.test(pin)) { window.alert("PIN must contain 4 to 6 digits."); return; }
                               setPin.mutate({ memberId: m.id, pin });
                             }}
                           >
