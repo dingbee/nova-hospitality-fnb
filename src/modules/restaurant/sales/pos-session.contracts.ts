@@ -15,3 +15,8 @@ export const startPosSessionSchema = z.object({
   terminalId: z.string().max(60).optional(),
 });
 export const endPosSessionSchema = z.object({ sessionId: z.string().uuid() });
+export const bootstrapOwnerPosPinSchema = z.object({
+  tenantId: z.string().uuid(),
+  propertyId: z.string().uuid(),
+  pin: z.string().regex(/^\\d{4,6}$/, "PIN must contain 4 to 6 digits"),
+});
