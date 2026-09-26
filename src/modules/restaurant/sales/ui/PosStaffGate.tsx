@@ -17,7 +17,6 @@ export function PosStaffGate({ children }: { children: ReactNode }) {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
   const propertyId = ws.data?.properties?.[0]?.id;
-  const qc = useQueryClient();
   const listFn = useServerFn(listRestaurantMembersFn);
   const startFn = useServerFn(startPosSessionFn);
   const endFn = useServerFn(endPosSessionFn);
@@ -73,7 +72,6 @@ export function PosStaffGate({ children }: { children: ReactNode }) {
       setSession(next);
       window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       setPin("");
-      void qc.invalidateQueries({ queryKey: ["restaurant.pos.staff-pin-members", tenantId] });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Invalid PIN.");
     } finally { setBusy(false); }
