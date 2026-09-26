@@ -22,6 +22,7 @@ import type {
   ListReceiptsInput,
   RefundPaymentInput,
   SaveBillSplitInput,
+  ClearBillSplitInput,
 } from "./bill.contracts";
 
 type Sb = any;
@@ -282,6 +283,22 @@ export async function saveBillSplit(sb: Sb, userId: string, input: SaveBillSplit
   ).select("id, split_no, label, mode, amount, allocation, status");
   if (error) throw new Error(error.message);
   return inserted ?? [];
+}
+
+/** Recombines unpaid child bills back into the parent bill. */
+export async function clearBillSplit(sb: Sb, userId: string, input: ClearBillSplitInput) {
+  await assertCapability(sb, userId, input.tenantId, "sales.manage");
+  const { data: splits } = await sb.from("restaurant_bill_splits")
+    .select("id").eq("tenant_id", input.tenantId).eq("order_id", input.orderId);
+  const ids = ((splits ?? []) as any[]).map((s) => s.id);
+  if (!ids.length) return { cleared: false };
+  const { data: payments } = await sb.from("restaurant_payments")
+    .select("id").eq("tenant_id", input.tenantId).in("split_bill_id", ids).neq("state", "refunded").limit(1);
+  if ((payments ?? []).length) throw new Error("A split bill has already been paid and cannot be recombined.");
+  const { error } = await sb.from("restaurant_bill_splits")
+    .delete().eq("tenant_id", input.tenantId).eq("order_id", input.orderId);
+  if (error) throw new Error(error.message);
+  return { cleared: true };
 }
 
 /** The guest has asked for the bill. Recorded, so "we asked ages ago" is answerable. */
