@@ -449,9 +449,11 @@ function PosWorkspaceBody({
       }),
     successMessage: "Payment recorded",
     onSuccess: (data: any) => {
+      const wasSplitPayment = Boolean(splitBillId);
       payKey.current = newRequestId();
       setShareAmount(null);
       setSplitBillId(null);
+      if (wasSplitPayment && !data?.receipt) setPayOpen(false);
       if (data?.receipt) {
         setReceipt(data.receipt);
         setPayOpen(false);
