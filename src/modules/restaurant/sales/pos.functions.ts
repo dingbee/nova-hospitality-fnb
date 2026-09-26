@@ -18,7 +18,8 @@ export const posBoardFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => posBoardSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./pos.server");
-    return mod.posBoard(context.supabase, context.userId, data);
+    const actorId = await (await import("./pos-session.server")).resolvePosActor(context.supabase, context.userId, data.posSessionId, data.tenantId, data.propertyId);
+    return mod.posBoard(context.supabase, actorId, data);
   });
 
 export const posCatalogFn = createServerFn({ method: "POST" })
@@ -26,7 +27,8 @@ export const posCatalogFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => posCatalogSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./pos.server");
-    return mod.posCatalog(context.supabase, context.userId, data);
+    const actorId = await (await import("./pos-session.server")).resolvePosActor(context.supabase, context.userId, data.posSessionId, data.tenantId, data.propertyId);
+    return mod.posCatalog(context.supabase, actorId, data);
   });
 
 export const openPosOrderFn = createServerFn({ method: "POST" })
@@ -34,7 +36,8 @@ export const openPosOrderFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => openPosOrderSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./pos.server");
-    return mod.openPosOrder(context.supabase, context.userId, data);
+    const actorId = await (await import("./pos-session.server")).resolvePosActor(context.supabase, context.userId, data.posSessionId, data.tenantId, data.propertyId);
+    return mod.openPosOrder(context.supabase, actorId, data);
   });
 
 export const addPosLinesFn = createServerFn({ method: "POST" })
@@ -42,7 +45,8 @@ export const addPosLinesFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => addPosLinesSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./pos.server");
-    return mod.addPosLines(context.supabase, context.userId, data);
+    const actorId = await (await import("./pos-session.server")).resolvePosActor(context.supabase, context.userId, data.posSessionId, data.tenantId, data.propertyId);
+    return mod.addPosLines(context.supabase, actorId, data);
   });
 
 export const voidPosLineFn = createServerFn({ method: "POST" })
@@ -50,7 +54,8 @@ export const voidPosLineFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => voidPosLineSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./pos.server");
-    return mod.voidPosLine(context.supabase, context.userId, data);
+    const actorId = await (await import("./pos-session.server")).resolvePosActor(context.supabase, context.userId, data.posSessionId, data.tenantId, data.propertyId);
+    return mod.voidPosLine(context.supabase, actorId, data);
   });
 
 export const transferPosOrderFn = createServerFn({ method: "POST" })
@@ -58,7 +63,8 @@ export const transferPosOrderFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => transferPosOrderSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./pos.server");
-    return mod.transferPosOrder(context.supabase, context.userId, data);
+    const actorId = await (await import("./pos-session.server")).resolvePosActor(context.supabase, context.userId, data.posSessionId, data.tenantId, data.propertyId);
+    return mod.transferPosOrder(context.supabase, actorId, data);
   });
 
 export const takePosPaymentFn = createServerFn({ method: "POST" })
@@ -66,7 +72,8 @@ export const takePosPaymentFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => posPaymentSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./pos.server");
-    return mod.takePosPayment(context.supabase, context.userId, data);
+    const actorId = await (await import("./pos-session.server")).resolvePosActor(context.supabase, context.userId, data.posSessionId, data.tenantId, data.propertyId);
+    return mod.takePosPayment(context.supabase, actorId, data);
   });
 
 export const reopenPosOrderFn = createServerFn({ method: "POST" })
@@ -74,7 +81,8 @@ export const reopenPosOrderFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => reopenPosOrderSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./pos.server");
-    return mod.reopenPosOrder(context.supabase, context.userId, data);
+    const actorId = await (await import("./pos-session.server")).resolvePosActor(context.supabase, context.userId, data.posSessionId, data.tenantId, data.propertyId);
+    return mod.reopenPosOrder(context.supabase, actorId, data);
   });
 
 export const cancelPosOrderFn = createServerFn({ method: "POST" })
@@ -82,7 +90,8 @@ export const cancelPosOrderFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => cancelOrderSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./cancellation.server");
-    return mod.cancelOrder(context.supabase, context.userId, data);
+    const actorId = await (await import("./pos-session.server")).resolvePosActor(context.supabase, context.userId, data.posSessionId, data.tenantId, data.propertyId);
+    return mod.cancelOrder(context.supabase, actorId, data);
   });
 
 export const posReceiptFn = createServerFn({ method: "POST" })
@@ -90,7 +99,8 @@ export const posReceiptFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => posReceiptSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./receipts.server");
+    const actorId = await (await import("./pos-session.server")).resolvePosActor(context.supabase, context.userId, data.posSessionId, data.tenantId, undefined);
     return data.reprint
-      ? mod.issueReceipt(context.supabase, context.userId, data)
-      : mod.getReceipt(context.supabase, context.userId, data);
+      ? mod.issueReceipt(context.supabase, actorId, data)
+      : mod.getReceipt(context.supabase, actorId, data);
   });
