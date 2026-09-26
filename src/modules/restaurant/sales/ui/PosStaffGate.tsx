@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { LockKeyhole, LogOut } from "lucide-react";
@@ -13,7 +13,7 @@ export const usePosStaffSession = () => useContext(PosSessionContext);
 
 const STORAGE_KEY = "lexibite.pos.staff-session";
 
-export function PosStaffGate({ children }: { children: React.ReactNode }) {
+export function PosStaffGate({ children }: { children: ReactNode }) {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
   const propertyId = ws.data?.properties?.[0]?.id;
