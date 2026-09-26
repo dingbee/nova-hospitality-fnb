@@ -1,10 +1,9 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+
 import { useServerFn } from "@tanstack/react-start";
 import { LockKeyhole, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
-import { listRestaurantMembersFn } from "@/modules/restaurant/core/tenancy.functions";
 import { startPosSessionFn, endPosSessionFn } from "../pos-session.functions";
 
 type SessionValue = { sessionId: string | null; staffUserId: string | null };
@@ -17,24 +16,15 @@ export function PosStaffGate({ children }: { children: ReactNode }) {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
   const propertyId = ws.data?.properties?.[0]?.id;
-  const listFn = useServerFn(listRestaurantMembersFn);
   const startFn = useServerFn(startPosSessionFn);
   const endFn = useServerFn(endPosSessionFn);
-  const members = useQuery({
-    queryKey: ["restaurant.pos.staff-pin-members", tenantId],
-    queryFn: () => listFn({ data: { tenantId: tenantId! } }),
-    enabled: Boolean(tenantId),
-    staleTime: 60_000,
-  });
   const [session, setSession] = useState<{ sessionId: string; staffUserId: string } | null>(() => {
     if (typeof window === "undefined") return null;
     try { return JSON.parse(window.sessionStorage.getItem(STORAGE_KEY) ?? "null"); } catch { return null; }
   });
-  const [selected, setSelected] = useState<string>("");
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const rows = ((members.data ?? []) as any[]).filter((m) => m.pos_pin_enabled);
 
   const logout = async () => {
     if (session?.sessionId) {
@@ -59,14 +49,14 @@ export function PosStaffGate({ children }: { children: ReactNode }) {
   }, [session?.sessionId]);
 
   const submit = async () => {
-    if (!tenantId || !propertyId || !selected || !/^\d{4,6}$/.test(pin)) {
-      setError("Select a staff member and enter a 4–6 digit PIN.");
+    if (!tenantId || !propertyId || !/^\d{4,6}$/.test(pin)) {
+      setError("Enter a valid 4–6 digit staff PIN.");
       return;
     }
     setBusy(true); setError("");
     try {
       const result = await startFn({ data: {
-        tenantId, propertyId, staffUserId: selected, pin, terminalId: "pos-web",
+        tenantId, propertyId, pin, terminalId: "pos-web",
       }});
       const next = { sessionId: result.sessionId, staffUserId: result.staffUserId };
       setSession(next);
@@ -102,15 +92,11 @@ export function PosStaffGate({ children }: { children: ReactNode }) {
           <div className="rounded-xl border p-2"><LockKeyhole className="size-5" /></div>
           <div><h2 className="font-semibold">POS Staff Access</h2><p className="text-xs text-muted-foreground">Enter the staff PIN to take this till.</p></div>
         </div>
-        <label className="mb-2 block text-xs font-medium">Staff member</label>
-        <select value={selected} onChange={(e) => setSelected(e.target.value)} className="mb-4 min-h-11 w-full rounded-md border bg-background px-3 text-sm">
-          <option value="">Select staff…</option>
-          {rows.map((m) => <option key={m.user_id} value={m.user_id}>{m.user_id.slice(0, 8)} · {m.role}</option>)}
-        </select>
-        <label className="mb-2 block text-xs font-medium">PIN</label>
+        <p className="mb-3 text-sm text-muted-foreground">Each staff member uses a personal PIN. The PIN identifies the operator and applies their existing role permissions.</p>
+        <label className="mb-2 block text-xs font-medium">Staff PIN</label>
         <input autoFocus value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))} onKeyDown={(e) => { if (e.key === "Enter") void submit(); }} inputMode="numeric" type="password" maxLength={6} className="mb-3 min-h-12 w-full rounded-md border bg-background px-4 text-center text-2xl tracking-[0.5em]" placeholder="••••" />
         {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
-        <Button className="min-h-11 w-full" disabled={busy || !selected || pin.length < 4} onClick={() => void submit()}>
+        <Button className="min-h-11 w-full" disabled={busy || pin.length < 4} onClick={() => void submit()}>
           {busy ? "Verifying…" : "Enter POS"}
         </Button>
       </div>
