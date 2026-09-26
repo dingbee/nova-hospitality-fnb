@@ -47,6 +47,8 @@ import {
   getImportWorkspaceFn,
   listImportWorkspacesFn,
   listRestaurantInventoryCategoriesFn,
+  listRestaurantMenuItemsFn,
+  listRestaurantMenusFn,
   listStagedRecordsFn,
   parseImportSourceFn,
   suggestImportMappingFn,
@@ -1289,11 +1291,29 @@ function CatalogEditDialog({
   const inventoryCategories = ((categoriesQuery.data as any[]) ?? []).filter((category) => category.active !== false);
   const categoryById = new Map(inventoryCategories.map((category) => [category.id, category]));
 
+  const menusFn = useServerFn(listRestaurantMenusFn);
+  const menuItemsFn = useServerFn(listRestaurantMenuItemsFn);
+  const [selectedMenuId, setSelectedMenuId] = useState("");
+  const menusQuery = useQuery({
+    queryKey: ["restaurant.import.menus", tenantId],
+    queryFn: () => menusFn({ data: { tenantId, limit: 200 } }),
+    enabled: open && initial.some(([key]) => key === "productMenuItemName"),
+    staleTime: 60_000,
+  });
+  const menuItemsQuery = useQuery({
+    queryKey: ["restaurant.import.menu-items", tenantId, selectedMenuId],
+    queryFn: () => menuItemsFn({ data: { tenantId, menuId: selectedMenuId, limit: 500 } }),
+    enabled: open && !!selectedMenuId,
+    staleTime: 60_000,
+  });
+  const selectedMenu = ((menusQuery.data as any[]) ?? []).find((menu) => menu.id === selectedMenuId);
+
   // Re-seed every time a different record is opened.
   useEffect(() => {
     const next: Record<string, string | number | boolean | null> = {};
     for (const [key, value] of initial) next[key] = value;
     setValues(next);
+    setSelectedMenuId("");
   }, [record.id, open]);
 
   const setValue = (key: string, raw: string) => {
@@ -1326,7 +1346,49 @@ function CatalogEditDialog({
             return (
               <div key={key} className={isLong ? "sm:col-span-2" : ""}>
                 <Label className="text-xs">{key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase())}</Label>
-                {key === "categoryName" ? (
+                {key === "productMenuItemName" ? (
+                  <div className="space-y-2">
+                    <select
+                      className="h-10 w-full rounded-md border bg-background px-2 text-sm"
+                      value={selectedMenuId}
+                      disabled={menusQuery.isLoading || busy}
+                      onChange={(e) => {
+                        setSelectedMenuId(e.target.value);
+                        setValues((prev) => ({ ...prev, productMenuItemName: "" }));
+                      }}
+                    >
+                      <option value="">— Select menu first —</option>
+                      {((menusQuery.data as any[]) ?? []).map((menu) => (
+                        <option key={menu.id} value={menu.id}>
+                          {menu.name}{menu.status ? ` · ${menu.status}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="h-10 w-full rounded-md border bg-background px-2 text-sm"
+                      value={String(fieldValue ?? "")}
+                      disabled={!selectedMenuId || menuItemsQuery.isLoading || busy}
+                      onChange={(e) =>
+                        setValues((prev) => ({ ...prev, productMenuItemName: e.target.value }))
+                      }
+                    >
+                      <option value="">
+                        {!selectedMenuId ? "— Select a menu above —" : "— Select menu item —"}
+                      </option>
+                      {((menuItemsQuery.data as any[]) ?? []).map((item) => (
+                        <option key={item.id} value={item.name}>
+                          {item.name}{item.available === false ? " · unavailable" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedMenu && (
+                      <p className="text-xs text-muted-foreground">
+                        Selecting from <span className="font-medium">{selectedMenu.name}</span> uses
+                        the existing menu item instead of creating another name match.
+                      </p>
+                    )}
+                  </div>
+                ) : key === "categoryName" ? (
                   <select
                     className="mt-1 h-10 w-full rounded-md border bg-background px-2 text-sm"
                     value={String(fieldValue ?? "")}
