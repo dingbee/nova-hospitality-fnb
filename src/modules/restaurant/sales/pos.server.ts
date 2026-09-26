@@ -742,6 +742,7 @@ export async function takePosPayment(sb: Sb, userId: string, input: PosPaymentIn
   const { error } = await sb.from("restaurant_payments").insert({
     tenant_id: input.tenantId,
     order_id: input.orderId,
+    split_bill_id: input.splitBillId ?? null,
     client_request_id: input.clientRequestId,
     method: input.method,
     state: input.state,
