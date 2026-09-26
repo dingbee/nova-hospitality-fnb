@@ -12,8 +12,26 @@ const uuid = z.string().uuid();
 export const RECEIPT_DELIVERY_CHANNELS = ["print", "email", "whatsapp", "none"] as const;
 export type ReceiptDeliveryChannel = (typeof RECEIPT_DELIVERY_CHANNELS)[number];
 
-export const SPLIT_MODES = ["none", "seat", "even", "amount"] as const;
+export const SPLIT_MODES = ["none", "seat", "even", "items", "amount", "percentage"] as const;
 export type BillSplitMode = (typeof SPLIT_MODES)[number];
+
+export const billSplitAllocationSchema = z.object({
+  lineId: uuid,
+  splitNo: z.number().int().min(1).max(24),
+  quantity: z.number().positive(),
+});
+export type BillSplitAllocationInput = z.infer<typeof billSplitAllocationSchema>;
+
+export const saveBillSplitSchema = z.object({
+  tenantId: uuid,
+  orderId: uuid,
+  mode: z.enum(["even", "seat", "items", "amount", "percentage"]),
+  ways: z.number().int().min(2).max(24).optional(),
+  amounts: z.array(z.number().min(0)).max(24).optional(),
+  percentages: z.array(z.number().min(0)).max(24).optional(),
+  allocations: z.array(billSplitAllocationSchema).max(1000).optional(),
+});
+export type SaveBillSplitInput = z.infer<typeof saveBillSplitSchema>;
 
 export const getBillSchema = z.object({
   tenantId: uuid,
