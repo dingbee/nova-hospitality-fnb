@@ -12,6 +12,7 @@ export const roomChargeQuoteSchema = z.object({
   tenantId: uuid,
   orderId: uuid,
   bookingId: uuid,
+  splitBillId: uuid.optional(),
   amount: z.number().positive(),
 });
 export type RoomChargeQuoteInput = z.infer<typeof roomChargeQuoteSchema>;
