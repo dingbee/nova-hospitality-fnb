@@ -14,6 +14,7 @@ import {
 } from "@/modules/restaurant/ui/forms";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { upsertRestaurantTableFn } from "@/modules/restaurant/sales/sales.functions";
+import { upsertServiceRequestSettingsFn } from "../../masterdata.functions";
 import { PanelList, PanelToolbar } from "../shared";
 import { buildTableQrCard, buildTableQrCards, type TableQrCard } from "../../qr";
 import { buildQrPackPdf } from "../qrRender";
@@ -21,6 +22,71 @@ import { TableQrDialog } from "./TableQrDialog";
 import type { MasterData, TableRow } from "../types";
 
 const STATUSES = ["available", "occupied", "reserved", "cleaning", "out_of_service"] as const;
+
+const DEFAULT_COOLDOWN_MINUTES = 5;
+
+function ServiceRequestSettingsField({ tenantId, data }: { tenantId: string; data: MasterData }) {
+  const serviceRequests =
+    (data.tenant?.settings as { serviceRequests?: { cooldownSeconds?: number } } | null)
+      ?.serviceRequests ?? {};
+  const configuredMinutes =
+    typeof serviceRequests.cooldownSeconds === "number"
+      ? serviceRequests.cooldownSeconds / 60
+      : null;
+  const [minutes, setMinutes] = React.useState(
+    String(configuredMinutes ?? DEFAULT_COOLDOWN_MINUTES),
+  );
+
+  React.useEffect(() => {
+    setMinutes(String(configuredMinutes ?? DEFAULT_COOLDOWN_MINUTES));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.tenant?.id]);
+
+  const fn = useServerFn(upsertServiceRequestSettingsFn);
+  const mutation = useAdminMutation({
+    mutationFn: fn,
+    successMessage: "Guest service request cooldown saved.",
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["restaurant.masterdata", tenantId] }),
+  });
+  const qc = useQueryClient();
+
+  return (
+    <div className="border-t pt-4">
+      <Field
+        label="Guest service request cooldown"
+        hint={
+          configuredMinutes == null
+            ? `Not yet configured — currently defaults to ${DEFAULT_COOLDOWN_MINUTES} minutes. Minutes a guest must wait after their "Request staff" alert is resolved before requesting again.`
+            : 'Minutes a guest must wait after their "Request staff" alert is resolved before requesting again.'
+        }
+      >
+        <form
+          className="flex items-center gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const parsed = Number(minutes);
+            if (!Number.isFinite(parsed) || parsed < 0) return;
+            mutation.mutate({ data: { tenantId, cooldownMinutes: parsed } });
+          }}
+        >
+          <Input
+            className="h-11 w-28"
+            type="number"
+            min={0}
+            max={120}
+            step={1}
+            value={minutes}
+            onChange={(e) => setMinutes(e.target.value)}
+          />
+          <span className="text-sm text-muted-foreground">minutes</span>
+          <Button type="submit" size="sm" className="h-9" disabled={mutation.isPending}>
+            Save
+          </Button>
+        </form>
+      </Field>
+    </div>
+  );
+}
 
 const empty = {
   code: "",
@@ -204,6 +270,14 @@ export function TablesPanel({ tenantId, data }: { tenantId: string; data: Master
       </div>
 
       <TableQrDialog card={qrCard} open={qrOpen} onOpenChange={setQrOpen} />
+      <div className="space-y-2">
+        <p className="text-sm font-semibold text-foreground">Table settings</p>
+        <p className="text-xs text-muted-foreground">
+          Guest service behavior for requests raised from table ordering.
+        </p>
+        <ServiceRequestSettingsField tenantId={tenantId} data={data} />
+      </div>
+
 
       <EntitySheet
         open={open}
