@@ -894,7 +894,7 @@ export async function listStagedRecords(
 export async function decideStagedRecord(sb: Sb, userId: string, input: DecideStagedRecordInput) {
   const { data: existing, error: readErr } = await sb
     .from("restaurant_import_staged_records")
-    .select("id, workspace_id, committed_at, mapped_data, matched_entity_table")
+    .select("id, workspace_id, source_id, sheet_name, domain, committed_at, mapped_data, matched_entity_table")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.recordId)
     .maybeSingle();
@@ -916,7 +916,26 @@ export async function decideStagedRecord(sb: Sb, userId: string, input: DecideSt
     patch.match_status = input.matchedEntityId ? "exact_match" : "new_entity";
   }
   if (input.mappedDataPatch) {
-    patch.mapped_data = { ...(existing.mapped_data as object), ...input.mappedDataPatch };
+    const mergedMappedData = { ...(existing.mapped_data as object), ...input.mappedDataPatch };
+
+    // A human edit is a correction, not just a cosmetic patch. Re-run the
+    // same deterministic staging resolver against the edited values so
+    // references such as inventoryItemId, menuItemId, groupId and stationId
+    // are recalculated before approval. This is what makes "Add to catalog"
+    // useful without introducing a second import engine.
+    const propertyCurrency = await resolvePropertyCurrency(sb, input.tenantId, scope.propertyId);
+    const ref = { ...(await fetchRefData(sb, input.tenantId)), propertyCurrency };
+    const restaged = stageRow(existing.domain as ImportDomain, mergedMappedData, ref);
+
+    patch.mapped_data = restaged.mappedData;
+    patch.matched_entity_id = restaged.matchedEntityId;
+    patch.matched_entity_table = restaged.matchedEntityTable;
+    patch.match_status = restaged.matchStatus;
+    patch.match_confidence = restaged.matchConfidence;
+    patch.match_evidence = restaged.matchEvidence;
+    patch.match_candidates = restaged.matchCandidates;
+    patch.validation_errors = restaged.validationErrors;
+    patch.severity = restaged.severity;
   }
   const { data, error } = await sb
     .from("restaurant_import_staged_records")
