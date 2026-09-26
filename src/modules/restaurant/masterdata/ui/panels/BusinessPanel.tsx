@@ -11,7 +11,6 @@ import { Field, FieldRow } from "@/modules/restaurant/ui/forms";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import {
   upsertRestaurantBusinessProfileFn,
-  upsertServiceRequestSettingsFn,
 } from "../../masterdata.functions";
 import { removeTenantLogoFn, uploadTenantLogoFn } from "../../tenant-logo.functions";
 import { validateTenantLogoFile, TENANT_LOGO_MIME_TYPES } from "../../tenant-logo.contracts";
@@ -101,79 +100,6 @@ function LogoField({
         </div>
       </div>
     </Field>
-  );
-}
-
-/** Default mirrored from selforder.server.ts's DEFAULT_SERVICE_REQUEST_COOLDOWN_SECONDS — shown only as a placeholder/hint, never written unless the admin actually saves a value. */
-const DEFAULT_COOLDOWN_MINUTES = 5;
-
-/**
- * The one admin-facing control for the guest "Request staff" cooldown —
- * settings.serviceRequests.cooldownSeconds, read by selfstaff.server.ts.
- * A separate small form/mutation rather than folding into the business
- * profile form above: this isn't a business-identity field, and saving it
- * should never require re-submitting legal name/tax ID/etc.
- */
-function ServiceRequestSettingsField({ tenantId, data }: { tenantId: string; data: MasterData }) {
-  const serviceRequests =
-    (data.tenant?.settings as { serviceRequests?: { cooldownSeconds?: number } } | null)
-      ?.serviceRequests ?? {};
-  const configuredMinutes =
-    typeof serviceRequests.cooldownSeconds === "number"
-      ? serviceRequests.cooldownSeconds / 60
-      : null;
-  const [minutes, setMinutes] = React.useState(
-    String(configuredMinutes ?? DEFAULT_COOLDOWN_MINUTES),
-  );
-
-  React.useEffect(() => {
-    setMinutes(String(configuredMinutes ?? DEFAULT_COOLDOWN_MINUTES));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.tenant?.id]);
-
-  const qc = useQueryClient();
-  const fn = useServerFn(upsertServiceRequestSettingsFn);
-  const mutation = useAdminMutation({
-    mutationFn: fn,
-    successMessage: "Guest service request cooldown saved.",
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["restaurant.masterdata", tenantId] }),
-  });
-
-  return (
-    <form
-      className="space-y-3 border-t pt-4"
-      onSubmit={(e) => {
-        e.preventDefault();
-        const parsed = Number(minutes);
-        if (!Number.isFinite(parsed) || parsed < 0) return;
-        mutation.mutate({ data: { tenantId, cooldownMinutes: parsed } });
-      }}
-    >
-      <Field
-        label="Guest service request cooldown"
-        hint={
-          configuredMinutes == null
-            ? `Not yet configured — currently defaults to ${DEFAULT_COOLDOWN_MINUTES} minutes. Minutes a guest must wait after their "Request staff" alert is resolved before requesting again.`
-            : 'Minutes a guest must wait after their "Request staff" alert is resolved before requesting again.'
-        }
-      >
-        <div className="flex items-center gap-3">
-          <Input
-            className="h-11 w-28"
-            type="number"
-            min={0}
-            max={120}
-            step={1}
-            value={minutes}
-            onChange={(e) => setMinutes(e.target.value)}
-          />
-          <span className="text-sm text-muted-foreground">minutes</span>
-          <Button type="submit" size="sm" className="h-9" disabled={mutation.isPending}>
-            Save
-          </Button>
-        </div>
-      </Field>
-    </form>
   );
 }
 
@@ -365,7 +291,6 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
           </Button>
         </div>
       </form>
-      <ServiceRequestSettingsField tenantId={tenantId} data={data} />
     </SectionCard>
   );
 }
