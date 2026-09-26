@@ -1555,12 +1555,14 @@ function PosWorkspaceBody({
         open={mobileMoneyAmount != null && Boolean(orderId)}
         tenantId={tenantId}
         orderId={orderId}
+        splitBillId={splitBillId}
         amount={mobileMoneyAmount ?? 0}
         currency={currency}
         onClose={() => setMobileMoneyAmount(null)}
         onPosted={() => {
           setMobileMoneyAmount(null);
           setShareAmount(null);
+          setSplitBillId(null);
           refresh();
         }}
       />
