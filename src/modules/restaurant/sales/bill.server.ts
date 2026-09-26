@@ -234,6 +234,11 @@ export async function saveBillSplit(sb: Sb, userId: string, input: SaveBillSplit
     }
     let i=0;
     for (const group of groups.values()) billRows.push({splitNo:++i,label:group.label,amount:money(group.amount),allocation:group.allocation});
+    const seatTotal = money(billRows.reduce((sum,b)=>add(sum,b.amount),0));
+    const seatDrift = money(sub(balance, seatTotal));
+    if (seatDrift !== 0 && Math.abs(seatDrift) <= 0.05 && billRows[0]) {
+      billRows[0].amount = money(add(billRows[0].amount, seatDrift));
+    }
   } else if (input.mode === "items") {
     const allocations = input.allocations ?? [];
     if (allocations.length === 0) throw new Error("Assign at least one item to a bill.");
