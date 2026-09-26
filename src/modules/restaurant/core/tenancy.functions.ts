@@ -8,6 +8,7 @@ import {
   upsertMemberSchema,
   workspaceSchema,
 } from "./contracts";
+import { setPosPinSchema, clearPosPinSchema } from "../sales/pos-session.contracts";
 
 export const getRestaurantWorkspaceFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -54,4 +55,21 @@ export const setMemberStationAssignmentFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./members.server");
     return mod.setMemberStationAssignment(context.supabase, context.userId, data);
+  });
+
+
+export const setStaffPosPinFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => setPosPinSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("../sales/pos-session.server");
+    return mod.setPosPin(context.supabase, context.userId, data);
+  });
+
+export const clearStaffPosPinFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => clearPosPinSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("../sales/pos-session.server");
+    return mod.clearPosPin(context.supabase, context.userId, data);
   });
