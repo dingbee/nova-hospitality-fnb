@@ -24,7 +24,7 @@ const MODES: { id: BillSplitMode; label: string }[] = [
   { id: "percentage", label: "By %" },
 ];
 
-type Share = { key: string; label: string; amount: number; splitBillId?: string; allocation?: any[] };
+type Share = { key: string; label: string; amount: number; splitBillId?: string; splitNo?: number; allocation?: any[] };
 
 export function PosBillDialog({
   open,
@@ -50,7 +50,7 @@ export function PosBillDialog({
   onWays: (n: number) => void;
   onClose: () => void;
   onPresent: () => void;
-  onPayShare: (value: { amount: number | null; splitBillId?: string; splitPlan?: SaveBillSplitInput }) => void;
+  onPayShare: (value: { amount: number | null; splitBillId?: string; splitNo?: number; splitPlan?: SaveBillSplitInput }) => void;
   presenting: boolean;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
@@ -84,7 +84,7 @@ export function PosBillDialog({
     if (!bill || splitMode === "none") return [];
     if (splitMode === "even") {
       const per = Number((balance / ways).toFixed(2));
-      const shares = Array.from({ length: ways }, (_, i) => ({ key: `new-${i + 1}`, label: `Bill ${i + 1}`, amount: per }));
+      const shares = Array.from({ length: ways }, (_, i) => ({ key: `new-${i + 1}`, label: `Bill ${i + 1}`, amount: per, splitNo: i + 1 }));
       const drift = Number((balance - shares.reduce((s, x) => s + x.amount, 0)).toFixed(2));
       if (shares[0]) shares[0].amount = Number((shares[0].amount + drift).toFixed(2));
       return shares;
@@ -97,6 +97,7 @@ export function PosBillDialog({
         key: `new-${i + 1}`,
         label: `Bill ${i + 1} · ${pct}%`,
         amount: Number((balance * pct / 100).toFixed(2)),
+        splitNo: i + 1,
       }));
     }
     if (splitMode === "items") {
@@ -110,7 +111,7 @@ export function PosBillDialog({
             allocation.push({ lineId: line.id, splitNo: i + 1, quantity: q });
           }
         }
-        return { key: `new-${i + 1}`, label: `Bill ${i + 1}`, amount: Number(amount.toFixed(2)), allocation };
+        return { key: `new-${i + 1}`, label: `Bill ${i + 1}`, amount: Number(amount.toFixed(2)), splitNo: i + 1, allocation };
       });
     }
     return persisted.map((s) => ({
@@ -118,6 +119,7 @@ export function PosBillDialog({
       label: s.label,
       amount: Number(s.balance ?? s.amount ?? 0),
       splitBillId: s.id,
+      splitNo: Number(s.split_no ?? 0),
       allocation: s.allocation ?? [],
     }));
   }, [bill, splitMode, ways, balance, amounts, percentages, itemQty, lines, persisted]);
@@ -314,6 +316,7 @@ export function PosBillDialog({
               onPayShare({
                 amount: share ? share.amount : null,
                 splitBillId: share?.splitBillId,
+                splitNo: share?.splitNo,
                 splitPlan: splitPlan(),
               });
             }}
