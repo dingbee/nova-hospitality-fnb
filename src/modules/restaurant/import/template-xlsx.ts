@@ -34,11 +34,11 @@ function buildStartHereSheet(): XLSX.WorkSheet {
   // Match the customer-facing template layout rather than the older compact
   // generated workbook. Column B carries the long guidance text.
   const rows: string[][] = [
-    ["Welcome to LexiBite — Import Template"],
+    ["LEXIBITE  |  OFFICIAL IMPORT TEMPLATE v1.0"],
     [],
     ["Template marker", LEXIBITE_TEMPLATE_MARKER],
     ["Template version", LEXIBITE_TEMPLATE_VERSION],
-    ["Purpose", "Structured restaurant master-data import for LexiBite Import Studio."],
+    ["Purpose", "Official LexiBite Restaurant & Bar OS master-data import workbook for Import Studio."],
     [
       "Before upload",
       "DELETE ALL WORKED EXAMPLE ROWS (the shaded rows) and replace them with your own data.",
@@ -71,7 +71,7 @@ function buildStartHereSheet(): XLSX.WorkSheet {
       "Upload this workbook to LexiBite Import Studio, review staging/mapping, then commit only after all blocking errors are resolved.",
     ],
     [],
-    ["LEXIBITE UNIT GUIDE"],
+    ["LEXIBITE UNIT GUIDE  |  RESTAURANT & BAR OS"],
     ...LEXIBITE_UNIT_GUIDE.map((u) => [u.code, u.meaning]),
   ];
 
@@ -206,7 +206,7 @@ function styledCell(cell: XLSX.CellObject | undefined, ref: string, style: numbe
 function stylesXml(): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <numFmts count="0"/><fonts count="4"><font><sz val="11"/><name val="Aptos"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Aptos"/></font><font><b/><color rgb="FF0F172A"/><sz val="11"/><name val="Aptos"/></font><font><b/><color rgb="FF0F172A"/><sz val="16"/><name val="Aptos Display"/></font></fonts>
-<fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF334155"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill></fills>
+<fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0F2620"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE8EFEA"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF7F8F5"/><bgColor indexed="64"/></patternFill></fill></fills>
 <borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFCBD5E1"/></left><right style="thin"><color rgb="FFCBD5E1"/></right><top style="thin"><color rgb="FFCBD5E1"/></top><bottom style="thin"><color rgb="FFCBD5E1"/></bottom><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="2" fillId="3" borderId="1" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="3" fillId="0" borderId="0" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="4" borderId="0" applyFont="1" applyFill="1"/></cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
