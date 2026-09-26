@@ -257,7 +257,14 @@ export function stageInventoryItemRow(
   const openingQuantity = numField(mapped.openingQuantity, "Opening quantity", errors);
 
   let categoryId: string | null = null;
-  if (mapped.categoryName) {
+  if (mapped.categoryId) {
+    const cat = ref.categories.find((c) => c.id === mapped.categoryId);
+    if (cat) {
+      categoryId = cat.id;
+    } else {
+      errors.push(`Selected category "${mapped.categoryId}" could not be found — please choose an existing category.`);
+    }
+  } else if (mapped.categoryName) {
     const cat = ref.categories.find(
       (c) => c.name.toLowerCase() === mapped.categoryName!.toLowerCase(),
     );
