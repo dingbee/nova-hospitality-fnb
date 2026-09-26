@@ -99,6 +99,7 @@ export const getMobileMoneyAccountSchema = z.object({
 export const requestMobileMoneyCollectionSchema = z.object({
   tenantId: z.string().uuid(),
   orderId: z.string().uuid(),
+  splitBillId: z.string().uuid().optional(),
   amount: z.number().positive(),
   customerPhone: z.string().trim().max(20).optional().nullable(),
   /** Same key -> same collection. Generated once per "Request Payment" tap. */
