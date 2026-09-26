@@ -4,7 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { LockKeyhole, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
-import { startPosSessionFn, endPosSessionFn } from "../pos-session.functions";
+import { startPosSessionFn, endPosSessionFn, bootstrapOwnerPosPinFn } from "../pos-session.functions";
 
 type SessionValue = { sessionId: string | null; staffUserId: string | null };
 const PosSessionContext = createContext<SessionValue>({ sessionId: null, staffUserId: null });
@@ -18,6 +18,7 @@ export function PosStaffGate({ children }: { children: ReactNode }) {
   const propertyId = ws.data?.properties?.[0]?.id;
   const startFn = useServerFn(startPosSessionFn);
   const endFn = useServerFn(endPosSessionFn);
+  const bootstrapFn = useServerFn(bootstrapOwnerPosPinFn);
   const [session, setSession] = useState<{ sessionId: string; staffUserId: string } | null>(() => {
     if (typeof window === "undefined") return null;
     try { return JSON.parse(window.sessionStorage.getItem(STORAGE_KEY) ?? "null"); } catch { return null; }
@@ -95,7 +96,31 @@ export function PosStaffGate({ children }: { children: ReactNode }) {
         <p className="mb-3 text-sm text-muted-foreground">Each staff member uses a personal PIN. The PIN identifies the operator and applies their existing role permissions.</p>
         <label className="mb-2 block text-xs font-medium">Staff PIN</label>
         <input autoFocus value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))} onKeyDown={(e) => { if (e.key === "Enter") void submit(); }} inputMode="numeric" type="password" maxLength={6} className="mb-3 min-h-12 w-full rounded-md border bg-background px-4 text-center text-2xl tracking-[0.5em]" placeholder="••••" />
+
         {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
+        {error === "Invalid staff PIN" && (
+          <Button
+            variant="outline"
+            className="mb-3 min-h-10 w-full"
+            disabled={busy}
+            onClick={async () => {
+              if (!tenantId || !propertyId || !/^\\d{4,6}$/.test(pin)) return;
+              setBusy(true); setError("");
+              try {
+                await bootstrapFn({ data: { tenantId, propertyId, pin } });
+                const result = await startFn({ data: { tenantId, propertyId, pin, terminalId: "pos-web" } });
+                const next = { sessionId: result.sessionId, staffUserId: result.staffUserId };
+                setSession(next);
+                window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+                setPin("");
+              } catch (e) {
+                setError(e instanceof Error ? e.message : "Could not recover POS access.");
+              } finally { setBusy(false); }
+            }}
+          >
+            Set this PIN for my owner account
+          </Button>
+        )}
         <Button className="min-h-11 w-full" disabled={busy || pin.length < 4} onClick={() => void submit()}>
           {busy ? "Verifying…" : "Enter POS"}
         </Button>
