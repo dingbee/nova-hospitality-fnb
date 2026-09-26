@@ -1569,12 +1569,14 @@ function PosWorkspaceBody({
         open={roomChargeAmount != null && Boolean(orderId)}
         tenantId={tenantId}
         orderId={orderId}
+        splitBillId={splitBillId}
         amount={roomChargeAmount ?? 0}
         currency={currency}
         onClose={() => setRoomChargeAmount(null)}
         onPosted={(result) => {
           setRoomChargeAmount(null);
           setShareAmount(null);
+          setSplitBillId(null);
           setBillOpen(false);
           if (result?.receipt) setReceipt(result.receipt);
           refresh();
