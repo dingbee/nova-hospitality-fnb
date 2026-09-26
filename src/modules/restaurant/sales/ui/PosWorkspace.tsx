@@ -311,6 +311,7 @@ function PosWorkspaceBody({
       const result = await openFn({
         data: {
           tenantId: tenantId!,
+          posSessionId: sessionId!,
           tableId: vars.tableId,
           orderType: vars.tableId ? "dine_in" : "bar",
           guestCount: vars.guestCount,
@@ -381,7 +382,7 @@ function PosWorkspaceBody({
       }
 
       const res = await addFn({
-        data: { tenantId: tenantId!, orderId: orderId!, lines },
+        data: { tenantId: tenantId!, posSessionId: sessionId!, orderId: orderId!, lines },
       });
       if (vars.fire) {
         await fireFn({
@@ -402,6 +403,7 @@ function PosWorkspaceBody({
       voidFn({
         data: {
           tenantId: tenantId!,
+          posSessionId: sessionId!,
           orderId: orderId!,
           orderItemId: vars.orderItemId,
           reason: vars.reason,
@@ -423,6 +425,7 @@ function PosWorkspaceBody({
       payFn({
         data: {
           tenantId: tenantId!,
+          posSessionId: sessionId!,
           orderId: orderId!,
           clientRequestId: payKey.current,
           method: vars.method,
