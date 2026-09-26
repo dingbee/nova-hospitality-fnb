@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { setPosPinSchema, clearPosPinSchema, startPosSessionSchema, endPosSessionSchema, bootstrapOwnerPosPinSchema } from "./pos-session.contracts";
+import { setPosPinSchema, clearPosPinSchema, startPosSessionSchema, endPosSessionSchema } from "./pos-session.contracts";
 
 export const setPosPinFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -35,10 +35,3 @@ export const endPosSessionFn = createServerFn({ method: "POST" })
   });
 
 
-export const bootstrapOwnerPosPinFn = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => bootstrapOwnerPosPinSchema.parse(d))
-  .handler(async ({ data, context }) => {
-    const mod = await import("./pos-session.server");
-    return mod.bootstrapOwnerPosPin(context.supabase, context.userId, data);
-  });
