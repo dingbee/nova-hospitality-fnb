@@ -39,6 +39,7 @@ export function PosMobileMoneyDialog({
   open,
   tenantId,
   orderId,
+  splitBillId,
   amount,
   currency,
   onClose,
@@ -47,6 +48,7 @@ export function PosMobileMoneyDialog({
   open: boolean;
   tenantId?: string;
   orderId?: string | null;
+  splitBillId?: string | null;
   amount: number;
   currency: string;
   onClose: () => void;
@@ -82,6 +84,7 @@ export function PosMobileMoneyDialog({
         data: {
           tenantId: tenantId!,
           orderId: orderId!,
+          splitBillId: splitBillId ?? undefined,
           amount,
           customerPhone: phone || undefined,
           clientRequestId: requestId,
