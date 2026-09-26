@@ -918,6 +918,19 @@ export async function decideStagedRecord(sb: Sb, userId: string, input: DecideSt
   if (input.mappedDataPatch) {
     const mergedMappedData = { ...(existing.mapped_data as object), ...input.mappedDataPatch };
 
+    // stageRow is intentionally a source-row normalizer and its field
+    // parsers expect strings. mapped_data, however, stores already-normalized
+    // numbers/booleans as JSON values. Coerce the edited record back to the
+    // staging contract before re-running resolution; otherwise a numeric
+    // field such as quantity/priceDelta reaches parseNumber() as a number and
+    // fails on raw.trim().
+    const stagingMappedData = Object.fromEntries(
+      Object.entries(mergedMappedData).map(([key, value]) => [
+        key,
+        value === null || value === undefined ? undefined : String(value),
+      ]),
+    ) as Record<string, string>;
+
     // A human edit is a correction, not just a cosmetic patch. Re-run the
     // same deterministic staging resolver against the edited values so
     // references such as inventoryItemId, menuItemId, groupId and stationId
@@ -925,7 +938,7 @@ export async function decideStagedRecord(sb: Sb, userId: string, input: DecideSt
     // useful without introducing a second import engine.
     const propertyCurrency = await resolvePropertyCurrency(sb, input.tenantId, scope.propertyId);
     const ref = { ...(await fetchRefData(sb, input.tenantId)), propertyCurrency };
-    const restaged = stageRow(existing.domain as ImportDomain, mergedMappedData, ref);
+    const restaged = stageRow(existing.domain as ImportDomain, stagingMappedData, ref);
 
     patch.mapped_data = restaged.mappedData;
     patch.matched_entity_id = restaged.matchedEntityId;
