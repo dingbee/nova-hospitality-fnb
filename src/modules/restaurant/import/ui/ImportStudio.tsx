@@ -46,6 +46,7 @@ import {
   decideStagedRecordFn,
   getImportWorkspaceFn,
   listImportWorkspacesFn,
+  listRestaurantInventoryCategoriesFn,
   listStagedRecordsFn,
   parseImportSourceFn,
   suggestImportMappingFn,
@@ -1098,7 +1099,7 @@ function StagedRecordsList({
   return (
     <ul className="max-h-[32rem] divide-y overflow-y-auto text-sm">
       {rows.map((r) => (
-        <StagedRowItem key={r.id} r={r} decide={decide} />
+        <StagedRowItem key={r.id} r={r} tenantId={tenantId} decide={decide} />
       ))}
     </ul>
   );
@@ -1106,9 +1107,11 @@ function StagedRecordsList({
 
 function StagedRowItem({
   r,
+  tenantId,
   decide,
 }: {
   r: any;
+  tenantId: string;
   decide: {
     isPending: boolean;
     mutate: (vars: {
@@ -1242,6 +1245,7 @@ function StagedRowItem({
         open={catalogOpen}
         busy={decide.isPending}
         onOpenChange={setCatalogOpen}
+        tenantId={tenantId}
         onSave={(mappedDataPatch) => {
           decide.mutate({
             recordId: r.id,
@@ -1260,12 +1264,14 @@ function CatalogEditDialog({
   record,
   open,
   busy,
+  tenantId,
   onOpenChange,
   onSave,
 }: {
   record: any;
   open: boolean;
   busy: boolean;
+  tenantId: string;
   onOpenChange: (open: boolean) => void;
   onSave: (patch: Record<string, string | number | boolean | null>) => void;
 }) {
@@ -1273,6 +1279,15 @@ function CatalogEditDialog({
     ([key, value]) => !key.toLowerCase().endsWith("id") && key !== "matchedEntityId",
   ) as Array<[string, string | number | boolean | null]>;
   const [values, setValues] = useState<Record<string, string | number | boolean | null>>({});
+  const categoriesFn = useServerFn(listRestaurantInventoryCategoriesFn);
+  const categoriesQuery = useQuery({
+    queryKey: ["restaurant.inventory.categories", tenantId],
+    queryFn: () => categoriesFn({ data: { tenantId } }),
+    enabled: open,
+    staleTime: 60_000,
+  });
+  const inventoryCategories = ((categoriesQuery.data as any[]) ?? []).filter((category) => category.active !== false);
+  const categoryById = new Map(inventoryCategories.map((category) => [category.id, category]));
 
   // Re-seed every time a different record is opened.
   useEffect(() => {
@@ -1311,7 +1326,28 @@ function CatalogEditDialog({
             return (
               <div key={key} className={isLong ? "sm:col-span-2" : ""}>
                 <Label className="text-xs">{key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase())}</Label>
-                {isLong ? (
+                {key === "categoryName" ? (
+                  <select
+                    className="mt-1 h-10 w-full rounded-md border bg-background px-2 text-sm"
+                    value={String(fieldValue ?? "")}
+                    disabled={categoriesQuery.isLoading || busy}
+                    onChange={(e) => {
+                      const selected = categoryById.get(e.target.value);
+                      setValues((prev) => ({
+                        ...prev,
+                        categoryName: selected?.name ?? "",
+                        categoryId: selected?.id ?? null,
+                      }));
+                    }}
+                  >
+                    <option value="">— Select existing category —</option>
+                    {inventoryCategories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.parent_id ? "↳ " : ""}{category.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : isLong ? (
                   <Textarea
                     className="mt-1"
                     rows={3}
