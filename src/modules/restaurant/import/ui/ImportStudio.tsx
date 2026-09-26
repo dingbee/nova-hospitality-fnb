@@ -1241,7 +1241,7 @@ function StagedRowItem({
         onSave={(mappedDataPatch) => {
           decide.mutate({
             recordId: r.id,
-            decision: "approved",
+            decision: "pending",
             matchedEntityId: candidates.length > 1 ? chosenId : undefined,
             mappedDataPatch,
           });
@@ -1341,7 +1341,7 @@ function CatalogEditDialog({
           </Button>
           <Button onClick={() => onSave(values)} disabled={busy}>
             {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            Save & approve for import
+            Save changes
           </Button>
         </DialogFooter>
       </DialogContent>
