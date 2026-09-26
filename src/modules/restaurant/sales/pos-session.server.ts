@@ -96,18 +96,3 @@ export async function resolvePosActor(
 
   return session.staff_user_id as string;
 }
-
-
-export async function bootstrapOwnerPosPin(
-  sb: Sb,
-  userId: string,
-  input: { tenantId: string; propertyId: string; pin: string },
-) {
-  const { data, error } = await sb.rpc("restaurant_bootstrap_owner_pos_pin", {
-    p_tenant_id: input.tenantId,
-    p_property_id: input.propertyId,
-    p_pin: input.pin,
-  });
-  if (error) throw new Error(error.message);
-  return data;
-}
