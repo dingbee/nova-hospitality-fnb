@@ -39,12 +39,11 @@ export async function clearPosPin(
 export async function startPosSession(
   sb: Sb,
   userId: string,
-  input: { tenantId: string; propertyId: string; staffUserId: string; pin: string; terminalId?: string },
+  input: { tenantId: string; propertyId: string; pin: string; terminalId?: string },
 ): Promise<PosStaffSession> {
-  const { data, error } = await sb.rpc("restaurant_start_pos_session", {
+  const { data, error } = await sb.rpc("restaurant_start_pos_session_by_pin", {
     p_tenant_id: input.tenantId,
     p_property_id: input.propertyId,
-    p_staff_user_id: input.staffUserId,
     p_pin: input.pin,
     p_terminal_id: input.terminalId ?? "pos-web",
   });
