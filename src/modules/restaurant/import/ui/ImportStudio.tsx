@@ -1069,7 +1069,7 @@ function StagedRecordsList({
   const decide = useAdminMutation({
     mutationFn: (vars: {
       recordId: string;
-      decision: "approved" | "rejected" | "skipped";
+      decision: "approved" | "rejected" | "skipped" | "pending";
       matchedEntityId?: string;
       mappedDataPatch?: Record<string, string | number | boolean | null>;
     }) => decideFn({ data: { tenantId, ...vars } }),
@@ -1109,7 +1109,7 @@ function StagedRowItem({
     isPending: boolean;
     mutate: (vars: {
       recordId: string;
-      decision: "approved" | "rejected" | "skipped";
+      decision: "approved" | "rejected" | "skipped" | "pending";
       matchedEntityId?: string;
       mappedDataPatch?: Record<string, string | number | boolean | null>;
     }) => void;
