@@ -1074,7 +1074,11 @@ function StagedRecordsList({
       mappedDataPatch?: Record<string, string | number | boolean | null>;
     }) => decideFn({ data: { tenantId, ...vars } }),
     onSuccessToast: (_data, vars) =>
-      vars.decision === "approved" ? "Record approved for import" : "Record rejected",
+      vars.decision === "approved"
+        ? "Record approved for import"
+        : vars.decision === "pending"
+          ? "Record re-evaluated — returned to review"
+          : "Record rejected",
     onSuccess: onChanged,
   });
 
