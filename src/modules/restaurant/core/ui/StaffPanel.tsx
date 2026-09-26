@@ -210,6 +210,7 @@ export function StaffPanel() {
                       </td>
                       <td className="py-3 pr-4 text-right">
                         <div className="flex items-center justify-end gap-2">
+                          {!["owner", "general_manager", "restaurant_manager"].includes(m.role) && <>
                           <span className="text-xs text-muted-foreground">{m.pos_pin_enabled ? "Set" : "Not set"}</span>
                           <Button
                             size="sm"
@@ -230,6 +231,7 @@ export function StaffPanel() {
                               Clear
                             </Button>
                           )}
+                          </>}
                         </div>
                       </td>
                       <td className="py-3 pr-4 text-right">
