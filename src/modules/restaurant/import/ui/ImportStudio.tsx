@@ -21,6 +21,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { EmptyState } from "@/components/os/EmptyState";
@@ -334,7 +342,14 @@ function TemplateImportFlow({
           )}
 
           <Button className="mt-4 h-11" disabled={commit.isPending} onClick={() => commit.mutate()}>
-            Import now
+            {commit.isPending ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Importing into LexiBite…
+              </>
+            ) : (
+              "Import now"
+            )}
           </Button>
         </SectionCard>
       )}
@@ -1056,11 +1071,17 @@ function StagedRecordsList({
       recordId: string;
       decision: "approved" | "rejected" | "skipped";
       matchedEntityId?: string;
+      mappedDataPatch?: Record<string, string | number | boolean | null>;
     }) => decideFn({ data: { tenantId, ...vars } }),
+    onSuccessToast: (_data, vars) =>
+      vars.decision === "approved" ? "Record approved for import" : "Record rejected",
     onSuccess: onChanged,
   });
 
-  const rows = ((q.data as any[]) ?? []).filter((r) => r.decision === "pending" || r.commit_error);
+  // Review is the human-control surface. Show every uncommitted row here,
+  // including Ready/auto-approved rows, so a configuration user can still
+  // edit anything before the final commit.
+  const rows = ((q.data as any[]) ?? []).filter((r) => !r.committed_at);
 
   if (rows.length === 0)
     return (
@@ -1090,12 +1111,14 @@ function StagedRowItem({
       recordId: string;
       decision: "approved" | "rejected" | "skipped";
       matchedEntityId?: string;
+      mappedDataPatch?: Record<string, string | number | boolean | null>;
     }) => void;
   };
 }) {
   const candidates: Array<{ id: string; label: string; score: number }> = r.match_candidates ?? [];
   const [chosenId, setChosenId] = useState<string>(r.matched_entity_id ?? candidates[0]?.id ?? "");
   const [showEvidence, setShowEvidence] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
 
   const meta = SEVERITY_META[r.severity] ?? SEVERITY_META.new_entity!;
   const label =
@@ -1105,10 +1128,6 @@ function StagedRowItem({
     r.mapped_data.productMenuItemName ??
     r.mapped_data.code ??
     "Row";
-  // For a variant/modifier/link row, the dish or group it attaches to is the
-  // fact a reviewer actually needs to see — not just the row's own name,
-  // which may otherwise look identical across many rows (e.g. every size
-  // variant sheet has a "name" of "Small"/"Large").
   const linkedTo =
     r.mapped_data.productMenuItemName ??
     (r.domain === "product_station" ? r.mapped_data.menuItemName : null) ??
@@ -1117,81 +1136,215 @@ function StagedRowItem({
     r.mapped_data.stationCode ??
     null;
 
+  const canAct = !r.committed_at;
+  const pending = r.decision === "pending";
+  const hasBlockingError = Array.isArray(r.validation_errors) && r.validation_errors.length > 0;
+
   return (
-    <li className="flex flex-wrap items-start justify-between gap-2 py-2">
-      <span className="min-w-0">
-        <span className="font-medium">
-          {meta.icon} {label}
-        </span>
-        <span className="block text-xs text-muted-foreground">
-          {r.sheet_name ? `${r.sheet_name} · ` : ""}
-          {IMPORT_DOMAIN_LABELS[r.domain as ImportDomain]} · row {r.source_row} · {meta.label}
-          {linkedTo && linkedTo !== label ? ` · linked to "${linkedTo}"` : ""}
-        </span>
-        {r.validation_errors?.length > 0 && (
+    <>
+      <li className="flex flex-wrap items-start justify-between gap-3 py-3">
+        <span className="min-w-0 flex-1">
+          <span className="font-medium">
+            {meta.icon} {label}
+          </span>
           <span className="block text-xs text-muted-foreground">
-            {r.validation_errors.join(" ")}
+            {r.sheet_name ? `${r.sheet_name} · ` : ""}
+            {IMPORT_DOMAIN_LABELS[r.domain as ImportDomain]} · row {r.source_row} · {meta.label}
+            {linkedTo && linkedTo !== label ? ` · linked to "${linkedTo}"` : ""}
           </span>
-        )}
-        {r.commit_error && (
-          <span className="block text-xs text-destructive">Commit failed: {r.commit_error}</span>
-        )}
-        {r.match_evidence?.length > 0 && (
-          <button
-            type="button"
-            className="mt-0.5 block text-xs text-muted-foreground underline underline-offset-2"
-            onClick={() => setShowEvidence((v) => !v)}
-          >
-            {showEvidence ? "Hide" : "Why this match?"}
-          </button>
-        )}
-        {showEvidence && r.match_evidence?.length > 0 && (
-          <span className="block text-xs text-muted-foreground">{r.match_evidence.join(" ")}</span>
-        )}
-        {candidates.length > 1 && (
-          <span className="mt-1 flex items-center gap-1">
-            <span className="text-xs text-muted-foreground">Match:</span>
-            <select
-              className="h-7 rounded-md border bg-background px-1 text-xs"
-              value={chosenId}
-              onChange={(e) => setChosenId(e.target.value)}
+          {r.validation_errors?.length > 0 && (
+            <span className="block text-xs text-muted-foreground">
+              {r.validation_errors.join(" ")}
+            </span>
+          )}
+          {r.commit_error && (
+            <span className="block text-xs text-destructive">Commit failed: {r.commit_error}</span>
+          )}
+          {r.match_evidence?.length > 0 && (
+            <button
+              type="button"
+              className="mt-0.5 block text-xs text-muted-foreground underline underline-offset-2"
+              onClick={() => setShowEvidence((v) => !v)}
             >
-              {candidates.map((c, idx) => (
-                <option key={c.id} value={c.id}>
-                  {c.label} ({idx === 0 ? "best match" : "possible match"})
-                </option>
-              ))}
-            </select>
+              {showEvidence ? "Hide" : "Why this match?"}
+            </button>
+          )}
+          {showEvidence && r.match_evidence?.length > 0 && (
+            <span className="block text-xs text-muted-foreground">{r.match_evidence.join(" ")}</span>
+          )}
+          {candidates.length > 1 && (
+            <span className="mt-1 flex items-center gap-1">
+              <span className="text-xs text-muted-foreground">Match:</span>
+              <select
+                className="h-7 rounded-md border bg-background px-1 text-xs"
+                value={chosenId}
+                onChange={(e) => setChosenId(e.target.value)}
+              >
+                {candidates.map((c, idx) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label} ({idx === 0 ? "best match" : "possible match"})
+                  </option>
+                ))}
+              </select>
+            </span>
+          )}
+        </span>
+
+        {canAct && (
+          <span className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8"
+              disabled={decide.isPending}
+              onClick={() => setCatalogOpen(true)}
+            >
+              {r.severity === "cannot_map" ? "Add to catalog" : "Edit catalog"}
+            </Button>
+
+            {pending && (
+              <>
+                <Button
+                  size="sm"
+                  className="h-8"
+                  disabled={decide.isPending}
+                  onClick={() =>
+                    decide.mutate({
+                      recordId: r.id,
+                      decision: "approved",
+                      matchedEntityId: candidates.length > 1 ? chosenId : undefined,
+                    })
+                  }
+                >
+                  {decide.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Approve"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8"
+                  disabled={decide.isPending}
+                  onClick={() => decide.mutate({ recordId: r.id, decision: "rejected" })}
+                >
+                  Reject
+                </Button>
+              </>
+            )}
           </span>
         )}
-      </span>
-      {r.decision === "pending" && !r.commit_error && (
-        <span className="flex shrink-0 items-center gap-1">
-          <Button
-            size="sm"
-            className="h-8"
-            disabled={decide.isPending}
-            onClick={() =>
-              decide.mutate({
-                recordId: r.id,
-                decision: "approved",
-                matchedEntityId: candidates.length > 1 ? chosenId : undefined,
-              })
-            }
-          >
-            Approve
+      </li>
+
+      <CatalogEditDialog
+        record={r}
+        open={catalogOpen}
+        busy={decide.isPending}
+        onOpenChange={setCatalogOpen}
+        onSave={(mappedDataPatch) => {
+          decide.mutate({
+            recordId: r.id,
+            decision: "approved",
+            matchedEntityId: candidates.length > 1 ? chosenId : undefined,
+            mappedDataPatch,
+          });
+          setCatalogOpen(false);
+        }}
+      />
+    </>
+  );
+}
+
+function CatalogEditDialog({
+  record,
+  open,
+  busy,
+  onOpenChange,
+  onSave,
+}: {
+  record: any;
+  open: boolean;
+  busy: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSave: (patch: Record<string, string | number | boolean | null>) => void;
+}) {
+  const initial = Object.entries(record.mapped_data ?? {}).filter(
+    ([key, value]) => !key.toLowerCase().endsWith("id") && key !== "matchedEntityId",
+  ) as Array<[string, string | number | boolean | null]>;
+  const [values, setValues] = useState<Record<string, string | number | boolean | null>>({});
+
+  // Re-seed every time a different record is opened.
+  useState(() => {
+    const next: Record<string, string | number | boolean | null> = {};
+    for (const [key, value] of initial) next[key] = value;
+    setValues(next);
+  });
+
+  const setValue = (key: string, raw: string) => {
+    const current = values[key];
+    if (typeof current === "number") {
+      const n = Number(raw);
+      setValues((prev) => ({ ...prev, [key]: Number.isFinite(n) ? n : raw }));
+    } else if (typeof current === "boolean") {
+      setValues((prev) => ({ ...prev, [key]: raw === "true" }));
+    } else {
+      setValues((prev) => ({ ...prev, [key]: raw }));
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{record.severity === "cannot_map" ? "Add to catalog" : "Edit catalog entry"}</DialogTitle>
+          <DialogDescription>
+            Review and edit every mapped field before LexiBite accepts this row. Nothing is written to
+            the live catalog until you use the final import action.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          {initial.map(([key, value]) => {
+            const fieldValue = values[key] ?? "";
+            const isLong = key.toLowerCase().includes("description") || key.toLowerCase().includes("notes");
+            return (
+              <div key={key} className={isLong ? "sm:col-span-2" : ""}>
+                <Label className="text-xs">{key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase())}</Label>
+                {isLong ? (
+                  <Textarea
+                    className="mt-1"
+                    rows={3}
+                    value={String(fieldValue ?? "")}
+                    onChange={(e) => setValue(key, e.target.value)}
+                  />
+                ) : typeof value === "boolean" ? (
+                  <select
+                    className="mt-1 h-10 w-full rounded-md border bg-background px-2 text-sm"
+                    value={String(fieldValue)}
+                    onChange={(e) => setValue(key, e.target.value)}
+                  >
+                    <option value="true">Yes</option>
+                    <option value="false">No</option>
+                  </select>
+                ) : (
+                  <Input
+                    className="mt-1 h-10"
+                    value={String(fieldValue ?? "")}
+                    onChange={(e) => setValue(key, e.target.value)}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            Cancel
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8"
-            disabled={decide.isPending}
-            onClick={() => decide.mutate({ recordId: r.id, decision: "rejected" })}
-          >
-            Reject
+          <Button onClick={() => onSave(values)} disabled={busy}>
+            {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Save & approve for import
           </Button>
-        </span>
-      )}
-    </li>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
