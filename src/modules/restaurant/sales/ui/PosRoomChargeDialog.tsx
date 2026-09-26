@@ -30,6 +30,7 @@ export function PosRoomChargeDialog({
   open,
   tenantId,
   orderId,
+  splitBillId,
   amount,
   currency,
   onClose,
@@ -38,6 +39,7 @@ export function PosRoomChargeDialog({
   open: boolean;
   tenantId?: string;
   orderId?: string | null;
+  splitBillId?: string | null;
   amount: number;
   currency: string;
   onClose: () => void;
@@ -86,6 +88,7 @@ export function PosRoomChargeDialog({
           tenantId: tenantId!,
           orderId: orderId!,
           bookingId: bookingId!,
+          splitBillId: splitBillId ?? undefined,
           amount,
           clientRequestId: requestId,
           closeWhenSettled: true,
