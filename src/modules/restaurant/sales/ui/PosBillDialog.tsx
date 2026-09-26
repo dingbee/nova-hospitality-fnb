@@ -90,7 +90,7 @@ export function PosBillDialog({
       return shares;
     }
     if (splitMode === "amount") {
-      return amounts.map((amount, i) => ({ key: `new-${i + 1}`, label: `Bill ${i + 1}`, amount }));
+      return amounts.map((amount, i) => ({ key: `new-${i + 1}`, label: `Bill ${i + 1}`, amount, splitNo: i + 1 }));
     }
     if (splitMode === "percentage") {
       return percentages.map((pct, i) => ({
@@ -98,6 +98,15 @@ export function PosBillDialog({
         label: `Bill ${i + 1} · ${pct}%`,
         amount: Number((balance * pct / 100).toFixed(2)),
         splitNo: i + 1,
+      }));
+    }
+    if (splitMode === "seat") {
+      return ((bill.split?.shares ?? []) as any[]).map((s, i) => ({
+        key: s.key ?? `seat-${i + 1}`,
+        label: s.label,
+        amount: Number(s.amount ?? 0),
+        splitNo: i + 1,
+        allocation: [],
       }));
     }
     if (splitMode === "items") {
