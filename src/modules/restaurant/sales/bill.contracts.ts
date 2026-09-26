@@ -33,6 +33,12 @@ export const saveBillSplitSchema = z.object({
 });
 export type SaveBillSplitInput = z.infer<typeof saveBillSplitSchema>;
 
+export const clearBillSplitSchema = z.object({
+  tenantId: uuid,
+  orderId: uuid,
+});
+export type ClearBillSplitInput = z.infer<typeof clearBillSplitSchema>;
+
 export const getBillSchema = z.object({
   tenantId: uuid,
   orderId: uuid,
