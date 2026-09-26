@@ -81,6 +81,7 @@ import { PosMenuItemCard } from "./PosMenuItemCard";
 import { beverageCategories } from "@/modules/restaurant/bar/lens";
 import { BAR_STATION_TYPES } from "@/modules/restaurant/bar/contracts";
 import { sendToStationLabel } from "../stationRouting";
+import { PosStaffGate, usePosStaffSession } from "./PosStaffGate";
 
 const newRequestId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -114,11 +115,12 @@ export type PosLens = "restaurant" | "bar";
  * All money and stock consequences happen server-side in the sales core; this
  * component only stages what the server has not yet accepted.
  */
-export function PosWorkspace({
+function PosWorkspaceBody({
   lens = "restaurant",
   className,
 }: { lens?: PosLens; className?: string } = {}) {
   const isBar = lens === "bar";
+  const { sessionId } = usePosStaffSession();
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
   const roles = (ws.data?.roles ?? []) as readonly string[];
@@ -190,8 +192,8 @@ export function PosWorkspace({
 
   const board = useQuery({
     queryKey: ["restaurant.pos.board", tenantId],
-    queryFn: () => boardFn({ data: { tenantId: tenantId! } }),
-    enabled: Boolean(tenantId),
+    queryFn: () => boardFn({ data: { tenantId: tenantId!, posSessionId: sessionId! } }),
+    enabled: Boolean(tenantId && sessionId),
     refetchInterval: 8_000,
   });
 
@@ -239,8 +241,8 @@ export function PosWorkspace({
   }, [newlyActiveAttention.join("|")]);
   const catalog = useQuery({
     queryKey: ["restaurant.pos.catalog", tenantId],
-    queryFn: () => catalogFn({ data: { tenantId: tenantId! } }),
-    enabled: Boolean(tenantId),
+    queryFn: () => catalogFn({ data: { tenantId: tenantId!, posSessionId: sessionId! } }),
+    enabled: Boolean(tenantId && sessionId),
     staleTime: 120_000,
   });
   const order = useQuery({
@@ -411,7 +413,7 @@ export function PosWorkspace({
 
   const transfer = useAdminMutation({
     mutationFn: (vars: { tableId: string | null }) =>
-      transferFn({ data: { tenantId: tenantId!, orderId: orderId!, tableId: vars.tableId } }),
+      transferFn({ data: { tenantId: tenantId!, posSessionId: sessionId!, orderId: orderId!, tableId: vars.tableId } }),
     successMessage: "Bill moved",
     onSuccess: refresh,
   });
@@ -514,7 +516,7 @@ export function PosWorkspace({
   const reopen = useAdminMutation({
     mutationFn: (vars: { orderId: string }) =>
       reopenFn({
-        data: { tenantId: tenantId!, orderId: vars.orderId, reason: "Correction at the till" },
+        data: { tenantId: tenantId!, posSessionId: sessionId!, orderId: vars.orderId, reason: "Correction at the till" },
       }),
     successMessage: "Bill reopened",
     onSuccess: refresh,
@@ -524,7 +526,7 @@ export function PosWorkspace({
   // decides whether it is allowed and unwinds any stock the sale consumed.
   const cancelBill = useAdminMutation({
     mutationFn: (vars: { orderId: string; reason: string }) =>
-      cancelFn({ data: { tenantId: tenantId!, orderId: vars.orderId, reason: vars.reason } }),
+      cancelFn({ data: { tenantId: tenantId!, posSessionId: sessionId!, orderId: vars.orderId, reason: vars.reason } }),
     onSuccessToast: (d: any) =>
       d?.reversal?.reversed
         ? `Bill cancelled — ${d.reversal.reversed} stock movement(s) reversed`
@@ -538,7 +540,7 @@ export function PosWorkspace({
 
   const showReceipt = useAdminMutation({
     mutationFn: (vars: { orderId: string; reprint: boolean }) =>
-      receiptFn({ data: { tenantId: tenantId!, orderId: vars.orderId, reprint: vars.reprint } }),
+      receiptFn({ data: { tenantId: tenantId!, posSessionId: sessionId!, orderId: vars.orderId, reprint: vars.reprint } }),
     silentSuccess: true,
     onSuccess: (data: any) => setReceipt(data),
   });
@@ -1587,4 +1589,9 @@ export function PosWorkspace({
       />
     </div>
   );
+}
+
+
+export function PosWorkspace(props: { lens?: PosLens; className?: string } = {}) {
+  return <PosStaffGate><PosWorkspaceBody {...props} /></PosStaffGate>;
 }
