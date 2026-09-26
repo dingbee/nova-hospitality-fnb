@@ -107,6 +107,8 @@ export const posPaymentSchema = z.object({
   posSessionId: uuid.optional(),
   tenantId: uuid,
   orderId: uuid,
+  /** Optional child bill being settled; parent order remains the source of truth. */
+  splitBillId: uuid.optional(),
   clientRequestId: z.string().min(6).max(80),
   method: z.enum(POS_PAYMENT_METHODS).default("cash"),
   amount: z.number().min(0),
