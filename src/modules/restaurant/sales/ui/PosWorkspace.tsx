@@ -51,6 +51,7 @@ import {
   refundRestaurantPaymentFn,
   releaseRestaurantTableFn,
   requestRestaurantBillFn,
+  saveRestaurantBillSplitFn,
 } from "../bill.functions";
 import {
   acknowledgeServiceRequestFn,
@@ -59,7 +60,7 @@ import {
 import { useNewlyActiveKeys, useStaffAttentionSignal } from "@/hooks/use-attention-signal";
 import { useOfflineSync } from "@/modules/restaurant/offline/useOfflineSync";
 import { ConnectivityIndicator } from "@/modules/restaurant/offline/ui/ConnectivityIndicator";
-import type { BillSplitMode } from "../bill.contracts";
+import type { BillSplitMode, SaveBillSplitInput } from "../bill.contracts";
 import { PosItemDialog } from "./PosItemDialog";
 import { PosBillDialog } from "./PosBillDialog";
 import { PosPaymentDialog } from "./PosPaymentDialog";
@@ -159,6 +160,7 @@ function PosWorkspaceBody({
   const [splitMode, setSplitMode] = useState<BillSplitMode>("none");
   const [ways, setWays] = useState(2);
   const [shareAmount, setShareAmount] = useState<number | null>(null);
+  const [splitBillId, setSplitBillId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<any | null>(null);
   const openKey = useRef<string>(newRequestId());
   const payKey = useRef<string>(newRequestId());
@@ -185,6 +187,7 @@ function PosWorkspaceBody({
   const billFn = useServerFn(getRestaurantBillFn);
   const requestBillFn = useServerFn(requestRestaurantBillFn);
   const presentBillFn = useServerFn(presentRestaurantBillFn);
+  const saveBillSplitFn = useServerFn(saveRestaurantBillSplitFn);
   const releaseTableFn = useServerFn(releaseRestaurantTableFn);
   const refundFn = useServerFn(refundRestaurantPaymentFn);
   const acknowledgeServiceRequestFnCall = useServerFn(acknowledgeServiceRequestFn);
@@ -427,6 +430,7 @@ function PosWorkspaceBody({
           tenantId: tenantId!,
           posSessionId: sessionId!,
           orderId: orderId!,
+          splitBillId: splitBillId ?? undefined,
           clientRequestId: payKey.current,
           method: vars.method,
           amount: vars.amount,
@@ -445,6 +449,7 @@ function PosWorkspaceBody({
     onSuccess: (data: any) => {
       payKey.current = newRequestId();
       setShareAmount(null);
+      setSplitBillId(null);
       if (data?.receipt) {
         setReceipt(data.receipt);
         setPayOpen(false);
@@ -1575,8 +1580,20 @@ function PosWorkspaceBody({
         onWays={setWays}
         onClose={() => setBillOpen(false)}
         onPresent={() => presentBill.mutate(undefined as never)}
-        onPayShare={(amount) => {
-          setShareAmount(amount);
+        onPayShare={async (value) => {
+          let resolvedSplitId = value.splitBillId;
+          if (value.splitPlan) {
+            const created = await saveBillSplitFn({ data: value.splitPlan });
+            const rows = (created ?? []) as any[];
+            if (value.splitBillId) resolvedSplitId = value.splitBillId;
+            else if (value.amount != null) {
+              const match = rows.find((row) => Math.abs(Number(row.amount ?? 0) - Number(value.amount)) < 0.01);
+              resolvedSplitId = match?.id ?? null;
+            }
+            void qc.invalidateQueries({ queryKey: ["restaurant.pos.bill", tenantId, orderId] });
+          }
+          setSplitBillId(resolvedSplitId ?? null);
+          setShareAmount(value.amount);
           setBillOpen(false);
           setPayOpen(true);
         }}
