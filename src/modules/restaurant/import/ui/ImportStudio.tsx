@@ -13,7 +13,7 @@
  * every approved row goes through the same service functions manual entry
  * uses (see import.server.ts / template-import.server.ts).
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -1271,11 +1271,11 @@ function CatalogEditDialog({
   const [values, setValues] = useState<Record<string, string | number | boolean | null>>({});
 
   // Re-seed every time a different record is opened.
-  useState(() => {
+  useEffect(() => {
     const next: Record<string, string | number | boolean | null> = {};
     for (const [key, value] of initial) next[key] = value;
     setValues(next);
-  });
+  }, [record.id, open]);
 
   const setValue = (key: string, raw: string) => {
     const current = values[key];
