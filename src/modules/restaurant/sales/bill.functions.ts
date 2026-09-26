@@ -7,6 +7,7 @@ import {
   listReceiptsSchema,
   refundPaymentSchema,
   releaseTableSchema,
+  saveBillSplitSchema,
 } from "./bill.contracts";
 
 export const getRestaurantBillFn = createServerFn({ method: "POST" })
@@ -15,6 +16,15 @@ export const getRestaurantBillFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./bill.server");
     return mod.getBill(context.supabase, context.userId, data);
+  });
+
+
+export const saveRestaurantBillSplitFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => saveBillSplitSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./bill.server");
+    return mod.saveBillSplit(context.supabase, context.userId, data);
   });
 
 export const requestRestaurantBillFn = createServerFn({ method: "POST" })
