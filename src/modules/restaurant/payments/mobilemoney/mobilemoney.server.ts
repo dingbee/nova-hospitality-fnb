@@ -162,6 +162,7 @@ export async function requestMobileMoneyCollection(
   input: {
     tenantId: string;
     orderId: string;
+    splitBillId?: string;
     amount: number;
     customerPhone?: string | null;
     clientRequestId: string;
@@ -551,6 +552,7 @@ export async function confirmMobileMoneyCollection(
       .insert({
         tenant_id: input.tenantId,
         order_id: collection.order_id,
+        split_bill_id: collection.split_bill_id ?? null,
         client_request_id: clientRequestId,
         method: "mobile_money",
         state: "paid",
