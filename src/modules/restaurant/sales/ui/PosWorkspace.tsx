@@ -1597,7 +1597,7 @@ function PosWorkspaceBody({
         recombining={clearBillSplit.isPending}
         onPayShare={async (value) => {
           let resolvedSplitId = value.splitBillId;
-          if (value.splitPlan) {
+          if (value.splitPlan && !value.splitBillId) {
             const created = await saveBillSplitFn({ data: value.splitPlan });
             const rows = (created ?? []) as any[];
             if (value.splitBillId) resolvedSplitId = value.splitBillId;
