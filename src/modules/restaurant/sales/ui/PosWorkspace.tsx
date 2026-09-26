@@ -52,6 +52,7 @@ import {
   releaseRestaurantTableFn,
   requestRestaurantBillFn,
   saveRestaurantBillSplitFn,
+  clearRestaurantBillSplitFn,
 } from "../bill.functions";
 import {
   acknowledgeServiceRequestFn,
@@ -188,6 +189,7 @@ function PosWorkspaceBody({
   const requestBillFn = useServerFn(requestRestaurantBillFn);
   const presentBillFn = useServerFn(presentRestaurantBillFn);
   const saveBillSplitFn = useServerFn(saveRestaurantBillSplitFn);
+  const clearBillSplitFn = useServerFn(clearRestaurantBillSplitFn);
   const releaseTableFn = useServerFn(releaseRestaurantTableFn);
   const refundFn = useServerFn(refundRestaurantPaymentFn);
   const acknowledgeServiceRequestFnCall = useServerFn(acknowledgeServiceRequestFn);
@@ -456,6 +458,17 @@ function PosWorkspaceBody({
         setBillOpen(false);
       }
       refresh();
+    },
+  });
+
+  const clearBillSplit = useAdminMutation({
+    mutationFn: () => clearBillSplitFn({ data: { tenantId: tenantId!, orderId: orderId! } }),
+    successMessage: "Split bills recombined",
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["restaurant.pos.bill", tenantId, orderId] });
+      setSplitMode("none");
+      setShareAmount(null);
+      setSplitBillId(null);
     },
   });
 
@@ -1580,6 +1593,8 @@ function PosWorkspaceBody({
         onWays={setWays}
         onClose={() => setBillOpen(false)}
         onPresent={() => presentBill.mutate(undefined as never)}
+        onRecombine={() => clearBillSplit.mutate()}
+        recombining={clearBillSplit.isPending}
         onPayShare={async (value) => {
           let resolvedSplitId = value.splitBillId;
           if (value.splitPlan) {
