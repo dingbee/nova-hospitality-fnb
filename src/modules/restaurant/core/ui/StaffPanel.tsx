@@ -14,6 +14,8 @@ import {
   removeRestaurantMemberFn,
   setMemberStationAssignmentFn,
   upsertRestaurantMemberFn,
+  setStaffPosPinFn,
+  clearStaffPosPinFn,
 } from "../tenancy.functions";
 import { ASSIGNABLE_RESTAURANT_ROLES } from "../contracts";
 import { RESTAURANT_ROLE_LABELS } from "../permissions";
@@ -88,6 +90,19 @@ export function StaffPanel() {
   });
 
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const setPinFn = useServerFn(setStaffPosPinFn);
+  const clearPinFn = useServerFn(clearStaffPosPinFn);
+  const setPin = useAdminMutation({
+    mutationFn: (vars: { memberId: string; pin: string }) =>
+      setPinFn({ data: { tenantId: tenantId!, memberId: vars.memberId, pin: vars.pin } }),
+    successMessage: "POS PIN saved.",
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["restaurant.members", tenantId] }),
+  });
+  const clearPin = useAdminMutation({
+    mutationFn: (memberId: string) => clearPinFn({ data: { tenantId: tenantId!, memberId } }),
+    successMessage: "POS PIN cleared.",
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["restaurant.members", tenantId] }),
+  });
 
   if (!ws.isLoading && !ws.data?.tenant) {
     return (
@@ -104,6 +119,7 @@ export function StaffPanel() {
     role: string;
     property_id: string | null;
     created_at: string;
+    pos_pin_enabled: boolean;
   }[];
 
   return (
@@ -193,6 +209,30 @@ export function StaffPanel() {
                         )}
                       </td>
                       <td className="py-3 pr-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <span className="text-xs text-muted-foreground">{m.pos_pin_enabled ? "Set" : "Not set"}</span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="min-h-9"
+                            disabled={setPin.isPending || clearPin.isPending}
+                            onClick={() => {
+                              const pin = window.prompt(m.pos_pin_enabled ? "Enter a new 4–6 digit POS PIN" : "Enter a 4–6 digit POS PIN");
+                              if (pin === null) return;
+                              if (!/^\\d{4,6}$/.test(pin)) { window.alert("PIN must contain 4 to 6 digits."); return; }
+                              setPin.mutate({ memberId: m.id, pin });
+                            }}
+                          >
+                            {m.pos_pin_enabled ? "Change" : "Set"}
+                          </Button>
+                          {m.pos_pin_enabled && (
+                            <Button size="sm" variant="ghost" className="min-h-9" disabled={clearPin.isPending} onClick={() => clearPin.mutate(m.id)}>
+                              Clear
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 pr-4 text-right">
                         {confirmRemove === m.id ? (
                           <span className="inline-flex items-center gap-2">
                             <Button
@@ -229,7 +269,7 @@ export function StaffPanel() {
                     </tr>
                     {stationMemberId === m.id && (
                       <tr className="border-b bg-muted/20">
-                        <td colSpan={5} className="px-2 py-3">
+                        <td colSpan={6} className="px-2 py-3">
                           <div className="rounded-lg border bg-background p-3">
                             <div className="mb-2">
                               <p className="text-sm font-medium">Production stations</p>
