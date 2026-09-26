@@ -62,7 +62,7 @@ export const listStagedRecordsSchema = tenantScope.extend({
 
 export const decideStagedRecordSchema = tenantScope.extend({
   recordId: uuid,
-  decision: z.enum(["approved", "rejected", "skipped"]),
+  decision: z.enum(["approved", "rejected", "skipped", "pending"]),
   /** A human correction to the matched entity, or an edit to a mapped field before approving. */
   matchedEntityId: uuid.nullish(),
   mappedDataPatch: z
