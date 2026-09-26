@@ -1292,6 +1292,14 @@ function CatalogEditDialog({
   });
   const inventoryCategories = ((categoriesQuery.data as any[]) ?? []).filter((category) => category.active !== false);
   const categoryById = new Map(inventoryCategories.map((category) => [category.id, category]));
+  const selectedCategoryId =
+    String(values.categoryId ?? "") ||
+    inventoryCategories.find(
+      (category) =>
+        String(category.name ?? "").toLowerCase() ===
+        String(values.categoryName ?? "").toLowerCase(),
+    )?.id ||
+    "";
 
   const menusFn = useServerFn(listRestaurantMenusFn);
   const menuItemsFn = useServerFn(listRestaurantMenuItemsFn);
@@ -1314,6 +1322,7 @@ function CatalogEditDialog({
   useEffect(() => {
     const next: Record<string, string | number | boolean | null> = {};
     for (const [key, value] of initial) next[key] = value;
+    next.categoryId = record.mapped_data?.categoryId ?? null;
     setValues(next);
     setSelectedMenuId("");
   }, [record.id, open]);
@@ -1393,7 +1402,7 @@ function CatalogEditDialog({
                 ) : key === "categoryName" ? (
                   <select
                     className="mt-1 h-10 w-full rounded-md border bg-background px-2 text-sm"
-                    value={String(fieldValue ?? "")}
+                    value={selectedCategoryId}
                     disabled={categoriesQuery.isLoading || busy}
                     onChange={(e) => {
                       const selected = categoryById.get(e.target.value);
