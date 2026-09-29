@@ -69,26 +69,28 @@ export function TableQrDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-x-hidden sm:max-w-xl">
-        <DialogHeader>
+      <DialogContent className="min-w-0 w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-x-hidden sm:max-w-xl">
+        <DialogHeader className="min-w-0">
           {/* The restaurant's own identity, front and center on-screen — the
               printed card also carries it, but at on-screen preview size
               that text renders too small to read, so the dialog restates it
               here rather than forking a second, preview-only render of the
               shared card image. */}
-          <DialogTitle>{card.businessName}</DialogTitle>
-          <DialogDescription>{card.tableLabel} · Scan to open the ordering menu</DialogDescription>
+          <DialogTitle className="min-w-0 break-words">{card.businessName}</DialogTitle>
+          <DialogDescription className="min-w-0 break-words">
+            {card.tableLabel} · Scan to open the ordering menu
+          </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col items-center gap-2.5">
-          <div className="flex aspect-[3/4] w-full max-w-[220px] items-center justify-center overflow-hidden rounded-lg border bg-muted/30">
+        <div className="min-w-0 flex w-full flex-col items-center gap-2.5">
+          <div className="flex min-w-0 shrink-0 aspect-[3/4] w-[min(220px,100%)] max-w-full items-center justify-center overflow-hidden rounded-lg border bg-muted/30">
             {error ? (
               <p className="px-4 text-center text-sm text-destructive">{error}</p>
             ) : dataUrl ? (
               <img
                 src={dataUrl}
                 alt={`QR code for ${card.businessName}, ${card.tableLabel} — scan to order`}
-                className="size-full object-contain"
+                className="block size-full min-w-0 max-w-full object-contain"
               />
             ) : (
               <Loader2 className="size-6 animate-spin text-muted-foreground" aria-hidden />
