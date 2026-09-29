@@ -132,6 +132,9 @@ function PosWorkspaceBody({
   const canRoomCharge = hasRestaurantCapability(roles, "sales.room_charge", platformAdmin);
   const currency = ws.data?.properties?.[0]?.currency ?? "TZS";
   const workspacePropertyId = ws.data?.properties?.[0]?.id ?? null;
+  const ownerOrAdmin = Boolean(platformAdmin) || roles.some((role) =>
+    ["owner", "general_manager", "restaurant_manager"].includes(role),
+  );
   // Authenticated owners/managers bypass the staff-PIN gate. For that path
   // there is intentionally no POS staff session, so optional posSessionId
   // must be omitted rather than sent as null. Staff sessions still carry the
