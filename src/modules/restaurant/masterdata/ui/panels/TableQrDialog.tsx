@@ -77,7 +77,9 @@ export function TableQrDialog({
               here rather than forking a second, preview-only render of the
               shared card image. */}
           <DialogTitle className="min-w-0 break-words">{card.businessName}</DialogTitle>
-          <DialogDescription className="min-w-0 break-words">{card.tableLabel} · Scan to open the ordering menu</DialogDescription>
+          <DialogDescription className="min-w-0 break-words">
+            {card.tableLabel} · Scan to open the ordering menu
+          </DialogDescription>
         </DialogHeader>
 
         <div className="min-w-0 flex w-full flex-col items-center gap-2.5">
