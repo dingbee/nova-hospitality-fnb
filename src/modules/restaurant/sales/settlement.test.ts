@@ -25,6 +25,13 @@ describe("bill splitting", () => {
     expect(split.reconciles).toBe(true);
   });
 
+  it("splits the outstanding balance, not the original paid total", () => {
+    const split = buildSplit([], 100, 60, "even", 3);
+    expect(split.shares.map((s) => s.amount)).toEqual([20, 20, 20]);
+    expect(split.shares.reduce((s, x) => s + x.amount, 0)).toBe(60);
+    expect(split.reconciles).toBe(true);
+  });
+
   it("supports four-way and five-way equal splits without changing the parent total", () => {
     for (const ways of [4, 5]) {
       const split = buildSplit([], 120_000, 120_000, "even", ways);
