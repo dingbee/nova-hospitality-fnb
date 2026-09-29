@@ -25,6 +25,29 @@ describe("bill splitting", () => {
     expect(split.reconciles).toBe(true);
   });
 
+  it("splits the outstanding balance, not the original paid total", () => {
+    const split = buildSplit([], 100, 60, "even", 3);
+    expect(split.shares.map((s) => s.amount)).toEqual([20, 20, 20]);
+    expect(split.shares.reduce((s, x) => s + x.amount, 0)).toBe(60);
+    expect(split.reconciles).toBe(true);
+  });
+
+  it("supports four-way and five-way equal splits without changing the parent total", () => {
+    for (const ways of [4, 5]) {
+      const split = buildSplit([], 120_000, 120_000, "even", ways);
+      expect(split.shares).toHaveLength(ways);
+      expect(split.shares.reduce((s, x) => s + x.amount, 0)).toBe(120_000);
+      expect(split.reconciles).toBe(true);
+    }
+  });
+
+  it("supports the configured maximum of 24 equal shares and still reconciles", () => {
+    const split = buildSplit([], 100, 100, "even", 24);
+    expect(split.shares).toHaveLength(24);
+    expect(split.shares.reduce((s, x) => s + x.amount, 0)).toBe(100);
+    expect(split.reconciles).toBe(true);
+  });
+
   it("offers the outstanding balance when splitting by amount", () => {
     const split = buildSplit([], 100, 40, "amount", 2);
     expect(split.shares[0]?.amount).toBe(40);

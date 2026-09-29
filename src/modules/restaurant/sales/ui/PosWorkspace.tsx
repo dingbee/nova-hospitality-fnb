@@ -132,6 +132,15 @@ function PosWorkspaceBody({
   const canRoomCharge = hasRestaurantCapability(roles, "sales.room_charge", platformAdmin);
   const currency = ws.data?.properties?.[0]?.currency ?? "TZS";
   const workspacePropertyId = ws.data?.properties?.[0]?.id ?? null;
+  const ownerOrAdmin = Boolean(platformAdmin) || roles.some((role) =>
+    ["owner", "general_manager", "restaurant_manager"].includes(role),
+  );
+  // Authenticated owners/managers bypass the staff-PIN gate. For that path
+  // there is intentionally no POS staff session, so optional posSessionId
+  // must be omitted rather than sent as null. Staff sessions still carry the
+  // real session id and are validated server-side.
+  const posSession = sessionId ? { posSessionId: sessionId } : {};
+  const posActorReady = ownerOrAdmin || Boolean(sessionId);
   const qc = useQueryClient();
 
   const [orderId, setOrderId] = useState<string | null>(null);
@@ -197,8 +206,8 @@ function PosWorkspaceBody({
 
   const board = useQuery({
     queryKey: ["restaurant.pos.board", tenantId],
-    queryFn: () => boardFn({ data: { tenantId: tenantId!, posSessionId: sessionId! } }),
-    enabled: Boolean(tenantId && sessionId),
+    queryFn: () => boardFn({ data: { tenantId: tenantId!, ...posSession } }),
+    enabled: Boolean(tenantId && posActorReady),
     refetchInterval: 8_000,
   });
 
@@ -246,8 +255,8 @@ function PosWorkspaceBody({
   }, [newlyActiveAttention.join("|")]);
   const catalog = useQuery({
     queryKey: ["restaurant.pos.catalog", tenantId],
-    queryFn: () => catalogFn({ data: { tenantId: tenantId!, posSessionId: sessionId! } }),
-    enabled: Boolean(tenantId && sessionId),
+    queryFn: () => catalogFn({ data: { tenantId: tenantId!, ...posSession } }),
+    enabled: Boolean(tenantId && posActorReady),
     staleTime: 120_000,
   });
   const order = useQuery({
@@ -316,7 +325,7 @@ function PosWorkspaceBody({
       const result = await openFn({
         data: {
           tenantId: tenantId!,
-          posSessionId: sessionId!,
+          ...posSession,
           tableId: vars.tableId,
           orderType: vars.tableId ? "dine_in" : "bar",
           guestCount: vars.guestCount,
@@ -387,7 +396,7 @@ function PosWorkspaceBody({
       }
 
       const res = await addFn({
-        data: { tenantId: tenantId!, posSessionId: sessionId!, orderId: orderId!, lines },
+        data: { tenantId: tenantId!, ...posSession, orderId: orderId!, lines },
       });
       if (vars.fire) {
         await fireFn({
@@ -408,7 +417,7 @@ function PosWorkspaceBody({
       voidFn({
         data: {
           tenantId: tenantId!,
-          posSessionId: sessionId!,
+          ...posSession,
           orderId: orderId!,
           orderItemId: vars.orderItemId,
           reason: vars.reason,
@@ -420,7 +429,7 @@ function PosWorkspaceBody({
 
   const transfer = useAdminMutation({
     mutationFn: (vars: { tableId: string | null }) =>
-      transferFn({ data: { tenantId: tenantId!, posSessionId: sessionId!, orderId: orderId!, tableId: vars.tableId } }),
+      transferFn({ data: { tenantId: tenantId!, ...posSession, orderId: orderId!, tableId: vars.tableId } }),
     successMessage: "Bill moved",
     onSuccess: refresh,
   });
@@ -430,7 +439,7 @@ function PosWorkspaceBody({
       payFn({
         data: {
           tenantId: tenantId!,
-          posSessionId: sessionId!,
+          ...posSession,
           orderId: orderId!,
           splitBillId: splitBillId ?? undefined,
           clientRequestId: payKey.current,
@@ -539,7 +548,7 @@ function PosWorkspaceBody({
   const reopen = useAdminMutation({
     mutationFn: (vars: { orderId: string }) =>
       reopenFn({
-        data: { tenantId: tenantId!, posSessionId: sessionId!, orderId: vars.orderId, reason: "Correction at the till" },
+        data: { tenantId: tenantId!, ...posSession, orderId: vars.orderId, reason: "Correction at the till" },
       }),
     successMessage: "Bill reopened",
     onSuccess: refresh,
@@ -549,7 +558,7 @@ function PosWorkspaceBody({
   // decides whether it is allowed and unwinds any stock the sale consumed.
   const cancelBill = useAdminMutation({
     mutationFn: (vars: { orderId: string; reason: string }) =>
-      cancelFn({ data: { tenantId: tenantId!, posSessionId: sessionId!, orderId: vars.orderId, reason: vars.reason } }),
+      cancelFn({ data: { tenantId: tenantId!, ...posSession, orderId: vars.orderId, reason: vars.reason } }),
     onSuccessToast: (d: any) =>
       d?.reversal?.reversed
         ? `Bill cancelled — ${d.reversal.reversed} stock movement(s) reversed`
@@ -563,7 +572,7 @@ function PosWorkspaceBody({
 
   const showReceipt = useAdminMutation({
     mutationFn: (vars: { orderId: string; reprint: boolean }) =>
-      receiptFn({ data: { tenantId: tenantId!, posSessionId: sessionId!, orderId: vars.orderId, reprint: vars.reprint } }),
+      receiptFn({ data: { tenantId: tenantId!, ...posSession, orderId: vars.orderId, reprint: vars.reprint } }),
     silentSuccess: true,
     onSuccess: (data: any) => setReceipt(data),
   });

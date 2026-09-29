@@ -149,21 +149,21 @@ export function buildSplit(
     }
     shares = [...groups.values()].map((s) => ({ ...s, amount: money(s.amount) }));
   } else if (mode === "even") {
-    const per = money(total / ways);
+    const per = money(balance / ways);
     shares = Array.from({ length: ways }, (_, i) => ({
       key: `share-${i + 1}`,
       label: `Share ${i + 1} of ${ways}`,
       amount: per,
       lineIds: [],
     }));
-    const drift = money(sub(total, money(per * ways)));
+    const drift = money(sub(balance, money(per * ways)));
     if (drift !== 0 && shares[0]) shares[0].amount = money(add(shares[0].amount, drift));
   } else if (mode === "amount") {
     shares = [{ key: "balance", label: "Outstanding balance", amount: balance, lineIds: [] }];
   }
 
   const sum = money(shares.reduce((s, x) => add(s, x.amount), 0));
-  return { mode, shares, reconciles: mode === "amount" || shares.length === 0 || sum === total };
+  return { mode, shares, reconciles: mode === "amount" || shares.length === 0 || sum === balance };
 }
 
 /** Creates/replaces the child bills for one parent order without changing the parent order total. */
@@ -223,6 +223,7 @@ export async function saveBillSplit(sb: Sb, userId: string, input: SaveBillSplit
     if (amountTotal !== balance) throw new Error(`Split amounts must equal the outstanding balance of ${balance}.`);
     amounts.forEach((amount,i)=>billRows.push({splitNo:i+1,label:`Bill ${i+1}`,amount,allocation:[]}));
   } else if (input.mode === "seat") {
+    if (paid > 0) throw new Error("By-seat splitting is available only before any payment is taken; use equal, amount, or percentage splitting for an outstanding balance.");
     const groups = new Map<string,{label:string;amount:number;allocation:any[]}>();
     for (const line of liveLines) {
       const key = line.seat_number ? `seat-${line.seat_number}` : "shared";
@@ -240,6 +241,7 @@ export async function saveBillSplit(sb: Sb, userId: string, input: SaveBillSplit
       billRows[0].amount = money(add(billRows[0].amount, seatDrift));
     }
   } else if (input.mode === "items") {
+    if (paid > 0) throw new Error("By-item splitting is available only before any payment is taken; use equal, amount, or percentage splitting for an outstanding balance.");
     const allocations = input.allocations ?? [];
     if (allocations.length === 0) throw new Error("Assign at least one item to a bill.");
     const byLine = new Map<string, any[]>();
@@ -266,7 +268,7 @@ export async function saveBillSplit(sb: Sb, userId: string, input: SaveBillSplit
     let i=0;
     for (const [splitNo,group] of [...groups.entries()].sort((a,b)=>a[0]-b[0])) {
       if (splitNo < 1 || splitNo > 24) throw new Error("Invalid split number.");
-      billRows.push({splitNo:++i,label:`Bill ${i}`,amount:money(group.amount),allocation:group.allocation});
+      billRows.push({splitNo,label:`Bill ${splitNo}`,amount:money(group.amount),allocation:group.allocation});
     }
     const allocatedTotal = money(billRows.reduce((sum,b)=>add(sum,b.amount),0));
     if (allocatedTotal !== balance) {

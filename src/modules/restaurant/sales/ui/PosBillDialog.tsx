@@ -17,10 +17,13 @@ import type { BillSplitMode, SaveBillSplitInput } from "../bill.contracts";
 
 const MODES: { id: BillSplitMode; label: string }[] = [
   { id: "none", label: "One bill" },
-  { id: "even", label: "Evenly" },
-  { id: "items", label: "By item" },
-  { id: "seat", label: "By seat" },
+  { id: "even", label: "Split equally" },
   { id: "amount", label: "By amount" },
+  { id: "items", label: "By item" },
+];
+
+const ADVANCED_MODES: { id: BillSplitMode; label: string }[] = [
+  { id: "seat", label: "By seat" },
   { id: "percentage", label: "By %" },
 ];
 
@@ -66,7 +69,9 @@ export function PosBillDialog({
   const lines = (bill?.lines ?? []) as any[];
   const persisted = (bill?.splitBills ?? []) as any[];
   const hasPaidSplit = persisted.some((s) => Number(s.paidAmount ?? 0) > 0);
+  const paid = Number(totals?.paid ?? 0);
   const balance = Number(totals?.balance ?? 0);
+  const allocationSplitBlocked = paid > 0;
 
   useEffect(() => {
     const per = balance / Math.max(2, ways);
@@ -97,7 +102,7 @@ export function PosBillDialog({
     if (persisted.length > 0 && persisted.every((s) => s.mode === splitMode)) {
       return persisted.map((s) => ({
         key: s.id,
-        label: s.label,
+        label: splitMode === "even" ? `Person ${Number(s.split_no ?? 0)}` : s.label,
         amount: Number(s.balance ?? s.amount ?? 0),
         splitBillId: s.id,
         splitNo: Number(s.split_no ?? 0),
@@ -106,7 +111,7 @@ export function PosBillDialog({
     }
     if (splitMode === "even") {
       const per = Number((balance / ways).toFixed(2));
-      const shares = Array.from({ length: ways }, (_, i) => ({ key: `new-${i + 1}`, label: `Bill ${i + 1}`, amount: per, splitNo: i + 1 }));
+      const shares = Array.from({ length: ways }, (_, i) => ({ key: `new-${i + 1}`, label: `Person ${i + 1}`, amount: per, splitNo: i + 1 }));
       const drift = Number((balance - shares.reduce((s, x) => s + x.amount, 0)).toFixed(2));
       if (shares[0]) shares[0].amount = Number((shares[0].amount + drift).toFixed(2));
       return shares;
@@ -217,20 +222,47 @@ export function PosBillDialog({
               <Row label="Balance due" value={money(balance, currency)} bold />
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              {MODES.map((m) => (
-                <Button key={m.id} variant={splitMode === m.id ? "default" : "outline"} className="min-h-11" onClick={() => {
-                  setSelected(null);
-                  onSplitMode(m.id);
-                }}>
-                  {m.label}
-                </Button>
-              ))}
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
+                {MODES.map((m) => (
+                  <Button key={m.id} variant={splitMode === m.id ? "default" : "outline"} className="min-h-11" onClick={() => {
+                    setSelected(null);
+                    onSplitMode(m.id);
+                  }}>
+                    {m.label}
+                  </Button>
+                ))}
+              </div>
+
+              <details className="rounded border px-3 py-2">
+                <summary className="cursor-pointer text-sm font-medium">More split options</summary>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {ADVANCED_MODES.map((m) => (
+                    <Button
+                      key={m.id}
+                      variant={splitMode === m.id ? "default" : "outline"}
+                      className="min-h-10"
+                      disabled={allocationSplitBlocked && m.id === "seat"}
+                      onClick={() => {
+                        setSelected(null);
+                        onSplitMode(m.id);
+                      }}
+                    >
+                      {m.label}
+                    </Button>
+                  ))}
+                </div>
+              </details>
+              {allocationSplitBlocked && (
+                <p className="text-xs text-muted-foreground">
+                  By seat and by item require no prior payment. For an outstanding balance, use equal, amount, or percentage splitting.
+                </p>
+              )}
             </div>
 
             {splitMode !== "none" && splitMode !== "seat" && (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">Bills</span>
+                <span className="text-sm text-muted-foreground">{splitMode === "even" ? "People" : "Bills"}</span>
                 <Button variant="outline" className="min-h-10" onClick={() => onWays(Math.max(2, ways - 1))}>−</Button>
                 <span className="min-w-8 text-center tabular-nums">{ways}</span>
                 <Button variant="outline" className="min-h-10" onClick={() => onWays(Math.min(24, ways + 1))}>+</Button>
@@ -266,7 +298,13 @@ export function PosBillDialog({
               </div>
             )}
 
-            {splitMode === "items" && (
+            {splitMode === "items" && allocationSplitBlocked && (
+              <div className="rounded border border-dashed p-3 text-sm text-muted-foreground">
+                Item allocation is locked because this order already has a payment. Recombine the unpaid split, or use equal, amount, or percentage splitting for the remaining balance.
+              </div>
+            )}
+
+            {splitMode === "items" && !allocationSplitBlocked && (
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">
                   Allocate every unit. A line with quantity 2 can be divided 1 + 1 between bills.
@@ -346,7 +384,7 @@ export function PosBillDialog({
           </Button>
           <Button
             className="min-h-12"
-            disabled={!bill || (splitMode !== "none" && !selected) || (splitMode === "amount" && !amountValid) || (splitMode === "percentage" && !percentageValid) || (splitMode === "items" && !itemValid)}
+            disabled={!bill || (splitMode !== "none" && !selected) || (splitMode === "amount" && !amountValid) || (splitMode === "percentage" && !percentageValid) || (splitMode === "items" && (!itemValid || allocationSplitBlocked)) || (splitMode === "seat" && allocationSplitBlocked)}
             onClick={() => {
               const share = localShares.find((s) => s.key === selected);
               onPayShare({
