@@ -17,6 +17,8 @@ import {
   Receipt,
   Search,
   Users,
+  UserPlus,
+  X,
   Wallet,
 } from "lucide-react";
 import { SectionCard } from "@/components/os/SectionCard";
@@ -52,6 +54,8 @@ import {
   getCommercialCustomerProfileFn,
   listCommercialCollectionsFn,
   listCommercialCustomersFn,
+  listCommercialPlansFn,
+  provisionCommercialCustomerFn,
   listCommercialUpcomingRenewalsFn,
   renewCommercialSubscriptionFn,
   suspendCommercialSubscriptionFn,
@@ -210,8 +214,19 @@ export function CustomersPortfolioPanel() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<string>("__all__");
   const [selectedTenant, setSelectedTenant] = useState<string | null>(null);
+  const [showProvisionForm, setShowProvisionForm] = useState(false);
+  const [customerName, setCustomerName] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [ownerEmail, setOwnerEmail] = useState("");
+  const [planId, setPlanId] = useState("");
+  const [programmeId, setProgrammeId] = useState("");
+  const [trialDays, setTrialDays] = useState("14");
 
   const listCustomers = useServerFn(listCommercialCustomersFn);
+  const listPlans = useServerFn(listCommercialPlansFn);
+  const provision = useServerFn(provisionCommercialCustomerFn);
+  const qc = useQueryClient();
+
   const customers = useQuery({
     queryKey: ["commercial.ops.customers", search, status],
     queryFn: () =>
@@ -220,12 +235,143 @@ export function CustomersPortfolioPanel() {
       }),
   });
 
+  const plans = useQuery({
+    queryKey: ["commercial.catalog.plans"],
+    queryFn: () => listPlans({ data: {} }),
+  });
+
+  const provisionMutation = useAdminMutation({
+    mutationFn: () =>
+      provision({
+        data: {
+          name: customerName.trim(),
+          ownerEmail: ownerEmail.trim(),
+          ownerFullName: ownerName.trim() || undefined,
+          planId,
+          programmeId: programmeId || undefined,
+          billingInterval: "monthly",
+          trialDays: Number(trialDays),
+        },
+      }),
+    successMessage: "Customer provisioned and owner invitation sent",
+    onSuccess: () => {
+      setCustomerName("");
+      setOwnerName("");
+      setOwnerEmail("");
+      setPlanId("");
+      setProgrammeId("");
+      setTrialDays("14");
+      setShowProvisionForm(false);
+      void qc.invalidateQueries({ queryKey: ["commercial.ops.customers"] });
+    },
+  });
+
+  const activePlans = ((plans.data ?? []) as any[]).filter((p) => p.status === "active");
+
   return (
     <div className="space-y-6">
       <SectionCard
         title="Customer portfolio"
-        description="Every tenant with billing status, plan/programme, subscription state and outstanding balance — search and filter are server-side."
+        description="Commercial Centre is the customer gate: provision the tenant, select its plan, and issue the owner invitation from here."
+        actions={
+          <Button size="sm" onClick={() => setShowProvisionForm((v) => !v)}>
+            {showProvisionForm ? (
+              <X className="mr-2 size-4" />
+            ) : (
+              <UserPlus className="mr-2 size-4" />
+            )}
+            {showProvisionForm ? "Close" : "Add customer"}
+          </Button>
+        }
       >
+        {showProvisionForm && (
+          <div className="mb-6 rounded-xl border border-primary/20 bg-muted/20 p-5">
+            <div className="mb-4">
+              <h3 className="font-semibold">Provision new customer</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                This creates the LexiBite customer workspace and immediately sends the owner
+                invitation. The owner completes property, outlet and operating-model setup after
+                activation.
+              </p>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <Label>Customer / restaurant name</Label>
+                <Input
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder="e.g. Syrian Restaurant"
+                />
+              </div>
+              <div>
+                <Label>Owner name</Label>
+                <Input
+                  value={ownerName}
+                  onChange={(e) => setOwnerName(e.target.value)}
+                  placeholder="e.g. Ahmed Hassan"
+                />
+              </div>
+              <div>
+                <Label>Owner email</Label>
+                <Input
+                  type="email"
+                  value={ownerEmail}
+                  onChange={(e) => setOwnerEmail(e.target.value)}
+                  placeholder="owner@restaurant.co.tz"
+                />
+              </div>
+              <div>
+                <Label>Plan</Label>
+                <Select value={planId} onValueChange={setPlanId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={plans.isLoading ? "Loading plans…" : "Select plan"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {activePlans.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {String(p.name ?? p.code)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Trial period</Label>
+                <Select value={trialDays} onValueChange={setTrialDays}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">No trial</SelectItem>
+                    <SelectItem value="7">7 days</SelectItem>
+                    <SelectItem value="14">14 days</SelectItem>
+                    <SelectItem value="30">30 days</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                Access is invitation-only. No public account creation is used for this flow.
+              </p>
+              <Button
+                disabled={
+                  provisionMutation.isPending ||
+                  !customerName.trim() ||
+                  !ownerEmail.trim() ||
+                  !planId
+                }
+                onClick={() => provisionMutation.mutate()}
+              >
+                <UserPlus className="mr-2 size-4" />
+                {provisionMutation.isPending ? "Provisioning…" : "Provision & invite owner"}
+              </Button>
+            </div>
+          </div>
+        )}
+
         <div className="mb-4 flex flex-wrap items-end gap-3">
           <div className="min-w-[220px] flex-1">
             <Label>Search by name</Label>
