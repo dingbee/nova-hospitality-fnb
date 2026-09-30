@@ -176,6 +176,11 @@ export async function inviteCommercialOwner(
     throw new Error(inviteError.message);
   }
 
+  if (!invited.user?.id) {
+    await admin.from("commercial_owner_invitations").delete().eq("id", invitation.id);
+    throw new Error("Supabase created the invitation without returning an owner account.");
+  }
+
   const { error: linkError } = await admin
     .from("commercial_owner_invitations")
     .update({ auth_user_id: invited.user.id, last_sent_at: new Date().toISOString() })
