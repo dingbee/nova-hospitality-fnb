@@ -218,16 +218,18 @@ function OnboardingPage() {
     );
   }
 
-  // §7 — existing tenant owner: continue through the normal first-run setup.
   if (!ws.isLoading && !tenant) {
     return (
-      <WelcomeAndBusinessStep
-        onCreated={(tenantId) => {
-          void qc.invalidateQueries({ queryKey: ["restaurant.workspace"] });
-          hadTenantOnMountRef.current = false; // this tenant was just created — never a "resume".
-          void tenantId;
-        }}
-      />
+      <Centered>
+        <StepShell
+          title="LexiBite access is invitation-only"
+          description="This workspace must be provisioned by LexiBite Commercial Center. If your organization has been onboarded, use the invitation sent to your authorized email address."
+        >
+          <Button onClick={() => navigate({ to: "/auth" })} className="min-h-11 w-full">
+            Return to sign in
+          </Button>
+        </StepShell>
+      </Centered>
     );
   }
 
