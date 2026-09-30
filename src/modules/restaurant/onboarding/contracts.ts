@@ -13,30 +13,6 @@ import { DEFAULT_CURRENCY, DEFAULT_TIMEZONE } from "../core/product";
 
 const uuid = z.string().uuid();
 
-/** §9 — operating-model business types. Influences later defaults/templates; never locks the tenant in. */
-export const BUSINESS_TYPES = [
-  "restaurant",
-  "cafe",
-  "bar",
-  "hotel_restaurant",
-  "fast_casual",
-  "fine_dining",
-  "quick_service",
-  "multi_outlet_group",
-] as const;
-export type BusinessType = (typeof BUSINESS_TYPES)[number];
-
-export const BUSINESS_TYPE_LABELS: Record<BusinessType, string> = {
-  restaurant: "Restaurant",
-  cafe: "Café",
-  bar: "Bar",
-  hotel_restaurant: "Hotel restaurant",
-  fast_casual: "Fast casual",
-  fine_dining: "Fine dining",
-  quick_service: "Quick service",
-  multi_outlet_group: "Multi-outlet group",
-};
-
 /** §13 — service model. Determines which setup requirements are relevant. */
 export const OPERATING_MODES = [
   "table_service",
@@ -75,15 +51,6 @@ export const SERVICE_FEATURE_LABELS: Record<ServiceFeature, string> = {
  */
 export const COUNTRIES = ["Tanzania", "Kenya", "Uganda", "Rwanda", "Other"] as const;
 export type Country = (typeof COUNTRIES)[number];
-
-export const bootstrapTenantSchema = z.object({
-  name: z.string().trim().min(2, "Give your restaurant a name.").max(160),
-  businessType: z.enum(BUSINESS_TYPES),
-  country: z.string().max(60).optional(),
-  currency: z.string().min(3).max(3).default(DEFAULT_CURRENCY),
-  timezone: z.string().min(2).max(60).default(DEFAULT_TIMEZONE),
-});
-export type BootstrapTenantInput = z.infer<typeof bootstrapTenantSchema>;
 
 export const createFirstOutletSchema = z.object({
   tenantId: uuid,
