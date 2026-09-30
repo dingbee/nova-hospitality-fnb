@@ -550,6 +550,38 @@ export const listCustomersSchema = z.object({
 });
 export type ListCustomersInput = z.infer<typeof listCustomersSchema>;
 
+export const provisionCommercialCustomerSchema = z.object({
+  name: z.string().min(2).max(160),
+  ownerEmail: z.string().email(),
+  ownerFullName: z.string().max(200).optional(),
+  planId: uuid,
+  programmeId: uuid.optional(),
+  billingInterval: z.enum(BILLING_INTERVALS).default("monthly"),
+  trialDays: z.number().int().min(0).max(90).default(14),
+});
+export type ProvisionCommercialCustomerInput = z.infer<
+  typeof provisionCommercialCustomerSchema
+>;
+
+export const listCommercialOwnerAccessSchema = z.object({
+  tenantId: uuid.optional(),
+});
+export type ListCommercialOwnerAccessInput = z.infer<typeof listCommercialOwnerAccessSchema>;
+
+export const inviteCommercialOwnerSchema = z.object({
+  tenantId: uuid,
+  email: z.string().email(),
+  fullName: z.string().max(200).optional(),
+});
+export type InviteCommercialOwnerInput = z.infer<typeof inviteCommercialOwnerSchema>;
+
+export const revokeCommercialOwnerInvitationSchema = z.object({
+  invitationId: uuid,
+});
+export type RevokeCommercialOwnerInvitationInput = z.infer<
+  typeof revokeCommercialOwnerInvitationSchema
+>;
+
 export const getCustomerProfileSchema = z.object({ tenantId: uuid });
 export type GetCustomerProfileInput = z.infer<typeof getCustomerProfileSchema>;
 

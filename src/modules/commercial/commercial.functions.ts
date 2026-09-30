@@ -20,6 +20,10 @@ import {
   listCommercialRecommendationsSchema,
   listCommercialSignalsSchema,
   listCustomersSchema,
+  listCommercialOwnerAccessSchema,
+  provisionCommercialCustomerSchema,
+  inviteCommercialOwnerSchema,
+  revokeCommercialOwnerInvitationSchema,
   listInvoicesSchema,
   listOverridesSchema,
   listPaymentsSchema,
@@ -354,6 +358,40 @@ export const cancelCommercialAgreementFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./agreements.server");
     return mod.cancelAgreement(context.supabase, context.userId, data);
+  });
+
+/* --------------------------------------------------------- owner access */
+
+export const provisionCommercialCustomerFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => provisionCommercialCustomerSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./customers.server");
+    return mod.provisionCustomer(context.supabase, context.userId, data);
+  });
+
+export const listCommercialOwnerAccessFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => listCommercialOwnerAccessSchema.parse(d ?? {}))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./owner-access.server");
+    return mod.listOwnerAccess(context.supabase, context.userId, data);
+  });
+
+export const inviteCommercialOwnerFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => inviteCommercialOwnerSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./owner-access.server");
+    return mod.inviteCommercialOwner(context.supabase, context.userId, data);
+  });
+
+export const revokeCommercialOwnerInvitationFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => revokeCommercialOwnerInvitationSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./owner-access.server");
+    return mod.revokeCommercialOwnerInvitation(context.supabase, context.userId, data);
   });
 
 /* --------------------------------------------------- subscription lifecycle */

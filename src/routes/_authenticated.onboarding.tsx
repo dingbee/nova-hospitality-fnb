@@ -14,6 +14,7 @@
  * there, not here.
  */
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { z } from "zod";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -24,22 +25,17 @@ import { PRODUCT } from "@/config/product";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import {
-  bootstrapTenantFn,
+  activateInvitedOwnerFn,
   createFirstOutletFn,
   getOnboardingStatusFn,
   recordOnboardingEventFn,
   setOperatingModelFn,
 } from "@/modules/restaurant/onboarding/onboarding.functions";
 import {
-  BUSINESS_TYPES,
-  BUSINESS_TYPE_LABELS,
-  COUNTRIES,
   OPERATING_MODES,
   OPERATING_MODE_LABELS,
   SERVICE_FEATURES,
   SERVICE_FEATURE_LABELS,
-  type BusinessType,
-  type Country,
   type OnboardingEventType,
   type OperatingMode,
   type ServiceFeature,
@@ -64,6 +60,9 @@ function useEmitOnboarding() {
 }
 
 export const Route = createFileRoute("/_authenticated/onboarding")({
+  validateSearch: z.object({
+    activation: z.string().uuid().optional(),
+  }),
   head: () => ({
     meta: [
       { title: `Set up your restaurant — ${PRODUCT.shortName}` },
@@ -119,6 +118,24 @@ function OnboardingPage() {
   const ws = useRestaurantWorkspace();
   const tenant = ws.data?.tenant ?? null;
   const emit = useEmitOnboarding();
+  const { activation } = Route.useSearch();
+  const activateOwnerFn = useServerFn(activateInvitedOwnerFn);
+  const [activationState, setActivationState] = useState<"idle" | "activating" | "failed">("idle");
+  const [activationError, setActivationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activation || ws.isLoading || tenant || activationState !== "idle") return;
+    setActivationState("activating");
+    activateOwnerFn({ data: { invitationId: activation } })
+      .then(() => {
+        setActivationState("idle");
+        void qc.invalidateQueries({ queryKey: ["restaurant.workspace"] });
+      })
+      .catch((error: unknown) => {
+        setActivationState("failed");
+        setActivationError(error instanceof Error ? error.message : "This invitation could not be activated.");
+      });
+  }, [activation, activationState, activateOwnerFn, qc, tenant, ws.isLoading]);
 
   const statusFn = useServerFn(getOnboardingStatusFn);
   const status = useQuery({
@@ -169,16 +186,44 @@ function OnboardingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenant, status.data]);
 
-  // §7 — new account, no tenant yet: welcome + business creation.
+  // A customer owner reaches this route through a Commercial Center invitation.
+  // There is deliberately no longer a public tenant-creation path.
+  if (activation && (ws.isLoading || activationState === "activating")) {
+    return (
+      <Centered>
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        <p className="mt-3 text-sm text-muted-foreground">Activating your LexiBite workspace…</p>
+      </Centered>
+    );
+  }
+
+  if (activation && activationState === "failed") {
+    return (
+      <Centered>
+        <StepShell
+          title="Invitation could not be activated"
+          description={activationError ?? "This invitation is no longer valid."}
+        >
+          <Button onClick={() => navigate({ to: "/auth" })} className="min-h-11 w-full">
+            Return to sign in
+          </Button>
+        </StepShell>
+      </Centered>
+    );
+  }
+
   if (!ws.isLoading && !tenant) {
     return (
-      <WelcomeAndBusinessStep
-        onCreated={(tenantId) => {
-          void qc.invalidateQueries({ queryKey: ["restaurant.workspace"] });
-          hadTenantOnMountRef.current = false; // this tenant was just created — never a "resume".
-          void tenantId;
-        }}
-      />
+      <Centered>
+        <StepShell
+          title="LexiBite access is invitation-only"
+          description="This workspace must be provisioned by LexiBite Commercial Center. If your organization has been onboarded, use the invitation sent to your authorized email address."
+        >
+          <Button onClick={() => navigate({ to: "/auth" })} className="min-h-11 w-full">
+            Return to sign in
+          </Button>
+        </StepShell>
+      </Centered>
     );
   }
 
@@ -235,171 +280,6 @@ function Centered({ children }: { children: React.ReactNode }) {
     <main className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-10 text-foreground">
       {children}
     </main>
-  );
-}
-
-/* ---------------- Step 1: Welcome + business creation ---------------- */
-
-function WelcomeAndBusinessStep({ onCreated }: { onCreated: (tenantId: string) => void }) {
-  const navigate = useNavigate();
-  const bootstrapFn = useServerFn(bootstrapTenantFn);
-  const emit = useEmitOnboarding();
-  const [name, setName] = useState("");
-  const [businessType, setBusinessType] = useState<BusinessType>("restaurant");
-  const [country, setCountry] = useState<Country>("Tanzania");
-
-  // §20 — this screen IS "entered" and "welcome_viewed"; both are captured
-  // once, at the true moment they happened, and flushed after the tenant
-  // that will scope them exists (see the module doc comment on
-  // `recordOnboardingEventSchema`). "business.started" captures real
-  // intent — the first field interaction — not just the page rendering.
-  const [enteredAt] = useState(() => new Date().toISOString());
-  const startedAtRef = useRef<string | null>(null);
-  const markStarted = () => {
-    if (!startedAtRef.current) startedAtRef.current = new Date().toISOString();
-  };
-
-  const create = useAdminMutation({
-    mutationFn: () =>
-      bootstrapFn({
-        data: {
-          name: name.trim(),
-          businessType,
-          country,
-          currency: "TZS",
-          timezone: "Africa/Dar_es_Salaam",
-        },
-      }),
-    successMessage: "Your restaurant is created.",
-    onSuccess: (data) => {
-      const tenantId = data.tenantId;
-      emit(tenantId, "restaurant.onboarding.entered", {}, enteredAt);
-      emit(tenantId, "restaurant.onboarding.welcome_viewed", {}, enteredAt);
-      emit(
-        tenantId,
-        "restaurant.onboarding.business.started",
-        { businessType },
-        startedAtRef.current ?? enteredAt,
-      );
-      emit(tenantId, "restaurant.onboarding.business.completed", { businessType, country });
-      onCreated(tenantId);
-      navigate({ to: "/onboarding" });
-    },
-  });
-  // §34 — mutation.isPending only updates on the next render, so two clicks
-  // landing in the same tick (a fast double-tap) can both pass the disabled
-  // check. This ref is checked-and-set synchronously, closing that race.
-  const submitting = useRef(false);
-  const submitOnce = () => {
-    if (submitting.current) return;
-    submitting.current = true;
-    create.mutate(undefined, {
-      onSettled: () => {
-        submitting.current = false;
-      },
-    });
-  };
-
-  return (
-    <Centered>
-      <StepShell
-        title={`Welcome to ${PRODUCT.shortName}`}
-        description="Let's get your restaurant ready to operate. We'll walk through your business, your first outlet and how you serve guests — then hand you into full setup."
-      >
-        <ul className="mb-6 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-          {[
-            "Menus & pricing",
-            "Kitchen & bar",
-            "Orders & payments",
-            "Guest QR ordering",
-            "Inventory",
-            "Business intelligence",
-          ].map((f) => (
-            <li key={f} className="flex items-center gap-1.5">
-              <Check className="size-3.5 text-primary" /> {f}
-            </li>
-          ))}
-        </ul>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (create.isPending || name.trim().length < 2) return;
-            submitOnce();
-          }}
-          className="space-y-4"
-        >
-          <label className="block text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            What's your restaurant called?
-            <input
-              autoFocus
-              required
-              value={name}
-              onChange={(e) => {
-                markStarted();
-                setName(e.target.value);
-              }}
-              placeholder="e.g. Kilimanjaro Grill"
-              className="mt-2 w-full rounded-md border bg-background px-4 py-3 text-sm outline-none focus:border-primary"
-            />
-          </label>
-          <div role="radiogroup" aria-label="What kind of business is it?">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              What kind of business is it?
-            </p>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              {BUSINESS_TYPES.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  role="radio"
-                  aria-checked={businessType === t}
-                  onClick={() => {
-                    markStarted();
-                    setBusinessType(t);
-                  }}
-                  className={`min-h-11 rounded-md border px-3 py-2 text-left text-xs transition-colors ${
-                    businessType === t
-                      ? "border-primary bg-primary/10 font-medium text-primary"
-                      : "border-border text-muted-foreground hover:border-primary/40"
-                  }`}
-                >
-                  {BUSINESS_TYPE_LABELS[t]}
-                </button>
-              ))}
-            </div>
-          </div>
-          <label className="block text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Which country do you operate in?
-            <select
-              value={country}
-              onChange={(e) => {
-                markStarted();
-                setCountry(e.target.value as Country);
-              }}
-              className="mt-2 min-h-11 w-full rounded-md border bg-background px-4 py-3 text-sm outline-none focus:border-primary"
-            >
-              {COUNTRIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-            <span className="mt-1 block text-[11px] font-normal normal-case text-muted-foreground">
-              This decides which local requirements — like Tanzania's TRA receipt rules — apply to
-              your setup.
-            </span>
-          </label>
-          <Button
-            type="submit"
-            disabled={create.isPending || name.trim().length < 2}
-            className="min-h-11 w-full"
-          >
-            {create.isPending && <Loader2 className="mr-2 size-4 animate-spin" />} Create your
-            restaurant
-          </Button>
-        </form>
-      </StepShell>
-    </Centered>
   );
 }
 

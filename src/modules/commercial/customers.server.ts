@@ -16,7 +16,12 @@
  */
 import { assertCommercialAdmin } from "./access.server";
 import { writeCommercialAudit } from "./audit.server";
-import type { AddCommercialNoteInput, ListCustomersInput } from "./contracts";
+import type {
+  AddCommercialNoteInput,
+  ListCustomersInput,
+  ProvisionCommercialCustomerInput,
+} from "./contracts";
+import { inviteCommercialOwner } from "./owner-access.server";
 
 type Sb = any;
 
@@ -199,6 +204,80 @@ export async function getCustomerCommercialProfile(sb: Sb, userId: string, tenan
  * than a new notes table — a note is simply an audited action with no
  * state mutation attached.
  */
+function slugifyCustomer(input: string): string {
+  const base = input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 70);
+  return base.length >= 2 ? base : "customer";
+}
+
+export async function provisionCustomer(
+  sb: Sb,
+  userId: string,
+  input: ProvisionCommercialCustomerInput,
+) {
+  await assertCommercialAdmin(sb, userId);
+
+  const baseSlug = slugifyCustomer(input.name);
+  let slug = baseSlug;
+  let result: any = null;
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { data, error } = await sb.rpc("commercial_provision_customer", {
+      _name: input.name.trim(),
+      _slug: slug,
+      _plan_id: input.planId,
+      _programme_id: input.programmeId ?? null,
+      _billing_interval: input.billingInterval,
+      _trial_days: input.trialDays,
+    });
+    if (!error) {
+      result = Array.isArray(data) ? data[0] : data;
+      break;
+    }
+    lastError = error;
+    if (!/slug.*taken/i.test(error.message) || attempt === 4) break;
+    slug = `${baseSlug}-${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  if (!result?.tenant_id) {
+    throw new Error(lastError?.message ?? "Customer could not be provisioned.");
+  }
+
+  await writeCommercialAudit(sb, {
+    actorId: userId,
+    action: "customer.provision",
+    entityType: "restaurant_tenants",
+    entityId: result.tenant_id,
+    tenantId: result.tenant_id,
+    after: {
+      name: input.name.trim(),
+      planId: input.planId,
+      programmeId: input.programmeId ?? null,
+      billingInterval: input.billingInterval,
+      trialDays: input.trialDays,
+    },
+    reason: "Customer provisioned from Commercial Centre.",
+  });
+
+  const invitation = await inviteCommercialOwner(sb, userId, {
+    tenantId: result.tenant_id,
+    email: input.ownerEmail.trim().toLowerCase(),
+    fullName: input.ownerFullName?.trim() || undefined,
+  });
+
+  return {
+    tenantId: result.tenant_id as string,
+    slug: result.slug as string,
+    subscriptionId: result.subscription_id as string,
+    invitation,
+  };
+}
+
 export async function addCommercialNote(sb: Sb, userId: string, input: AddCommercialNoteInput) {
   await assertCommercialAdmin(sb, userId);
   await writeCommercialAudit(sb, {

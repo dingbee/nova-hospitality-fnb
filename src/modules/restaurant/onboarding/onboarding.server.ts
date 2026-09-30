@@ -2,31 +2,17 @@
 /**
  * P12 First-Run Experience — server module.
  *
- * Two things happen here that don't happen anywhere else in the app:
- *
- * 1. `bootstrapTenant` — the one genuinely new authoritative write. A
- *    brand-new authenticated user holds no `restaurant_members` row
- *    anywhere, so the ordinary RLS-scoped path (`restaurant_can_write`)
- *    can never let them create their first tenant — a real chicken-and-egg
- *    problem. `restaurant_bootstrap_tenant` (migration 0049) is the single,
- *    narrow SECURITY DEFINER function that solves it: it derives the owner
- *    strictly from `auth.uid()`, never a parameter, so a caller can only
- *    ever make themselves the owner of a brand-new tenant.
- *
- * 2. Everything after that (property, outlet, operating model) goes
- *    through the *existing* authoritative functions
- *    (upsertProperty/upsertLocation, or the same settings-merge pattern
- *    upsertBusinessProfile already uses) — because the caller now genuinely
- *    holds the 'owner' role those functions check. No parallel
- *    configuration engine.
+ * Customer owners arrive through a Commercial Centre invitation. Activation
+ * establishes the tenant membership first; everything after that (property,
+ * outlet, operating model) uses the existing authoritative functions. There is
+ * no self-service tenant-creation path in the web application.
  */
-import type { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
+import type { z } from "zod";
 import { upsertProperty } from "../masterdata/masterdata.server";
 import { upsertLocation } from "../inventory/locations.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import type {
-  bootstrapTenantSchema,
   createFirstOutletSchema,
   recordOnboardingEventSchema,
   setOperatingModelSchema,
@@ -42,41 +28,6 @@ function slugify(input: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
   return base.length >= 2 ? base : "restaurant";
-}
-
-export async function bootstrapTenant(
-  sb: Sb,
-  _userId: string,
-  input: z.infer<typeof bootstrapTenantSchema>,
-): Promise<{ tenantId: string; memberId: string; slug: string }> {
-  const baseSlug = slugify(input.name);
-  let slug = baseSlug;
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const { data, error } = await sb.rpc("restaurant_bootstrap_tenant", {
-      _name: input.name,
-      _slug: slug,
-      _timezone: input.timezone,
-      _currency: input.currency,
-      _country: input.country ?? null,
-      _business_type: input.businessType,
-    });
-    if (!error) {
-      const row = (Array.isArray(data) ? data[0] : data) as
-        { tenant_id: string; member_id: string } | undefined;
-      if (!row?.tenant_id) {
-        throw new Error("Couldn't create your restaurant. Please try again.");
-      }
-      return { tenantId: row.tenant_id, memberId: row.member_id, slug };
-    }
-    if (/already taken/i.test(error.message) && attempt < 3) {
-      slug = `${baseSlug}-${Math.random().toString(36).slice(2, 6)}`;
-      continue;
-    }
-    throw new Error(error.message);
-  }
-  throw new Error(
-    "Couldn't find an available name for your restaurant. Please try a different name.",
-  );
 }
 
 /**
