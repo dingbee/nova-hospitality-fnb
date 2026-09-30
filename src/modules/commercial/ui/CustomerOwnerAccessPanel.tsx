@@ -126,9 +126,8 @@ export function CustomerOwnerAccessPanel({ tenantId }: { tenantId: string }) {
             {inviteMutation.isPending ? "Issuing access…" : "Issue owner access"}
           </Button>
           <p className="text-xs text-muted-foreground">
-            New owners receive an email invitation and activate the tenant through that invitation.
-            Existing authenticated accounts are granted the tenant owner role directly after this
-            commercial authorization.
+            New owners receive a Nolmark-issued email invitation. The invitation is bound to this
+            customer workspace and becomes the tenant owner membership only after activation.
           </p>
         </div>
       )}
