@@ -26,7 +26,6 @@ import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import {
   activateInvitedOwnerFn,
-  bootstrapTenantFn,
   createFirstOutletFn,
   getOnboardingStatusFn,
   recordOnboardingEventFn,
