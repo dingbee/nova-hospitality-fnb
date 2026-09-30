@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/select";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { COMMERCIAL_CUSTOMER_STATUSES } from "../contracts";
+import { CustomerOwnerAccessPanel } from "./CustomerOwnerAccessPanel";
 import {
   addCommercialNoteFn,
   cancelCommercialSubscriptionFn,
@@ -362,6 +363,8 @@ function CustomerProfilePanel({ tenantId, onClose }: { tenantId: string; onClose
         </Button>
       }
     >
+      <CustomerOwnerAccessPanel tenantId={tenantId} />
+
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <dl className="space-y-2 text-sm">
           <div className="flex justify-between">
