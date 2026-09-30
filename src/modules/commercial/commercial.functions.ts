@@ -359,6 +359,32 @@ export const cancelCommercialAgreementFn = createServerFn({ method: "POST" })
     return mod.cancelAgreement(context.supabase, context.userId, data);
   });
 
+/* --------------------------------------------------------- owner access */
+
+export const listCommercialOwnerAccessFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => listCommercialOwnerAccessSchema.parse(d ?? {}))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./owner-access.server");
+    return mod.listOwnerAccess(context.supabase, context.userId, data);
+  });
+
+export const inviteCommercialOwnerFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => inviteCommercialOwnerSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./owner-access.server");
+    return mod.inviteCommercialOwner(context.supabase, context.userId, data);
+  });
+
+export const revokeCommercialOwnerInvitationFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => revokeCommercialOwnerInvitationSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./owner-access.server");
+    return mod.revokeCommercialOwnerInvitation(context.supabase, context.userId, data);
+  });
+
 /* --------------------------------------------------- subscription lifecycle */
 
 export const activateCommercialSubscriptionFn = createServerFn({ method: "POST" })
