@@ -34,7 +34,7 @@ export async function listOwnerAccess(
   input: z.infer<typeof listCommercialOwnerAccessSchema>,
 ) {
   await assertCommercialAdmin(sb, userId);
-  const admin = (await import("@/integrations/supabase/client.server")).supabaseAdmin;
+  const admin: any = (await import("@/integrations/supabase/client.server")).supabaseAdmin;
 
   let q = admin
     .from("commercial_owner_invitations")
