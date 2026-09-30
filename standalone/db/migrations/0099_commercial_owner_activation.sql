@@ -93,32 +93,34 @@ begin
       using errcode = '42501';
   end if;
 
-  insert into public.restaurant_members (tenant_id, user_id, role, property_id)
-  values (v_tenant, v_user, 'owner', null)
-  on conflict (tenant_id, user_id, property_id) do update
-    set role = 'owner';
-
   select rm.id
     into v_member
   from public.restaurant_members rm
   where rm.tenant_id = v_tenant
     and rm.user_id = v_user
     and rm.property_id is null
-    and rm.role = 'owner'
   order by rm.created_at asc
   limit 1;
 
-  insert into public.app_users (user_id, tenant_id, email, full_name, status)
+  if v_member is null then
+    insert into public.restaurant_members (tenant_id, user_id, role, property_id)
+    values (v_tenant, v_user, 'owner', null)
+    returning id into v_member;
+  else
+    update public.restaurant_members
+    set role = 'owner'
+    where id = v_member;
+  end if;
+
+  insert into public.app_users (user_id, email, full_name, status)
   values (
     v_user,
-    v_tenant,
     v_email,
     v_invitation.full_name,
     'active'
   )
   on conflict (user_id) do update
-    set tenant_id = excluded.tenant_id,
-        email = excluded.email,
+    set email = excluded.email,
         full_name = coalesce(excluded.full_name, public.app_users.full_name),
         status = 'active',
         updated_at = now();
