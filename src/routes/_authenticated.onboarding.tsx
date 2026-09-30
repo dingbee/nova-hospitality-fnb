@@ -32,15 +32,10 @@ import {
   setOperatingModelFn,
 } from "@/modules/restaurant/onboarding/onboarding.functions";
 import {
-  BUSINESS_TYPES,
-  BUSINESS_TYPE_LABELS,
-  COUNTRIES,
   OPERATING_MODES,
   OPERATING_MODE_LABELS,
   SERVICE_FEATURES,
   SERVICE_FEATURE_LABELS,
-  type BusinessType,
-  type Country,
   type OnboardingEventType,
   type OperatingMode,
   type ServiceFeature,
