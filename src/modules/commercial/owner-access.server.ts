@@ -1,0 +1,224 @@
+/* Commercial customer owner access — platform-controlled onboarding. */
+import { assertCommercialAdmin } from "./access.server";
+import { writeCommercialAudit } from "./audit.server";
+import type { z } from "zod";
+import type {
+  inviteCommercialOwnerSchema,
+  revokeCommercialOwnerInvitationSchema,
+  listCommercialOwnerAccessSchema,
+} from "./contracts";
+
+type Sb = any;
+
+function publicOrigin(): string {
+  const configured = process.env.PUBLIC_APP_URL;
+  return configured ? configured.replace(/\/$/, "") : "";
+}
+
+async function authUserByEmail(adminClient: any, email: string) {
+  for (let page = 1; page <= 20; page += 1) {
+    const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) throw new Error(error.message);
+    const user = (data?.users ?? []).find(
+      (u: any) => String(u.email ?? "").toLowerCase() === email.toLowerCase(),
+    );
+    if (user) return user;
+    if ((data?.users ?? []).length < 1000) break;
+  }
+  return null;
+}
+
+export async function listOwnerAccess(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listCommercialOwnerAccessSchema>,
+) {
+  await assertCommercialAdmin(sb, userId);
+  const admin = (await import("@/integrations/supabase/client.server")).supabaseAdmin;
+
+  let q = admin
+    .from("commercial_owner_invitations")
+    .select("id, tenant_id, email, full_name, status, auth_user_id, invited_at, last_sent_at, accepted_at")
+    .order("created_at", { ascending: false });
+
+  if (input.tenantId) q = q.eq("tenant_id", input.tenantId);
+
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+
+  const tenantIds = [...new Set((data ?? []).map((r: any) => r.tenant_id))];
+  if (tenantIds.length === 0) return [];
+
+  const { data: tenants, error: tenantError } = await admin
+    .from("restaurant_tenants")
+    .select("id, name, slug")
+    .in("id", tenantIds);
+  if (tenantError) throw new Error(tenantError.message);
+
+  const names = new Map((tenants ?? []).map((t: any) => [t.id, t]));
+
+  return (data ?? []).map((row: any) => ({
+    ...row,
+    tenantName: names.get(row.tenant_id)?.name ?? "Unknown customer",
+    tenantSlug: names.get(row.tenant_id)?.slug ?? null,
+  }));
+}
+
+export async function inviteCommercialOwner(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof inviteCommercialOwnerSchema>,
+) {
+  await assertCommercialAdmin(sb, userId);
+  const admin = (await import("@/integrations/supabase/client.server")).supabaseAdmin;
+  const email = input.email.trim().toLowerCase();
+
+  const [{ data: billing, error: billingError }, { data: subscription, error: subError }] =
+    await Promise.all([
+      admin
+        .from("commercial_billing_accounts")
+        .select("commercial_status")
+        .eq("tenant_id", input.tenantId)
+        .maybeSingle(),
+      admin
+        .from("restaurant_subscriptions")
+        .select("status")
+        .eq("tenant_id", input.tenantId)
+        .maybeSingle(),
+    ]);
+
+  if (billingError) throw new Error(billingError.message);
+  if (subError) throw new Error(subError.message);
+  if (billing?.commercial_status !== "active" || !["active", "trial"].includes(subscription?.status)) {
+    throw new Error("Customer must have an active commercial account and active/trial subscription before owner access can be issued.");
+  }
+
+  const { data: pending } = await admin
+    .from("commercial_owner_invitations")
+    .select("id")
+    .eq("tenant_id", input.tenantId)
+    .eq("status", "pending")
+    .maybeSingle();
+  if (pending) throw new Error("This customer already has a pending owner invitation.");
+
+  const existing = await authUserByEmail(admin, email);
+
+  if (existing?.confirmed_at) {
+    const { data: member, error: memberError } = await admin
+      .from("restaurant_members")
+      .select("id")
+      .eq("tenant_id", input.tenantId)
+      .eq("user_id", existing.id)
+      .is("property_id", null)
+      .maybeSingle();
+    if (memberError) throw new Error(memberError.message);
+
+    if (!member) {
+      const { error } = await admin.from("restaurant_members").insert({
+        tenant_id: input.tenantId,
+        user_id: existing.id,
+        role: "owner",
+        property_id: null,
+      });
+      if (error) throw new Error(error.message);
+    }
+
+    const { error: profileError } = await admin.from("app_users").upsert(
+      {
+        user_id: existing.id,
+        email,
+        full_name: input.fullName ?? existing.user_metadata?.full_name ?? null,
+        status: "active",
+      },
+      { onConflict: "user_id" },
+    );
+    if (profileError) throw new Error(profileError.message);
+
+    await writeCommercialAudit(sb, {
+      actorId: userId,
+      action: "owner.access.granted",
+      entityType: "restaurant_tenants",
+      entityId: input.tenantId,
+      tenantId: input.tenantId,
+      reason: "Commercial owner access granted to an existing authenticated account.",
+    });
+
+    return { mode: "granted_existing", userId: existing.id, email };
+  }
+
+  const { data: invitation, error: invitationError } = await admin
+    .from("commercial_owner_invitations")
+    .insert({
+      tenant_id: input.tenantId,
+      email,
+      full_name: input.fullName ?? null,
+      invited_by: userId,
+    })
+    .select("id")
+    .single();
+
+  if (invitationError) throw new Error(invitationError.message);
+
+  const origin = publicOrigin();
+  const redirectTo = origin
+    ? `${origin}/onboarding?activation=${invitation.id}`
+    : undefined;
+
+  const { data: invited, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, {
+    data: { full_name: input.fullName ?? null },
+    ...(redirectTo ? { redirectTo } : {}),
+  });
+
+  if (inviteError) {
+    await admin.from("commercial_owner_invitations").delete().eq("id", invitation.id);
+    throw new Error(inviteError.message);
+  }
+
+  const { error: linkError } = await admin
+    .from("commercial_owner_invitations")
+    .update({ auth_user_id: invited.user.id, last_sent_at: new Date().toISOString() })
+    .eq("id", invitation.id);
+  if (linkError) throw new Error(linkError.message);
+
+  await writeCommercialAudit(sb, {
+    actorId: userId,
+    action: "owner.invitation.sent",
+    entityType: "commercial_owner_invitations",
+    entityId: invitation.id,
+    tenantId: input.tenantId,
+    reason: `Owner invitation sent to ${email}.`,
+  });
+
+  return { mode: "invited", invitationId: invitation.id, userId: invited.user.id, email };
+}
+
+export async function revokeCommercialOwnerInvitation(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof revokeCommercialOwnerInvitationSchema>,
+) {
+  await assertCommercialAdmin(sb, userId);
+  const admin = (await import("@/integrations/supabase/client.server")).supabaseAdmin;
+
+  const { data, error } = await admin
+    .from("commercial_owner_invitations")
+    .update({ status: "revoked", updated_at: new Date().toISOString() })
+    .eq("id", input.invitationId)
+    .eq("status", "pending")
+    .select("id, tenant_id, email, auth_user_id")
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Invitation is no longer pending.");
+
+  await writeCommercialAudit(sb, {
+    actorId: userId,
+    action: "owner.invitation.revoked",
+    entityType: "commercial_owner_invitations",
+    entityId: data.id,
+    tenantId: data.tenant_id,
+    reason: `Owner invitation revoked for ${data.email}.`,
+  });
+
+  return { ok: true };
+}
