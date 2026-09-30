@@ -8,17 +8,27 @@
  * no self-service tenant-creation path in the web application.
  */
 import { assertCapability, assertTenantRead } from "../core/access.server";
+import type { z } from "zod";
 import { upsertProperty } from "../masterdata/masterdata.server";
 import { upsertLocation } from "../inventory/locations.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import type {
-  bootstrapTenantSchema,
   createFirstOutletSchema,
   recordOnboardingEventSchema,
   setOperatingModelSchema,
 } from "./contracts";
 
 type Sb = any;
+
+function slugify(input: string): string {
+  const base = input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  return base.length >= 2 ? base : "restaurant";
+}
 
 /**
  * §10-12 — single-outlet-optimized property + outlet creation in one call.
