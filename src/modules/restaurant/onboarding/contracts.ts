@@ -9,7 +9,6 @@
  * `settings.business` and `settings.serviceRequests` already live.
  */
 import { z } from "zod";
-import { DEFAULT_CURRENCY, DEFAULT_TIMEZONE } from "../core/product";
 
 const uuid = z.string().uuid();
 
