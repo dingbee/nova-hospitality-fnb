@@ -70,7 +70,7 @@ export async function inviteCommercialOwner(
   input: z.infer<typeof inviteCommercialOwnerSchema>,
 ) {
   await assertCommercialAdmin(sb, userId);
-  const admin = (await import("@/integrations/supabase/client.server")).supabaseAdmin;
+  const admin: any = (await import("@/integrations/supabase/client.server")).supabaseAdmin;
   const email = input.email.trim().toLowerCase();
 
   const [{ data: billing, error: billingError }, { data: subscription, error: subError }] =
@@ -198,7 +198,7 @@ export async function revokeCommercialOwnerInvitation(
   input: z.infer<typeof revokeCommercialOwnerInvitationSchema>,
 ) {
   await assertCommercialAdmin(sb, userId);
-  const admin = (await import("@/integrations/supabase/client.server")).supabaseAdmin;
+  const admin: any = (await import("@/integrations/supabase/client.server")).supabaseAdmin;
 
   const { data, error } = await admin
     .from("commercial_owner_invitations")
