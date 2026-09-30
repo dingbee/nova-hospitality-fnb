@@ -166,17 +166,11 @@ function AuthPage() {
                 {!loading ? <ArrowRight className="size-4" /> : null}
               </button>
 
-              <div className="mt-6 border-t border-[#edf0ed] pt-5">
-                <p className="text-xs text-[#78817b]">
-                  New restaurant owner?
-                </p>
-                <Link
-                  to="/auth/sign-up"
-                  className="mt-1 inline-block text-sm font-semibold text-[#2f7139] transition hover:text-[#275f30] hover:underline"
-                >
-                  Create your restaurant account
-                </Link>
+              <div className="mt-6 border-t border-[#edf0ed] pt-5 text-center text-xs leading-5 text-[#78817b]">
+                LexiBite access is issued by invitation. Contact your LexiBite administrator if you
+                have not received your activation email.
               </div>
+
             </form>
 
             <p className="mt-7 text-center text-[11px] text-[#8a928c]">
