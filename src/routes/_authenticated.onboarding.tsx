@@ -14,6 +14,7 @@
  * there, not here.
  */
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { z } from "zod";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -24,6 +25,7 @@ import { PRODUCT } from "@/config/product";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import {
+  activateInvitedOwnerFn,
   bootstrapTenantFn,
   createFirstOutletFn,
   getOnboardingStatusFn,
@@ -64,6 +66,9 @@ function useEmitOnboarding() {
 }
 
 export const Route = createFileRoute("/_authenticated/onboarding")({
+  validateSearch: z.object({
+    activation: z.string().uuid().optional(),
+  }),
   head: () => ({
     meta: [
       { title: `Set up your restaurant — ${PRODUCT.shortName}` },
@@ -119,6 +124,24 @@ function OnboardingPage() {
   const ws = useRestaurantWorkspace();
   const tenant = ws.data?.tenant ?? null;
   const emit = useEmitOnboarding();
+  const { activation } = Route.useSearch();
+  const activateOwnerFn = useServerFn(activateInvitedOwnerFn);
+  const [activationState, setActivationState] = useState<"idle" | "activating" | "failed">("idle");
+  const [activationError, setActivationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activation || ws.isLoading || tenant || activationState !== "idle") return;
+    setActivationState("activating");
+    activateOwnerFn({ data: { invitationId: activation } })
+      .then(() => {
+        setActivationState("idle");
+        void qc.invalidateQueries({ queryKey: ["restaurant.workspace"] });
+      })
+      .catch((error: unknown) => {
+        setActivationState("failed");
+        setActivationError(error instanceof Error ? error.message : "This invitation could not be activated.");
+      });
+  }, [activation, activationState, activateOwnerFn, qc, tenant, ws.isLoading]);
 
   const statusFn = useServerFn(getOnboardingStatusFn);
   const status = useQuery({
@@ -169,7 +192,33 @@ function OnboardingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenant, status.data]);
 
-  // §7 — new account, no tenant yet: welcome + business creation.
+  // A customer owner reaches this route through a Commercial Center invitation.
+  // There is deliberately no longer a public tenant-creation path.
+  if (activation && (ws.isLoading || activationState === "activating")) {
+    return (
+      <Centered>
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        <p className="mt-3 text-sm text-muted-foreground">Activating your LexiBite workspace…</p>
+      </Centered>
+    );
+  }
+
+  if (activation && activationState === "failed") {
+    return (
+      <Centered>
+        <StepShell
+          title="Invitation could not be activated"
+          description={activationError ?? "This invitation is no longer valid."}
+        >
+          <Button onClick={() => navigate({ to: "/auth" })} className="min-h-11 w-full">
+            Return to sign in
+          </Button>
+        </StepShell>
+      </Centered>
+    );
+  }
+
+  // §7 — existing tenant owner: continue through the normal first-run setup.
   if (!ws.isLoading && !tenant) {
     return (
       <WelcomeAndBusinessStep
