@@ -10,8 +10,11 @@ import type {
 type Sb = any;
 
 function publicOrigin(): string {
-  const configured = process.env.PUBLIC_APP_URL;
-  return configured ? configured.replace(/\/$/, "") : "";
+  const configured =
+    process.env.LEXIBITE_APP_ORIGIN ??
+    process.env.PUBLIC_APP_URL ??
+    "https://lexibite.nolmark.co";
+  return configured.replace(/\/$/, "");
 }
 
 async function authUserByEmail(adminClient: any, email: string) {
