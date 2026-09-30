@@ -2,7 +2,6 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
-  bootstrapTenantSchema,
   createFirstOutletSchema,
   getOnboardingStatusSchema,
   recordOnboardingEventSchema,
@@ -15,14 +14,6 @@ export const activateInvitedOwnerFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./onboarding.server");
     return mod.activateInvitedOwner(context.supabase, context.userId, data.invitationId);
-  });
-
-export const bootstrapTenantFn = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => bootstrapTenantSchema.parse(d))
-  .handler(async ({ data, context }) => {
-    const mod = await import("./onboarding.server");
-    return mod.bootstrapTenant(context.supabase, context.userId, data);
   });
 
 export const createFirstOutletFn = createServerFn({ method: "POST" })
