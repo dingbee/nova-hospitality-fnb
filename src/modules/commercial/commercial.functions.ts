@@ -21,6 +21,7 @@ import {
   listCommercialSignalsSchema,
   listCustomersSchema,
   listCommercialOwnerAccessSchema,
+  provisionCommercialCustomerSchema,
   inviteCommercialOwnerSchema,
   revokeCommercialOwnerInvitationSchema,
   listInvoicesSchema,
@@ -360,6 +361,14 @@ export const cancelCommercialAgreementFn = createServerFn({ method: "POST" })
   });
 
 /* --------------------------------------------------------- owner access */
+
+export const provisionCommercialCustomerFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => provisionCommercialCustomerSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./customers.server");
+    return mod.provisionCustomer(context.supabase, context.userId, data);
+  });
 
 export const listCommercialOwnerAccessFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
