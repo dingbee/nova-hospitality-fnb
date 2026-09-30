@@ -103,49 +103,15 @@ export async function inviteCommercialOwner(
     .maybeSingle();
   if (pending) throw new Error("This customer already has a pending owner invitation.");
 
+  // LexiBite owner onboarding is invitation-only. Supabase's Admin Invite API
+  // rejects confirmed existing accounts; do not silently convert that into a
+  // direct tenant-role grant because that bypasses the intended invitation
+  // boundary.
   const existing = await authUserByEmail(admin, email);
-
   if (existing?.confirmed_at) {
-    const { data: member, error: memberError } = await admin
-      .from("restaurant_members")
-      .select("id")
-      .eq("tenant_id", input.tenantId)
-      .eq("user_id", existing.id)
-      .is("property_id", null)
-      .maybeSingle();
-    if (memberError) throw new Error(memberError.message);
-
-    if (!member) {
-      const { error } = await admin.from("restaurant_members").insert({
-        tenant_id: input.tenantId,
-        user_id: existing.id,
-        role: "owner",
-        property_id: null,
-      });
-      if (error) throw new Error(error.message);
-    }
-
-    const { error: profileError } = await admin.from("app_users").upsert(
-      {
-        user_id: existing.id,
-        email,
-        full_name: input.fullName ?? existing.user_metadata?.full_name ?? null,
-        status: "active",
-      },
-      { onConflict: "user_id" },
+    throw new Error(
+      "This email already has a confirmed LexiBite account. Use a different owner email for a new customer invitation.",
     );
-    if (profileError) throw new Error(profileError.message);
-
-    await writeCommercialAudit(sb, {
-      actorId: userId,
-      action: "owner.access.granted",
-      entityType: "restaurant_tenants",
-      entityId: input.tenantId,
-      tenantId: input.tenantId,
-      reason: "Commercial owner access granted to an existing authenticated account.",
-    });
-
-    return { mode: "granted_existing", userId: existing.id, email };
   }
 
   const { data: invitation, error: invitationError } = await admin
