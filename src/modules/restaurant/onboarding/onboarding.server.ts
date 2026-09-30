@@ -44,6 +44,23 @@ function slugify(input: string): string {
   return base.length >= 2 ? base : "restaurant";
 }
 
+export async function activateInvitedOwner(
+  sb: Sb,
+  _userId: string,
+  invitationId: string,
+): Promise<{ tenantId: string; memberId: string }> {
+  const { data, error } = await sb.rpc("restaurant_activate_invited_owner", {
+    _invitation_id: invitationId,
+  });
+  if (error) throw new Error(error.message);
+  const row = (Array.isArray(data) ? data[0] : data) as
+    { tenant_id: string; member_id: string } | undefined;
+  if (!row?.tenant_id || !row?.member_id) {
+    throw new Error("This LexiBite invitation could not be activated.");
+  }
+  return { tenantId: row.tenant_id, memberId: row.member_id };
+}
+
 export async function bootstrapTenant(
   sb: Sb,
   _userId: string,
