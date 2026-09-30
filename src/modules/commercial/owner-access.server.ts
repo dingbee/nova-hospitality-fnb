@@ -1,11 +1,10 @@
 /* Commercial customer owner access — platform-controlled onboarding. */
 import { assertCommercialAdmin } from "./access.server";
 import { writeCommercialAudit } from "./audit.server";
-import type { z } from "zod";
 import type {
-  inviteCommercialOwnerSchema,
-  revokeCommercialOwnerInvitationSchema,
-  listCommercialOwnerAccessSchema,
+  InviteCommercialOwnerInput,
+  RevokeCommercialOwnerInvitationInput,
+  ListCommercialOwnerAccessInput,
 } from "./contracts";
 
 type Sb = any;
@@ -31,7 +30,7 @@ async function authUserByEmail(adminClient: any, email: string) {
 export async function listOwnerAccess(
   sb: Sb,
   userId: string,
-  input: z.infer<typeof listCommercialOwnerAccessSchema>,
+  input: ListCommercialOwnerAccessInput,
 ) {
   await assertCommercialAdmin(sb, userId);
   const admin: any = (await import("@/integrations/supabase/client.server")).supabaseAdmin;
@@ -67,7 +66,7 @@ export async function listOwnerAccess(
 export async function inviteCommercialOwner(
   sb: Sb,
   userId: string,
-  input: z.infer<typeof inviteCommercialOwnerSchema>,
+  input: InviteCommercialOwnerInput,
 ) {
   await assertCommercialAdmin(sb, userId);
   const admin: any = (await import("@/integrations/supabase/client.server")).supabaseAdmin;
@@ -195,7 +194,7 @@ export async function inviteCommercialOwner(
 export async function revokeCommercialOwnerInvitation(
   sb: Sb,
   userId: string,
-  input: z.infer<typeof revokeCommercialOwnerInvitationSchema>,
+  input: RevokeCommercialOwnerInvitationInput,
 ) {
   await assertCommercialAdmin(sb, userId);
   const admin: any = (await import("@/integrations/supabase/client.server")).supabaseAdmin;
