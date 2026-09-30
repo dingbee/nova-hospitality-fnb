@@ -275,6 +275,7 @@ export function CustomersPortfolioPanel() {
                 <TableHead>Subscription</TableHead>
                 <TableHead>Renews</TableHead>
                 <TableHead>Balance</TableHead>
+                <TableHead>Owner access</TableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
