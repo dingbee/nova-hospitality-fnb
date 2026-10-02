@@ -643,6 +643,52 @@ describe("guest dining session — the continuous-session defect (tests 13-30)",
     ).resolves.toBeTruthy();
   });
 
+  it("31: a guest scan inherits an already-open staff order, and a follow-up guest order stays in the same table session", async () => {
+    const sb = makeFakeSupabase(
+      baseRows({
+        restaurant_orders: [
+          {
+            id: "staff-order",
+            tenant_id: TENANT,
+            table_id: TABLE,
+            guest_session_id: null,
+            order_number: "ORD-STAFF",
+            status: "sent",
+            subtotal: 2000,
+            discount_total: 0,
+            tax_total: 0,
+            service_charge: 0,
+            total: 2000,
+            paid_total: 0,
+            currency: "USD",
+            opened_at: "2026-10-02T09:00:00.000Z",
+          },
+        ],
+      }),
+    );
+
+    const firstScan = await guestSessionProjection(sb, { tableId: TABLE });
+    expect(firstScan.session?.status).toBe("active");
+    expect(firstScan.orders.map((o) => o.id)).toEqual(["staff-order"]);
+    expect(sb.store.restaurant_guest_sessions).toHaveLength(1);
+    expect(sb.store.restaurant_orders[0].guest_session_id).toBe(
+      sb.store.restaurant_guest_sessions[0].id,
+    );
+
+    const continued = await submitGuestOrder(sb, {
+      tableId: TABLE,
+      lines: [friesLine()],
+      clientRequestId: "req-continue",
+    });
+
+    expect(continued.session.session?.status).toBe("active");
+    expect(continued.session.orders.map((o: any) => o.id)).toEqual([
+      "staff-order",
+      continued.id,
+    ]);
+    expect(sb.store.restaurant_guest_sessions).toHaveLength(1);
+  });
+
   it("30: order-level payment status (guestOrderStatus) still resolves correctly for an order that belongs to a session", async () => {
     const sb = makeFakeSupabase(baseRows());
     const a = await submitGuestOrder(sb, {
