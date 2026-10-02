@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CI: true
@@ -39,46 +39,6 @@ jobs:
 
       - name: Install dependencies
         run: bun install
-
-      - name: Capture resolved lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: lexibite-bun-lock
-          path: bun.lockb
-          if-no-files-found: error
-
-      - name: Persist resolved lockfile
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- bun.lockb; then
-            echo "Bun lockfile is already synchronized."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          python - <<'PY'
-          from pathlib import Path
-          p = Path(".github/workflows/ci.yml")
-          s = p.read_text()
-          s = s.replace("          bun install\n", "          bun install --frozen-lockfile\n", 1)
-          marker = """      - name: Capture resolved lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: lexibite-bun-lock
-          path: bun.lockb
-          if-no-files-found: error
-
-"""
-          s = s.replace(marker, "")
-          p.write_text(s)
-          PY
-
-          git add bun.lockb .github/workflows/ci.yml
-          git commit -m "chore(deps): synchronize Bun lockfile"
-          git push origin HEAD:gtm/table-session-continuity
 
       - name: Generate production artifacts
         run: bun run build
