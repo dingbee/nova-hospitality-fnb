@@ -503,6 +503,7 @@ function GuestOrderPage() {
         onOrderMore={() => {
           dismissRecovery();
           setConfirmed(null);
+          setContinueOrdering(true);
         }}
       />
     );
