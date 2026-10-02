@@ -1,7 +1,8 @@
 name: Regenerate Bun lockfile
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [gtm/table-session-continuity]
 
 permissions:
   contents: write
