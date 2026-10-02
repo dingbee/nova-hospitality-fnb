@@ -40,6 +40,13 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Capture resolved lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: lexibite-bun-lock
+          path: bun.lockb
+          if-no-files-found: error
+
       - name: Generate production artifacts
         run: bun run build
 
