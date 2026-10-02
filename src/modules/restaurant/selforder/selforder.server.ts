@@ -156,6 +156,114 @@ export async function resolveGuestTableContext(
 }
 
 /**
+ * GTM table continuity: when a guest scans a table whose staff-side order is
+ * already open, fold that existing order into the same guest dining-session
+ * model used by self-ordering. This is deliberately additive: no order is
+ * recreated, no bill is rebuilt, and no second session model is introduced.
+ */
+const ACTIVE_TABLE_ORDER_STATUSES = ["open", "sent", "served"] as const;
+
+export async function ensureGuestTableSession(sb: Sb, tableId: string) {
+  const table = await resolveGuestTableContext(sb, tableId);
+  const { data: activeOrders } = await sb
+    .from("restaurant_orders")
+    .select("id, guest_session_id, opened_at")
+    .eq("tenant_id", table.tenantId)
+    .eq("table_id", table.tableId)
+    .in("status", [...ACTIVE_TABLE_ORDER_STATUSES])
+    .order("opened_at");
+
+  const orders = (activeOrders ?? []) as {
+    id: string;
+    guest_session_id: string | null;
+    opened_at: string;
+  }[];
+  if (orders.length === 0) {
+    const { data: staleSession } = await sb
+      .from("restaurant_guest_sessions")
+      .select("id")
+      .eq("tenant_id", table.tenantId)
+      .eq("table_id", table.tableId)
+      .eq("status", "active")
+      .maybeSingle();
+    if (staleSession) {
+      await sb
+        .from("restaurant_guest_sessions")
+        .update({
+          status: "closed",
+          closed_at: new Date().toISOString(),
+          closed_reason: "table_has_no_open_orders",
+        })
+        .eq("id", staleSession.id)
+        .eq("status", "active");
+    }
+    return { hasOpenOrders: false, activeOrderId: null as string | null };
+  }
+
+  let session: { id: string } | null = null;
+  const { data: existingSession } = await sb
+    .from("restaurant_guest_sessions")
+    .select("id")
+    .eq("tenant_id", table.tenantId)
+    .eq("table_id", table.tableId)
+    .eq("status", "active")
+    .maybeSingle();
+  session = existingSession ? { id: existingSession.id } : null;
+
+  if (!session) {
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + GUEST_SESSION_DURATION_MS).toISOString();
+    const { data: created, error } = await sb
+      .from("restaurant_guest_sessions")
+      .insert({
+        tenant_id: table.tenantId,
+        property_id: table.propertyId,
+        location_id: table.locationId,
+        table_id: table.tableId,
+        token: generateGuestSessionToken(),
+        status: "active",
+        started_at: now.toISOString(),
+        last_activity_at: now.toISOString(),
+        expires_at: expiresAt,
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (created) {
+      session = { id: created.id };
+    } else if (error) {
+      const { data: raced } = await sb
+        .from("restaurant_guest_sessions")
+        .select("id")
+        .eq("tenant_id", table.tenantId)
+        .eq("table_id", table.tableId)
+        .eq("status", "active")
+        .maybeSingle();
+      if (raced) session = { id: raced.id };
+      else throw new Error(error.message);
+    }
+  }
+
+  if (!session) throw new Error("This table session could not be opened.");
+
+  for (const order of orders) {
+    if (order.guest_session_id) continue;
+    await sb
+      .from("restaurant_orders")
+      .update({ guest_session_id: session.id })
+      .eq("tenant_id", table.tenantId)
+      .eq("id", order.id)
+      .eq("table_id", table.tableId)
+      .in("status", [...ACTIVE_TABLE_ORDER_STATUSES]);
+  }
+
+  return {
+    hasOpenOrders: true,
+    activeOrderId: orders[0]?.id ?? null,
+  };
+}
+
+/**
  * The sole write path that creates or reuses a guest dining session. Called
  * only from `submitGuestOrder`, immediately before a new order is written.
  *
@@ -221,7 +329,29 @@ export async function resolveOrStartGuestSession(
     .eq("status", "active")
     .maybeSingle();
   if (blocking) {
-    throw new Error(GUEST_SESSION_TABLE_OCCUPIED_MESSAGE);
+    if (!presentedToken) {
+      const { data: liveOrders } = await sb
+        .from("restaurant_orders")
+        .select("id")
+        .eq("tenant_id", table.tenantId)
+        .eq("table_id", table.tableId)
+        .in("status", [...ACTIVE_TABLE_ORDER_STATUSES])
+        .limit(1);
+      if (liveOrders && liveOrders.length > 0) {
+        return { token: "", sessionId: blocking.id, created: false };
+      }
+      await sb
+        .from("restaurant_guest_sessions")
+        .update({
+          status: "closed",
+          closed_at: new Date().toISOString(),
+          closed_reason: "table_has_no_open_orders",
+        })
+        .eq("id", blocking.id)
+        .eq("status", "active");
+    } else {
+      throw new Error(GUEST_SESSION_TABLE_OCCUPIED_MESSAGE);
+    }
   }
 
   const token = generateGuestSessionToken();
@@ -277,12 +407,14 @@ export async function closeActiveGuestSession(
 /** The public menu for the table's own tenant/location — nothing else is reachable from a table id. */
 export async function guestMenu(sb: Sb, tableId: string) {
   const table = await resolveGuestTableContext(sb, tableId);
+  const tableSession = await ensureGuestTableSession(sb, tableId);
   const catalog = await fetchSellableCatalog(sb, table.tenantId, {
     propertyId: table.propertyId ?? undefined,
     locationId: table.locationId ?? undefined,
   });
   return {
     table,
+    tableSession,
     ...catalog,
     // A guest never sees an item staff have marked unavailable, or one the
     // pricing engine has no active price for — a price it would only refuse

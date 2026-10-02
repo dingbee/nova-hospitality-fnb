@@ -27,7 +27,7 @@
  *    per order, but identical logic, so a mixed order's "kitchen preparing,
  *    bar ready" reads exactly the same here as it does standalone.
  */
-import { resolveGuestTableContext } from "./selforder.server";
+import { ensureGuestTableSession, resolveGuestTableContext } from "./selforder.server";
 import { deriveLifecycle } from "../sales/ui/lifecycle";
 import {
   classifyGuestOverallStage,
@@ -120,6 +120,7 @@ export async function guestSessionProjection(
   input: { tableId: string },
 ): Promise<GuestSessionProjection> {
   const table = await resolveGuestTableContext(sb, input.tableId);
+  await ensureGuestTableSession(sb, input.tableId);
   const session = await loadActiveSession(sb, table.tenantId, table.tableId);
 
   if (!session) {

@@ -228,6 +228,7 @@ function GuestOrderPage() {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [novaOpen, setNovaOpen] = useState(false);
+  const [continueOrdering, setContinueOrdering] = useState(false);
   const [guestName, setGuestName] = useState("");
   const [confirmed, setConfirmed] = useState<{
     orderId: string;
@@ -451,6 +452,7 @@ function GuestOrderPage() {
         writeStoredSessionToken(tableId, order.guestSessionToken);
         setSessionToken(order.guestSessionToken);
       }
+      setContinueOrdering(false);
       setConfirmed({
         orderId: order.id,
         orderNumber: order.order_number,
@@ -501,6 +503,7 @@ function GuestOrderPage() {
         onOrderMore={() => {
           dismissRecovery();
           setConfirmed(null);
+          setContinueOrdering(true);
         }}
       />
     );
@@ -528,6 +531,18 @@ function GuestOrderPage() {
           })
         }
         onStartNew={dismissRecovery}
+      />
+    );
+  }
+
+  if (menu.data?.tableSession?.hasOpenOrders && !continueOrdering) {
+    return (
+      <TableSessionScreen
+        tableId={tableId}
+        justPlacedOrderId={null}
+        onOrderMore={() => {
+          setContinueOrdering(true);
+        }}
       />
     );
   }
@@ -919,7 +934,7 @@ function TableSessionScreen({
   onOrderMore,
 }: {
   tableId: string;
-  justPlacedOrderId: string;
+  justPlacedOrderId: string | null;
   onOrderMore: () => void;
 }) {
   const sessionFn = useServerFn(guestSessionProjectionFn);
@@ -942,6 +957,12 @@ function TableSessionScreen({
   const ordered = [...orders].sort((a, b) =>
     a.id === justPlacedOrderId ? -1 : b.id === justPlacedOrderId ? 1 : 0,
   );
+  const actionOrderId =
+    justPlacedOrderId ??
+    ordered.find((o) => o.outstanding > 0 && !["cancelled", "voided"].includes(o.status))?.id ??
+    ordered[0]?.id ??
+    null;
+  const isContinuation = !justPlacedOrderId;
 
   return (
     <div className="flex min-h-dvh flex-col items-center gap-3 bg-background px-6 pt-16 pb-16 text-center pt-safe">
@@ -949,14 +970,15 @@ function TableSessionScreen({
         <CheckCircle2 className="size-9 text-primary" aria-hidden />
       </span>
       <div>
-        <h1 className="font-display mt-2 text-2xl text-foreground">Order sent</h1>
+        <h1 className="font-display mt-2 text-2xl text-foreground">{isContinuation ? "Continue your table" : "Order sent"}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {data?.session ? `Your table — ${data.session.table.name}` : "Your dining session"}
         </p>
       </div>
       <p className="max-w-xs text-sm text-muted-foreground">
-        Your order is on its way to the kitchen and bar. A member of staff will bring it out
-        shortly.
+        {isContinuation
+          ? "Your table is already open. Follow progress, add to the order, request staff, request the bill, or pay."
+          : "Your order is on its way to the kitchen and bar. A member of staff will bring it out shortly."}
       </p>
 
       {ordered.length > 0 && (
@@ -1012,14 +1034,18 @@ function TableSessionScreen({
         </div>
       )}
 
-      <OrderProgressPanel tableId={tableId} orderId={justPlacedOrderId} />
-      <RequestStaffPanel tableId={tableId} orderId={justPlacedOrderId} />
-      <RequestBillPanel tableId={tableId} orderId={justPlacedOrderId} />
-      <GuestPaymentPanel tableId={tableId} orderId={justPlacedOrderId} />
-      <GuestFeedbackPanel tableId={tableId} orderId={justPlacedOrderId} />
+      {actionOrderId && (
+        <>
+          <OrderProgressPanel tableId={tableId} orderId={actionOrderId} />
+          <RequestStaffPanel tableId={tableId} orderId={actionOrderId} />
+          <RequestBillPanel tableId={tableId} orderId={actionOrderId} />
+          <GuestPaymentPanel tableId={tableId} orderId={actionOrderId} />
+          <GuestFeedbackPanel tableId={tableId} orderId={actionOrderId} />
+        </>
+      )}
 
       <Button variant="outline" className="mt-4 min-h-11" onClick={onOrderMore}>
-        Order more
+        Add to order
       </Button>
     </div>
   );
