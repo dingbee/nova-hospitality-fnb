@@ -48,9 +48,15 @@ import {
 } from "../control.functions";
 import { listRestaurantUnitsFn, upsertRestaurantInventoryItemFn } from "../inventory.functions";
 import { INVENTORY_ITEM_TYPES } from "../../core/contracts";
+import {
+  executeApprovedInventoryAgentActionsFn,
+  runInventoryAgentFn,
+  verifyExecutedInventoryAgentActionsFn,
+} from "../../inventory-agent/inventory-agent.functions";
 
 const TABS = [
   { id: "overview", label: "Overview" },
+  { id: "agent", label: "Inventory Agent" },
   { id: "positions", label: "Stock positions" },
   { id: "transfers", label: "Transfers" },
   { id: "waste", label: "Waste & adjustments" },
@@ -117,6 +123,7 @@ export function InventoryCentre({ initialTab }: { initialTab?: string } = {}) {
       ) : (
         <>
           {tab === "overview" && <OverviewTab tenantId={tenantId} />}
+          {tab === "agent" && <InventoryAgentTab tenantId={tenantId} />}
           {tab === "positions" && <PositionsTab tenantId={tenantId} />}
           {tab === "transfers" && <TransfersTab tenantId={tenantId} />}
           {tab === "waste" && <WasteTab tenantId={tenantId} />}
@@ -124,6 +131,147 @@ export function InventoryCentre({ initialTab }: { initialTab?: string } = {}) {
           {tab === "batches" && <BatchesTab tenantId={tenantId} />}
           {tab === "locations" && <LocationsTab tenantId={tenantId} />}
           {tab === "reconciliation" && <ReconciliationTab tenantId={tenantId} />}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- Inventory Agent ---------------- */
+
+function InventoryAgentTab({ tenantId }: { tenantId: string }) {
+  const runFn = useServerFn(runInventoryAgentFn);
+  const executeFn = useServerFn(executeApprovedInventoryAgentActionsFn);
+  const verifyFn = useServerFn(verifyExecutedInventoryAgentActionsFn);
+  const [scanned, setScanned] = useState(false);
+
+  const agent = useQuery({
+    queryKey: ["restaurant.inventory.agent", tenantId],
+    queryFn: () => runFn({ data: { tenantId, windowDays: 30 } }),
+    enabled: scanned,
+  });
+
+  const execute = useAdminMutation({
+    mutationFn: () => executeFn({ data: { tenantId, limit: 20 } }),
+    successMessage: "Approved inventory actions processed",
+    onSuccess: () => {
+      void agent.refetch();
+    },
+  });
+
+  const verify = useAdminMutation({
+    mutationFn: () => verifyFn({ data: { tenantId, limit: 20 } }),
+    successMessage: "Inventory actions verified",
+    onSuccess: () => {
+      void agent.refetch();
+    },
+  });
+
+  const recommendations = agent.data?.recommendations ?? [];
+
+  return (
+    <div className="space-y-4">
+      <SectionCard
+        title="LexiBite Inventory Agent"
+        description="Replenishment intelligence built on the existing inventory ledger, Purchasing Intelligence and governed decision workflow. The agent recommends; human approval remains authoritative."
+      >
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => setScanned(true)} disabled={agent.isFetching}>
+            {agent.isFetching ? "Scanning…" : "Scan inventory"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => execute.mutate(undefined)}
+            disabled={execute.isPending}
+          >
+            {execute.isPending ? "Executing…" : "Execute approved"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => verify.mutate(undefined)}
+            disabled={verify.isPending}
+          >
+            {verify.isPending ? "Verifying…" : "Verify executed"}
+          </Button>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Execute only dispatches already-approved replenishment actions. It does not approve
+          purchase orders, create a purchase order directly, contact suppliers, pay suppliers or
+          mutate the stock ledger.
+        </p>
+      </SectionCard>
+
+      {!scanned ? (
+        <EmptyState
+          title="Inventory Agent is ready"
+          description="Run a scan to rebuild the current replenishment picture from live inventory and purchasing intelligence."
+        />
+      ) : agent.isLoading ? (
+        <SectionCard title="Scanning">
+          <p className="text-sm text-muted-foreground">Analysing current inventory requirements…</p>
+        </SectionCard>
+      ) : agent.isError ? (
+        <SectionCard title="Scan failed">
+          <p className="text-sm text-destructive">{String(agent.error?.message ?? "Unable to run the inventory agent.")}</p>
+        </SectionCard>
+      ) : (
+        <>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <StatCard
+              label="Findings evaluated"
+              value={String(agent.data?.decisionPass.findings ?? 0)}
+            />
+            <StatCard
+              label="Recommendations"
+              value={String(recommendations.length)}
+              tone={recommendations.length > 0 ? "warn" : "green"}
+            />
+            <StatCard
+              label="New decisions"
+              value={String(agent.data?.decisionPass.decisionsRecorded ?? 0)}
+            />
+          </div>
+
+          <SectionCard
+            title="Replenishment recommendations"
+            description="Evidence comes from the current decision pass. Missing quantity or supplier data is never invented."
+          >
+            {recommendations.length === 0 ? (
+              <EmptyState
+                title="No replenishment recommendation"
+                description="Current inventory intelligence has no actionable shortage or replenishment finding."
+              />
+            ) : (
+              <ul className="divide-y text-sm">
+                {recommendations.map((r) => (
+                  <li key={r.decisionId} className="py-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-medium">{r.subject}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{r.headline}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <StatusChip tone={r.severity === "critical" ? "danger" : r.severity === "high" ? "warning" : "info"}>
+                          {r.severity}
+                        </StatusChip>
+                        <StatusChip tone="neutral">{r.status}</StatusChip>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+                      <span>Confidence: {Math.round(r.confidence * 100)}%</span>
+                      <span>Decision: {r.recommendedOptionKey ?? "none"}</span>
+                      <span>Recommended quantity: {String(r.facts.recommendedQuantity ?? "not available")}</span>
+                      <span>Supplier: {String(r.facts.supplierId ?? "not configured")}</span>
+                      <span>Estimated cost: {String(r.facts.estimatedCost ?? "not available")}</span>
+                      <span>Action: {r.actionStatus ?? "awaiting decision approval"}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
         </>
       )}
     </div>
