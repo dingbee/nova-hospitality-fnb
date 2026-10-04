@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase rows are untyped at this boundary. */
 /**
- * Secure outlet-level provider connection management.
+ * Secure Mobile Money provider connection management.
  *
- * Provider credentials are reversible because an adapter must call the PSP
- * with the real credential. They are encrypted at rest with the existing
- * AES-256-GCM primitive and never included in an account read response.
+ * Provider credentials are tenant-owned. Outlet accounts remain the
+ * operational payment context, but provider secrets live once at tenant
+ * level and are encrypted at rest.
  */
 import { assertCapability } from "@/modules/restaurant/core/access.server";
 import { resolvePublicOrigin } from "@/modules/restaurant/core/product";
@@ -15,6 +15,7 @@ import {
   mobileMoneyProviderCodeSchema,
   type MobileMoneyProviderCode,
 } from "./providerRegistry";
+import type { MobileMoneyEnvironment, MobileMoneyNetwork } from "./contracts";
 
 type Sb = any;
 
@@ -31,6 +32,15 @@ export interface MobileMoneyProviderConfig {
   accountId?: string;
   callbackUrl?: string;
   [key: string]: string | undefined;
+}
+
+export interface MobileMoneyTenantProviderConnection {
+  providerCode: MobileMoneyProviderCode;
+  environment: MobileMoneyEnvironment;
+  enabledNetworks: MobileMoneyNetwork[];
+  config: MobileMoneyProviderConfig;
+  credentialsConfigured: boolean;
+  providerStatus: string;
 }
 
 const SAFE_ACCOUNT_COLUMNS =
@@ -50,6 +60,194 @@ function validateCredentials(
   }
 }
 
+function normalizeNetworks(value: unknown): MobileMoneyNetwork[] {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set<MobileMoneyNetwork>(["mpesa", "mixx_yas", "airtel_money", "halopesa", "ttcl_pesa"]);
+  return [...new Set(value.filter((n): n is MobileMoneyNetwork => typeof n === "string" && allowed.has(n as MobileMoneyNetwork)))];
+}
+
+/**
+ * Tenant-level control-plane read. Secrets are never returned.
+ */
+export async function getMobileMoneyTenantProviderConnection(
+  sb: Sb,
+  userId: string,
+  input: { tenantId: string },
+): Promise<MobileMoneyTenantProviderConnection | null> {
+  await assertCapability(sb, userId, input.tenantId, "mobile_money.manage");
+
+  const { data } = await sb
+    .from("restaurant_mobile_money_provider_connections")
+    .select("provider_code, environment, enabled_networks, provider_config, provider_status, credential_ciphertext")
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+
+  if (!data) return null;
+
+  const providerCode = mobileMoneyProviderCodeSchema.safeParse(data.provider_code);
+  if (!providerCode.success) return null;
+
+  return {
+    providerCode: providerCode.data,
+    environment: data.environment as MobileMoneyEnvironment,
+    enabledNetworks: normalizeNetworks(data.enabled_networks),
+    config: (data.provider_config ?? {}) as MobileMoneyProviderConfig,
+    credentialsConfigured: Boolean(data.credential_ciphertext),
+    providerStatus: String(data.provider_status ?? "not_configured"),
+  };
+}
+
+/**
+ * Tenant-level provider configuration. This is the authoritative place for
+ * provider selection, environment, enabled networks and encrypted credentials.
+ */
+export async function configureMobileMoneyTenantProvider(
+  sb: Sb,
+  userId: string,
+  input: {
+    tenantId: string;
+    providerCode: string;
+    environment: MobileMoneyEnvironment;
+    enabledNetworks: MobileMoneyNetwork[];
+    config?: MobileMoneyProviderConfig;
+    credentials?: MobileMoneyProviderCredentials;
+  },
+) {
+  await assertCapability(sb, userId, input.tenantId, "mobile_money.manage");
+
+  const providerCode = mobileMoneyProviderCodeSchema.parse(input.providerCode);
+  const provider = getMobileMoneyProvider(providerCode);
+  if (!provider) throw new Error("Unsupported Mobile Money provider.");
+
+  const enabledNetworks = normalizeNetworks(input.enabledNetworks);
+  if (enabledNetworks.length === 0) throw new Error("Select at least one Mobile Money network.");
+
+  for (const network of enabledNetworks) {
+    if (!provider.supportedNetworks.includes(network)) {
+      throw new Error(provider.name + " does not support " + network + ".");
+    }
+  }
+
+  const { data: existing } = await sb
+    .from("restaurant_mobile_money_provider_connections")
+    .select("credential_ciphertext, credential_iv, credential_tag, provider_code, provider_config")
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+
+  const credentials = input.credentials && Object.keys(input.credentials).length
+    ? input.credentials
+    : null;
+
+  if (credentials) validateCredentials(providerCode, credentials);
+  else if (!existing?.credential_ciphertext) validateCredentials(providerCode, {});
+
+  const configured = { ...(input.config ?? {}) };
+  if (providerCode === "payin" && !configured.callbackUrl) {
+    try {
+      const origin = resolvePublicOrigin(
+        getRequestHeader("host"),
+        getRequestHeader("x-forwarded-proto") ?? "https",
+      );
+      configured.callbackUrl = `${origin}/api/mobile-money-webhook/${providerCode}`;
+    } catch {
+      // Credentials may still be saved; callback can be supplied later.
+    }
+  }
+
+  const encrypted = credentials ? encryptSecret(JSON.stringify(credentials)) : null;
+  const row: Record<string, unknown> = {
+    tenant_id: input.tenantId,
+    provider_code: providerCode,
+    environment: input.environment,
+    enabled_networks: enabledNetworks,
+    provider_config: configured,
+    provider_status: "configured",
+    last_provider_error: null,
+    updated_at: new Date().toISOString(),
+    created_by: userId,
+  };
+
+  if (encrypted) {
+    row.credential_ciphertext = encrypted.ciphertext;
+    row.credential_iv = encrypted.iv;
+    row.credential_tag = encrypted.tag;
+  }
+
+  const { data, error } = await sb
+    .from("restaurant_mobile_money_provider_connections")
+    .upsert(row, { onConflict: "tenant_id" })
+    .select("id, tenant_id, provider_code, environment, enabled_networks, provider_config, provider_status, credential_ciphertext")
+    .single();
+
+  if (error) throw new Error(error.message);
+
+  return {
+    id: data.id,
+    tenantId: data.tenant_id,
+    providerCode: data.provider_code,
+    environment: data.environment,
+    enabledNetworks: normalizeNetworks(data.enabled_networks),
+    config: (data.provider_config ?? {}) as MobileMoneyProviderConfig,
+    credentialsConfigured: Boolean(data.credential_ciphertext),
+    providerStatus: data.provider_status,
+  };
+}
+
+/** Server-only. Prefers the tenant connection; outlet connection is legacy fallback. */
+export async function getMobileMoneyProviderCredentials(
+  supabaseAdmin: Sb,
+  tenantId: string,
+  locationId: string,
+): Promise<{
+  providerCode: MobileMoneyProviderCode;
+  environment?: MobileMoneyEnvironment;
+  enabledNetworks?: MobileMoneyNetwork[];
+  config: MobileMoneyProviderConfig;
+  credentials: MobileMoneyProviderCredentials;
+} | null> {
+  const { data: tenantConnection } = await supabaseAdmin
+    .from("restaurant_mobile_money_provider_connections")
+    .select("provider_code, environment, enabled_networks, provider_config, credential_ciphertext, credential_iv, credential_tag")
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+
+  const source = tenantConnection?.credential_ciphertext
+    ? tenantConnection
+    : (await supabaseAdmin
+        .from("restaurant_mobile_money_accounts")
+        .select("provider_code, environment, provider_config, credential_ciphertext, credential_iv, credential_tag")
+        .eq("tenant_id", tenantId)
+        .eq("location_id", locationId)
+        .maybeSingle()).data;
+
+  if (!source?.credential_ciphertext) return null;
+
+  const providerCode = mobileMoneyProviderCodeSchema.safeParse(source.provider_code);
+  if (!providerCode.success) return null;
+
+  const plaintext = decryptSecret({
+    ciphertext: source.credential_ciphertext,
+    iv: source.credential_iv,
+    tag: source.credential_tag,
+  });
+
+  let credentials: MobileMoneyProviderCredentials;
+  try {
+    credentials = JSON.parse(plaintext);
+  } catch {
+    throw new Error("Stored Mobile Money provider credentials are invalid.");
+  }
+
+  return {
+    providerCode: providerCode.data,
+    environment: source.environment as MobileMoneyEnvironment | undefined,
+    enabledNetworks: normalizeNetworks(source.enabled_networks),
+    config: (source.provider_config ?? {}) as MobileMoneyProviderConfig,
+    credentials,
+  };
+}
+
+/** Legacy outlet-level configuration retained for backward compatibility. */
 export async function configureMobileMoneyProvider(
   sb: Sb,
   userId: string,
@@ -64,10 +262,8 @@ export async function configureMobileMoneyProvider(
   await assertCapability(sb, userId, input.tenantId, "mobile_money.manage", {
     locationId: input.locationId,
   });
-
   const providerCode = mobileMoneyProviderCodeSchema.parse(input.providerCode);
   validateCredentials(providerCode, input.credentials);
-
   const configured = { ...(input.config ?? {}) };
   if (providerCode === "payin" && !configured.callbackUrl) {
     try {
@@ -76,13 +272,8 @@ export async function configureMobileMoneyProvider(
         getRequestHeader("x-forwarded-proto") ?? "https",
       );
       configured.callbackUrl = `${origin}/api/mobile-money-webhook/${providerCode}`;
-    } catch {
-      // A missing request host must not prevent credential storage; the
-      // connector remains configured but will not receive push callbacks until
-      // a callback URL is supplied or the connection is configured again.
-    }
+    } catch {}
   }
-
   const encrypted = encryptSecret(JSON.stringify(input.credentials));
   const { data, error } = await sb
     .from("restaurant_mobile_money_accounts")
@@ -100,55 +291,9 @@ export async function configureMobileMoneyProvider(
     .eq("location_id", input.locationId)
     .select(SAFE_ACCOUNT_COLUMNS)
     .maybeSingle();
-
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Mobile Money account is not configured for this outlet.");
-
   return { ...data, credentialsConfigured: true };
-}
-
-/** Server-only. Never call this from a UI/server-function response. */
-export async function getMobileMoneyProviderCredentials(
-  supabaseAdmin: Sb,
-  tenantId: string,
-  locationId: string,
-): Promise<{
-  providerCode: MobileMoneyProviderCode;
-  config: MobileMoneyProviderConfig;
-  credentials: MobileMoneyProviderCredentials;
-} | null> {
-  const { data } = await supabaseAdmin
-    .from("restaurant_mobile_money_accounts")
-    .select(
-      "provider_code, provider_config, credential_ciphertext, credential_iv, credential_tag",
-    )
-    .eq("tenant_id", tenantId)
-    .eq("location_id", locationId)
-    .maybeSingle();
-
-  if (!data?.credential_ciphertext) return null;
-
-  const providerCode = mobileMoneyProviderCodeSchema.safeParse(data.provider_code);
-  if (!providerCode.success) return null;
-
-  const plaintext = decryptSecret({
-    ciphertext: data.credential_ciphertext,
-    iv: data.credential_iv,
-    tag: data.credential_tag,
-  });
-
-  let credentials: MobileMoneyProviderCredentials;
-  try {
-    credentials = JSON.parse(plaintext);
-  } catch {
-    throw new Error("Stored Mobile Money provider credentials are invalid.");
-  }
-
-  return {
-    providerCode: providerCode.data,
-    config: (data.provider_config ?? {}) as MobileMoneyProviderConfig,
-    credentials,
-  };
 }
 
 export async function clearMobileMoneyProvider(
@@ -159,7 +304,6 @@ export async function clearMobileMoneyProvider(
   await assertCapability(sb, userId, input.tenantId, "mobile_money.manage", {
     locationId: input.locationId,
   });
-
   const { data, error } = await sb
     .from("restaurant_mobile_money_accounts")
     .update({
@@ -177,7 +321,6 @@ export async function clearMobileMoneyProvider(
     .eq("location_id", input.locationId)
     .select(SAFE_ACCOUNT_COLUMNS)
     .maybeSingle();
-
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Mobile Money account is not configured for this outlet.");
   return data;
