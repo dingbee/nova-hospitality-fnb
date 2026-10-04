@@ -1900,7 +1900,8 @@ function GuestConnectedMobileMoneyPayment({
   const view = status.data;
   useEffect(() => {
     if (view?.state === "paid") onSettled();
-  }, [view?.state, onSettled]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire on the terminal paid transition only
+  }, [view?.state]);
 
   const normalizedPhone = phone.replace(/\D/g, "");
   const phoneValid =
