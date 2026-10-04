@@ -14,7 +14,7 @@ afterEach(() => {
 
 describe("PayIn adapter", () => {
   it("creates a collection with provider idempotency and Tanzania operator mapping", async () => {
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       new Response(
         JSON.stringify({
           success: true,
@@ -41,7 +41,7 @@ describe("PayIn adapter", () => {
     expect(result).toEqual({ outcome: "accepted", providerReference: "PAY123" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    const [, request] = fetchMock.mock.calls[0];
+    const [, request] = fetchMock.mock.calls[0] ?? [];
     expect(request?.headers).toMatchObject({
       "X-API-Key": credentials.apiKey,
       "X-API-Secret": credentials.apiSecret,
