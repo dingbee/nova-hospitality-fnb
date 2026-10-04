@@ -104,7 +104,10 @@ export function MobileMoneySettingsPanel() {
     environment: (accountQuery.data?.environment ?? "test") as MobileMoneyEnvironment,
     activationState: (accountQuery.data?.activation_state ??
       "inactive") as MobileMoneyActivationState,
-    providerCode: accountQuery.data?.provider_code ?? "test",
+    providerCode:
+      accountQuery.data?.provider_code && accountQuery.data.provider_code !== "test"
+        ? accountQuery.data.provider_code
+        : "payin",
     credentials: {},
   };
   const isOn = effective.activationState === "active";
