@@ -339,7 +339,7 @@ export async function createIntelligentPurchaseOrders(sb: Sb, userId: string, in
         supplierProductId: line.supplierProductId,
         unitId: line.unitId,
         description: line.description,
-        quantity: finalQuantity,
+        quantity: line.quantity,
         unitPrice: line.unitPrice,
       })),
     });
