@@ -40,15 +40,9 @@ function validateCredentials(
   const provider = getMobileMoneyProvider(providerCode);
   if (!provider) throw new Error("Unsupported Mobile Money provider.");
 
-  if (!provider.certified) {
-    throw new Error(
-      ${provider.name} + " is registered but not yet certified for live LexiBite payment execution.",
-    );
-  }
-
   for (const field of provider.credentialFields) {
     if (!credentials[field]?.trim()) {
-      throw new Error(${provider.name} + " requires " + field + ".");
+      throw new Error(provider.name + " requires " + field + ".");
     }
   }
 }
