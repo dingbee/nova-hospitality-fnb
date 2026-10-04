@@ -1156,7 +1156,7 @@ export async function getMobileMoneyHealth(
 
   let accountQuery = sb
     .from("restaurant_mobile_money_accounts")
-    .select("mode, environment, activation_state")
+    .select("id, tenant_id, location_id, mode, environment, activation_state, provider_code")
     .eq("tenant_id", input.tenantId);
   if (input.locationId) accountQuery = accountQuery.eq("location_id", input.locationId);
   else if (restrictedIds !== null)
@@ -1169,7 +1169,7 @@ export async function getMobileMoneyHealth(
 
   let status: MobileMoneyHealthStatus = "configuration_required";
   if (active) {
-    const adapter = getConfiguredMobileMoneyAdapter(active.mode, active.environment);
+    const adapter = await getConfiguredMobileMoneyAdapterForAccount(sb, active);
     if (!adapter) status = "provider_unavailable";
     else {
       const health = await adapter.healthCheck();
