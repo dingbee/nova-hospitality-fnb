@@ -55,6 +55,7 @@ import {
 } from "@/modules/restaurant/selforder/selfmobilemoney.functions";
 import { MM_NETWORK_LABELS } from "@/modules/restaurant/payments/mobilemoney/contracts";
 import { requestGuestBillFn } from "@/modules/restaurant/selforder/selfbill.functions";
+import { getOrCreateGuestReceiptLinkFn } from "@/modules/restaurant/receipts/delivery.functions";
 import { guestOrderProgressFn } from "@/modules/restaurant/selforder/selftrack.functions";
 import { guestSessionProjectionFn } from "@/modules/restaurant/selforder/selfsession.functions";
 import {
@@ -1634,6 +1635,7 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
   const initiateFn = useServerFn(initiateGuestPaymentFn);
   const confirmFn = useServerFn(confirmGuestPaymentFn);
   const mmAccountFn = useServerFn(getGuestMobileMoneyAccountFn);
+  const receiptLinkFn = useServerFn(getOrCreateGuestReceiptLinkFn);
   const [method, setMethod] = useState<(typeof GUEST_PAYMENT_METHODS)[number]>("mobile_money");
 
   const status = useQuery({
@@ -1651,6 +1653,15 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
     queryKey: ["selforder.mobileMoneyAccount", tableId],
     queryFn: () => mmAccountFn({ data: { tableId } }),
     staleTime: 60_000,
+    networkMode: "always",
+  });
+
+  const receiptLink = useQuery({
+    queryKey: ["selforder.guestReceiptLink", tableId, orderId],
+    queryFn: () => receiptLinkFn({ data: { tableId, orderId } }),
+    enabled: Boolean(status.data && (status.data.paymentState === "paid" || status.data.amountDue <= 0)),
+    retry: false,
+    refetchInterval: (q) => (q.state.data?.ok ? false : 2_000),
     networkMode: "always",
   });
 
@@ -1696,6 +1707,30 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
         <p className="mt-1 text-xs text-muted-foreground">
           {money(s.total, currency)} settled on order {s.orderNumber}.
         </p>
+        {receiptLink.data?.ok ? (
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <a
+              href={receiptLink.data.shareUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex min-h-10 items-center justify-center rounded-full border border-primary/30 bg-background px-3 text-sm font-medium text-primary"
+            >
+              View receipt
+            </a>
+            <a
+              href={receiptLink.data.shareUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex min-h-10 items-center justify-center rounded-full bg-primary px-3 text-sm font-medium text-primary-foreground"
+            >
+              Save receipt
+            </a>
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Preparing your receipt…
+          </p>
+        )}
       </div>
     );
   }
