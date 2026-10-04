@@ -64,7 +64,7 @@ function GuestReceiptPage() {
       <main className="receipt-page min-h-dvh bg-muted/30 px-4 py-8">
         <div className="receipt-card mx-auto max-w-md rounded-2xl border bg-card p-5 shadow-sm">
           <div className="text-center">
-            <p className="eyebrow">{PRODUCT.guestFacingName}</p>
+            <p className="eyebrow">{receipt.outlet || PRODUCT.guestFacingName}</p>
             <h1 className="font-display mt-1 text-2xl">Receipt</h1>
             <p className="mt-1 text-xs text-muted-foreground">{receipt.number}</p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -145,7 +145,7 @@ function GuestReceiptPage() {
             </button>
             <button
               type="button"
-              onClick={() => window.close()}
+              onClick={() => window.history.back()}
               className="min-h-11 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground"
             >
               Done
