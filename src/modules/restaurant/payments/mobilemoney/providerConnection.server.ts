@@ -7,6 +7,8 @@
  * AES-256-GCM primitive and never included in an account read response.
  */
 import { assertCapability } from "@/modules/restaurant/core/access.server";
+import { resolvePublicOrigin } from "@/modules/restaurant/core/product";
+import { getRequestHeader } from "@tanstack/react-start/server";
 import { decryptSecret, encryptSecret } from "@/modules/api-platform/crypto.server";
 import {
   getMobileMoneyProvider,
@@ -66,12 +68,27 @@ export async function configureMobileMoneyProvider(
   const providerCode = mobileMoneyProviderCodeSchema.parse(input.providerCode);
   validateCredentials(providerCode, input.credentials);
 
+  const configured = { ...(input.config ?? {}) };
+  if (providerCode === "payin" && !configured.callbackUrl) {
+    try {
+      const origin = resolvePublicOrigin(
+        getRequestHeader("host"),
+        getRequestHeader("x-forwarded-proto") ?? "https",
+      );
+      configured.callbackUrl = `${origin}/api/mobile-money-webhook/${providerCode}`;
+    } catch {
+      // A missing request host must not prevent credential storage; the
+      // connector remains configured but will not receive push callbacks until
+      // a callback URL is supplied or the connection is configured again.
+    }
+  }
+
   const encrypted = encryptSecret(JSON.stringify(input.credentials));
   const { data, error } = await sb
     .from("restaurant_mobile_money_accounts")
     .update({
       provider_code: providerCode,
-      provider_config: input.config ?? {},
+      provider_config: configured,
       credential_ciphertext: encrypted.ciphertext,
       credential_iv: encrypted.iv,
       credential_tag: encrypted.tag,
