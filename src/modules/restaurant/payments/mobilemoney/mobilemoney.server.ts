@@ -48,10 +48,22 @@ const AMOUNT_TOLERANCE = 0.01;
 export function getConfiguredMobileMoneyAdapter(
   mode: MobileMoneyMode,
   environment: MobileMoneyEnvironment,
+  providerCode = "test",
 ): MobileMoneyAdapter | null {
   if (mode === "lipa_namba") return createLipaNambaAdapter();
-  if (environment === "test") return createTestMobileMoneyAdapter("success");
-  return createAggregatorAdapter();
+
+  // The deterministic test adapter is available only for the explicit
+  // built-in test provider. A production account accidentally left on
+  // provider_code="test" must fail closed rather than route real money into
+  // a simulator.
+  if (providerCode === "test") {
+    return environment === "test" ? createTestMobileMoneyAdapter("success") : null;
+  }
+
+  // Connected provider adapters are selected by the account's provider_code.
+  // The current generic aggregator seam remains fail-closed until a concrete
+  // provider has passed the LexiBite adapter certification gate.
+  return createAggregatorAdapter(providerCode);
 }
 
 function toStatusView(row: any): MobileMoneyStatusView {
@@ -428,7 +440,7 @@ async function createCollectionForOrder(
   const adapter =
     adapterOverride !== undefined
       ? adapterOverride
-      : getConfiguredMobileMoneyAdapter(account.mode, account.environment);
+      : getConfiguredMobileMoneyAdapter(account.mode, account.environment, account.provider_code);
   if (!adapter) {
     collection = await patchCollection(sb, collection.id, input.tenantId, {
       state: "failed",
@@ -712,7 +724,11 @@ export async function refreshMobileMoneyCollectionStatus(
   const adapter =
     adapterOverride !== undefined
       ? adapterOverride
-      : getConfiguredMobileMoneyAdapter(collection.mode, collection.environment);
+      : getConfiguredMobileMoneyAdapter(
+        collection.mode,
+        collection.environment,
+        collection.provider_code ?? "test",
+      );
   if (!adapter) return toStatusView(collection);
 
   const status = await adapter.verifyTransaction(collection.provider_reference);
