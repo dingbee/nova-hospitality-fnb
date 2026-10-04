@@ -529,6 +529,7 @@ export async function getSharedReceipt(tokenValue: string) {
   return {
     ok: true as const,
     receipt: {
+      outlet: snapshot.order?.outlet ?? null,
       number: receipt.receipt_number,
       currency: receipt.currency,
       subtotal: Number(receipt.subtotal ?? 0),
