@@ -139,7 +139,12 @@ export async function configureMobileMoneyTenantProvider(
     : null;
 
   if (credentials) validateCredentials(providerCode, credentials);
-  else if (!existing?.credential_ciphertext) validateCredentials(providerCode, {});
+  else if (
+    !existing?.credential_ciphertext ||
+    existing.provider_code !== providerCode
+  ) {
+    throw new Error("Enter the credentials for the selected Mobile Money provider.");
+  }
 
   const configured = { ...(input.config ?? {}) };
   if (providerCode === "payin" && !configured.callbackUrl) {
