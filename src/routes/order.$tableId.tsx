@@ -1891,7 +1891,7 @@ function GuestConnectedMobileMoneyPayment({
     refetchInterval: (q) => {
       const s = q.state.data?.state;
       return s && ["pending_customer", "processing", "created", "initiated"].includes(s)
-        ? 2_000
+        ? 5_000
         : false;
     },
     networkMode: "always",
