@@ -78,43 +78,57 @@ export async function getConfiguredMobileMoneyAdapterForAccount(
 ): Promise<MobileMoneyAdapter | null> {
   if (account.mode === "lipa_namba") return createLipaNambaAdapter();
 
-  const providerCode = String(account.provider_code ?? "test");
-  if (providerCode === "test") {
-    return account.environment === "test" ? createTestMobileMoneyAdapter("success") : null;
-  }
-
-  const provider = getMobileMoneyProvider(providerCode);
-  if (!provider?.implemented) return null;
-  if (account.environment === "production" && !provider.certified) return null;
-
   const connection = await getMobileMoneyProviderCredentials(
     sb,
     account.tenant_id,
     account.location_id,
   );
-  if (!connection) return null;
 
-  const effectiveProviderCode = connection.providerCode;
-  const effectiveProvider = getMobileMoneyProvider(effectiveProviderCode);
-  if (!effectiveProvider?.implemented) return null;
+  if (connection) {
+    const effectiveProviderCode = connection.providerCode;
+    const effectiveProvider = getMobileMoneyProvider(effectiveProviderCode);
+    if (!effectiveProvider?.implemented) return null;
 
-  if (
-    connection.enabledNetworks?.length &&
-    !connection.enabledNetworks.includes(account.network)
-  ) {
-    return null;
+    const effectiveEnvironment = connection.environment ?? account.environment;
+    if (effectiveEnvironment === "production" && !effectiveProvider.certified) return null;
+
+    if (
+      connection.enabledNetworks?.length &&
+      !connection.enabledNetworks.includes(account.network)
+    ) {
+      return null;
+    }
+
+    if (effectiveProviderCode === "payin") {
+      return createPayInAdapter(
+        effectiveEnvironment,
+        connection.credentials,
+        connection.config,
+      );
+    }
+
+    // Keep the generic seam fail-closed until each provider's actual API,
+    // webhook and reversal contract has passed the provider certification gate.
+    return createAggregatorAdapter(effectiveProviderCode);
   }
 
-  if (effectiveProviderCode === "payin") {
-    return createPayInAdapter(
-      connection.environment ?? account.environment,
-      connection.credentials,
-      connection.config,
+  // Legacy outlet-level connection fallback.
+  const providerCode = String(account.provider_code ?? "test");
+  if (providerCode === "test") {
+    return account.environment === "test" ? createTestMobileMoneyAdapter("success") : null;
+  }
+  const provider = getMobileMoneyProvider(providerCode);
+  if (!provider?.implemented) return null;
+  if (account.environment === "production" && !provider.certified) return null;
+  if (providerCode === "payin") {
+    const legacyConnection = await getMobileMoneyProviderCredentials(
+      sb,
+      account.tenant_id,
+      account.location_id,
     );
+    if (!legacyConnection) return null;
+    return createPayInAdapter(account.environment, legacyConnection.credentials, legacyConnection.config);
   }
-
-  // Keep the generic seam fail-closed until each provider's actual API,
-  // webhook and reversal contract has passed the provider certification gate.
   return createAggregatorAdapter(providerCode);
 }
 
