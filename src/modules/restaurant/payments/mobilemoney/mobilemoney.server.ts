@@ -92,10 +92,25 @@ export async function getConfiguredMobileMoneyAdapterForAccount(
     account.tenant_id,
     account.location_id,
   );
-  if (!connection || connection.providerCode !== providerCode) return null;
+  if (!connection) return null;
 
-  if (providerCode === "payin") {
-    return createPayInAdapter(account.environment, connection.credentials, connection.config);
+  const effectiveProviderCode = connection.providerCode;
+  const effectiveProvider = getMobileMoneyProvider(effectiveProviderCode);
+  if (!effectiveProvider?.implemented) return null;
+
+  if (
+    connection.enabledNetworks?.length &&
+    !connection.enabledNetworks.includes(account.network)
+  ) {
+    return null;
+  }
+
+  if (effectiveProviderCode === "payin") {
+    return createPayInAdapter(
+      connection.environment ?? account.environment,
+      connection.credentials,
+      connection.config,
+    );
   }
 
   // Keep the generic seam fail-closed until each provider's actual API,
