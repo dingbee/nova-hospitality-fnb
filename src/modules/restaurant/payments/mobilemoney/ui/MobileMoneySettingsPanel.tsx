@@ -2,10 +2,9 @@
 /**
  * Settings -> Payments -> Mobile Money.
  *
- * "Enter Lipa Namba -> Activate -> ON." Everything below the activation
- * toggle (mode, provider, environment) is present but stays secondary —
- * the operator's whole job is: pick a network, type the merchant number,
- * hit Activate. No API/OAuth/webhook language anywhere on this page.
+ * Provider-connected Mobile Money is the primary experience.
+ * Manual Lipa Namba remains available as an explicit fallback for outlets
+ * that are not using an automated provider connection.
  */
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -201,7 +200,7 @@ export function MobileMoneySettingsPanel() {
     <div className="space-y-6">
       <PageHeader
         title="Mobile Money"
-        description="Enter your Lipa Namba, activate, and Mobile Money is on. Everything else stays behind the scenes."
+        description="Connect your Mobile Money provider, activate the outlet, and let LexiBite handle payment confirmation and reconciliation."
       />
 
       <SectionCard
@@ -231,37 +230,9 @@ export function MobileMoneySettingsPanel() {
           </StatusChip>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Choose network">
-            <select
-              className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-              value={effective.network}
-              onChange={(e) =>
-                setForm({ ...effective, network: e.target.value as MobileMoneyNetwork })
-              }
-            >
-              {MM_NETWORKS.map((n) => (
-                <option key={n} value={n}>
-                  {MM_NETWORK_LABELS[n]}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Lipa Namba / Merchant Number">
-            <Input
-              value={effective.merchantNumber}
-              onChange={(e) => setForm({ ...effective, merchantNumber: e.target.value })}
-              placeholder="e.g. 123456"
-            />
-          </Field>
-        </div>
-
-        <details className="mt-4 rounded-md border p-3 text-xs text-[color:var(--os-ink-3)]">
-          <summary className="cursor-pointer select-none font-medium">
-            Advanced (integration)
-          </summary>
-          <div className="mt-3 grid gap-4 sm:grid-cols-2">
-            <Field label="Mode">
+        <div className="rounded-md border p-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Connection method">
               <select
                 className="h-9 w-full rounded-md border bg-background px-2 text-sm"
                 value={effective.mode}
@@ -269,8 +240,8 @@ export function MobileMoneySettingsPanel() {
                   setForm({ ...effective, mode: e.target.value as MobileMoneyMode })
                 }
               >
-                <option value="lipa_namba">Merchant number — staff confirm each payment</option>
-                <option value="connected">Connected — automatic confirmation</option>
+                <option value="connected">Connected provider — automatic confirmation</option>
+                <option value="lipa_namba">Manual Lipa Namba — staff confirm payment</option>
               </select>
             </Field>
             {effective.mode === "connected" && (
@@ -292,8 +263,8 @@ export function MobileMoneySettingsPanel() {
             )}
           </div>
 
-          {effective.mode === "connected" && (
-            <div className="mt-4 space-y-4 rounded-md border p-3">
+          {effective.mode === "connected" ? (
+            <div className="mt-4 space-y-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Payment provider">
                   <select
@@ -326,18 +297,32 @@ export function MobileMoneySettingsPanel() {
               {provider?.implemented && (
                 <div className="grid gap-4 sm:grid-cols-2">
                   {provider.credentialFields.map((field) => (
-                    <Field key={field} label={field === "apiKey" ? "API key" : field === "apiSecret" ? "API secret" : "Webhook secret"}>
+                    <Field
+                      key={field}
+                      label={
+                        field === "apiKey"
+                          ? "API key"
+                          : field === "apiSecret"
+                            ? "API secret"
+                            : "Webhook secret"
+                      }
+                    >
                       <Input
                         type="password"
                         autoComplete="new-password"
                         value={effective.credentials[field] ?? ""}
                         placeholder={
-                          credentialsConfigured ? "Stored securely — enter only to replace" : "Enter credential"
+                          credentialsConfigured
+                            ? "Stored securely — enter only to replace"
+                            : "Enter credential"
                         }
                         onChange={(e) =>
                           setForm({
                             ...effective,
-                            credentials: { ...effective.credentials, [field]: e.target.value },
+                            credentials: {
+                              ...effective.credentials,
+                              [field]: e.target.value,
+                            },
                           })
                         }
                       />
@@ -357,8 +342,38 @@ export function MobileMoneySettingsPanel() {
                 </p>
               )}
             </div>
+          ) : (
+            <details className="mt-4 rounded-md border p-3 text-xs text-[color:var(--os-ink-3)]">
+              <summary className="cursor-pointer select-none font-medium">
+                Manual Lipa Namba configuration
+              </summary>
+              <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                <Field label="Choose network">
+                  <select
+                    className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                    value={effective.network}
+                    onChange={(e) =>
+                      setForm({ ...effective, network: e.target.value as MobileMoneyNetwork })
+                    }
+                  >
+                    {MM_NETWORKS.map((n) => (
+                      <option key={n} value={n}>
+                        {MM_NETWORK_LABELS[n]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Lipa Namba / Merchant Number">
+                  <Input
+                    value={effective.merchantNumber}
+                    onChange={(e) => setForm({ ...effective, merchantNumber: e.target.value })}
+                    placeholder="e.g. 123456"
+                  />
+                </Field>
+              </div>
+            </details>
           )}
-        </details>
+        </div>
 
         <div className="mt-4 flex flex-wrap justify-end gap-2">
           {isOn && (
