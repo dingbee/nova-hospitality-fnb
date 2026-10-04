@@ -34,3 +34,36 @@ export const clearMobileMoneyProviderFn = createServerFn({ method: "POST" })
     const mod = await import("./providerConnection.server");
     return mod.clearMobileMoneyProvider(context.supabase, context.userId, data);
   });
+
+
+const tenantProviderReadSchema = z.object({
+  tenantId: z.string().uuid(),
+});
+
+const tenantProviderConfigureSchema = z.object({
+  tenantId: z.string().uuid(),
+  providerCode: z.string().min(1).max(40),
+  environment: z.enum(["test", "production"]),
+  enabledNetworks: z.array(z.string()).min(1).max(10),
+  config: z.record(z.string(), z.string().max(1000)).optional(),
+  credentials: credentialsSchema.optional(),
+});
+
+export const getMobileMoneyTenantProviderConnectionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => tenantProviderReadSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./providerConnection.server");
+    return mod.getMobileMoneyTenantProviderConnection(context.supabase, context.userId, data);
+  });
+
+export const configureMobileMoneyTenantProviderFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => tenantProviderConfigureSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./providerConnection.server");
+    return mod.configureMobileMoneyTenantProvider(context.supabase, context.userId, {
+      ...data,
+      enabledNetworks: data.enabledNetworks as any,
+    });
+  });
