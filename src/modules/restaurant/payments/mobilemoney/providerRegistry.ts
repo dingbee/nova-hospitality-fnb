@@ -93,6 +93,7 @@ export const MOBILE_MONEY_PROVIDERS: Record<
     automatic: true,
     supportedNetworks: ALL_CONNECTED_NETWORKS,
     credentialFields: ["apiKey", "apiSecret", "webhookSecret"],
+    implemented: false,
     certified: false,
   },
 };
