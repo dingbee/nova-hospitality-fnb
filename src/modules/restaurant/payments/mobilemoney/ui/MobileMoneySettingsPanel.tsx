@@ -108,7 +108,7 @@ export function MobileMoneySettingsPanel() {
       accountQuery.data?.provider_code && accountQuery.data.provider_code !== "test"
         ? accountQuery.data.provider_code
         : "payin",
-    credentials: {},
+    credentials: {} as Record<string, string>,
   };
   const isOn = effective.activationState === "active";
 
