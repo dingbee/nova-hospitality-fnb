@@ -54,7 +54,7 @@ function headers(credentials: MobileMoneyProviderCredentials, idempotencyKey?: s
   };
 }
 
-function errorClassForStatus(status: number): "authentication" | "validation" | "provider_rejection" | "network" | "timeout" | "unknown" {
+function errorClassForStatus(status: number): "authentication" | "validation" | "provider_rejection" | "network" | "timeout" | "duplicate" | "unknown" {
   if (status === 401 || status === 403) return "authentication";
   if (status === 422) return "validation";
   if (status === 409) return "duplicate";
