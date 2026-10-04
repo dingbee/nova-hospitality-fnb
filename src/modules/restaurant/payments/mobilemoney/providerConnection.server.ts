@@ -296,6 +296,62 @@ export async function configureMobileMoneyProvider(
   return { ...data, credentialsConfigured: true };
 }
 
+/** Tests the tenant connection without creating a payment. */
+export async function testMobileMoneyTenantProviderConnection(
+  sb: Sb,
+  userId: string,
+  input: { tenantId: string },
+) {
+  await assertCapability(sb, userId, input.tenantId, "mobile_money.manage");
+  const { data } = await sb
+    .from("restaurant_mobile_money_provider_connections")
+    .select("provider_code, environment, provider_config, credential_ciphertext, credential_iv, credential_tag")
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+
+  if (!data?.credential_ciphertext) {
+    throw new Error("Connect a Mobile Money provider before testing the connection.");
+  }
+
+  const providerCode = mobileMoneyProviderCodeSchema.safeParse(data.provider_code);
+  if (!providerCode.success) throw new Error("Unsupported Mobile Money provider.");
+
+  const provider = getMobileMoneyProvider(providerCode.data);
+  if (!provider?.implemented) throw new Error("This provider connector is not implemented yet.");
+  if (data.environment === "production" && !provider.certified) {
+    throw new Error("This provider is not production-certified for LexiBite yet.");
+  }
+
+  const plaintext = decryptSecret({
+    ciphertext: data.credential_ciphertext,
+    iv: data.credential_iv,
+    tag: data.credential_tag,
+  });
+  const credentials = JSON.parse(plaintext) as MobileMoneyProviderCredentials;
+
+  if (providerCode.data === "payin") {
+    const { createPayInAdapter } = await import("./providers/payinAdapter.server");
+    const adapter = createPayInAdapter(
+      data.environment as MobileMoneyEnvironment,
+      credentials,
+      (data.provider_config ?? {}) as MobileMoneyProviderConfig,
+    );
+    const health = await adapter.healthCheck();
+    await sb
+      .from("restaurant_mobile_money_provider_connections")
+      .update({
+        provider_status: health.ok ? "operational" : "error",
+        last_health_check_at: new Date().toISOString(),
+        last_provider_error: health.ok ? null : health.message,
+      })
+      .eq("tenant_id", input.tenantId);
+    if (!health.ok) throw new Error(health.message || "Provider connection failed.");
+    return { ok: true, providerCode: providerCode.data, message: "Connected" };
+  }
+
+  throw new Error("This provider connector does not yet support connection testing.");
+}
+
 export async function clearMobileMoneyProvider(
   sb: Sb,
   userId: string,
