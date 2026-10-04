@@ -50,11 +50,11 @@ function isConfigured(): boolean {
  * available" and put the collection into a configuration error, never
  * fabricate an accepted/paid outcome.
  */
-export function createAggregatorAdapter(): MobileMoneyAdapter | null {
+export function createAggregatorAdapter(providerCode = "tz_mm_aggregator"): MobileMoneyAdapter | null {
   if (!isConfigured()) return null;
 
   return {
-    providerCode: "tz_mm_aggregator",
+    providerCode,
     environment: process.env.MM_AGGREGATOR_ENV === "production" ? "production" : "test",
     automatic: true,
 
