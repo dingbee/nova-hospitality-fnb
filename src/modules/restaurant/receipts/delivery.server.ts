@@ -433,7 +433,7 @@ export async function getOrCreateGuestReceiptLink(
   const idempotencyKey = `guest-portal-receipt:${receipt.id}`;
   const { data: existing } = await sb
     .from("restaurant_receipt_deliveries")
-    .select("share_token, share_expires_at")
+    .select("id, share_token, share_expires_at")
     .eq("tenant_id", receipt.tenant_id)
     .eq("receipt_id", receipt.id)
     .eq("method", "secure_link")
@@ -454,6 +454,30 @@ export async function getOrCreateGuestReceiptLink(
 
   const shareToken = token();
   const expiresAt = new Date(Date.now() + SHARE_TTL_DAYS * 864e5).toISOString();
+
+  // The deterministic idempotency key means an expired link is rotated in
+  // place rather than inserted as a second delivery row.
+  if (existing?.id) {
+    const { data: rotated, error: rotateError } = await sb
+      .from("restaurant_receipt_deliveries")
+      .update({
+        share_token: shareToken,
+        share_expires_at: expiresAt,
+        status: "shared",
+        metadata: { source: "guest_portal", delivery_purpose: "receipt_access" },
+      })
+      .eq("id", existing.id)
+      .select("share_token, share_expires_at")
+      .single();
+
+    if (rotateError) throw new Error(rotateError.message);
+    return {
+      ok: true as const,
+      receiptNumber: receipt.receipt_number,
+      shareUrl: `${siteOrigin()}/receipt/${rotated.share_token}`,
+      expiresAt: rotated.share_expires_at ?? null,
+    };
+  }
 
   const { data: created, error } = await sb
     .from("restaurant_receipt_deliveries")
