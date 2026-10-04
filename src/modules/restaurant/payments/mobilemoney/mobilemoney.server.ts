@@ -183,7 +183,7 @@ export async function upsertMobileMoneyAccount(
       },
       { onConflict: "tenant_id,location_id" },
     )
-    .select("*")
+    .select(SAFE_ACCOUNT_COLUMNS)
     .single();
   if (error) throw new Error(error.message);
 
