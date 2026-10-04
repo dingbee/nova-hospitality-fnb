@@ -28,6 +28,8 @@ import {
   listMobileMoneyReconciliationFn,
   upsertMobileMoneyAccountFn,
 } from "../mobilemoney.functions";
+import { configureMobileMoneyProviderFn } from "../providerConnection.functions";
+import { getMobileMoneyProvider, MOBILE_MONEY_PROVIDER_CODES } from "../providerRegistry";
 import {
   MM_NETWORK_LABELS,
   MM_NETWORKS,
@@ -91,6 +93,8 @@ export function MobileMoneySettingsPanel() {
     merchantNumber: string;
     environment: MobileMoneyEnvironment;
     activationState: MobileMoneyActivationState;
+    providerCode: string;
+    credentials: Record<string, string>;
   } | null>(null);
 
   const effective = form ?? {
@@ -100,22 +104,76 @@ export function MobileMoneySettingsPanel() {
     environment: (accountQuery.data?.environment ?? "test") as MobileMoneyEnvironment,
     activationState: (accountQuery.data?.activation_state ??
       "inactive") as MobileMoneyActivationState,
+    providerCode: accountQuery.data?.provider_code ?? "test",
+    credentials: {},
   };
   const isOn = effective.activationState === "active";
 
+  const configureProvider = useServerFn(configureMobileMoneyProviderFn);
+  const provider = getMobileMoneyProvider(effective.providerCode);
+  const providerChanged =
+    Boolean(accountQuery.data?.provider_code) &&
+    effective.providerCode !== accountQuery.data?.provider_code;
+  const credentialsProvided = Object.values(effective.credentials).some((v) => v.trim().length > 0);
+  const credentialsConfigured = ["configured", "operational", "error"].includes(
+    String(accountQuery.data?.provider_status ?? ""),
+  );
+  const productionBlocked =
+    effective.mode === "connected" &&
+    effective.environment === "production" &&
+    (!provider || !provider.certified);
+
   const save = useAdminMutation({
-    mutationFn: (activationState: MobileMoneyActivationState) =>
-      upsertAccount({
+    mutationFn: async (activationState: MobileMoneyActivationState) => {
+      if (productionBlocked && activationState === "active") {
+        throw new Error("This provider is not production-certified for LexiBite yet.");
+      }
+
+      // Create/update the outlet row first so the provider connection can be
+      // bound to an authoritative account. It remains inactive until the
+      // connection is successfully stored.
+      await upsertAccount({
         data: {
           tenantId,
           locationId: activeLocationId,
           mode: effective.mode,
           network: effective.network,
-          merchantNumber: effective.merchantNumber,
+          merchantNumber: effective.merchantNumber || "CONNECTED",
+          environment: effective.environment,
+          activationState: "inactive",
+        },
+      });
+
+      if (effective.mode === "connected" && effective.providerCode !== "test") {
+        if (providerChanged && !credentialsProvided) {
+          throw new Error("Enter the new provider credentials before switching providers.");
+        }
+        if (credentialsProvided) {
+          await configureProvider({
+            data: {
+              tenantId,
+              locationId: activeLocationId,
+              providerCode: effective.providerCode,
+              credentials: effective.credentials,
+            },
+          });
+        } else if (!credentialsConfigured) {
+          throw new Error("Configure the selected payment provider before activating it.");
+        }
+      }
+
+      return upsertAccount({
+        data: {
+          tenantId,
+          locationId: activeLocationId,
+          mode: effective.mode,
+          network: effective.network,
+          merchantNumber: effective.merchantNumber || "CONNECTED",
           environment: effective.environment,
           activationState,
         },
-      }),
+      });
+    },
     successMessage: "Mobile Money saved.",
     onSuccess: () => {
       setForm(null);
@@ -204,7 +262,9 @@ export function MobileMoneySettingsPanel() {
               <select
                 className="h-9 w-full rounded-md border bg-background px-2 text-sm"
                 value={effective.mode}
-                onChange={(e) => setForm({ ...effective, mode: e.target.value as MobileMoneyMode })}
+                onChange={(e) =>
+                  setForm({ ...effective, mode: e.target.value as MobileMoneyMode })
+                }
               >
                 <option value="lipa_namba">Merchant number — staff confirm each payment</option>
                 <option value="connected">Connected — automatic confirmation</option>
@@ -216,7 +276,10 @@ export function MobileMoneySettingsPanel() {
                   className="h-9 w-full rounded-md border bg-background px-2 text-sm"
                   value={effective.environment}
                   onChange={(e) =>
-                    setForm({ ...effective, environment: e.target.value as MobileMoneyEnvironment })
+                    setForm({
+                      ...effective,
+                      environment: e.target.value as MobileMoneyEnvironment,
+                    })
                   }
                 >
                   <option value="test">Test / sandbox</option>
@@ -225,11 +288,72 @@ export function MobileMoneySettingsPanel() {
               </Field>
             )}
           </div>
-          {effective.mode === "connected" && effective.environment === "production" && (
-            <p className="mt-3 text-[color:var(--os-warn)]">
-              Production requires an approved, connected provider to be configured server-side.
-              Until then, requests at this outlet will show as configuration required.
-            </p>
+
+          {effective.mode === "connected" && (
+            <div className="mt-4 space-y-4 rounded-md border p-3">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Payment provider">
+                  <select
+                    className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                    value={effective.providerCode}
+                    onChange={(e) =>
+                      setForm({
+                        ...effective,
+                        providerCode: e.target.value,
+                        credentials: {},
+                      })
+                    }
+                  >
+                    {MOBILE_MONEY_PROVIDER_CODES.filter((code) => code !== "test").map((code) => (
+                      <option key={code} value={code}>
+                        {getMobileMoneyProvider(code)?.name ?? code}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <div className="flex items-end text-xs text-[color:var(--os-ink-3)]">
+                  {provider?.implemented
+                    ? provider.certified
+                      ? "Connector certified."
+                      : "Connector implemented; production certification is still gated."
+                    : "Connector registered; adapter implementation is pending."}
+                </div>
+              </div>
+
+              {provider?.implemented && (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {provider.credentialFields.map((field) => (
+                    <Field key={field} label={field === "apiKey" ? "API key" : field === "apiSecret" ? "API secret" : "Webhook secret"}>
+                      <Input
+                        type="password"
+                        autoComplete="new-password"
+                        value={effective.credentials[field] ?? ""}
+                        placeholder={
+                          credentialsConfigured ? "Stored securely — enter only to replace" : "Enter credential"
+                        }
+                        onChange={(e) =>
+                          setForm({
+                            ...effective,
+                            credentials: { ...effective.credentials, [field]: e.target.value },
+                          })
+                        }
+                      />
+                    </Field>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-xs text-[color:var(--os-ink-3)]">
+                Credentials are encrypted at rest and are never returned to the browser after saving.
+                LexiBite never receives or stores the customer's mobile-money PIN.
+              </p>
+
+              {productionBlocked && (
+                <p className="text-[color:var(--os-warn)]">
+                  Production activation is locked until this connector passes LexiBite's provider certification gate.
+                </p>
+              )}
+            </div>
           )}
         </details>
 
