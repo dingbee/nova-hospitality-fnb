@@ -73,7 +73,7 @@ function GuestReceiptPage() {
           </div>
 
           <div className="mt-5 space-y-2 border-y py-4">
-            {receipt.lines.map((line, index) => (
+            {receipt.lines.map((line: { description: string; quantity: number; amount: number }, index: number) => (
               <div key={`${line.description}-${index}`} className="flex items-start justify-between gap-3 text-sm">
                 <div className="min-w-0">
                   <p className="font-medium">{line.description}</p>
@@ -125,7 +125,7 @@ function GuestReceiptPage() {
                 Payment
               </p>
               <div className="mt-2 space-y-1.5 text-sm">
-                {receipt.payments.map((payment, index) => (
+                {receipt.payments.map((payment: { method: string; amount: number }, index: number) => (
                   <div key={`${payment.method}-${index}`} className="flex justify-between gap-3">
                     <span className="capitalize">{payment.method.replaceAll("_", " ")}</span>
                     <span>{money(payment.amount, receipt.currency)}</span>
