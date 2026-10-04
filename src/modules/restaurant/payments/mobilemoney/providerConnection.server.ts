@@ -181,6 +181,20 @@ export async function configureMobileMoneyTenantProvider(
 
   if (error) throw new Error(error.message);
 
+  // Keep outlet payment rows aligned with the tenant's provider metadata.
+  // Credentials remain tenant-only; this is only a provider/environment
+  // snapshot used by collection records and legacy operational reads.
+  const { error: outletSyncError } = await sb
+    .from("restaurant_mobile_money_accounts")
+    .update({
+      provider_code: providerCode,
+      environment: input.environment,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("tenant_id", input.tenantId)
+    .eq("mode", "connected");
+  if (outletSyncError) throw new Error(outletSyncError.message);
+
   return {
     id: data.id,
     tenantId: data.tenant_id,
