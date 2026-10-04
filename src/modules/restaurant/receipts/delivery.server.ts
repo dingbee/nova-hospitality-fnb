@@ -389,6 +389,125 @@ export async function listDeliveries(sb: Sb, userId: string, input: ListDeliveri
  * only credential; it is unguessable, expiring, and bound to one receipt, so
  * no tenant can reach another tenant's document through it.
  */
+/**
+ * Guest Portal receipt link.
+ *
+ * Reuses the existing receipt-delivery/share-token surface, but creates no
+ * staff delivery attempt and never issues or mutates the financial receipt.
+ * The order/table relationship and fully-paid state are re-derived here.
+ */
+export async function getOrCreateGuestReceiptLink(
+  sb: Sb,
+  input: { tableId: string; orderId: string },
+) {
+  const { resolveGuestTableContext } = await import("../selforder/selforder.server");
+  const table = await resolveGuestTableContext(sb, input.tableId);
+
+  const { data: order } = await sb
+    .from("restaurant_orders")
+    .select("id, tenant_id, property_id, location_id, total, paid_total, payment_state")
+    .eq("tenant_id", table.tenantId)
+    .eq("id", input.orderId)
+    .eq("table_id", input.tableId)
+    .maybeSingle();
+
+  if (!order) return { ok: false as const, reason: "not_found" as const };
+
+  const amountDue = Math.max(0, Number(order.total ?? 0) - Number(order.paid_total ?? 0));
+  if (order.payment_state !== "paid" && amountDue > 0) {
+    return { ok: false as const, reason: "not_paid" as const };
+  }
+
+  const { data: receipt } = await sb
+    .from("restaurant_receipts")
+    .select("id, tenant_id, property_id, location_id, order_id, receipt_number")
+    .eq("tenant_id", table.tenantId)
+    .eq("order_id", order.id)
+    .maybeSingle();
+
+  // Payment confirmation and receipt issuance are separate commits. A brief
+  // race is therefore legitimate; the portal polls until the authoritative
+  // receipt exists instead of manufacturing a second document.
+  if (!receipt) return { ok: false as const, reason: "receipt_not_ready" as const };
+
+  const idempotencyKey = `guest-portal-receipt:${receipt.id}`;
+  const { data: existing } = await sb
+    .from("restaurant_receipt_deliveries")
+    .select("share_token, share_expires_at")
+    .eq("tenant_id", receipt.tenant_id)
+    .eq("receipt_id", receipt.id)
+    .eq("method", "secure_link")
+    .eq("idempotency_key", idempotencyKey)
+    .maybeSingle();
+
+  if (
+    existing?.share_token &&
+    (!existing.share_expires_at || new Date(existing.share_expires_at).getTime() > Date.now())
+  ) {
+    return {
+      ok: true as const,
+      receiptNumber: receipt.receipt_number,
+      shareUrl: `${siteOrigin()}/receipt/${existing.share_token}`,
+      expiresAt: existing.share_expires_at ?? null,
+    };
+  }
+
+  const shareToken = token();
+  const expiresAt = new Date(Date.now() + SHARE_TTL_DAYS * 864e5).toISOString();
+
+  const { data: created, error } = await sb
+    .from("restaurant_receipt_deliveries")
+    .insert({
+      tenant_id: receipt.tenant_id,
+      property_id: receipt.property_id ?? null,
+      location_id: receipt.location_id ?? null,
+      receipt_id: receipt.id,
+      order_id: receipt.order_id,
+      receipt_number: receipt.receipt_number,
+      method: "secure_link",
+      recipient: null,
+      attempt: 1,
+      idempotency_key: idempotencyKey,
+      share_token: shareToken,
+      share_expires_at: expiresAt,
+      correlation_id: null,
+      initiated_by: null,
+      status: "shared",
+      metadata: { source: "guest_portal", delivery_purpose: "receipt_access" },
+    })
+    .select("share_token, share_expires_at")
+    .single();
+
+  if (error) {
+    // A concurrent portal request may have created the same deterministic
+    // link first. Recover it rather than surfacing a duplicate-key error.
+    const { data: winner } = await sb
+      .from("restaurant_receipt_deliveries")
+      .select("share_token, share_expires_at")
+      .eq("tenant_id", receipt.tenant_id)
+      .eq("receipt_id", receipt.id)
+      .eq("method", "secure_link")
+      .eq("idempotency_key", idempotencyKey)
+      .maybeSingle();
+    if (winner?.share_token) {
+      return {
+        ok: true as const,
+        receiptNumber: receipt.receipt_number,
+        shareUrl: `${siteOrigin()}/receipt/${winner.share_token}`,
+        expiresAt: winner.share_expires_at ?? null,
+      };
+    }
+    throw new Error(error.message);
+  }
+
+  return {
+    ok: true as const,
+    receiptNumber: receipt.receipt_number,
+    shareUrl: `${siteOrigin()}/receipt/${created.share_token}`,
+    expiresAt: created.share_expires_at ?? null,
+  };
+}
+
 export async function getSharedReceipt(tokenValue: string) {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   const { data: delivery } = await supabaseAdmin
