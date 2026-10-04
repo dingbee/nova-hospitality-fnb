@@ -138,6 +138,7 @@ export function createPayInAdapter(
             operator,
             reference: input.reference,
             description: "LexiBite restaurant payment",
+            ...(config.callbackUrl ? { callback_url: config.callbackUrl } : {}),
           }),
         });
 
