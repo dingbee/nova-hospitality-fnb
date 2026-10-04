@@ -31,7 +31,8 @@ export const getOrCreateGuestReceiptLinkFn = createServerFn({ method: "GET" })
   .inputValidator((d: unknown) => guestReceiptLinkSchema.parse(d))
   .handler(async ({ data }) => {
     const mod = await import("./delivery.server");
-    return mod.getOrCreateGuestReceiptLink(data);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    return mod.getOrCreateGuestReceiptLink(supabaseAdmin, data);
   });
 
 
