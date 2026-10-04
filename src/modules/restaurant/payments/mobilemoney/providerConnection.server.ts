@@ -27,6 +27,7 @@ export interface MobileMoneyProviderConfig {
   baseUrl?: string;
   merchantId?: string;
   accountId?: string;
+  callbackUrl?: string;
   [key: string]: string | undefined;
 }
 
