@@ -342,7 +342,7 @@ export async function testMobileMoneyTenantProviderConnection(
       .update({
         provider_status: health.ok ? "operational" : "error",
         last_health_check_at: new Date().toISOString(),
-        last_provider_error: health.ok ? null : health.message,
+        last_provider_error: health.ok ? null : health.detail,
       })
       .eq("tenant_id", input.tenantId);
     if (!health.ok) throw new Error(health.message || "Provider connection failed.");
