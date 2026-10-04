@@ -48,6 +48,9 @@ type Sb = any;
 /** A cent of slack against floating-point/rounding noise — same tolerance confirmGuestPayment already uses. */
 const AMOUNT_TOLERANCE = 0.01;
 
+const SAFE_ACCOUNT_COLUMNS =
+  "id, tenant_id, property_id, location_id, mode, network, merchant_number, provider_code, environment, activation_state, provider_config, provider_status, last_health_check_at, last_provider_error, created_at, updated_at";
+
 export function getConfiguredMobileMoneyAdapter(
   mode: MobileMoneyMode,
   environment: MobileMoneyEnvironment,
@@ -136,7 +139,7 @@ export async function getMobileMoneyAccount(
   await assertTenantRead(sb, userId, input.tenantId, { locationId: input.locationId });
   const { data } = await sb
     .from("restaurant_mobile_money_accounts")
-    .select("*")
+    .select(SAFE_ACCOUNT_COLUMNS)
     .eq("tenant_id", input.tenantId)
     .eq("location_id", input.locationId)
     .maybeSingle();
