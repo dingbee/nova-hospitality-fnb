@@ -1718,7 +1718,7 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
               View receipt
             </a>
             <a
-              href={receiptLink.data.shareUrl}
+              href={`${receiptLink.data.shareUrl}?print=1`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex min-h-10 items-center justify-center rounded-full bg-primary px-3 text-sm font-medium text-primary-foreground"
