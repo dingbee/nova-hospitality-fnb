@@ -27,6 +27,7 @@ export interface MobileMoneyProviderDefinition {
   automatic: boolean;
   supportedNetworks: readonly MobileMoneyNetwork[];
   credentialFields: readonly string[];
+  implemented: boolean;
   certified: boolean;
 }
 
@@ -47,6 +48,7 @@ export const MOBILE_MONEY_PROVIDERS: Record<
     automatic: true,
     supportedNetworks: ALL_CONNECTED_NETWORKS,
     credentialFields: [],
+    implemented: true,
     certified: true,
   },
   stakaba: {
@@ -55,6 +57,7 @@ export const MOBILE_MONEY_PROVIDERS: Record<
     automatic: true,
     supportedNetworks: ALL_CONNECTED_NETWORKS,
     credentialFields: ["apiKey", "webhookSecret"],
+    implemented: false,
     certified: false,
   },
   clickpesa: {
@@ -63,6 +66,7 @@ export const MOBILE_MONEY_PROVIDERS: Record<
     automatic: true,
     supportedNetworks: ALL_CONNECTED_NETWORKS,
     credentialFields: ["apiKey", "apiSecret", "webhookSecret"],
+    implemented: false,
     certified: false,
   },
   payin: {
@@ -71,6 +75,7 @@ export const MOBILE_MONEY_PROVIDERS: Record<
     automatic: true,
     supportedNetworks: ALL_CONNECTED_NETWORKS,
     credentialFields: ["apiKey", "apiSecret", "webhookSecret"],
+    implemented: true,
     certified: false,
   },
   snippe: {
@@ -79,6 +84,7 @@ export const MOBILE_MONEY_PROVIDERS: Record<
     automatic: true,
     supportedNetworks: ALL_CONNECTED_NETWORKS,
     credentialFields: ["apiKey", "apiSecret", "webhookSecret"],
+    implemented: false,
     certified: false,
   },
   malipopay: {
