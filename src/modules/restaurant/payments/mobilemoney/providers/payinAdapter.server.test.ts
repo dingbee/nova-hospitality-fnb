@@ -56,6 +56,38 @@ describe("PayIn adapter", () => {
     });
   });
 
+  it("treats PayIn open_collection_session as an existing pending request, not a second push", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            success: false,
+            message: "A collection is already in progress for this phone.",
+            error: "open_collection_session",
+            request_ref: "PAY-EXISTING",
+            status: "processing",
+          }),
+          { status: 409 },
+        ),
+      ),
+    );
+
+    const adapter = createPayInAdapter("test", credentials);
+    await expect(
+      adapter.createCollection({
+        environment: "test",
+        idempotencyKey: "mm-idem-open",
+        network: "mpesa",
+        merchantNumber: "ignored",
+        customerPhone: "0712345678",
+        amount: 5000,
+        currency: "TZS",
+        reference: "mm:collection-open",
+      }),
+    ).resolves.toEqual({ outcome: "accepted", providerReference: "PAY-EXISTING" });
+  });
+
   it("rejects a connected request without a customer phone", async () => {
     const adapter = createPayInAdapter("test", credentials);
     await expect(
