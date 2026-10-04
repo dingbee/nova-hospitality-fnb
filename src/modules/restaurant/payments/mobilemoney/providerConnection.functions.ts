@@ -67,3 +67,12 @@ export const configureMobileMoneyTenantProviderFn = createServerFn({ method: "PO
       enabledNetworks: data.enabledNetworks as any,
     });
   });
+
+
+export const testMobileMoneyTenantProviderConnectionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => tenantProviderReadSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./providerConnection.server");
+    return mod.testMobileMoneyTenantProviderConnection(context.supabase, context.userId, data);
+  });
