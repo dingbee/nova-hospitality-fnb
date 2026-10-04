@@ -110,11 +110,11 @@ export function createPayInAdapter(
         };
       }
 
-      if (!Number.isInteger(input.amount) || input.amount < 100) {
+      if (!Number.isInteger(input.amount) || input.amount < 100 || input.amount > 10_000_000) {
         return {
           outcome: "rejected",
           errorClass: "validation",
-          reason: "PayIn requires a whole-number amount of at least 100 TZS.",
+          reason: "PayIn requires a whole-number amount between 100 and 10,000,000 TZS.",
         };
       }
 
@@ -143,6 +143,13 @@ export function createPayInAdapter(
         });
 
         if (!response.ok || !body?.request_ref) {
+          // PayIn returns 409/open_collection_session when the same phone
+          // already has an active USSD/STK session. That is not a payment
+          // failure and must not trigger a second push; continue polling the
+          // existing request instead.
+          if (response.status === 409 && body?.request_ref) {
+            return { outcome: "accepted", providerReference: String(body.request_ref) };
+          }
           return {
             outcome: "rejected",
             errorClass: errorClassForStatus(response.status),
