@@ -223,7 +223,11 @@ export async function executeApprovedInventoryAgentActions(
     action_type: string;
     status: string;
   }>)
-    .filter((row) => row.status === "approved" || row.status === "failed")
+    .filter(
+      (row) =>
+        row.action_type === INVENTORY_ACTION_TYPE &&
+        (row.status === "approved" || row.status === "failed"),
+    )
     .slice(0, limit);
 
   const outcomes: InventoryAgentActionSweepResult["outcomes"] = [];
@@ -317,7 +321,9 @@ export async function verifyExecutedInventoryAgentActions(
     decision_id: string;
     action_type: string;
     status: string;
-  }>).slice(0, limit);
+  }>)
+    .filter((row) => row.action_type === INVENTORY_ACTION_TYPE && row.status === "executed")
+    .slice(0, limit);
 
   const outcomes: InventoryAgentVerificationSweepResult["outcomes"] = [];
   for (const row of eligible) {
