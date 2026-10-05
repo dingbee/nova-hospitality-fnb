@@ -227,7 +227,7 @@ function ConnectionRow({
           <h3 className="font-semibold">{connection.label}</h3>
           <Badge variant="destructive">Unknown provider</Badge>
         </div>
-        <p className="mt-2 text-sm text-muted-foreground">Provider ${connection.providerKey} is not currently registered. The connection is preserved but cannot be operated until its adapter is restored.</p>
+        <p className="mt-2 text-sm text-muted-foreground">Provider {connection.providerKey} is not currently registered. The connection is preserved but cannot be operated until its adapter is restored.</p>
       </div>
     );
   }
