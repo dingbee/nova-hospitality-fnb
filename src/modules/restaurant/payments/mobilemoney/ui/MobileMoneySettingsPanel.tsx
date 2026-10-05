@@ -188,6 +188,10 @@ export function MobileMoneySettingsPanel() {
         description="Tenant-level provider connection"
       >
         <div className="space-y-5">
+          <div className="rounded-md border border-[color:var(--os-info)]/30 bg-[color:var(--os-info)]/5 px-3 py-2 text-xs text-[color:var(--os-ink-2)]">
+            This connection belongs to the restaurant tenant and is shared by its outlets.
+            Outlet payment activation remains operationally scoped; provider credentials are not stored per outlet.
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Provider">
               <select
