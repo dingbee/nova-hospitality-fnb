@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Loader2, Plus, Save } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -129,7 +129,7 @@ function ChannelEditor({
   channel?: StoredChannelDefinition;
   providers: ChannelProviderDefinition[];
   submitLabel: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
   onSaved: () => void;
 }) {
   const [key, setKey] = useState(channel?.key ?? "");
