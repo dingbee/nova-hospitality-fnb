@@ -80,7 +80,6 @@ export async function updateChannelConnection(sb: any, userId: string, input: Up
         projectId: input.config.projectId ?? current.projectId ?? "",
         languageCode: input.config.languageCode ?? current.languageCode ?? "en",
         businessId: input.config.businessId ?? current.businessId,
-        baseUrl: input.config.baseUrl ?? current.baseUrl ?? "https://api.ordering.co",
       })
     : undefined;
 
