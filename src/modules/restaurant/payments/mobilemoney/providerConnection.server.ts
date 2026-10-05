@@ -119,18 +119,6 @@ export async function configureMobileMoneyTenantProvider(
   const provider = getMobileMoneyProvider(providerCode);
   if (!provider) throw new Error("Unsupported Mobile Money provider.");
 
-  // A live collection is bound to the provider credentials/signing secret
-  // that existed when it was initiated. Changing those credentials while
-  // the collection is pending can make a legitimate webhook unverifiable or
-  // route status polling through the wrong provider. Fail closed until all
-  // in-flight collections reach a terminal state.
-  const { data: pendingCollections } = await sb
-    .from("restaurant_mobile_money_collections")
-    .select("id")
-    .eq("tenant_id", input.tenantId)
-    .in("state", ["created", "initiated", "pending_customer", "processing"])
-    .limit(1);
-
   const enabledNetworks = normalizeNetworks(input.enabledNetworks);
   if (enabledNetworks.length === 0) throw new Error("Select at least one Mobile Money network.");
 
@@ -140,50 +128,11 @@ export async function configureMobileMoneyTenantProvider(
     }
   }
 
-  const { data: existing } = await sb
-    .from("restaurant_mobile_money_provider_connections")
-    .select("credential_ciphertext, credential_iv, credential_tag, provider_code, provider_config, environment, enabled_networks")
-    .eq("tenant_id", input.tenantId)
-    .maybeSingle();
-
   const credentials = input.credentials && Object.keys(input.credentials).length
     ? input.credentials
     : null;
 
-  if ((pendingCollections ?? []).length > 0 && existing) {
-    const existingNetworks = normalizeNetworks(existing.enabled_networks);
-    const networksChanged =
-      existingNetworks.length !== enabledNetworks.length ||
-      existingNetworks.some((n) => !enabledNetworks.includes(n));
-
-    const configChanged =
-      JSON.stringify(existing.provider_config ?? {}) !==
-      JSON.stringify(input.config ?? existing.provider_config ?? {});
-
-    const credentialsChanged = Boolean(credentials);
-    const providerChanged = existing.provider_code !== providerCode;
-    const environmentChanged = existing.environment !== input.environment;
-
-    if (
-      providerChanged ||
-      environmentChanged ||
-      networksChanged ||
-      configChanged ||
-      credentialsChanged
-    ) {
-      throw new Error(
-        "Mobile Money configuration cannot change while a payment is still in progress. Wait for the pending collection to finish.",
-      );
-    }
-  }
-
   if (credentials) validateCredentials(providerCode, credentials);
-  else if (
-    !existing?.credential_ciphertext ||
-    existing.provider_code !== providerCode
-  ) {
-    throw new Error("Enter the credentials for the selected Mobile Money provider.");
-  }
 
   const configured = { ...(input.config ?? {}) };
   if (providerCode === "payin" && !configured.callbackUrl) {
