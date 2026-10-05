@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { CheckCircle2, ExternalLink, Link2, Loader2, Plus, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2, Plus, RefreshCw } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { PageHeader } from "@/components/os/PageHeader";
@@ -54,20 +54,9 @@ export function ChannelIntegrationsCentre() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Universal Channel Centre"
-        description="One control plane for external ordering, marketplace, delivery and aggregator channels. Channels are decoupled from their transport providers."
+        title="Channel Integrations"
+        description="Connect external ordering and delivery channels to this restaurant. Your operational workflows remain in LexiBite."
       />
-
-      <SectionCard
-        title="Universal channel control plane"
-        description="Channel identity, provider transport and LexiBite operations are separate layers. A new channel does not require changes to POS, kitchen, inventory or intelligence."
-      >
-        <div className="grid gap-3 md:grid-cols-3">
-          <BoundaryCard icon={<Link2 className="h-4 w-4" />} title="Universal channel contract" text="Every external channel is represented through the same connection, order and status boundary." />
-          <BoundaryCard icon={<ShieldCheck className="h-4 w-4" />} title="Tenant controlled" text="Owners and general managers configure channel connections here. Credentials remain server-side." />
-          <BoundaryCard icon={<Unplug className="h-4 w-4" />} title="Provider-independent core" text="Every supported external channel stays outside the LexiBite operational core." />
-        </div>
-      </SectionCard>
 
       <ProviderCatalog channels={channels} />
 
@@ -91,15 +80,6 @@ export function ChannelIntegrationsCentre() {
   );
 }
 
-function BoundaryCard({ icon, title, text }: { icon: ReactNode; title: string; text: string }) {
-  return (
-    <div className="rounded-xl border bg-muted/20 p-4">
-      <div className="flex items-center gap-2 font-medium"><span className="rounded-lg border bg-background p-2">{icon}</span>{title}</div>
-      <p className="mt-2 text-sm text-muted-foreground">{text}</p>
-    </div>
-  );
-}
-
 function ProviderCatalog({ channels }: { channels: StoredChannelDefinition[] }) {
   return (
     <SectionCard
@@ -117,19 +97,18 @@ function ProviderCatalog({ channels }: { channels: StoredChannelDefinition[] }) 
                     <h3 className="font-semibold">{channel.name}</h3>
                     <p className="mt-1 text-xs uppercase tracking-wide text-muted-foreground">{channel.category.replaceAll("_", " ")}</p>
                   </div>
-                  <Badge variant="outline">Channel</Badge>
+                  <Badge variant="outline">Available</Badge>
                 </div>
                 <p className="mt-3 text-sm text-muted-foreground">{channel.description}</p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary">Adapter: {provider?.name ?? channel.providerKey}</Badge>
-                  <span className="text-xs text-muted-foreground">{provider?.capabilities.length ?? 0} capabilities</span>
+                  <Badge variant="secondary">{provider?.name ?? channel.providerKey}</Badge>
                 </div>
               </div>
             );
           })}
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">No universal channels are enabled.</p>
+        <p className="text-sm text-muted-foreground">No external channels are currently available.</p>
       )}
     </SectionCard>
   );
@@ -152,8 +131,8 @@ function ConnectionList({
 }) {
   if (!connections.length) {
     return (
-      <SectionCard title="Connected channels" description="No external channel is connected to this tenant yet.">
-        <p className="text-sm text-muted-foreground">Choose a universal channel below. The selected channel resolves its provider adapter automatically and remains scoped to this tenant and optionally to a property.</p>
+      <SectionCard title="Connected channels" description="No external channel is connected yet.">
+        <p className="text-sm text-muted-foreground">Choose an available channel below to connect it to this restaurant.</p>
       </SectionCard>
     );
   }
@@ -390,7 +369,7 @@ function NewConnection({
   return (
     <SectionCard
       title="Connect a channel"
-      description="Select an enabled external channel, configure its provider connection, and keep provider credentials server-side."
+      description="Select a channel, enter its connection details, and verify the connection."
     >
       {!provider ? (
         <p className="text-sm text-muted-foreground">No external channels are currently enabled by platform administration.</p>
@@ -409,7 +388,7 @@ function NewConnection({
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <Badge variant="outline">Adapter: {provider.name}</Badge>
                   <Badge variant="outline">{channel.category.replaceAll("_", " ")}</Badge>
-                  <span>{provider.capabilities.length} supported capabilities</span>
+                  
                   {provider.setup.docsUrl ? (
                     <a className="inline-flex items-center font-medium underline underline-offset-2" href={provider.setup.docsUrl} target="_blank" rel="noreferrer">
                       Provider documentation <ExternalLink className="ml-1 h-3 w-3" />
@@ -428,7 +407,7 @@ function NewConnection({
           </div>
 
           <div className="mt-4 flex items-center justify-between gap-4">
-            <p className="text-xs text-muted-foreground">Advanced integrations are entitlement-controlled. Tenant configuration is performed here; no Supabase dashboard action is required.</p>
+            <p className="text-xs text-muted-foreground">Connection credentials are stored securely and are not shown again after saving.</p>
             <Button
               disabled={mutation.isPending || !label.trim() || !requiredFieldsComplete || (provider.setup.credential.required && credential.length < 8)}
               onClick={() => mutation.mutate({
