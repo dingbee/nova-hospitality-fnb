@@ -3,21 +3,20 @@ import { CHANNEL_PROVIDERS, getChannelProviderDefinition } from "./channel-catal
 import { normaliseChannelConfig } from "./channel-registry.server";
 
 describe("universal channel registry", () => {
-  it("ships Ordering.co as a provider, not Piki as a provider", () => {
+  it("registers providers without creating product-specific provider keys", () => {
     expect(CHANNEL_PROVIDERS.map((provider) => provider.key)).toEqual(["ordering.co"]);
     expect(getChannelProviderDefinition("piki")).toBeNull();
   });
 
-  it("normalises tenant connection metadata without accepting a transport URL", () => {
+  it("keeps the universal connection config provider-neutral", () => {
     const config = normaliseChannelConfig("ordering.co", {
-      projectId: "piki-project",
-      languageCode: " en ",
-      businessId: "123",
+      providerProject: "example-project",
+      region: "tz",
     });
+
     expect(config).toEqual({
-      projectId: "piki-project",
-      languageCode: "en",
-      businessId: "123",
+      providerProject: "example-project",
+      region: "tz",
     });
     expect("baseUrl" in config).toBe(false);
   });
