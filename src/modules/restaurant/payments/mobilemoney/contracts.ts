@@ -4,10 +4,10 @@
  * tables (standalone/db/migrations/0026_mobile_money_foundation.sql)
  * one-to-one.
  *
- * Product principle: "Enter Lipa Namba -> Activate -> ON." The operator
- * never sees provider/API complexity — that lives entirely behind:
+ * Product principle: provider connection is controlled once at tenant level;
+ * POS and outlet operations consume the resulting connection through:
  *
- *   LEXIBITE POS -> PAYMENT CORE -> MOBILE MONEY ADAPTER -> PSP / MNO
+ *   TENANT CONTROL -> PAYMENT CORE -> MOBILE MONEY ADAPTER -> PSP / MNO
  */
 import { z } from "zod";
 

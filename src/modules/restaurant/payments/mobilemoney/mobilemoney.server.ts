@@ -28,6 +28,9 @@ import type { MobileMoneyAdapter } from "./adapter";
 import { createLipaNambaAdapter } from "./providers/lipaNambaAdapter.server";
 import { createTestMobileMoneyAdapter } from "./providers/testAdapter.server";
 import { createAggregatorAdapter } from "./providers/aggregatorAdapter.server";
+import { createPayInAdapter } from "./providers/payinAdapter.server";
+import { getMobileMoneyProvider } from "./providerRegistry";
+import { getMobileMoneyProviderCredentials } from "./providerConnection.server";
 import {
   operatorMessageForCollectionState,
   reconciliationStateForCollection,
@@ -45,13 +48,88 @@ type Sb = any;
 /** A cent of slack against floating-point/rounding noise — same tolerance confirmGuestPayment already uses. */
 const AMOUNT_TOLERANCE = 0.01;
 
+const SAFE_ACCOUNT_COLUMNS =
+  "id, tenant_id, property_id, location_id, mode, network, merchant_number, provider_code, environment, activation_state, provider_config, provider_status, last_health_check_at, last_provider_error, created_at, updated_at";
+
 export function getConfiguredMobileMoneyAdapter(
   mode: MobileMoneyMode,
   environment: MobileMoneyEnvironment,
+  providerCode = "test",
 ): MobileMoneyAdapter | null {
   if (mode === "lipa_namba") return createLipaNambaAdapter();
-  if (environment === "test") return createTestMobileMoneyAdapter("success");
-  return createAggregatorAdapter();
+
+  // The deterministic test adapter is available only for the explicit
+  // built-in test provider. A production account accidentally left on
+  // provider_code="test" must fail closed rather than route real money into
+  // a simulator.
+  if (providerCode === "test") {
+    return environment === "test" ? createTestMobileMoneyAdapter("success") : null;
+  }
+
+  // Connected provider adapters are selected by the account's provider_code.
+  // The current generic aggregator seam remains fail-closed until a concrete
+  // provider has passed the LexiBite adapter certification gate.
+  return createAggregatorAdapter(providerCode);
+}
+
+export async function getConfiguredMobileMoneyAdapterForAccount(
+  sb: Sb,
+  account: any,
+): Promise<MobileMoneyAdapter | null> {
+  if (account.mode === "lipa_namba") return createLipaNambaAdapter();
+
+  const connection = await getMobileMoneyProviderCredentials(
+    sb,
+    account.tenant_id,
+    account.location_id,
+  );
+
+  if (connection) {
+    const effectiveProviderCode = connection.providerCode;
+    const effectiveProvider = getMobileMoneyProvider(effectiveProviderCode);
+    if (!effectiveProvider?.implemented) return null;
+
+    const effectiveEnvironment = connection.environment ?? account.environment;
+    if (effectiveEnvironment === "production" && !effectiveProvider.certified) return null;
+
+    if (
+      connection.enabledNetworks?.length &&
+      !connection.enabledNetworks.includes(account.network)
+    ) {
+      return null;
+    }
+
+    if (effectiveProviderCode === "payin") {
+      return createPayInAdapter(
+        effectiveEnvironment,
+        connection.credentials,
+        connection.config,
+      );
+    }
+
+    // Keep the generic seam fail-closed until each provider's actual API,
+    // webhook and reversal contract has passed the provider certification gate.
+    return createAggregatorAdapter(effectiveProviderCode);
+  }
+
+  // Legacy outlet-level connection fallback.
+  const providerCode = String(account.provider_code ?? "test");
+  if (providerCode === "test") {
+    return account.environment === "test" ? createTestMobileMoneyAdapter("success") : null;
+  }
+  const provider = getMobileMoneyProvider(providerCode);
+  if (!provider?.implemented) return null;
+  if (account.environment === "production" && !provider.certified) return null;
+  if (providerCode === "payin") {
+    const legacyConnection = await getMobileMoneyProviderCredentials(
+      sb,
+      account.tenant_id,
+      account.location_id,
+    );
+    if (!legacyConnection) return null;
+    return createPayInAdapter(account.environment, legacyConnection.credentials, legacyConnection.config);
+  }
+  return createAggregatorAdapter(providerCode);
 }
 
 function toStatusView(row: any): MobileMoneyStatusView {
@@ -90,7 +168,7 @@ export async function getMobileMoneyAccount(
   await assertTenantRead(sb, userId, input.tenantId, { locationId: input.locationId });
   const { data } = await sb
     .from("restaurant_mobile_money_accounts")
-    .select("*")
+    .select(SAFE_ACCOUNT_COLUMNS)
     .eq("tenant_id", input.tenantId)
     .eq("location_id", input.locationId)
     .maybeSingle();
@@ -134,7 +212,7 @@ export async function upsertMobileMoneyAccount(
       },
       { onConflict: "tenant_id,location_id" },
     )
-    .select("*")
+    .select(SAFE_ACCOUNT_COLUMNS)
     .single();
   if (error) throw new Error(error.message);
 
@@ -428,7 +506,7 @@ async function createCollectionForOrder(
   const adapter =
     adapterOverride !== undefined
       ? adapterOverride
-      : getConfiguredMobileMoneyAdapter(account.mode, account.environment);
+      : await getConfiguredMobileMoneyAdapterForAccount(sb, account);
   if (!adapter) {
     collection = await patchCollection(sb, collection.id, input.tenantId, {
       state: "failed",
@@ -712,7 +790,7 @@ export async function refreshMobileMoneyCollectionStatus(
   const adapter =
     adapterOverride !== undefined
       ? adapterOverride
-      : getConfiguredMobileMoneyAdapter(collection.mode, collection.environment);
+      : await getConfiguredMobileMoneyAdapterForAccount(sb, collection);
   if (!adapter) return toStatusView(collection);
 
   const status = await adapter.verifyTransaction(collection.provider_reference);
@@ -785,7 +863,7 @@ export async function reverseMobileMoneyCollection(
     .single();
   if (!claimed) throw new Error("Only a paid collection can be reversed.");
 
-  const adapter = getConfiguredMobileMoneyAdapter(collection.mode, collection.environment);
+  const adapter = await getConfiguredMobileMoneyAdapterForAccount(sb, collection);
   const reversal =
     adapter && collection.provider_reference
       ? await adapter.reversePayment(collection.provider_reference, amount)
@@ -848,10 +926,28 @@ export async function handleMobileMoneyWebhookEvent(
   sb: Sb,
   input: { providerCode: string; rawBody: string; headers: Record<string, string> },
 ) {
-  const adapter =
-    input.providerCode === "test"
-      ? createTestMobileMoneyAdapter("success")
-      : createAggregatorAdapter();
+  // The webhook body is untrusted, but request_ref is only used as an
+  // opaque lookup key to locate the tenant/outlet connection. Signature
+  // verification still happens inside the provider adapter before any
+  // business side effect.
+  let untrustedPayload: any = null;
+  try {
+    untrustedPayload = JSON.parse(input.rawBody);
+  } catch {
+    return { processed: false, reason: "invalid_payload" as const };
+  }
+  const providerReference = String(untrustedPayload?.request_ref ?? untrustedPayload?.providerReference ?? "");
+  if (!providerReference) return { processed: false, reason: "missing_provider_reference" as const };
+
+  const { data: collectionForAdapter } = await sb
+    .from("restaurant_mobile_money_collections")
+    .select("*")
+    .eq("provider_code", input.providerCode)
+    .eq("provider_reference", providerReference)
+    .maybeSingle();
+  if (!collectionForAdapter) return { processed: false, reason: "collection_not_found" as const };
+
+  const adapter = await getConfiguredMobileMoneyAdapterForAccount(sb, collectionForAdapter);
   if (!adapter) return { processed: false, reason: "no_provider_configured" as const };
 
   const parsed = await adapter.handleWebhook({ headers: input.headers, rawBody: input.rawBody });
@@ -894,6 +990,7 @@ export async function handleMobileMoneyWebhookEvent(
     .from("restaurant_mobile_money_collections")
     .select("*")
     .eq("provider_reference", parsed.providerReference)
+    .eq("provider_code", input.providerCode)
     .maybeSingle();
 
   if (!collection) {
@@ -1091,7 +1188,7 @@ export async function getMobileMoneyHealth(
 
   let accountQuery = sb
     .from("restaurant_mobile_money_accounts")
-    .select("mode, environment, activation_state")
+    .select("id, tenant_id, location_id, mode, environment, activation_state, provider_code")
     .eq("tenant_id", input.tenantId);
   if (input.locationId) accountQuery = accountQuery.eq("location_id", input.locationId);
   else if (restrictedIds !== null)
@@ -1104,7 +1201,7 @@ export async function getMobileMoneyHealth(
 
   let status: MobileMoneyHealthStatus = "configuration_required";
   if (active) {
-    const adapter = getConfiguredMobileMoneyAdapter(active.mode, active.environment);
+    const adapter = await getConfiguredMobileMoneyAdapterForAccount(sb, active);
     if (!adapter) status = "provider_unavailable";
     else {
       const health = await adapter.healthCheck();
