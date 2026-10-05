@@ -4,7 +4,7 @@ import { writeCommercialAudit } from "@/modules/commercial/audit.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UpdateChannelConnectionInput, CreateChannelConnectionInput } from "./channel-contracts";
-import { assertChannelProvider, getChannelProvider } from "./channel-registry.server";
+import { assertChannelProvider } from "./channel-registry.server";
 import { getChannelDefinition } from "./channel-catalog";
 import { getChannelAdapter } from "./adapters/index.server";
 import { registerIntegration, updateIntegration } from "./integrations.server";
