@@ -5,10 +5,15 @@ const mocks = vi.hoisted(() => ({
   executeRestaurantAction: vi.fn(),
   verifyRestaurantAction: vi.fn(),
   assertCapability: vi.fn(),
+  assertEntitled: vi.fn(),
 }));
 
 vi.mock("../core/access.server", () => ({
   assertCapability: (...args: unknown[]) => mocks.assertCapability(...args),
+}));
+
+vi.mock("@/modules/commercial/resolver.server", () => ({
+  assertEntitled: (...args: unknown[]) => mocks.assertEntitled(...args),
 }));
 
 vi.mock("../decisions/decisions.server", () => ({
@@ -45,6 +50,9 @@ function sbFor(tableResults: Record<string, unknown>) {
 }
 
 describe("LexiBite Inventory Agent V1", () => {
+  beforeEach(() => {
+    mocks.assertEntitled.mockResolvedValue(undefined);
+  });
   it("runs the canonical decision pass and returns only inventory replenishment findings", async () => {
     mocks.runRestaurantDecisionPass.mockResolvedValueOnce({
       findings: 2,
@@ -100,6 +108,12 @@ describe("LexiBite Inventory Agent V1", () => {
 
     const result = await runInventoryAgent(sb, USER, { tenantId: TENANT });
 
+    expect(mocks.assertEntitled).toHaveBeenCalledWith(
+      sb,
+      TENANT,
+      "inventory_agent",
+      expect.objectContaining({ propertyId: null }),
+    );
     expect(mocks.runRestaurantDecisionPass).toHaveBeenCalledWith(
       sb,
       USER,
@@ -188,6 +202,12 @@ describe("LexiBite Inventory Agent V1", () => {
 
     const result = await executeApprovedInventoryAgentActions(sb, USER, { tenantId: TENANT });
 
+    expect(mocks.assertEntitled).toHaveBeenCalledWith(
+      sb,
+      TENANT,
+      "inventory_agent",
+      expect.objectContaining({ propertyId: null }),
+    );
     expect(mocks.assertCapability).toHaveBeenCalledWith(sb, USER, TENANT, "intelligence.read");
     expect(mocks.executeRestaurantAction).toHaveBeenCalledTimes(1);
     expect(mocks.executeRestaurantAction).toHaveBeenCalledWith(sb, USER, { actionId: ACTION });
