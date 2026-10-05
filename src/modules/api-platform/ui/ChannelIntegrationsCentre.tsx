@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { CheckCircle2, ExternalLink, Loader2, Plus, RefreshCw } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -83,8 +83,8 @@ export function ChannelIntegrationsCentre() {
 function ProviderCatalog({ channels }: { channels: StoredChannelDefinition[] }) {
   return (
     <SectionCard
-      title="Universal channels"
-      description="Channels are the operational identities tenants connect. Each channel resolves to a provider adapter without exposing provider transport as the product model."
+      title="Available channels"
+      description="These are the external channels currently available for this restaurant."
     >
       {channels.length ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
