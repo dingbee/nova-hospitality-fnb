@@ -83,7 +83,7 @@ Adding another channel backed by an already-registered adapter is configuration 
 
 ## Channel/provider boundary
 
-There is no first or default customer-facing channel in LexiBite. The product does not assume PIKI, Ordering.co, Uber Eats, Glovo or any other external channel is part of the business.
+There is no first or default customer-facing channel in LexiBite. The product does not assume any external channel is part of the business.
 
 The provider adapter registry is developer-controlled. The customer-facing channel catalogue is platform-controlled data. A tenant sees only enabled channel definitions and connects them to its own property or tenant scope.
 
