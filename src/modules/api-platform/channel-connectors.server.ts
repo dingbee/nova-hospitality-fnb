@@ -1,66 +1,10 @@
-import { getIntegrationSecret, updateIntegration } from "./integrations.server";
-import { assertChannelProvider, normaliseChannelConfig } from "./channel-registry.server";
-import type { ChannelConnectionConfig, ChannelProviderKey } from "./channel-contracts";
+import { getIntegrationSecret } from "./integrations.server";
+import { assertChannelProvider } from "./channel-registry.server";
+import { getChannelAdapter } from "./adapters/index.server";
+import type { ChannelHealth } from "./adapters/channel-adapter.server";
+import type { ChannelProviderKey } from "./channel-contracts";
 
-export type ChannelHealth = {
-  ok: boolean;
-  provider: ChannelProviderKey;
-  status: number | null;
-  message: string;
-  checkedAt: string;
-};
-
-const ORDERING_API_BASE = "https://api.ordering.co";
-
-function orderingUrl(config: ChannelConnectionConfig, resource: string) {
-  return `${ORDERING_API_BASE}/v400/${encodeURIComponent(config.languageCode)}/${encodeURIComponent(config.projectId)}/${resource}`;
-}
-
-async function orderingRequest(
-  config: ChannelConnectionConfig,
-  apiKey: string,
-  resource: string,
-): Promise<Response> {
-  return fetch(orderingUrl(config, resource), {
-    method: "GET",
-    headers: {
-      accept: "application/json",
-      "x-api-key": apiKey,
-    },
-    signal: AbortSignal.timeout(10_000),
-  });
-}
-
-async function testOrderingConnection(
-  config: ChannelConnectionConfig,
-  apiKey: string,
-): Promise<ChannelHealth> {
-  const response = await orderingRequest(
-    config,
-    apiKey,
-    "orders?orderBy=-id&page=1&page_size=1&mode=dashboard",
-  );
-  if (response.ok) {
-    return {
-      ok: true,
-      provider: "ordering.co",
-      status: response.status,
-      message: "Ordering.co API connection verified.",
-      checkedAt: new Date().toISOString(),
-    };
-  }
-
-  return {
-    ok: false,
-    provider: "ordering.co",
-    status: response.status,
-    message:
-      response.status === 401 || response.status === 403
-        ? "Ordering.co rejected the API key or its project access."
-        : `Ordering.co returned HTTP ${response.status}.`,
-    checkedAt: new Date().toISOString(),
-  };
-}
+export { type ChannelHealth };
 
 export async function testChannelConnection(
   supabaseAdmin: any,
@@ -72,24 +16,27 @@ export async function testChannelConnection(
     .select("id, provider, config, status")
     .eq("id", integrationId)
     .eq("tenant_id", tenantId)
+    .eq("integration_type", "channel")
     .maybeSingle();
 
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Channel connection not found.");
+
+  const provider = assertChannelProvider(data.provider);
+  const adapter = getChannelAdapter(provider.key);
+
   if (data.status === "disabled") {
     return {
       ok: false,
-      provider: data.provider as ChannelProviderKey,
+      provider: provider.key,
       status: null,
       message: "Channel connection is disabled.",
       checkedAt: new Date().toISOString(),
     };
   }
 
-  const provider = assertChannelProvider(data.provider);
-  const config = normaliseChannelConfig(provider.key, data.config as ChannelConnectionConfig);
-  const secret = await getIntegrationSecret(supabaseAdmin, tenantId, integrationId);
-  if (!secret) {
+  const credential = await getIntegrationSecret(supabaseAdmin, tenantId, integrationId);
+  if (!credential) {
     return {
       ok: false,
       provider: provider.key,
@@ -99,8 +46,8 @@ export async function testChannelConnection(
     };
   }
 
-  if (provider.key === "ordering.co") return testOrderingConnection(config, secret);
-  throw new Error(`No runtime connector is registered for ${provider.key}`);
+  const config = adapter.validateConfig(data.config ?? {});
+  return adapter.testConnection(config, credential);
 }
 
 export async function persistChannelHealth(
@@ -123,3 +70,5 @@ export async function persistChannelHealth(
 
   if (error) throw new Error(error.message);
 }
+
+export type { ChannelProviderKey };
