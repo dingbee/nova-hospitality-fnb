@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHANNELS, CHANNEL_PROVIDERS, getChannelDefinition, getChannelProviderDefinition } from "./channel-catalog";
+import { CHANNEL_PROVIDERS, getChannelProviderDefinition } from "./channel-catalog";
 import { normaliseChannelConfig } from "./channel-registry.server";
 
 describe("universal channel registry", () => {
@@ -8,9 +8,9 @@ describe("universal channel registry", () => {
     expect(getChannelProviderDefinition("piki")).toBeNull();
   });
 
-  it("registers customer-facing channels separately from provider adapters", () => {
-    expect(CHANNELS.map((channel) => channel.key)).toEqual(["piki"]);
-    expect(getChannelDefinition("piki")?.providerKey).toBe("ordering.co");
+  it("keeps customer-facing channel identities out of the provider adapter catalogue", () => {
+    expect(getChannelProviderDefinition("piki")).toBeNull();
+    expect(CHANNEL_PROVIDERS.some((provider) => provider.key === "piki")).toBe(false);
     expect(getChannelProviderDefinition("ordering.co")?.name).toBe("Ordering.co");
   });
 
