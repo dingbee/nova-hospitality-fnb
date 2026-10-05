@@ -5,7 +5,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UpdateChannelConnectionInput, CreateChannelConnectionInput } from "./channel-contracts";
 import { assertChannelProvider } from "./channel-registry.server";
-import { getChannelDefinition } from "./channel-catalog";
+import { getChannelDefinition } from "./channel-catalog.server";
 import { getChannelAdapter } from "./adapters/index.server";
 import { registerIntegration, updateIntegration } from "./integrations.server";
 import { testChannelConnection, persistChannelHealth } from "./channel-connectors.server";
@@ -14,7 +14,7 @@ export async function listChannelConnections(sb: any, userId: string, input: { t
   await assertCapability(sb, userId, input.tenantId, "tenant.manage");
   const { data, error } = await sb
     .from("api_integrations")
-    .select("id, provider, integration_type, label, status, config, property_id, last_error, last_synced_at, created_at, updated_at")
+    .select("id, provider, integration_type, channel_key, label, status, config, property_id, last_error, last_synced_at, created_at, updated_at")
     .eq("tenant_id", input.tenantId)
     .eq("integration_type", "channel")
     .order("created_at", { ascending: false });
@@ -25,6 +25,7 @@ export async function listChannelConnections(sb: any, userId: string, input: { t
     tenantId: input.tenantId,
     propertyId: row.property_id,
     providerKey: row.provider,
+    channelKey: row.channel_key,
     label: row.label,
     status: row.status,
     config: row.config,
@@ -43,7 +44,7 @@ export async function createChannelConnection(sb: any, userId: string, input: Cr
     propertyId: input.propertyId ?? null,
   });
 
-  const channel = getChannelDefinition(input.channelKey);
+  const channel = await getChannelDefinition(sb, input.channelKey);
   if (!channel) throw new Error(`Unsupported channel: ${input.channelKey}`);
   const provider = assertChannelProvider(channel.providerKey);
   const adapter = getChannelAdapter(provider.key);
@@ -53,6 +54,7 @@ export async function createChannelConnection(sb: any, userId: string, input: Cr
     tenantId: input.tenantId,
     propertyId: input.propertyId ?? null,
     provider: provider.key,
+    channelKey: channel.key,
     integrationType: "channel",
     label: input.label,
     config,
@@ -70,13 +72,19 @@ export async function updateChannelConnection(sb: any, userId: string, input: Up
 
   const { data: existing, error } = await sb
     .from("api_integrations")
-    .select("provider, config")
+    .select("provider, channel_key, config")
     .eq("id", input.integrationId)
     .eq("tenant_id", input.tenantId)
     .eq("integration_type", "channel")
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!existing) throw new Error("Channel connection not found.");
+
+  if (existing.channel_key) {
+    const channel = await getChannelDefinition(sb, existing.channel_key);
+    if (!channel) throw new Error("Channel definition is no longer enabled.");
+    if (channel.providerKey !== existing.provider) throw new Error("Channel provider boundary mismatch.");
+  }
 
   const provider = assertChannelProvider(existing.provider);
   const adapter = getChannelAdapter(provider.key);

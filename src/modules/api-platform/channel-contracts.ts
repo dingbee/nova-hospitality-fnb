@@ -87,6 +87,7 @@ export type ChannelConnection = {
   tenantId: string;
   propertyId: string | null;
   providerKey: ChannelProviderKey;
+  channelKey: ChannelKey | null;
   label: string;
   status: ChannelStatus;
   config: ChannelConnectionConfig;

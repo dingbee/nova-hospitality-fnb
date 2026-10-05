@@ -18,7 +18,7 @@ import type { RegisterIntegrationInput, UpdateIntegrationInput } from "./contrac
 type Sb = any;
 
 const SAFE_COLUMNS =
-  "id, provider, integration_type, label, status, config, property_id, last_error, last_synced_at, created_at, updated_at";
+  "id, provider, integration_type, channel_key, label, status, config, property_id, last_error, last_synced_at, created_at, updated_at";
 
 export async function registerIntegration(sb: Sb, userId: string, input: RegisterIntegrationInput) {
   await assertCapability(sb, userId, input.tenantId, "tenant.manage", {
@@ -35,6 +35,7 @@ export async function registerIntegration(sb: Sb, userId: string, input: Registe
       tenant_id: input.tenantId,
       property_id: input.propertyId ?? null,
       provider: input.provider,
+      channel_key: input.channelKey ?? null,
       integration_type: input.integrationType,
       label: input.label,
       config: input.config,

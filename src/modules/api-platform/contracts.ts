@@ -48,6 +48,7 @@ export const registerIntegrationSchema = z.object({
   tenantId: uuid,
   propertyId: uuid.nullish(),
   provider: z.string().min(2).max(60),
+  channelKey: z.string().min(2).max(80).optional(),
   integrationType: z.string().min(2).max(60),
   label: z.string().min(2).max(120),
   config: z.record(z.string(), z.unknown()).default({}),
