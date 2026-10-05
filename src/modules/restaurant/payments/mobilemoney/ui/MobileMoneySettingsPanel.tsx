@@ -132,7 +132,15 @@ export function MobileMoneySettingsPanel() {
   });
 
   const test = useAdminMutation({
-    mutationFn: () => testConnection({ data: { tenantId } }),
+    mutationFn: () =>
+      testConnection({
+        data: {
+          tenantId,
+          providerCode,
+          environment,
+          credentials: Object.keys(credentials).length ? credentials : undefined,
+        },
+      }),
     successMessage: "Mobile Money provider connected.",
     onSuccess: () => {
       setTestResult("connected");
@@ -157,7 +165,7 @@ export function MobileMoneySettingsPanel() {
 
   const statusConnected =
     testResult === "connected" ||
-    saved?.providerStatus === "operational";
+    (!dirty && saved?.providerStatus === "operational");
 
   const providerCredentialFields = provider?.credentialFields ?? [];
 
@@ -302,7 +310,7 @@ export function MobileMoneySettingsPanel() {
                 disabled={
                   !tenantId ||
                   !provider?.implemented ||
-                  !credentialConfigured ||
+                  (!credentialConfigured && Object.keys(credentials).length === 0) ||
                   test.isPending
                 }
                 onClick={() => test.mutate()}
