@@ -18,8 +18,5 @@ export function normaliseChannelConfig(
   config: ChannelConnectionConfig,
 ): ChannelConnectionConfig {
   assertChannelProvider(providerKey);
-  return {
-    ...config,
-    languageCode: config.languageCode.trim() || "en",
-  };
+  return { ...config };
 }
