@@ -94,7 +94,7 @@ function ChannelDefinitionRow({
   onSaved,
 }: {
   channel: StoredChannelDefinition;
-  providers: ChannelProviderDefinition[];
+  providers: readonly ChannelProviderDefinition[];
   onSaved: () => void;
 }) {
   return (
@@ -106,7 +106,7 @@ function NewChannelDefinition({
   providers,
   onCreated,
 }: {
-  providers: ChannelProviderDefinition[];
+  providers: readonly ChannelProviderDefinition[];
   onCreated: () => void;
 }) {
   return (
