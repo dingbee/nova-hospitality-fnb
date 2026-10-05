@@ -415,7 +415,7 @@ function NewConnection({
               onClick={() => mutation.mutate({
                 tenantId,
                 propertyId: propertyId === "tenant" ? null : propertyId,
-                providerKey: provider.key,
+                channelKey: channel.key,
                 label,
                 config: { ...config, channelKey: channel.key },
                 credential,
