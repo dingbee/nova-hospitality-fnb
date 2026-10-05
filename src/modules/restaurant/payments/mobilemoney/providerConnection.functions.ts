@@ -40,6 +40,14 @@ const tenantProviderReadSchema = z.object({
   tenantId: z.string().uuid(),
 });
 
+const tenantProviderTestSchema = z.object({
+  tenantId: z.string().uuid(),
+  providerCode: z.string().min(1).max(40).optional(),
+  environment: z.enum(["test", "production"]).optional(),
+  config: z.record(z.string(), z.string().max(1000)).optional(),
+  credentials: credentialsSchema.optional(),
+});
+
 const tenantProviderConfigureSchema = z.object({
   tenantId: z.string().uuid(),
   providerCode: z.string().min(1).max(40),
@@ -71,7 +79,7 @@ export const configureMobileMoneyTenantProviderFn = createServerFn({ method: "PO
 
 export const testMobileMoneyTenantProviderConnectionFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => tenantProviderReadSchema.parse(d))
+  .inputValidator((d: unknown) => tenantProviderTestSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./providerConnection.server");
     return mod.testMobileMoneyTenantProviderConnection(context.supabase, context.userId, data);
