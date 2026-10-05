@@ -373,13 +373,6 @@ export const NAV_GROUPS: NavGroup[] = [
         exact: true,
         hint: "Plans, pricing, entitlements, quotas and commercial governance",
       },
-      {
-        to: "/admin/commercial/channels",
-        label: "Channel Catalogue",
-        icon: Link2,
-        requiresCommercialAdmin: true,
-        hint: "Enable and manage customer-facing universal channel identities",
-      },
     ],
   },
 ];
