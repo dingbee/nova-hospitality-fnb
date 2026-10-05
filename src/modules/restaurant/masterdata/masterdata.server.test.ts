@@ -189,15 +189,28 @@ function makeFakeSupabaseForProperty() {
 describe("upsertProperty — P01 commercial classification wiring", () => {
   beforeEach(() => {
     classifyPropertyMock.mockReset();
-    classifyPropertyMock.mockResolvedValue({
-      classification: "base",
-      chargeable: false,
-      priceApplied: null,
-      currency: "TZS",
-      propertySequence: 1,
-      requiresApproval: false,
-      notes: "test",
-    });
+    classifyPropertyMock.mockImplementation(
+      async (_sb: unknown, _userId: string, _tenantId: string, propertyId: string) =>
+        propertyId.endsWith("-1")
+          ? {
+              classification: "base",
+              chargeable: false,
+              priceApplied: null,
+              currency: "TZS",
+              propertySequence: 1,
+              requiresApproval: false,
+              notes: "test",
+            }
+          : {
+              classification: "additional_included",
+              chargeable: false,
+              priceApplied: null,
+              currency: "TZS",
+              propertySequence: 2,
+              requiresApproval: false,
+              notes: "test",
+            },
+    );
   });
   it("classifies a brand-new property as 'base', non-chargeable, and writes an audit entry", async () => {
     const sb = makeFakeSupabaseForProperty();
