@@ -13,7 +13,6 @@ export const channelConnectionConfigSchema = z.object({
   projectId: z.string().trim().min(1).max(120),
   languageCode: z.string().trim().min(2).max(10).default("en"),
   businessId: z.string().trim().max(120).optional(),
-  baseUrl: z.string().url().startsWith("https://").default("https://api.ordering.co"),
 });
 
 export type ChannelConnectionConfig = z.infer<typeof channelConnectionConfigSchema>;
