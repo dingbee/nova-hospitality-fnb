@@ -20,7 +20,6 @@ export function normaliseChannelConfig(
   assertChannelProvider(providerKey);
   return {
     ...config,
-    baseUrl: config.baseUrl.replace(/\/+$/, ""),
     languageCode: config.languageCode.trim() || "en",
   };
 }
