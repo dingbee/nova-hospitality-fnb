@@ -86,4 +86,4 @@ jobs:
         run: echo "::warning::Full repository test suite remains non-clean outside the scoped GTM functional gate; scoped changed-path tests passed."
 
       - name: Verify bundle origin
-        run: bun run verify:bundle
+        run: bun run verify:bundle -- .output
