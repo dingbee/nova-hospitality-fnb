@@ -8,8 +8,8 @@ The channel layer provides a stable boundary:
 
 ```
 External channel
-  -> provider connector
-  -> canonical channel contract
+  -> provider adapter
+  -> universal channel contract
   -> LexiBite Core
   -> POS / Kitchen / Inventory / Payments / Intelligence
 ```
@@ -28,7 +28,7 @@ Tenant owners and general managers can:
 - scope a connection to the tenant or a property;
 - store/rotate the provider credential;
 - test the connection;
-- disable a connection.
+- enable or disable a connection.
 
 Provider secrets are encrypted server-side and are never returned after issuance.
 
@@ -36,49 +36,78 @@ The tenant does **not** need to edit Supabase tables or configuration directly.
 
 ## Provider-neutral design
 
-The provider catalogue is browser-safe metadata in:
+The browser-safe provider catalogue lives in:
 
 `src/modules/api-platform/channel-catalog.ts`
 
-Runtime provider resolution is isolated in:
+It contains metadata only: provider identity, capabilities, setup fields and documentation.
 
-`src/modules/api-platform/channel-registry.server.ts`
+The universal connection contract is in:
 
-Provider transport logic lives behind the connector boundary:
+`src/modules/api-platform/channel-contracts.ts`
+
+It deliberately does **not** define provider-specific fields such as a project ID, business ID, endpoint URL or authentication mechanism.
+
+Provider-specific runtime configuration validation and transport live in adapter modules:
+
+`src/modules/api-platform/adapters/`
+
+The adapter registry is:
+
+`src/modules/api-platform/adapters/index.server.ts`
+
+The universal runtime boundary is:
 
 `src/modules/api-platform/channel-connectors.server.ts`
 
-Adding a new marketplace/provider therefore does not require changing POS, kitchen, inventory or intelligence modules.
+That layer resolves an adapter by provider key and delegates to it. It contains no provider-specific conditional transport code.
 
-## First provider: Ordering.co
+Adding a provider therefore follows this pattern:
 
-Ordering.co is the first connector because Piki Tanzania is an Ordering.co deployment.
+```
+1. Add provider metadata to the catalogue.
+2. Implement the provider adapter.
+3. Register the adapter.
+4. Add provider-specific tests.
+5. No POS/core change.
+```
 
-The tenant connects:
+## First provider
 
-- Ordering.co Project ID
-- optional Business ID
-- Ordering.co API key
+Ordering.co is the first registered adapter.
 
-The connector uses the provider-owned API endpoint and `X-Api-Key` authentication. The transport URL is deliberately **not tenant-configurable**; provider endpoints are controlled by the adapter.
+Its provider-specific configuration is defined by its adapter and catalogue metadata. The universal channel layer does not know that the provider uses a project ID, business ID or API key.
 
-The current connection test uses the documented Ordering.co orders endpoint. It verifies credential/project access without writing orders.
+The adapter owns:
+
+- endpoint selection;
+- authentication headers;
+- provider-specific configuration validation;
+- provider-specific connection testing;
+- provider-specific error interpretation.
+
+The transport endpoint is **not tenant-configurable**. This prevents tenant input from becoming an arbitrary outbound URL.
 
 ## Piki architecture
 
-Piki is represented as an Ordering.co project, not as a provider key.
+Piki is represented by its Ordering.co deployment/project configuration, not as a provider key.
 
 Therefore:
 
 ```
 Correct:
-LexiBite -> Universal Channel Layer -> Ordering.co -> Piki project
+LexiBite
+  -> Universal Channel Layer
+  -> Ordering.co adapter
+  -> Ordering.co project
+  -> Piki deployment
 
 Incorrect:
-LexiBite Core -> Piki-specific business logic
+LexiBite Core
+  -> Piki-specific business logic
 ```
 
-This allows a future Uber Eats, Glovo, Deliverect or other channel connector to use the same boundary.
+The same boundary can host future marketplace, delivery, ordering-platform and aggregator adapters without changing the restaurant core.
 
 ## GTM rule
 
