@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, ExternalLink, Loader2, Plus, RefreshCw } from "lucide-react";
+import { CheckCircle2, Loader2, Plus, RefreshCw } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { PageHeader } from "@/components/os/PageHeader";
@@ -58,8 +58,6 @@ export function ChannelIntegrationsCentre() {
         description="Connect external ordering and delivery channels to this restaurant. Your operational workflows remain in LexiBite."
       />
 
-      <ProviderCatalog channels={channels} />
-
       <ConnectionList
         tenantId={tenant.id}
         properties={ws.data?.properties ?? []}
@@ -77,40 +75,6 @@ export function ChannelIntegrationsCentre() {
         onCreated={() => queryClient.invalidateQueries({ queryKey: ["channel-integrations", tenant.id] })}
       />
     </div>
-  );
-}
-
-function ProviderCatalog({ channels }: { channels: StoredChannelDefinition[] }) {
-  return (
-    <SectionCard
-      title="Available channels"
-      description="These are the external channels currently available for this restaurant."
-    >
-      {channels.length ? (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {channels.map((channel) => {
-            const provider = CHANNEL_PROVIDERS.find((item) => item.key === channel.providerKey);
-            return (
-              <div key={channel.key} className="rounded-xl border bg-card p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="font-semibold">{channel.name}</h3>
-                    <p className="mt-1 text-xs uppercase tracking-wide text-muted-foreground">{channel.category.replaceAll("_", " ")}</p>
-                  </div>
-                  <Badge variant="outline">Available</Badge>
-                </div>
-                <p className="mt-3 text-sm text-muted-foreground">{channel.description}</p>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary">{provider?.name ?? channel.providerKey}</Badge>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">No external channels are currently available.</p>
-      )}
-    </SectionCard>
   );
 }
 
@@ -242,17 +206,9 @@ function ConnectionRow({
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="font-semibold">{connection.label}</h3>
             {channel ? <Badge variant="outline">{channel.name}</Badge> : null}
-            <Badge variant="outline">Adapter: {provider.name}</Badge>
             <Badge variant={connection.status === "active" ? "default" : connection.status === "error" ? "destructive" : "secondary"}>{connection.status}</Badge>
           </div>
           <div className="text-sm text-muted-foreground">{propertyName}</div>
-          <div className="flex flex-wrap gap-2">
-            {provider.setup.fields.map((field) => (
-              <Badge key={field.key} variant="outline">
-                {field.label}: {String(connection.config[field.key] ?? "—")}
-              </Badge>
-            ))}
-          </div>
           {connection.lastError ? <p className="text-sm text-destructive">{connection.lastError}</p> : null}
           {connection.lastSyncedAt ? <p className="text-xs text-muted-foreground">Last verified: {new Date(connection.lastSyncedAt).toLocaleString()}</p> : null}
         </div>
@@ -358,7 +314,7 @@ function NewConnection({
 
   if (!canManage) {
     return (
-      <SectionCard title="Connect a channel" description="Only tenant owners and general managers can change channel connections.">
+      <SectionCard title="Add a channel" description="Only tenant owners and general managers can change channel connections.">
         <p className="text-sm text-muted-foreground">You can view the tenant's connections, but credentials and operational controls are restricted to authorized tenant administrators.</p>
       </SectionCard>
     );
@@ -369,7 +325,7 @@ function NewConnection({
   return (
     <SectionCard
       title="Connect a channel"
-      description="Select a channel, enter its connection details, and verify the connection."
+      description="Connect an external ordering or delivery channel to this restaurant."
     >
       {!provider ? (
         <p className="text-sm text-muted-foreground">No external channels are currently enabled by platform administration.</p>
@@ -384,16 +340,6 @@ function NewConnection({
                   {channels.map((item) => <SelectItem key={item.key} value={item.key}>{item.name}</SelectItem>)}
                 </SelectContent>
               </Select>
-              {channel && provider ? (
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <Badge variant="outline">Adapter: {provider.name}</Badge>
-                  <Badge variant="outline">{channel.category.replaceAll("_", " ")}</Badge>
-                  
-                  {provider.setup.docsUrl ? (
-                    <a className="inline-flex items-center font-medium underline underline-offset-2" href={provider.setup.docsUrl} target="_blank" rel="noreferrer">
-                      Provider documentation <ExternalLink className="ml-1 h-3 w-3" />
-                    </a>
-                  ) : null}
                 </div>
               ) : null}
             </div>
