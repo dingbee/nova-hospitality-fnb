@@ -1,7 +1,16 @@
 import { z } from "zod";
 
 export type ChannelProviderKey = string;
+export type ChannelKey = string;
 export type ChannelConnectionConfig = Record<string, unknown>;
+
+export type ChannelDefinition = {
+  key: ChannelKey;
+  name: string;
+  description: string;
+  providerKey: ChannelProviderKey;
+  category: ChannelType;
+};
 
 export const CHANNEL_TYPES = ["marketplace", "ordering_platform", "delivery", "aggregator"] as const;
 export type ChannelType = (typeof CHANNEL_TYPES)[number];
