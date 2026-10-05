@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import { CHANNEL_PROVIDERS } from "../channel-catalog";
-import type { ChannelConnection, ChannelProviderDefinition } from "../channel-contracts";
+import type { ChannelConnection, ChannelConnectionConfig, ChannelProviderDefinition } from "../channel-contracts";
 import {
   createChannelConnectionFn,
   listChannelConnectionsFn,
@@ -45,17 +45,17 @@ export function ChannelIntegrationsCentre() {
     <div className="space-y-6">
       <PageHeader
         title="Channel Integrations"
-        description="Connect approved external channels through a provider-neutral integration boundary without changing the LexiBite core."
+        description="Connect approved external channels through a provider-neutral boundary without changing the LexiBite core."
       />
 
       <SectionCard
         title="Universal integration layer"
-        description="External providers are adapters. LexiBite consumes one canonical channel contract for orders, menus and status updates."
+        description="External providers are replaceable adapters. LexiBite consumes canonical channel contracts for orders, menus and status updates."
       >
         <div className="grid gap-3 md:grid-cols-3">
-          <BoundaryCard icon={<Link2 className="h-4 w-4" />} title="One operational core" text="Ordering, delivery, marketplace and future providers enter through the same integration boundary." />
-          <BoundaryCard icon={<ShieldCheck className="h-4 w-4" />} title="Tenant controlled" text="Owners and general managers configure approved connections here. Provider secrets never appear after save." />
-          <BoundaryCard icon={<Unplug className="h-4 w-4" />} title="Replaceable adapters" text="Providers can be added or replaced without changing POS, kitchen, inventory or intelligence logic." />
+          <BoundaryCard icon={<Link2 className="h-4 w-4" />} title="One operational core" text="All approved external channels enter through the same LexiBite integration boundary." />
+          <BoundaryCard icon={<ShieldCheck className="h-4 w-4" />} title="Tenant controlled" text="Owners and general managers configure connections here. Credentials remain server-side." />
+          <BoundaryCard icon={<Unplug className="h-4 w-4" />} title="Replaceable adapters" text="Provider transport and authentication stay outside POS, kitchen, inventory and intelligence." />
         </div>
       </SectionCard>
 
@@ -92,7 +92,7 @@ function ProviderCatalog() {
   return (
     <SectionCard
       title="Available channel providers"
-      description="This catalogue is the tenant-facing provider registry. New adapters appear here when enabled; the restaurant core does not change."
+      description="Providers are registered as adapters. Adding an adapter extends this catalogue without changing the restaurant core."
     >
       {CHANNEL_PROVIDERS.length ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -113,7 +113,7 @@ function ProviderCatalog() {
           ))}
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">No channel providers are enabled for this environment.</p>
+        <p className="text-sm text-muted-foreground">No channel providers are enabled.</p>
       )}
     </SectionCard>
   );
@@ -133,12 +133,9 @@ function ConnectionList({
   onRefresh: () => void;
 }) {
   if (!connections.length) {
-    const providerNames = CHANNEL_PROVIDERS.map((provider) => provider.name).join(", ");
     return (
       <SectionCard title="Connected channels" description="No external channel is connected to this tenant yet.">
-        <p className="text-sm text-muted-foreground">
-          Connect an enabled provider below{providerNames ? ` (available: ${providerNames})` : ""}. The connection is scoped to this tenant and optionally to a property.
-        </p>
+        <p className="text-sm text-muted-foreground">Choose an enabled provider below. Each connection is scoped to this tenant and optionally to a property.</p>
       </SectionCard>
     );
   }
@@ -161,6 +158,35 @@ function ConnectionList({
   );
 }
 
+function ConfigFields({
+  provider,
+  config,
+  onChange,
+  disabled = false,
+}: {
+  provider: ChannelProviderDefinition;
+  config: ChannelConnectionConfig;
+  onChange: (key: string, value: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <>
+      {provider.setup.fields.map((field) => (
+        <div key={field.key}>
+          <Label>{field.label}</Label>
+          <Input
+            type={field.type}
+            value={String(config[field.key] ?? "")}
+            onChange={(event) => onChange(field.key, event.target.value)}
+            placeholder={field.placeholder}
+            disabled={disabled}
+          />
+        </div>
+      ))}
+    </>
+  );
+}
+
 function ConnectionRow({
   tenantId,
   properties,
@@ -177,11 +203,11 @@ function ConnectionRow({
   const provider = CHANNEL_PROVIDERS.find((item) => item.key === connection.providerKey);
   const test = useServerFn(testChannelConnectionFn);
   const update = useServerFn(updateChannelConnectionFn);
-  const [newKey, setNewKey] = useState("");
+  const [credential, setCredential] = useState("");
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(connection.label);
-  const [businessId, setBusinessId] = useState(connection.config.businessId ?? "");
   const [propertyId, setPropertyId] = useState(connection.propertyId ?? "tenant");
+  const [config, setConfig] = useState<ChannelConnectionConfig>(connection.config);
 
   const testMutation = useAdminMutation({
     mutationFn: (data: Parameters<typeof testChannelConnectionFn>[0]["data"]) => test({ data }),
@@ -191,12 +217,22 @@ function ConnectionRow({
   const updateMutation = useAdminMutation({
     mutationFn: (data: Parameters<typeof updateChannelConnectionFn>[0]["data"]) => update({ data }),
     successMessage: "Channel connection updated",
-    onSuccess: () => { setEditing(false); setNewKey(""); onRefresh(); },
+    onSuccess: () => { setEditing(false); setCredential(""); onRefresh(); },
   });
 
+  if (!provider) {
+    return (
+      <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4">
+        <div className="flex items-center gap-2">
+          <h3 className="font-semibold">{connection.label}</h3>
+          <Badge variant="destructive">Unknown provider</Badge>
+        </div>
+        <p className="mt-2 text-sm text-muted-foreground">Provider ${connection.providerKey} is not currently registered. The connection is preserved but cannot be operated until its adapter is restored.</p>
+      </div>
+    );
+  }
+
   const propertyName = propertyId === "tenant" ? "All properties" : properties.find((property) => property.id === propertyId)?.name ?? "Property";
-  const projectLabel = provider?.setup.projectLabel ?? "Provider project ID";
-  const businessLabel = provider?.setup.businessLabel ?? "Provider business ID";
 
   return (
     <div className="rounded-xl border bg-card p-4">
@@ -204,12 +240,16 @@ function ConnectionRow({
         <div className="min-w-0 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="font-semibold">{connection.label}</h3>
-            <Badge variant="outline">{provider?.name ?? connection.providerKey}</Badge>
+            <Badge variant="outline">{provider.name}</Badge>
             <Badge variant={connection.status === "active" ? "default" : connection.status === "error" ? "destructive" : "secondary"}>{connection.status}</Badge>
           </div>
-          <div className="text-sm text-muted-foreground">
-            {propertyName} · {projectLabel} <span className="font-mono">{connection.config.projectId}</span>
-            {connection.config.businessId ? <> · {businessLabel} <span className="font-mono">{connection.config.businessId}</span></> : null}
+          <div className="text-sm text-muted-foreground">{propertyName}</div>
+          <div className="flex flex-wrap gap-2">
+            {provider.setup.fields.map((field) => (
+              <Badge key={field.key} variant="outline">
+                {field.label}: {String(connection.config[field.key] ?? "—")}
+              </Badge>
+            ))}
           </div>
           {connection.lastError ? <p className="text-sm text-destructive">{connection.lastError}</p> : null}
           {connection.lastSyncedAt ? <p className="text-xs text-muted-foreground">Last verified: {new Date(connection.lastSyncedAt).toLocaleString()}</p> : null}
@@ -217,12 +257,22 @@ function ConnectionRow({
 
         <div className="flex shrink-0 flex-wrap gap-2">
           {canManage ? (
-            <Button size="sm" variant="outline" disabled={testMutation.isPending} onClick={() => testMutation.mutate({ tenantId, integrationId: connection.id })}>
+            <Button size="sm" variant="outline" disabled={testMutation.isPending || connection.status === "disabled"} onClick={() => testMutation.mutate({ tenantId, integrationId: connection.id })}>
               {testMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
               Test connection
             </Button>
           ) : null}
           {canManage ? <Button size="sm" variant="outline" onClick={() => setEditing((value) => !value)}>{editing ? "Cancel" : "Edit"}</Button> : null}
+          {canManage ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => updateMutation.mutate({ tenantId, integrationId: connection.id, status: connection.status === "disabled" ? "active" : "disabled" })}
+              disabled={updateMutation.isPending}
+            >
+              {connection.status === "disabled" ? "Enable" : "Disable"}
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -230,11 +280,10 @@ function ConnectionRow({
         <div className="mt-4 grid gap-4 border-t pt-4 md:grid-cols-2">
           <div><Label>Connection name</Label><Input value={label} onChange={(event) => setLabel(event.target.value)} /></div>
           <div><Label>Property scope</Label><PropertySelect value={propertyId} properties={properties} onChange={setPropertyId} /></div>
-          <div><Label>{projectLabel}</Label><Input value={connection.config.projectId} disabled /></div>
-          <div><Label>{businessLabel}</Label><Input value={businessId} onChange={(event) => setBusinessId(event.target.value)} placeholder="Optional" /></div>
+          <ConfigFields provider={provider} config={config} onChange={(key, value) => setConfig((current) => ({ ...current, [key]: value }))} />
           <div className="md:col-span-2">
-            <Label>Replace provider credential</Label>
-            <Input type="password" value={newKey} onChange={(event) => setNewKey(event.target.value)} placeholder="Leave blank to keep the stored credential" autoComplete="new-password" />
+            <Label>Replace {provider.setup.credential.label}</Label>
+            <Input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="Leave blank to keep the stored credential" autoComplete="new-password" />
           </div>
           <div className="md:col-span-2 flex justify-end">
             <Button disabled={updateMutation.isPending} onClick={() => updateMutation.mutate({
@@ -242,8 +291,8 @@ function ConnectionRow({
               integrationId: connection.id,
               propertyId: propertyId === "tenant" ? null : propertyId,
               label,
-              config: { businessId: businessId || undefined },
-              apiKey: newKey || undefined,
+              config,
+              credential: credential || undefined,
             })}>
               <CheckCircle2 className="mr-2 h-4 w-4" />Save changes
             </Button>
@@ -279,17 +328,15 @@ function NewConnection({
 }) {
   const create = useServerFn(createChannelConnectionFn);
   const [providerKey, setProviderKey] = useState(CHANNEL_PROVIDERS[0]?.key ?? "");
-  const provider = CHANNEL_PROVIDERS.find((item) => item.key === providerKey) ?? CHANNEL_PROVIDERS[0] ?? null;
+  const provider = CHANNEL_PROVIDERS.find((item) => item.key === providerKey) ?? null;
   const [label, setLabel] = useState("");
   const [propertyId, setPropertyId] = useState("tenant");
-  const [projectId, setProjectId] = useState("");
-  const [businessId, setBusinessId] = useState("");
-  const [apiKey, setApiKey] = useState("");
+  const [config, setConfig] = useState<ChannelConnectionConfig>({});
+  const [credential, setCredential] = useState("");
 
   useEffect(() => {
-    setProjectId("");
-    setBusinessId("");
-    setApiKey("");
+    setConfig({});
+    setCredential("");
   }, [providerKey]);
 
   const mutation = useAdminMutation({
@@ -297,9 +344,8 @@ function NewConnection({
     successMessage: "Channel connection created",
     onSuccess: () => {
       setLabel("");
-      setProjectId("");
-      setBusinessId("");
-      setApiKey("");
+      setConfig({});
+      setCredential("");
       setPropertyId("tenant");
       onCreated();
     },
@@ -308,10 +354,12 @@ function NewConnection({
   if (!canManage) {
     return (
       <SectionCard title="Connect a channel" description="Only tenant owners and general managers can change channel connections.">
-        <p className="text-sm text-muted-foreground">You can view the tenant's connections, but connection credentials and operational controls are restricted to authorized tenant administrators.</p>
+        <p className="text-sm text-muted-foreground">You can view the tenant's connections, but credentials and operational controls are restricted to authorized tenant administrators.</p>
       </SectionCard>
     );
   }
+
+  const requiredFieldsComplete = provider?.setup.fields.filter((field) => field.required).every((field) => String(config[field.key] ?? "").trim().length > 0) ?? false;
 
   return (
     <SectionCard
@@ -334,9 +382,11 @@ function NewConnection({
             </div>
             <div><Label>Connection name</Label><Input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="e.g. Main external ordering channel" /></div>
             <div><Label>Property scope</Label><PropertySelect value={propertyId} properties={properties} onChange={setPropertyId} /></div>
-            <div><Label>{provider.setup.projectLabel}</Label><Input value={projectId} onChange={(event) => setProjectId(event.target.value)} placeholder={provider.setup.projectLabel} /></div>
-            <div><Label>{provider.setup.businessLabel ?? "Business identifier (optional)"}</Label><Input value={businessId} onChange={(event) => setBusinessId(event.target.value)} placeholder="Optional" /></div>
-            <div><Label>{provider.setup.credentialLabel}</Label><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste once; never shown again" autoComplete="new-password" /></div>
+            <ConfigFields provider={provider} config={config} onChange={(key, value) => setConfig((current) => ({ ...current, [key]: value }))} />
+            <div>
+              <Label>{provider.setup.credential.label}</Label>
+              <Input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="Paste once; never shown again" autoComplete="new-password" />
+            </div>
           </div>
 
           <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm">
@@ -354,14 +404,14 @@ function NewConnection({
           <div className="mt-4 flex items-center justify-between gap-4">
             <p className="text-xs text-muted-foreground">Advanced integrations are entitlement-controlled. Tenant configuration is performed here; no Supabase dashboard action is required.</p>
             <Button
-              disabled={mutation.isPending || !label.trim() || !projectId.trim() || apiKey.length < 8}
+              disabled={mutation.isPending || !label.trim() || !requiredFieldsComplete || (provider.setup.credential.required && credential.length < 8)}
               onClick={() => mutation.mutate({
                 tenantId,
                 propertyId: propertyId === "tenant" ? null : propertyId,
                 providerKey: provider.key,
                 label,
-                config: { projectId, languageCode: "en", businessId: businessId || undefined },
-                apiKey,
+                config,
+                credential,
               })}
             >
               {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}Connect channel
