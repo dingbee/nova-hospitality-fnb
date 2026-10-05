@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
-import { CHANNEL_PROVIDERS } from "../channel-catalog";
+import { CHANNELS, CHANNEL_PROVIDERS, getChannelDefinition } from "../channel-catalog";
 import type { ChannelConnection, ChannelConnectionConfig, ChannelProviderDefinition } from "../channel-contracts";
 import {
   createChannelConnectionFn,
@@ -44,18 +44,18 @@ export function ChannelIntegrationsCentre() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Channel Integrations"
-        description="Connect approved external channels through a provider-neutral boundary without changing the LexiBite core."
+        title="Universal Channel Centre"
+        description="One control plane for external ordering, marketplace, delivery and aggregator channels. Channels are decoupled from their transport providers."
       />
 
       <SectionCard
-        title="Universal integration layer"
-        description="External providers are replaceable adapters. LexiBite consumes canonical channel contracts for orders, menus and status updates."
+        title="Universal channel control plane"
+        description="Channel identity, provider transport and LexiBite operations are separate layers. A new channel does not require changes to POS, kitchen, inventory or intelligence."
       >
         <div className="grid gap-3 md:grid-cols-3">
-          <BoundaryCard icon={<Link2 className="h-4 w-4" />} title="One operational core" text="All approved external channels enter through the same LexiBite integration boundary." />
-          <BoundaryCard icon={<ShieldCheck className="h-4 w-4" />} title="Tenant controlled" text="Owners and general managers configure connections here. Credentials remain server-side." />
-          <BoundaryCard icon={<Unplug className="h-4 w-4" />} title="Replaceable adapters" text="Provider transport and authentication stay outside POS, kitchen, inventory and intelligence." />
+          <BoundaryCard icon={<Link2 className="h-4 w-4" />} title="Universal channel contract" text="Every external channel is represented through the same connection, order and status boundary." />
+          <BoundaryCard icon={<ShieldCheck className="h-4 w-4" />} title="Tenant controlled" text="Owners and general managers configure channel connections here. Credentials remain server-side." />
+          <BoundaryCard icon={<Unplug className="h-4 w-4" />} title="Provider-independent core" text="Ordering.co, PIKI and future providers stay outside the LexiBite operational core." />
         </div>
       </SectionCard>
 
@@ -91,29 +91,33 @@ function BoundaryCard({ icon, title, text }: { icon: ReactNode; title: string; t
 function ProviderCatalog() {
   return (
     <SectionCard
-      title="Available channel providers"
-      description="Providers are registered as adapters. Select a provider below; its adapter supplies the setup fields without changing the restaurant core."
+      title="Universal channels"
+      description="Channels are the operational identities tenants connect. Each channel resolves to a provider adapter without exposing provider transport as the product model."
     >
-      {CHANNEL_PROVIDERS.length ? (
+      {CHANNELS.length ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {CHANNEL_PROVIDERS.map((provider) => (
-            <div key={provider.key} className="rounded-xl border bg-card p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-semibold">{provider.name}</h3>
-                  <p className="mt-1 text-xs uppercase tracking-wide text-muted-foreground">{provider.type.replaceAll("_", " ")}</p>
+          {CHANNELS.map((channel) => {
+            const provider = CHANNEL_PROVIDERS.find((item) => item.key === channel.providerKey);
+            return (
+              <div key={channel.key} className="rounded-xl border bg-card p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold">{channel.name}</h3>
+                    <p className="mt-1 text-xs uppercase tracking-wide text-muted-foreground">{channel.category.replaceAll("_", " ")}</p>
+                  </div>
+                  <Badge variant="outline">Channel</Badge>
                 </div>
-                <Badge variant="outline">Adapter</Badge>
+                <p className="mt-3 text-sm text-muted-foreground">{channel.description}</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary">Adapter: {provider?.name ?? channel.providerKey}</Badge>
+                  <span className="text-xs text-muted-foreground">{provider?.capabilities.length ?? 0} capabilities</span>
+                </div>
               </div>
-              <p className="mt-3 text-sm text-muted-foreground">{provider.description}</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {provider.capabilities.map((capability) => <Badge key={capability} variant="outline">{capability}</Badge>)}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">No channel providers are enabled.</p>
+        <p className="text-sm text-muted-foreground">No universal channels are enabled.</p>
       )}
     </SectionCard>
   );
@@ -327,24 +331,25 @@ function NewConnection({
   onCreated: () => void;
 }) {
   const create = useServerFn(createChannelConnectionFn);
-  const [providerKey, setProviderKey] = useState(CHANNEL_PROVIDERS[0]?.key ?? "");
-  const provider = CHANNEL_PROVIDERS.find((item) => item.key === providerKey) ?? null;
+  const [channelKey, setChannelKey] = useState(CHANNELS[0]?.key ?? "");
+  const channel = getChannelDefinition(channelKey);
+  const provider = channel ? CHANNEL_PROVIDERS.find((item) => item.key === channel.providerKey) ?? null : null;
   const [label, setLabel] = useState("");
   const [propertyId, setPropertyId] = useState("tenant");
   const [config, setConfig] = useState<ChannelConnectionConfig>({});
   const [credential, setCredential] = useState("");
 
   useEffect(() => {
-    setConfig({});
+    setConfig(channel ? { channelKey: channel.key } : {});
     setCredential("");
-  }, [providerKey]);
+  }, [channelKey]);
 
   const mutation = useAdminMutation({
     mutationFn: (data: Parameters<typeof createChannelConnectionFn>[0]["data"]) => create({ data }),
     successMessage: "Channel connection created",
     onSuccess: () => {
       setLabel("");
-      setConfig({});
+      setConfig(channel ? { channelKey: channel.key } : {});
       setCredential("");
       setPropertyId("tenant");
       onCreated();
@@ -372,22 +377,25 @@ function NewConnection({
         <>
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <Label>Provider</Label>
-              <Select value={providerKey} onValueChange={setProviderKey}>
-                <SelectTrigger><SelectValue placeholder="Select provider" /></SelectTrigger>
+              <Label>Channel</Label>
+              <Select value={channelKey} onValueChange={setChannelKey}>
+                <SelectTrigger><SelectValue placeholder="Select channel" /></SelectTrigger>
                 <SelectContent>
-                  {CHANNEL_PROVIDERS.map((item) => <SelectItem key={item.key} value={item.key}>{item.name}</SelectItem>)}
+                  {CHANNELS.map((item) => <SelectItem key={item.key} value={item.key}>{item.name}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <Badge variant="outline">{provider.type.replaceAll("_", " ")}</Badge>
-                <span>{provider.capabilities.length} supported capabilities</span>
-                {provider.setup.docsUrl ? (
-                  <a className="inline-flex items-center font-medium underline underline-offset-2" href={provider.setup.docsUrl} target="_blank" rel="noreferrer">
-                    Setup documentation <ExternalLink className="ml-1 h-3 w-3" />
-                  </a>
-                ) : null}
-              </div>
+              {channel && provider ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <Badge variant="outline">Adapter: {provider.name}</Badge>
+                  <Badge variant="outline">{channel.category.replaceAll("_", " ")}</Badge>
+                  <span>{provider.capabilities.length} supported capabilities</span>
+                  {provider.setup.docsUrl ? (
+                    <a className="inline-flex items-center font-medium underline underline-offset-2" href={provider.setup.docsUrl} target="_blank" rel="noreferrer">
+                      Provider documentation <ExternalLink className="ml-1 h-3 w-3" />
+                    </a>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
             <div><Label>Connection name</Label><Input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="e.g. Main external ordering channel" /></div>
             <div><Label>Property scope</Label><PropertySelect value={propertyId} properties={properties} onChange={setPropertyId} /></div>
@@ -407,7 +415,7 @@ function NewConnection({
                 propertyId: propertyId === "tenant" ? null : propertyId,
                 providerKey: provider.key,
                 label,
-                config,
+                config: { ...config, channelKey: channel.key },
                 credential,
               })}
             >
