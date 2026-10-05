@@ -223,7 +223,7 @@ function NewConnection({ tenantId, properties, canManage, onCreated }: { tenantI
     <SectionCard title="Connect a channel" description="Tenant owners and general managers can connect an approved provider. Credentials are stored server-side and are never displayed after save.">
       <div className="grid gap-4 md:grid-cols-2">
         <div><Label>Provider</Label><Input value={provider.name} disabled /></div>
-        <div><Label>Connection name</Label><Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Piki / Ordering.co" /></div>
+        <div><Label>Connection name</Label><Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Ordering / delivery channel" /></div>
         <div><Label>Property scope</Label><PropertySelect value={propertyId} properties={properties} onChange={setPropertyId} /></div>
         <div><Label>{provider.setup.projectLabel}</Label><Input value={projectId} onChange={(e) => setProjectId(e.target.value)} placeholder="Ordering project ID" /></div>
         <div><Label>{provider.setup.businessLabel ?? "Business ID"}</Label><Input value={businessId} onChange={(e) => setBusinessId(e.target.value)} placeholder="Optional" /></div>
@@ -244,7 +244,7 @@ function NewConnection({ tenantId, properties, canManage, onCreated }: { tenantI
           propertyId: propertyId === "tenant" ? null : propertyId,
           providerKey: provider.key,
           label,
-          config: { projectId, languageCode: "en", businessId: businessId || undefined, baseUrl: "https://api.ordering.co" },
+          config: { projectId, languageCode: "en", businessId: businessId || undefined },
           apiKey,
         })}>
           {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}Connect channel
