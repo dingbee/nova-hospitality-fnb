@@ -31,4 +31,6 @@ export const updateChannelConnectionFn = createServerFn({ method: "POST" })
 export const testChannelConnectionFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => testChannelConnectionSchema.parse(d))
-  .handler(async ({ data, context }) => testChannelConnectionForTenant(context.userId, data));
+  .handler(async ({ data, context }) =>
+    testChannelConnectionForTenant(context.supabase, context.userId, data),
+  );
