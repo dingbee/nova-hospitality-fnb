@@ -55,6 +55,25 @@ export async function getChannelDefinition(sb: Sb, key: string): Promise<StoredC
   };
 }
 
+export async function listAllChannelDefinitionsForAdmin(sb: Sb, userId: string): Promise<StoredChannelDefinition[]> {
+  await assertCommercialAdmin(sb, userId);
+  const { data, error } = await sb
+    .from("api_channel_definitions")
+    .select("key, name, description, provider_key, category, enabled, sort_order")
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row: any) => ({
+    key: row.key,
+    name: row.name,
+    description: row.description,
+    providerKey: row.provider_key,
+    category: row.category,
+    enabled: row.enabled,
+    sortOrder: row.sort_order,
+  }));
+}
+
 export async function upsertChannelDefinition(
   sb: Sb,
   userId: string,
