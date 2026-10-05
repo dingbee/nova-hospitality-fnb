@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { assertCommercialAdmin } from "@/modules/commercial/access.server";
 import { CHANNEL_PROVIDERS, getChannelProviderDefinition } from "./channel-catalog";
 import { CHANNEL_TYPES, type ChannelDefinition, type ChannelType } from "./channel-contracts";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -57,7 +58,7 @@ export async function getChannelDefinition(sb: Sb, key: string): Promise<StoredC
 
 export async function listAllChannelDefinitionsForAdmin(sb: Sb, userId: string): Promise<StoredChannelDefinition[]> {
   await assertCommercialAdmin(sb, userId);
-  const { data, error } = await sb
+  const { data, error } = await supabaseAdmin
     .from("api_channel_definitions")
     .select("key, name, description, provider_key, category, enabled, sort_order")
     .order("sort_order", { ascending: true })
@@ -92,7 +93,7 @@ export async function upsertChannelDefinition(
     throw new Error(`Unsupported channel provider: ${input.providerKey}`);
   }
 
-  const { data, error } = await sb
+  const { data, error } = await supabaseAdmin
     .from("api_channel_definitions")
     .upsert({
       key: input.key,
