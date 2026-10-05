@@ -2,11 +2,8 @@ import { assertCapability } from "@/modules/restaurant/core/access.server";
 import { assertEntitled } from "@/modules/commercial/resolver.server";
 import { writeCommercialAudit } from "@/modules/commercial/audit.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import {
-  createChannelConnectionSchema,
-  type CreateChannelConnectionInput,
-  type UpdateChannelConnectionInput,
-} from "./channel-contracts";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { UpdateChannelConnectionInput, CreateChannelConnectionInput } from "./channel-contracts";
 import { assertChannelProvider, normaliseChannelConfig } from "./channel-registry.server";
 import { registerIntegration, updateIntegration } from "./integrations.server";
 import { testChannelConnection, persistChannelHealth } from "./channel-connectors.server";
@@ -36,11 +33,7 @@ export async function listChannelConnections(sb: any, userId: string, input: { t
   }));
 }
 
-export async function createChannelConnection(
-  sb: any,
-  userId: string,
-  input: CreateChannelConnectionInput,
-) {
+export async function createChannelConnection(sb: any, userId: string, input: CreateChannelConnectionInput) {
   await assertCapability(sb, userId, input.tenantId, "tenant.manage", {
     propertyId: input.propertyId ?? undefined,
   });
@@ -62,11 +55,7 @@ export async function createChannelConnection(
   });
 }
 
-export async function updateChannelConnection(
-  sb: any,
-  userId: string,
-  input: UpdateChannelConnectionInput,
-) {
+export async function updateChannelConnection(sb: any, userId: string, input: UpdateChannelConnectionInput) {
   await assertCapability(sb, userId, input.tenantId, "tenant.manage", {
     propertyId: input.propertyId ?? undefined,
   });
@@ -74,12 +63,26 @@ export async function updateChannelConnection(
     propertyId: input.propertyId ?? null,
   });
 
-  const config = input.config ? normaliseChannelConfig("ordering.co", {
-    projectId: input.config.projectId ?? "",
-    languageCode: input.config.languageCode ?? "en",
-    businessId: input.config.businessId,
-    baseUrl: input.config.baseUrl ?? "https://api.ordering.co",
-  }) : undefined;
+  const { data: existing, error } = await sb
+    .from("api_integrations")
+    .select("provider, config")
+    .eq("id", input.integrationId)
+    .eq("tenant_id", input.tenantId)
+    .eq("integration_type", "channel")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!existing) throw new Error("Channel connection not found.");
+
+  const providerKey = existing.provider as "ordering.co";
+  const current = existing.config ?? {};
+  const config = input.config
+    ? normaliseChannelConfig(providerKey, {
+        projectId: input.config.projectId ?? current.projectId ?? "",
+        languageCode: input.config.languageCode ?? current.languageCode ?? "en",
+        businessId: input.config.businessId ?? current.businessId,
+        baseUrl: input.config.baseUrl ?? current.baseUrl ?? "https://api.ordering.co",
+      })
+    : undefined;
 
   return updateIntegration(sb, userId, {
     tenantId: input.tenantId,
@@ -92,13 +95,10 @@ export async function updateChannelConnection(
 }
 
 export async function testChannelConnectionForTenant(
+  sb: SupabaseClient<any, any, any>,
   userId: string,
   input: { tenantId: string; integrationId: string },
 ) {
-  // Authorization is evaluated on the RLS-scoped client before the server-only
-  // secret is ever decrypted.
-  const { createSupabaseClient } = await import("@/integrations/supabase/client.server");
-  const sb = createSupabaseClient();
   await assertCapability(sb, userId, input.tenantId, "tenant.manage");
 
   const health = await testChannelConnection(supabaseAdmin, input.tenantId, input.integrationId);
