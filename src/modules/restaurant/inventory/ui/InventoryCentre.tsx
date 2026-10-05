@@ -20,6 +20,7 @@ import { StatCard } from "@/components/os/StatCard";
 import { StatusChip } from "@/components/os/StatusChip";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "../../ui/useRestaurantWorkspace";
+import { resolveCommercialEntitlementFn } from "@/modules/commercial/commercial.functions";
 import { BatchSheet } from "./BatchSheet";
 import { BarcodeScanButton } from "./BarcodeScanButton";
 import { stocktakeBadge, transferBadge, type StockPosition } from "../contracts";
@@ -80,9 +81,30 @@ function Row({ children }: { children: React.ReactNode }) {
 export function InventoryCentre({ initialTab }: { initialTab?: string } = {}) {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
-  const [tab, setTab] = useState<TabId>(
-    TABS.some((t) => t.id === initialTab) ? (initialTab as TabId) : "overview",
+  const resolveEntitlement = useServerFn(resolveCommercialEntitlementFn);
+  const agentEntitlement = useQuery({
+    queryKey: ["commercial", "entitlement", tenantId, "inventory_agent"],
+    queryFn: () =>
+      resolveEntitlement({
+        data: { tenantId: tenantId as string, capabilityCode: "inventory_agent" },
+      }),
+    enabled: Boolean(tenantId),
+    staleTime: 60_000,
+  });
+  const inventoryAgentEntitled = ["included", "limited", "advanced", "enterprise", "add_on"].includes(
+    String((agentEntitlement.data as any)?.state ?? ""),
   );
+  const visibleTabs = useMemo(
+    () => (inventoryAgentEntitled ? TABS : TABS.filter((t) => t.id !== "agent")),
+    [inventoryAgentEntitled],
+  );
+  const [tab, setTab] = useState<TabId>(
+    visibleTabs.some((t) => t.id === initialTab) ? (initialTab as TabId) : "overview",
+  );
+
+  useEffect(() => {
+    if (!inventoryAgentEntitled && tab === "agent") setTab("overview");
+  }, [inventoryAgentEntitled, tab]);
 
   if (!ws.isLoading && !ws.data?.tenant) {
     return (
@@ -100,7 +122,7 @@ export function InventoryCentre({ initialTab }: { initialTab?: string } = {}) {
         description="Item → location → position → ledger → transfer → waste → stocktake → valuation. On hand, reserved, available and incoming are tracked as four separate numbers."
       />
       <nav className="flex flex-wrap gap-1 rounded-lg border bg-card p-1 text-sm">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button
             key={t.id}
             type="button"

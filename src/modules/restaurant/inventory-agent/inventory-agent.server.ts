@@ -17,6 +17,7 @@
  *   mutates stock, changes inventory balances, or pays anyone.
  */
 import { assertCapability } from "../core/access.server";
+import { assertEntitled } from "@/modules/commercial/resolver.server";
 import {
   executeRestaurantAction,
   verifyRestaurantAction,
@@ -77,6 +78,10 @@ export async function runInventoryAgent(
   input: InventoryAgentRunInput,
 ): Promise<InventoryAgentRunResult> {
   const windowDays = input.windowDays ?? 30;
+
+  await assertEntitled(sb, input.tenantId, "inventory_agent", {
+    propertyId: input.propertyId ?? null,
+  });
 
   const decisionPass = await runRestaurantDecisionPass(sb, userId, {
     tenantId: input.tenantId,
@@ -182,6 +187,9 @@ export async function executeApprovedInventoryAgentActions(
   userId: string,
   input: { tenantId: string; limit?: number; propertyId?: string; locationId?: string },
 ): Promise<InventoryAgentActionSweepResult> {
+  await assertEntitled(sb, input.tenantId, "inventory_agent", {
+    propertyId: input.propertyId ?? null,
+  });
   await assertCapability(sb, userId, input.tenantId, "intelligence.read");
 
   const limit = Math.min(Math.max(input.limit ?? 20, 1), 50);
@@ -281,6 +289,9 @@ export async function verifyExecutedInventoryAgentActions(
   userId: string,
   input: { tenantId: string; limit?: number; propertyId?: string; locationId?: string },
 ): Promise<InventoryAgentVerificationSweepResult> {
+  await assertEntitled(sb, input.tenantId, "inventory_agent", {
+    propertyId: input.propertyId ?? null,
+  });
   await assertCapability(sb, userId, input.tenantId, "intelligence.read");
 
   const limit = Math.min(Math.max(input.limit ?? 20, 1), 50);
