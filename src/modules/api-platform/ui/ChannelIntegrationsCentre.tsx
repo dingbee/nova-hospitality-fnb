@@ -139,7 +139,7 @@ function ConnectionList({
   if (!connections.length) {
     return (
       <SectionCard title="Connected channels" description="No external channel is connected to this tenant yet.">
-        <p className="text-sm text-muted-foreground">Choose an enabled provider below. Each connection is scoped to this tenant and optionally to a property.</p>
+        <p className="text-sm text-muted-foreground">Choose a universal channel below. The selected channel resolves its provider adapter automatically and remains scoped to this tenant and optionally to a property.</p>
       </SectionCard>
     );
   }
@@ -204,6 +204,7 @@ function ConnectionRow({
   canManage: boolean;
   onRefresh: () => void;
 }) {
+  const channel = getChannelDefinition(String(connection.config.channelKey ?? ""));
   const provider = CHANNEL_PROVIDERS.find((item) => item.key === connection.providerKey);
   const test = useServerFn(testChannelConnectionFn);
   const update = useServerFn(updateChannelConnectionFn);
@@ -244,7 +245,8 @@ function ConnectionRow({
         <div className="min-w-0 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="font-semibold">{connection.label}</h3>
-            <Badge variant="outline">{provider.name}</Badge>
+            {channel ? <Badge variant="outline">{channel.name}</Badge> : null}
+            <Badge variant="outline">Adapter: {provider.name}</Badge>
             <Badge variant={connection.status === "active" ? "default" : connection.status === "error" ? "destructive" : "secondary"}>{connection.status}</Badge>
           </div>
           <div className="text-sm text-muted-foreground">{propertyName}</div>
