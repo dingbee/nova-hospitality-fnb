@@ -14,7 +14,7 @@ type Property = MasterData["properties"][number];
 
 import { DEFAULT_CURRENCY, DEFAULT_TIMEZONE } from "@/modules/restaurant/core/product";
 
-const EMPTY = { name: "", slug: "", timezone: DEFAULT_TIMEZONE, currency: DEFAULT_CURRENCY, status: "active" };
+const EMPTY = { name: "", slug: "", timezone: DEFAULT_TIMEZONE, currency: DEFAULT_CURRENCY, status: "pending_activation" as const };
 
 export function PropertiesPanel({ tenantId, data }: { tenantId: string; data: MasterData }) {
   const [search, setSearch] = React.useState("");
@@ -26,7 +26,7 @@ export function PropertiesPanel({ tenantId, data }: { tenantId: string; data: Ma
   const fn = useServerFn(upsertRestaurantPropertyFn);
   const mutation = useAdminMutation({
     mutationFn: fn,
-    successMessage: "Property saved.",
+    successMessage: "Property saved. Chargeable properties remain pending until the commercial charge is paid.",
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["restaurant.masterdata", tenantId] });
       setOpen(false);
@@ -53,7 +53,12 @@ export function PropertiesPanel({ tenantId, data }: { tenantId: string; data: Ma
       <div className="space-y-4">
         <PanelToolbar search={search} onSearch={setSearch} onCreate={openCreate} createLabel="New property" />
         <PanelList
-          items={properties.map((p) => ({ id: p.id, title: p.name, subtitle: `${p.slug} · ${p.currency}`, active: p.status === "active" }))}
+          items={properties.map((p) => ({
+            id: p.id,
+            title: p.name,
+            subtitle: `${p.slug} · ${p.currency} · ${p.status === "pending_activation" ? "Pending commercial activation" : p.status}`,
+            active: p.status === "active",
+          }))}
           onEdit={openEdit}
           onToggleActive={(id, active) => {
             const p = data.properties.find((x) => x.id === id);
