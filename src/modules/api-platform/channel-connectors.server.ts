@@ -10,9 +10,10 @@ export type ChannelHealth = {
   checkedAt: string;
 };
 
+const ORDERING_API_BASE = "https://api.ordering.co";
+
 function orderingUrl(config: ChannelConnectionConfig, resource: string) {
-  const base = config.baseUrl.replace(/\/+$/, "");
-  return `${base}/v400/${encodeURIComponent(config.languageCode)}/${encodeURIComponent(config.projectId)}/${resource}`;
+  return `${ORDERING_API_BASE}/v400/${encodeURIComponent(config.languageCode)}/${encodeURIComponent(config.projectId)}/${resource}`;
 }
 
 async function orderingRequest(
