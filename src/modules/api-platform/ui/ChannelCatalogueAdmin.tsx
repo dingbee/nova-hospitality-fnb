@@ -127,7 +127,7 @@ function ChannelEditor({
   onSaved,
 }: {
   channel?: StoredChannelDefinition;
-  providers: ChannelProviderDefinition[];
+  providers: readonly ChannelProviderDefinition[];
   submitLabel: string;
   icon: ReactNode;
   onSaved: () => void;
