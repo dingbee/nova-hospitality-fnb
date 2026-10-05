@@ -148,45 +148,23 @@ export async function configureMobileMoneyTenantProvider(
   }
 
   const encrypted = credentials ? encryptSecret(JSON.stringify(credentials)) : null;
-  const row: Record<string, unknown> = {
-    tenant_id: input.tenantId,
-    provider_code: providerCode,
-    environment: input.environment,
-    enabled_networks: enabledNetworks,
-    provider_config: configured,
-    provider_status: "configured",
-    last_provider_error: null,
-    updated_at: new Date().toISOString(),
-    created_by: userId,
-  };
 
-  if (encrypted) {
-    row.credential_ciphertext = encrypted.ciphertext;
-    row.credential_iv = encrypted.iv;
-    row.credential_tag = encrypted.tag;
-  }
-
-  const { data, error } = await sb
-    .from("restaurant_mobile_money_provider_connections")
-    .upsert(row, { onConflict: "tenant_id" })
-    .select("id, tenant_id, provider_code, environment, enabled_networks, provider_config, provider_status, credential_ciphertext")
-    .single();
+  const { data, error } = await sb.rpc(
+    "configure_mobile_money_tenant_provider",
+    {
+      p_tenant_id: input.tenantId,
+      p_provider_code: providerCode,
+      p_environment: input.environment,
+      p_enabled_networks: enabledNetworks,
+      p_provider_config: configured,
+      p_credential_ciphertext: encrypted?.ciphertext ?? null,
+      p_credential_iv: encrypted?.iv ?? null,
+      p_credential_tag: encrypted?.tag ?? null,
+      p_user_id: userId,
+    },
+  ).single();
 
   if (error) throw new Error(error.message);
-
-  // Keep outlet payment rows aligned with the tenant's provider metadata.
-  // Credentials remain tenant-only; this is only a provider/environment
-  // snapshot used by collection records and legacy operational reads.
-  const { error: outletSyncError } = await sb
-    .from("restaurant_mobile_money_accounts")
-    .update({
-      provider_code: providerCode,
-      environment: input.environment,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("tenant_id", input.tenantId)
-    .eq("mode", "connected");
-  if (outletSyncError) throw new Error(outletSyncError.message);
 
   return {
     id: data.id,
@@ -198,6 +176,7 @@ export async function configureMobileMoneyTenantProvider(
     credentialsConfigured: Boolean(data.credential_ciphertext),
     providerStatus: data.provider_status,
   };
+
 }
 
 /** Server-only. Prefers the tenant connection; outlet connection is legacy fallback. */
