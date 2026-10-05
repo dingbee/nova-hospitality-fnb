@@ -5,7 +5,7 @@ export const CHANNEL_PROVIDERS: readonly ChannelProviderDefinition[] = [
     key: "ordering.co",
     name: "Ordering.co",
     description:
-      "Connect an Ordering.co project as an external ordering channel. Piki is an Ordering.co deployment; this connector is project-based, not Piki-hardcoded.",
+      "Connect an Ordering.co project as an external channel. Provider-specific transport and configuration stay inside its adapter.",
     type: "ordering_platform",
     capabilities: [
       "catalog.read",
@@ -16,9 +16,34 @@ export const CHANNEL_PROVIDERS: readonly ChannelProviderDefinition[] = [
       "webhooks",
     ],
     setup: {
-      credentialLabel: "Ordering.co API key",
-      projectLabel: "Project ID",
-      businessLabel: "Business ID (optional)",
+      fields: [
+        {
+          key: "projectId",
+          label: "Project ID",
+          type: "text",
+          required: true,
+          placeholder: "Provider project identifier",
+        },
+        {
+          key: "languageCode",
+          label: "Language",
+          type: "text",
+          required: false,
+          placeholder: "en",
+        },
+        {
+          key: "businessId",
+          label: "Business ID",
+          type: "text",
+          required: false,
+          placeholder: "Optional provider business identifier",
+        },
+      ],
+      credential: {
+        label: "API key",
+        kind: "api_key",
+        required: true,
+      },
       docsUrl: "https://docs.ordering.co/docs/products/dashboard/settings/pro/developers/api-keys/",
     },
   },
