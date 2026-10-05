@@ -4,7 +4,8 @@ import { writeCommercialAudit } from "@/modules/commercial/audit.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UpdateChannelConnectionInput, CreateChannelConnectionInput } from "./channel-contracts";
-import { assertChannelProvider, normaliseChannelConfig } from "./channel-registry.server";
+import { assertChannelProvider } from "./channel-registry.server";
+import { getChannelAdapter } from "./adapters/index.server";
 import { registerIntegration, updateIntegration } from "./integrations.server";
 import { testChannelConnection, persistChannelHealth } from "./channel-connectors.server";
 
@@ -42,7 +43,8 @@ export async function createChannelConnection(sb: any, userId: string, input: Cr
   });
 
   const provider = assertChannelProvider(input.providerKey);
-  const config = normaliseChannelConfig(input.providerKey, input.config);
+  const adapter = getChannelAdapter(provider.key);
+  const config = adapter.validateConfig(input.config);
 
   return registerIntegration(sb, userId, {
     tenantId: input.tenantId,
@@ -51,7 +53,7 @@ export async function createChannelConnection(sb: any, userId: string, input: Cr
     integrationType: "channel",
     label: input.label,
     config,
-    secret: input.apiKey,
+    secret: input.credential,
   });
 }
 
@@ -73,14 +75,10 @@ export async function updateChannelConnection(sb: any, userId: string, input: Up
   if (error) throw new Error(error.message);
   if (!existing) throw new Error("Channel connection not found.");
 
-  const providerKey = assertChannelProvider(existing.provider).key;
-  const current = existing.config ?? {};
-  const config = input.config
-    ? normaliseChannelConfig(providerKey, {
-        projectId: input.config.projectId ?? current.projectId ?? "",
-        languageCode: input.config.languageCode ?? current.languageCode ?? "en",
-        businessId: input.config.businessId ?? current.businessId,
-      })
+  const provider = assertChannelProvider(existing.provider);
+  const adapter = getChannelAdapter(provider.key);
+  const config = input.config !== undefined
+    ? adapter.validateConfig({ ...(existing.config ?? {}), ...input.config })
     : undefined;
 
   return updateIntegration(sb, userId, {
@@ -89,7 +87,7 @@ export async function updateChannelConnection(sb: any, userId: string, input: Up
     propertyId: input.propertyId,
     label: input.label,
     config,
-    secret: input.apiKey,
+    secret: input.credential,
     status: input.status,
   });
 }
