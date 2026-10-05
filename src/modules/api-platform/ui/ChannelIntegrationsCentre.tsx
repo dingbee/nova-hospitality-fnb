@@ -12,7 +12,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
-import { CHANNELS, CHANNEL_PROVIDERS, getChannelDefinition } from "../channel-catalog";
+import { CHANNEL_PROVIDERS } from "../channel-catalog";
+import { listChannelDefinitionsFn } from "../channel-catalog.functions";
+import type { StoredChannelDefinition } from "../channel-catalog.server";
 import type { ChannelConnection, ChannelConnectionConfig, ChannelProviderDefinition } from "../channel-contracts";
 import {
   createChannelConnectionFn,
@@ -27,7 +29,14 @@ export function ChannelIntegrationsCentre() {
   const ws = useRestaurantWorkspace();
   const tenant = ws.data?.tenant;
   const listFn = useServerFn(listChannelConnectionsFn);
+  const listChannelsFn = useServerFn(listChannelDefinitionsFn);
   const queryClient = useQueryClient();
+  const channelsQuery = useQuery({
+    queryKey: ["channel-definitions"],
+    queryFn: () => listChannelsFn({ data: { enabledOnly: true } }),
+    staleTime: 60_000,
+  });
+
   const query = useQuery({
     queryKey: ["channel-integrations", tenant?.id],
     enabled: Boolean(tenant?.id),
@@ -35,10 +44,11 @@ export function ChannelIntegrationsCentre() {
     staleTime: 15_000,
   });
 
-  if (ws.isLoading || query.isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading integrations…</div>;
+  if (ws.isLoading || query.isLoading || channelsQuery.isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading integrations…</div>;
   if (!tenant) return <EmptyState title="No restaurant tenant" description="You are not a member of a Restaurant & Bar OS tenant." />;
 
   const connections = query.data ?? [];
+  const channels = channelsQuery.data ?? [];
   const canManage = Boolean(ws.data?.platformAdmin || ws.data?.roles?.some((role: string) => role === "owner" || role === "general_manager"));
 
   return (
@@ -55,16 +65,17 @@ export function ChannelIntegrationsCentre() {
         <div className="grid gap-3 md:grid-cols-3">
           <BoundaryCard icon={<Link2 className="h-4 w-4" />} title="Universal channel contract" text="Every external channel is represented through the same connection, order and status boundary." />
           <BoundaryCard icon={<ShieldCheck className="h-4 w-4" />} title="Tenant controlled" text="Owners and general managers configure channel connections here. Credentials remain server-side." />
-          <BoundaryCard icon={<Unplug className="h-4 w-4" />} title="Provider-independent core" text="Ordering.co, PIKI and future providers stay outside the LexiBite operational core." />
+          <BoundaryCard icon={<Unplug className="h-4 w-4" />} title="Provider-independent core" text="Every supported external channel stays outside the LexiBite operational core." />
         </div>
       </SectionCard>
 
-      <ProviderCatalog />
+      <ProviderCatalog channels={channels} />
 
       <ConnectionList
         tenantId={tenant.id}
         properties={ws.data?.properties ?? []}
         connections={connections}
+        channels={channels}
         canManage={canManage}
         onRefresh={() => queryClient.invalidateQueries({ queryKey: ["channel-integrations", tenant.id] })}
       />
@@ -72,6 +83,7 @@ export function ChannelIntegrationsCentre() {
       <NewConnection
         tenantId={tenant.id}
         properties={ws.data?.properties ?? []}
+        channels={channels}
         canManage={canManage}
         onCreated={() => queryClient.invalidateQueries({ queryKey: ["channel-integrations", tenant.id] })}
       />
@@ -88,15 +100,15 @@ function BoundaryCard({ icon, title, text }: { icon: ReactNode; title: string; t
   );
 }
 
-function ProviderCatalog() {
+function ProviderCatalog({ channels }: { channels: StoredChannelDefinition[] }) {
   return (
     <SectionCard
       title="Universal channels"
       description="Channels are the operational identities tenants connect. Each channel resolves to a provider adapter without exposing provider transport as the product model."
     >
-      {CHANNELS.length ? (
+      {channels.length ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {CHANNELS.map((channel) => {
+          {channels.map((channel) => {
             const provider = CHANNEL_PROVIDERS.find((item) => item.key === channel.providerKey);
             return (
               <div key={channel.key} className="rounded-xl border bg-card p-4">
@@ -127,12 +139,14 @@ function ConnectionList({
   tenantId,
   properties,
   connections,
+  channels,
   canManage,
   onRefresh,
 }: {
   tenantId: string;
   properties: Property[];
   connections: ChannelConnection[];
+  channels: StoredChannelDefinition[];
   canManage: boolean;
   onRefresh: () => void;
 }) {
@@ -153,6 +167,7 @@ function ConnectionList({
             tenantId={tenantId}
             properties={properties}
             connection={connection}
+            channels={channels}
             canManage={canManage}
             onRefresh={onRefresh}
           />
@@ -195,16 +210,18 @@ function ConnectionRow({
   tenantId,
   properties,
   connection,
+  channels,
   canManage,
   onRefresh,
 }: {
   tenantId: string;
   properties: Property[];
   connection: ChannelConnection;
+  channels: StoredChannelDefinition[];
   canManage: boolean;
   onRefresh: () => void;
 }) {
-  const channel = getChannelDefinition(String(connection.config.channelKey ?? ""));
+  const channel = channels.find((item) => item.key === connection.channelKey) ?? null;
   const provider = CHANNEL_PROVIDERS.find((item) => item.key === connection.providerKey);
   const test = useServerFn(testChannelConnectionFn);
   const update = useServerFn(updateChannelConnectionFn);
@@ -324,17 +341,19 @@ function PropertySelect({ value, properties, onChange }: { value: string; proper
 function NewConnection({
   tenantId,
   properties,
+  channels,
   canManage,
   onCreated,
 }: {
   tenantId: string;
   properties: Property[];
+  channels: StoredChannelDefinition[];
   canManage: boolean;
   onCreated: () => void;
 }) {
   const create = useServerFn(createChannelConnectionFn);
-  const [channelKey, setChannelKey] = useState(CHANNELS[0]?.key ?? "");
-  const channel = getChannelDefinition(channelKey);
+  const [channelKey, setChannelKey] = useState(channels[0]?.key ?? "");
+  const channel = channels.find((item) => item.key === channelKey) ?? null;
   const provider = channel ? CHANNEL_PROVIDERS.find((item) => item.key === channel.providerKey) ?? null : null;
   const [label, setLabel] = useState("");
   const [propertyId, setPropertyId] = useState("tenant");
@@ -342,7 +361,7 @@ function NewConnection({
   const [credential, setCredential] = useState("");
 
   useEffect(() => {
-    setConfig(channel ? { channelKey: channel.key } : {});
+    setConfig({});
     setCredential("");
   }, [channelKey]);
 
@@ -351,7 +370,7 @@ function NewConnection({
     successMessage: "Channel connection created",
     onSuccess: () => {
       setLabel("");
-      setConfig(channel ? { channelKey: channel.key } : {});
+      setConfig({});
       setCredential("");
       setPropertyId("tenant");
       onCreated();
@@ -371,10 +390,10 @@ function NewConnection({
   return (
     <SectionCard
       title="Connect a channel"
-      description="Select an enabled provider, configure its tenant connection, and keep provider credentials server-side."
+      description="Select an enabled external channel, configure its provider connection, and keep provider credentials server-side."
     >
       {!provider ? (
-        <p className="text-sm text-muted-foreground">No channel providers are currently enabled.</p>
+        <p className="text-sm text-muted-foreground">No external channels are currently enabled by platform administration.</p>
       ) : (
         <>
           <div className="grid gap-4 md:grid-cols-2">
@@ -383,7 +402,7 @@ function NewConnection({
               <Select value={channelKey} onValueChange={setChannelKey}>
                 <SelectTrigger><SelectValue placeholder="Select channel" /></SelectTrigger>
                 <SelectContent>
-                  {CHANNELS.map((item) => <SelectItem key={item.key} value={item.key}>{item.name}</SelectItem>)}
+                  {channels.map((item) => <SelectItem key={item.key} value={item.key}>{item.name}</SelectItem>)}
                 </SelectContent>
               </Select>
               {channel && provider ? (
@@ -417,7 +436,7 @@ function NewConnection({
                 propertyId: propertyId === "tenant" ? null : propertyId,
                 channelKey: channel.key,
                 label,
-                config: { ...config, channelKey: channel.key },
+                config,
                 credential,
               })}
             >
