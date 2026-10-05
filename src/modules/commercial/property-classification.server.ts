@@ -102,23 +102,16 @@ export async function classifyProperty(
   const sub = await getEffectiveSubscription(sb, tenantId);
 
   // 2. Determine this property's sequence for the tenant. The database
-  // also enforces (tenant_id, property_sequence) uniqueness, so a concurrent
-  // property creation cannot silently receive the same commercial sequence.
-  let propertySequence = 0;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const { count, error: countError } = await sb
-      .from("commercial_property_classifications")
-      .select("id", { count: "exact", head: true })
-      .eq("tenant_id", tenantId);
-    if (countError) throw new Error(countError.message);
-    propertySequence = (count ?? 0) + 1;
-
-    // The insert below is retried after the classification decision is
-    // computed if a concurrent writer wins the sequence. This retry block
-    // is intentionally kept close to the insert because Supabase's HTTP
-    // client does not expose a multi-statement transaction boundary.
-    break;
-  }
+  // additionally enforces (tenant_id, property_sequence) uniqueness, so a
+  // concurrent property creation can never silently create duplicate
+  // commercial sequence numbers; the losing request fails closed and can be
+  // safely retried by the caller.
+  const { count, error: countError } = await sb
+    .from("commercial_property_classifications")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId);
+  if (countError) throw new Error(countError.message);
+  const propertySequence = (count ?? 0) + 1;
 
   // 3-4. Load the additional-property policy for this plan/programme.
   const policy = await findPropertyPolicy(sb, sub.planId, sub.programmeId);
