@@ -1,7 +1,6 @@
 import { z } from "zod";
 
-export const CHANNEL_PROVIDER_KEYS = ["ordering.co"] as const;
-export type ChannelProviderKey = (typeof CHANNEL_PROVIDER_KEYS)[number];
+export type ChannelProviderKey = string;
 
 export const CHANNEL_TYPES = ["marketplace", "ordering_platform", "delivery", "aggregator"] as const;
 export type ChannelType = (typeof CHANNEL_TYPES)[number];
@@ -20,7 +19,7 @@ export type ChannelConnectionConfig = z.infer<typeof channelConnectionConfigSche
 export const createChannelConnectionSchema = z.object({
   tenantId: z.string().uuid(),
   propertyId: z.string().uuid().nullish(),
-  providerKey: z.enum(CHANNEL_PROVIDER_KEYS),
+  providerKey: z.string().trim().min(2).max(80),
   label: z.string().trim().min(2).max(120),
   config: channelConnectionConfigSchema,
   apiKey: z.string().min(8).max(4000),
