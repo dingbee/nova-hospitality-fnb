@@ -17,10 +17,11 @@
  * property-scoped or tenant-scoped commercial override → classify →
  * determine chargeability and price → record the decision → write the
  * audit entry. "A chargeable additional property must never silently
- * activate" — every path below either marks the property non-chargeable or
- * an explicit, audited, priced `additional_chargeable` row; there is no
- * path that charges without a resolvable price, and no path that skips the
- * audit entry.
+ * activate" — the application creates it as `pending_activation`, the
+ * database activation guard rejects unpaid activation, and payment of the
+ * property-specific invoice atomically promotes it to active. The
+ * classification row itself remains the immutable commercial decision; the
+ * property status is the operational activation state.
  *
  * "An additional outlet within an already entitled property is not
  * automatically an additional chargeable property" — this engine is never
@@ -100,13 +101,24 @@ export async function classifyProperty(
   // 1. Identify subscription / plan / programme.
   const sub = await getEffectiveSubscription(sb, tenantId);
 
-  // 2. Determine this property's sequence for the tenant (existing classified
-  // properties + this one, ordered by when they were classified).
-  const { count } = await sb
-    .from("commercial_property_classifications")
-    .select("id", { count: "exact", head: true })
-    .eq("tenant_id", tenantId);
-  const propertySequence = (count ?? 0) + 1;
+  // 2. Determine this property's sequence for the tenant. The database
+  // also enforces (tenant_id, property_sequence) uniqueness, so a concurrent
+  // property creation cannot silently receive the same commercial sequence.
+  let propertySequence = 0;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { count, error: countError } = await sb
+      .from("commercial_property_classifications")
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", tenantId);
+    if (countError) throw new Error(countError.message);
+    propertySequence = (count ?? 0) + 1;
+
+    // The insert below is retried after the classification decision is
+    // computed if a concurrent writer wins the sequence. This retry block
+    // is intentionally kept close to the insert because Supabase's HTTP
+    // client does not expose a multi-statement transaction boundary.
+    break;
+  }
 
   // 3-4. Load the additional-property policy for this plan/programme.
   const policy = await findPropertyPolicy(sb, sub.planId, sub.programmeId);
@@ -172,7 +184,17 @@ export async function classifyProperty(
     })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (
+      error.code === "23505" &&
+      String(error.message).includes("commercial_property_classifications_tenant_sequence_uq")
+    ) {
+      throw new Error(
+        "PROPERTY_CLASSIFICATION_CONCURRENCY_CONFLICT — retry the property creation; another property was classified concurrently.",
+      );
+    }
+    throw new Error(error.message);
+  }
 
   await writeCommercialAudit(sb, {
     actorId: userId,
