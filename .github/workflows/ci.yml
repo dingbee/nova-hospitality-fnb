@@ -74,7 +74,13 @@ jobs:
 
       - name: Scoped GTM functional tests
         run: |
-          bunx vitest run             src/modules/restaurant/payments/mobilemoney/mobilemoney.server.test.ts             src/modules/restaurant/payments/mobilemoney/mobilemoney.property-scope.test.ts             src/modules/restaurant/payments/mobilemoney/providers/payinAdapter.server.test.ts             src/modules/restaurant/receipts/delivery.server.test.ts
+          bunx vitest run \
+            src/modules/api-platform/channel-registry.test.ts \
+            src/modules/api-platform/adapters/channel-adapter.test.ts \
+            src/modules/restaurant/payments/mobilemoney/mobilemoney.server.test.ts \
+            src/modules/restaurant/payments/mobilemoney/mobilemoney.property-scope.test.ts \
+            src/modules/restaurant/payments/mobilemoney/providers/payinAdapter.server.test.ts \
+            src/modules/restaurant/receipts/delivery.server.test.ts
 
       - name: Full test suite (repository baseline)
         id: full_tests
