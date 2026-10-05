@@ -5,7 +5,12 @@
  * functions; this form only ever touches the text fields, so a save here
  * must carry any existing logoUrl forward unchanged.
  */
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const classifyPropertyMock = vi.fn();
+vi.mock("@/modules/commercial/property-classification.server", () => ({
+  classifyProperty: (...args: unknown[]) => classifyPropertyMock(...args),
+}));
 import { upsertBusinessProfile, upsertProperty } from "./masterdata.server";
 
 const TENANT = "tenant-1";
@@ -182,6 +187,18 @@ function makeFakeSupabaseForProperty() {
 }
 
 describe("upsertProperty — P01 commercial classification wiring", () => {
+  beforeEach(() => {
+    classifyPropertyMock.mockReset();
+    classifyPropertyMock.mockResolvedValue({
+      classification: "base",
+      chargeable: false,
+      priceApplied: null,
+      currency: "TZS",
+      propertySequence: 1,
+      requiresApproval: false,
+      notes: "test",
+    });
+  });
   it("classifies a brand-new property as 'base', non-chargeable, and writes an audit entry", async () => {
     const sb = makeFakeSupabaseForProperty();
     const result = await upsertProperty(sb, OWNER, {
@@ -192,7 +209,8 @@ describe("upsertProperty — P01 commercial classification wiring", () => {
       currency: "TZS",
       status: "active",
     } as any);
-    expect((result as any).commercial).toMatchObject({ classification: "base", chargeable: false });
+    expect((result as any).commercial).toMatchObject({ classification: "base", chargeable: false, activationState: "active" });
+    expect((result as any).status).toBe("active");
     expect(sb.tables.commercial_property_classifications).toHaveLength(1);
     expect(sb.tables.commercial_audit_log).toHaveLength(1);
   });
@@ -218,6 +236,33 @@ describe("upsertProperty — P01 commercial classification wiring", () => {
     expect((second as any).commercial).toMatchObject({
       classification: "additional_included",
       chargeable: false,
+    });
+  });
+
+  it("keeps a chargeable additional property pending until the commercial gate is satisfied", async () => {
+    const sb = makeFakeSupabaseForProperty();
+    classifyPropertyMock.mockResolvedValueOnce({
+      classification: "additional_chargeable",
+      chargeable: true,
+      priceApplied: 450000,
+      currency: "TZS",
+      propertySequence: 2,
+      requiresApproval: false,
+      notes: "Additional property charge applies.",
+    });
+    const result = await upsertProperty(sb, OWNER, {
+      tenantId: TENANT,
+      name: "Masaki",
+      slug: "masaki",
+      timezone: "Africa/Dar_es_Salaam",
+      currency: "TZS",
+      status: "active",
+    } as any);
+    expect((result as any).status).toBe("pending_activation");
+    expect((result as any).commercial).toMatchObject({
+      classification: "additional_chargeable",
+      chargeable: true,
+      activationState: "pending_activation",
     });
   });
 
