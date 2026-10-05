@@ -36,6 +36,7 @@ export function ChannelIntegrationsCentre() {
   if (!tenant) return <EmptyState title="No restaurant tenant" description="You are not a member of a Restaurant & Bar OS tenant." />;
 
   const connections = query.data ?? [];
+  const canManage = Boolean(ws.data?.platformAdmin || ws.data?.roles?.some((role: string) => role === "owner" || role === "general_manager"));
 
   return (
     <div className="space-y-6">
@@ -59,12 +60,14 @@ export function ChannelIntegrationsCentre() {
         tenantId={tenant.id}
         properties={ws.data?.properties ?? []}
         connections={connections}
+        canManage={canManage}
         onRefresh={() => queryClient.invalidateQueries({ queryKey: ["channel-integrations", tenant.id] })}
       />
 
       <NewConnection
         tenantId={tenant.id}
         properties={ws.data?.properties ?? []}
+        canManage={canManage}
         onCreated={() => queryClient.invalidateQueries({ queryKey: ["channel-integrations", tenant.id] })}
       />
     </div>
@@ -80,10 +83,11 @@ function BoundaryCard({ icon, title, text }: { icon: ReactNode; title: string; t
   );
 }
 
-function ConnectionList({ tenantId, properties, connections, onRefresh }: {
+function ConnectionList({ tenantId, properties, connections, canManage, onRefresh }: {
   tenantId: string;
   properties: Array<{ id: string; name: string }>;
   connections: any[];
+  canManage: boolean;
   onRefresh: () => void;
 }) {
   if (!connections.length) {
@@ -98,14 +102,14 @@ function ConnectionList({ tenantId, properties, connections, onRefresh }: {
     <SectionCard title="Connected channels" description={\`\${connections.length} connection\${connections.length === 1 ? "" : "s"} configured\`}>
       <div className="space-y-3">
         {connections.map((connection) => (
-          <ConnectionRow key={connection.id} tenantId={tenantId} properties={properties} connection={connection} onRefresh={onRefresh} />
+          <ConnectionRow key={connection.id} tenantId={tenantId} properties={properties} connection={connection} canManage={canManage} onRefresh={onRefresh} />
         ))}
       </div>
     </SectionCard>
   );
 }
 
-function ConnectionRow({ tenantId, properties, connection, onRefresh }: any) {
+function ConnectionRow({ tenantId, properties, connection, canManage, onRefresh }: any) {
   const provider = CHANNEL_PROVIDERS.find((p) => p.key === connection.providerKey);
   const test = useServerFn(testChannelConnectionFn);
   const update = useServerFn(updateChannelConnectionFn);
@@ -145,11 +149,11 @@ function ConnectionRow({ tenantId, properties, connection, onRefresh }: any) {
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Button size="sm" variant="outline" disabled={testMutation.isPending} onClick={() => testMutation.mutate({ tenantId, integrationId: connection.id })}>
+          {canManage ? <Button size="sm" variant="outline" disabled={testMutation.isPending} onClick={() => testMutation.mutate({ tenantId, integrationId: connection.id })}>
             {testMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
             Test connection
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setEditing((v) => !v)}>{editing ? "Cancel" : "Edit"}</Button>
+          </Button> : null}
+          {canManage ? <Button size="sm" variant="outline" onClick={() => setEditing((v) => !v)}>{editing ? "Cancel" : "Edit"}</Button> : null}
         </div>
       </div>
 
@@ -193,7 +197,7 @@ function PropertySelect({ value, properties, onChange }: { value: string; proper
   );
 }
 
-function NewConnection({ tenantId, properties, onCreated }: { tenantId: string; properties: Array<{ id: string; name: string }>; onCreated: () => void }) {
+function NewConnection({ tenantId, properties, canManage, onCreated }: { tenantId: string; properties: Array<{ id: string; name: string }>; canManage: boolean; onCreated: () => void }) {
   const create = useServerFn(createChannelConnectionFn);
   const provider = CHANNEL_PROVIDERS[0];
   const [label, setLabel] = useState("");
@@ -206,6 +210,14 @@ function NewConnection({ tenantId, properties, onCreated }: { tenantId: string; 
     successMessage: "Channel connection created",
     onSuccess: () => { setLabel(""); setProjectId(""); setBusinessId(""); setApiKey(""); setPropertyId("tenant"); onCreated(); },
   });
+
+  if (!canManage) {
+    return (
+      <SectionCard title="Connect a channel" description="Only tenant owners and general managers can change channel connections.">
+        <p className="text-sm text-muted-foreground">You can view the tenant's connections, but connection credentials and operational controls are restricted to authorized tenant administrators.</p>
+      </SectionCard>
+    );
+  }
 
   return (
     <SectionCard title="Connect a channel" description="Tenant owners and general managers can connect an approved provider. Credentials are stored server-side and are never displayed after save.">
