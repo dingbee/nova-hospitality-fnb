@@ -17,7 +17,7 @@ export const upsertPropertySchema = z.object({
     .regex(/^[a-z0-9-]+$/),
   timezone: z.string().min(2).max(60).default(DEFAULT_TIMEZONE),
   currency: z.string().min(3).max(3).default(DEFAULT_CURRENCY),
-  status: z.string().max(30).default("active"),
+  status: z.enum(["pending_activation", "active", "inactive"]).default("active"),
 });
 export type UpsertPropertyInput = z.infer<typeof upsertPropertySchema>;
 

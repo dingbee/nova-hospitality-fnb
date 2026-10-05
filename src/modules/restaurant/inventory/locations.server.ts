@@ -31,6 +31,26 @@ export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocati
   await assertCapability(sb, userId, input.tenantId, "location.manage");
   if (input.parentId && input.parentId === input.id) throw new Error("A location cannot be its own parent.");
 
+  // A pending commercial property may exist so the tenant can see the
+  // commercial gate, but it cannot become operational through an outlet or
+  // storage location. The database trigger below is the final enforcement
+  // layer; this check provides the immediate application-level error.
+  if (!input.id || input.active) {
+    const { data: property, error: propertyError } = await sb
+      .from("restaurant_properties")
+      .select("status")
+      .eq("id", input.propertyId)
+      .eq("tenant_id", input.tenantId)
+      .maybeSingle();
+    if (propertyError) throw new Error(propertyError.message);
+    if (!property) throw new Error("Property not found in this tenant.");
+    if (property.status !== "active") {
+      throw new Error(
+        "PROPERTY_NOT_ACTIVE — this property is pending commercial activation. Activate the property before creating or activating an outlet.",
+      );
+    }
+  }
+
   const row = {
     tenant_id: input.tenantId,
     property_id: input.propertyId,

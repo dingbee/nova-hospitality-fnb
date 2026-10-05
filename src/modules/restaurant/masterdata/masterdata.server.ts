@@ -19,15 +19,20 @@ type Sb = any;
 
 export async function upsertProperty(sb: Sb, userId: string, input: UpsertPropertyInput) {
   await assertCapability(sb, userId, input.tenantId, "tenant.manage");
+  const isNewProperty = !input.id;
+  // NEW properties are born non-operational. This is a deliberate safety
+  // boundary: commercial classification happens after the insert, so an
+  // additional chargeable property can never become active in the gap
+  // between creation and classification. The database trigger is the final
+  // enforcement layer and also forces direct active INSERTs to pending.
   const row = {
     tenant_id: input.tenantId,
     slug: input.slug,
     name: input.name,
     timezone: input.timezone,
     currency: input.currency,
-    status: input.status,
+    status: isNewProperty ? "pending_activation" : input.status,
   };
-  const isNewProperty = !input.id;
   const q = input.id
     ? sb
         .from("restaurant_properties")
@@ -39,14 +44,31 @@ export async function upsertProperty(sb: Sb, userId: string, input: UpsertProper
   if (error) throw new Error(error.message);
 
   // P01: every NEW property passes through the commercial classification
-  // engine exactly once — base/included/additional_chargeable/programme-
-  // or-override-covered/enterprise — so a chargeable additional property
-  // is never silently activated. Never runs on update, and never runs for
-  // outlets (restaurant_locations), which carry no commercial charge.
+  // engine exactly once. A chargeable property stays pending until the
+  // property-specific commercial invoice is fully paid; the DB trigger
+  // prevents every alternate client/write path from bypassing that gate.
   const commercial = isNewProperty
     ? await classifyProperty(sb, userId, input.tenantId, data.id)
     : null;
-  return { ...data, commercial };
+
+  if (isNewProperty && commercial && !commercial.chargeable) {
+    const { data: activated, error: activationError } = await sb
+      .from("restaurant_properties")
+      .update({ status: "active" })
+      .eq("id", data.id)
+      .eq("tenant_id", input.tenantId)
+      .select("id, name, slug, status")
+      .single();
+    if (activationError) throw new Error(activationError.message);
+    return { ...activated, commercial: { ...commercial, activationState: "active" as const } };
+  }
+
+  return {
+    ...data,
+    commercial: commercial
+      ? { ...commercial, activationState: "pending_activation" as const }
+      : null,
+  };
 }
 
 export async function upsertBusinessProfile(
