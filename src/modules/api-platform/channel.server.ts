@@ -87,6 +87,7 @@ export async function updateChannelConnection(sb: any, userId: string, input: Up
   return updateIntegration(sb, userId, {
     tenantId: input.tenantId,
     integrationId: input.integrationId,
+    propertyId: input.propertyId,
     label: input.label,
     config,
     secret: input.apiKey,
