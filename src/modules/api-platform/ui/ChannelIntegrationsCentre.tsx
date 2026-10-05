@@ -92,7 +92,7 @@ function ProviderCatalog() {
   return (
     <SectionCard
       title="Available channel providers"
-      description="Providers are registered as adapters. Adding an adapter extends this catalogue without changing the restaurant core."
+      description="Providers are registered as adapters. Select a provider below; its adapter supplies the setup fields without changing the restaurant core."
     >
       {CHANNEL_PROVIDERS.length ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -379,6 +379,15 @@ function NewConnection({
                   {CHANNEL_PROVIDERS.map((item) => <SelectItem key={item.key} value={item.key}>{item.name}</SelectItem>)}
                 </SelectContent>
               </Select>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <Badge variant="outline">{provider.type.replaceAll("_", " ")}</Badge>
+                <span>{provider.capabilities.length} supported capabilities</span>
+                {provider.setup.docsUrl ? (
+                  <a className="inline-flex items-center font-medium underline underline-offset-2" href={provider.setup.docsUrl} target="_blank" rel="noreferrer">
+                    Setup documentation <ExternalLink className="ml-1 h-3 w-3" />
+                  </a>
+                ) : null}
+              </div>
             </div>
             <div><Label>Connection name</Label><Input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="e.g. Main external ordering channel" /></div>
             <div><Label>Property scope</Label><PropertySelect value={propertyId} properties={properties} onChange={setPropertyId} /></div>
@@ -387,18 +396,6 @@ function NewConnection({
               <Label>{provider.setup.credential.label}</Label>
               <Input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="Paste once; never shown again" autoComplete="new-password" />
             </div>
-          </div>
-
-          <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm">
-            <div className="flex items-center justify-between gap-3">
-              <div className="font-medium">{provider.name}</div>
-              <Badge variant="outline">{provider.type.replaceAll("_", " ")}</Badge>
-            </div>
-            <p className="mt-1 text-muted-foreground">{provider.description}</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {provider.capabilities.map((capability) => <Badge key={capability} variant="outline">{capability}</Badge>)}
-            </div>
-            {provider.setup.docsUrl ? <a className="mt-3 inline-flex items-center text-xs font-medium underline" href={provider.setup.docsUrl} target="_blank" rel="noreferrer">Provider setup documentation <ExternalLink className="ml-1 h-3 w-3" /></a> : null}
           </div>
 
           <div className="mt-4 flex items-center justify-between gap-4">
