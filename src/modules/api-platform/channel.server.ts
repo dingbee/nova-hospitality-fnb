@@ -73,7 +73,7 @@ export async function updateChannelConnection(sb: any, userId: string, input: Up
   if (error) throw new Error(error.message);
   if (!existing) throw new Error("Channel connection not found.");
 
-  const providerKey = existing.provider as "ordering.co";
+  const providerKey = assertChannelProvider(existing.provider).key;
   const current = existing.config ?? {};
   const config = input.config
     ? normaliseChannelConfig(providerKey, {
