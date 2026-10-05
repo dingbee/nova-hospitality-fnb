@@ -4,6 +4,11 @@
 
 LexiBite must not contain provider-specific marketplace logic in the restaurant core.
 
+The channel layer provides a stable boundary. The product model has two deliberately separate identities:
+
+- **Channel** — the customer-facing external channel/deployment a tenant connects (for example, PIKI).
+- **Provider adapter** — the transport/API implementation used to reach that channel (for example, Ordering.co).
+
 The channel layer provides a stable boundary:
 
 ```
@@ -72,7 +77,9 @@ Adding a provider therefore follows this pattern:
 5. No POS/core change.
 ```
 
-## First provider
+## First channel and provider
+
+PIKI is the first registered customer-facing channel definition. It resolves to the Ordering.co adapter. PIKI is therefore **not** a provider key, and Ordering.co is not presented as the customer-facing channel identity.
 
 Ordering.co is the first registered adapter.
 

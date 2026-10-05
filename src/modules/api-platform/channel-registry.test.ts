@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { CHANNEL_PROVIDERS, getChannelProviderDefinition } from "./channel-catalog";
+import { CHANNELS, CHANNEL_PROVIDERS, getChannelDefinition, getChannelProviderDefinition } from "./channel-catalog";
 import { normaliseChannelConfig } from "./channel-registry.server";
 
 describe("universal channel registry", () => {
   it("registers providers without creating product-specific provider keys", () => {
     expect(CHANNEL_PROVIDERS.map((provider) => provider.key)).toEqual(["ordering.co"]);
     expect(getChannelProviderDefinition("piki")).toBeNull();
+  });
+
+  it("registers customer-facing channels separately from provider adapters", () => {
+    expect(CHANNELS.map((channel) => channel.key)).toEqual(["piki"]);
+    expect(getChannelDefinition("piki")?.providerKey).toBe("ordering.co");
+    expect(getChannelProviderDefinition("ordering.co")?.name).toBe("Ordering.co");
   });
 
   it("keeps the universal connection config provider-neutral", () => {

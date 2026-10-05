@@ -1,7 +1,16 @@
 import { z } from "zod";
 
 export type ChannelProviderKey = string;
+export type ChannelKey = string;
 export type ChannelConnectionConfig = Record<string, unknown>;
+
+export type ChannelDefinition = {
+  key: ChannelKey;
+  name: string;
+  description: string;
+  providerKey: ChannelProviderKey;
+  category: ChannelType;
+};
 
 export const CHANNEL_TYPES = ["marketplace", "ordering_platform", "delivery", "aggregator"] as const;
 export type ChannelType = (typeof CHANNEL_TYPES)[number];
@@ -15,7 +24,7 @@ export const channelCredentialSchema = z.string().min(8).max(4000);
 export const createChannelConnectionSchema = z.object({
   tenantId: z.string().uuid(),
   propertyId: z.string().uuid().nullish(),
-  providerKey: z.string().trim().min(2).max(80),
+  channelKey: z.string().trim().min(2).max(80),
   label: z.string().trim().min(2).max(120),
   config: channelConnectionConfigSchema,
   credential: channelCredentialSchema,
