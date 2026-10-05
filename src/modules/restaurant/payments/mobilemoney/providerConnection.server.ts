@@ -319,53 +319,85 @@ export async function configureMobileMoneyProvider(
 export async function testMobileMoneyTenantProviderConnection(
   sb: Sb,
   userId: string,
-  input: { tenantId: string },
+  input: {
+    tenantId: string;
+    providerCode?: string;
+    environment?: MobileMoneyEnvironment;
+    config?: MobileMoneyProviderConfig;
+    credentials?: MobileMoneyProviderCredentials;
+  },
 ) {
   await assertCapability(sb, userId, input.tenantId, "mobile_money.manage");
-  const { data } = await sb
+
+  const { data: saved } = await sb
     .from("restaurant_mobile_money_provider_connections")
     .select("provider_code, environment, provider_config, credential_ciphertext, credential_iv, credential_tag")
     .eq("tenant_id", input.tenantId)
     .maybeSingle();
 
-  if (!data?.credential_ciphertext) {
-    throw new Error("Connect a Mobile Money provider before testing the connection.");
-  }
-
-  const providerCode = mobileMoneyProviderCodeSchema.safeParse(data.provider_code);
-  if (!providerCode.success) throw new Error("Unsupported Mobile Money provider.");
+  const providerCode = mobileMoneyProviderCodeSchema.safeParse(
+    input.providerCode ?? saved?.provider_code,
+  );
+  if (!providerCode.success) throw new Error("Select a supported Mobile Money provider.");
 
   const provider = getMobileMoneyProvider(providerCode.data);
-  if (!provider?.implemented) throw new Error("This provider connector is not implemented yet.");
-  if (data.environment === "production" && !provider.certified) {
-    throw new Error("This provider is not production-certified for LexiBite yet.");
+  if (!provider?.implemented) {
+    throw new Error("This provider connector is not implemented yet.");
   }
 
-  const plaintext = decryptSecret({
-    ciphertext: data.credential_ciphertext,
-    iv: data.credential_iv,
-    tag: data.credential_tag,
-  });
-  const credentials = JSON.parse(plaintext) as MobileMoneyProviderCredentials;
+  const environment =
+    input.environment ??
+    (saved?.environment as MobileMoneyEnvironment | undefined) ??
+    "test";
+  const config =
+    input.config ??
+    ((saved?.provider_config ?? {}) as MobileMoneyProviderConfig);
 
+  let credentials = input.credentials;
+  if (!credentials || Object.keys(credentials).length === 0) {
+    if (!saved?.credential_ciphertext) {
+      throw new Error("Enter the provider credentials before testing the connection.");
+    }
+    const plaintext = decryptSecret({
+      ciphertext: saved.credential_ciphertext,
+      iv: saved.credential_iv,
+      tag: saved.credential_tag,
+    });
+    try {
+      credentials = JSON.parse(plaintext) as MobileMoneyProviderCredentials;
+    } catch {
+      throw new Error("Stored Mobile Money provider credentials are invalid.");
+    }
+  } else {
+    validateCredentials(providerCode.data, credentials);
+  }
+
+  // Testing only verifies provider reachability/authentication. It never
+  // creates a collection, so production certification does not block this
+  // diagnostic operation. Actual production payment activation remains gated.
   if (providerCode.data === "payin") {
     const { createPayInAdapter } = await import("./providers/payinAdapter.server");
-    const adapter = createPayInAdapter(
-      data.environment as MobileMoneyEnvironment,
-      credentials,
-      (data.provider_config ?? {}) as MobileMoneyProviderConfig,
-    );
+    const adapter = createPayInAdapter(environment, credentials, config);
     const health = await adapter.healthCheck();
-    await sb
-      .from("restaurant_mobile_money_provider_connections")
-      .update({
-        provider_status: health.ok ? "operational" : "error",
-        last_health_check_at: new Date().toISOString(),
-        last_provider_error: health.ok ? null : health.detail,
-      })
-      .eq("tenant_id", input.tenantId);
-    if (!health.ok) throw new Error(health.message || "Provider connection failed.");
-    return { ok: true, providerCode: providerCode.data, message: "Connected" };
+
+    const testingSavedCredentials =
+      !input.credentials &&
+      saved?.provider_code === providerCode.data &&
+      saved?.environment === environment;
+
+    if (testingSavedCredentials) {
+      await sb
+        .from("restaurant_mobile_money_provider_connections")
+        .update({
+          provider_status: health.ok ? "operational" : "error",
+          last_health_check_at: new Date().toISOString(),
+          last_provider_error: health.ok ? null : health.detail,
+        })
+        .eq("tenant_id", input.tenantId);
+    }
+
+    if (!health.ok) throw new Error(health.detail || "Provider connection failed.");
+    return { ok: true, providerCode: providerCode.data, environment, message: "Connected" };
   }
 
   throw new Error("This provider connector does not yet support connection testing.");
