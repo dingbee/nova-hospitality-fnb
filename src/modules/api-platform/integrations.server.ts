@@ -73,6 +73,7 @@ export async function listIntegrations(sb: Sb, userId: string, input: { tenantId
 export async function updateIntegration(sb: Sb, userId: string, input: UpdateIntegrationInput) {
   await assertCapability(sb, userId, input.tenantId, "tenant.manage");
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (input.propertyId !== undefined) patch.property_id = input.propertyId ?? null;
   if (input.label !== undefined) patch.label = input.label;
   if (input.config !== undefined) patch.config = input.config;
   if (input.status !== undefined) patch.status = input.status;

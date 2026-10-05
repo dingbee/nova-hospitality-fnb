@@ -58,6 +58,7 @@ export type RegisterIntegrationInput = z.infer<typeof registerIntegrationSchema>
 export const updateIntegrationSchema = z.object({
   tenantId: uuid,
   integrationId: uuid,
+  propertyId: uuid.nullish(),
   label: z.string().min(2).max(120).optional(),
   config: z.record(z.string(), z.unknown()).optional(),
   secret: z.string().min(1).max(4000).optional(),
