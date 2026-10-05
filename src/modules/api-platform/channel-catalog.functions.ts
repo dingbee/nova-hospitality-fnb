@@ -3,6 +3,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
 import { CHANNEL_TYPES } from "./channel-contracts";
 import {
+  listAllChannelDefinitionsForAdmin,
   listChannelDefinitions,
   listChannelProvidersForAdmin,
   upsertChannelDefinition,
@@ -23,6 +24,11 @@ export const listChannelDefinitionsFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => listSchema.parse(d))
   .handler(async ({ data, context }) => listChannelDefinitions(context.supabase, data.enabledOnly));
+
+
+export const listAllChannelDefinitionsForAdminFn = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => listAllChannelDefinitionsForAdmin(context.supabase, context.userId));
 
 export const listChannelProvidersForAdminFn = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
