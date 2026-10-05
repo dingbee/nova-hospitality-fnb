@@ -24,7 +24,7 @@ export const channelCredentialSchema = z.string().min(8).max(4000);
 export const createChannelConnectionSchema = z.object({
   tenantId: z.string().uuid(),
   propertyId: z.string().uuid().nullish(),
-  providerKey: z.string().trim().min(2).max(80),
+  channelKey: z.string().trim().min(2).max(80),
   label: z.string().trim().min(2).max(120),
   config: channelConnectionConfigSchema,
   credential: channelCredentialSchema,
