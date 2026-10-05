@@ -60,6 +60,8 @@ export const listDeliveriesSchema = z.object({
 });
 export type ListDeliveriesInput = z.infer<typeof listDeliveriesSchema>;
 
+export const guestReceiptLinkSchema = z.object({ tableId: uuid, orderId: uuid });
+
 export const sharedReceiptSchema = z.object({ token: z.string().min(20).max(120) });
 
 /* ------------------------------- pure helpers ------------------------------ */

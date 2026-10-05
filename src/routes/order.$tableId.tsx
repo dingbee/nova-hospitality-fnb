@@ -55,6 +55,7 @@ import {
 } from "@/modules/restaurant/selforder/selfmobilemoney.functions";
 import { MM_NETWORK_LABELS } from "@/modules/restaurant/payments/mobilemoney/contracts";
 import { requestGuestBillFn } from "@/modules/restaurant/selforder/selfbill.functions";
+import { getOrCreateGuestReceiptLinkFn } from "@/modules/restaurant/receipts/delivery.functions";
 import { guestOrderProgressFn } from "@/modules/restaurant/selforder/selftrack.functions";
 import { guestSessionProjectionFn } from "@/modules/restaurant/selforder/selfsession.functions";
 import {
@@ -1634,6 +1635,7 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
   const initiateFn = useServerFn(initiateGuestPaymentFn);
   const confirmFn = useServerFn(confirmGuestPaymentFn);
   const mmAccountFn = useServerFn(getGuestMobileMoneyAccountFn);
+  const receiptLinkFn = useServerFn(getOrCreateGuestReceiptLinkFn);
   const [method, setMethod] = useState<(typeof GUEST_PAYMENT_METHODS)[number]>("mobile_money");
 
   const status = useQuery({
@@ -1651,6 +1653,15 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
     queryKey: ["selforder.mobileMoneyAccount", tableId],
     queryFn: () => mmAccountFn({ data: { tableId } }),
     staleTime: 60_000,
+    networkMode: "always",
+  });
+
+  const receiptLink = useQuery({
+    queryKey: ["selforder.guestReceiptLink", tableId, orderId],
+    queryFn: () => receiptLinkFn({ data: { tableId, orderId } }),
+    enabled: Boolean(status.data && (status.data.paymentState === "paid" || status.data.amountDue <= 0)),
+    retry: false,
+    refetchInterval: (q) => (q.state.data?.ok ? false : 2_000),
     networkMode: "always",
   });
 
@@ -1696,6 +1707,30 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
         <p className="mt-1 text-xs text-muted-foreground">
           {money(s.total, currency)} settled on order {s.orderNumber}.
         </p>
+        {receiptLink.data?.ok ? (
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <a
+              href={receiptLink.data.shareUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex min-h-10 items-center justify-center rounded-full border border-primary/30 bg-background px-3 text-sm font-medium text-primary"
+            >
+              View receipt
+            </a>
+            <a
+              href={`${receiptLink.data.shareUrl}?print=1`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex min-h-10 items-center justify-center rounded-full bg-primary px-3 text-sm font-medium text-primary-foreground"
+            >
+              Save receipt
+            </a>
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Preparing your receipt…
+          </p>
+        )}
       </div>
     );
   }
@@ -1709,6 +1744,7 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
   // checkout for an unrelated "mobile money" concept. Connected mode (or no
   // account configured at all) keeps the existing Pesapal flow unchanged.
   const useMerchantNumberFlow = method === "mobile_money" && mmAccount.data?.mode === "lipa_namba";
+  const useConnectedMobileMoneyFlow = method === "mobile_money" && mmAccount.data?.mode === "connected";
 
   return (
     <div className="mt-2 w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
@@ -1738,6 +1774,15 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
           currency={currency}
           network={mmAccount.data!.network}
           merchantNumber={mmAccount.data!.merchantNumber}
+          onSettled={() => status.refetch()}
+        />
+      ) : useConnectedMobileMoneyFlow ? (
+        <GuestConnectedMobileMoneyPayment
+          tableId={tableId}
+          orderId={orderId}
+          amountDue={s.amountDue}
+          currency={currency}
+          network={mmAccount.data?.network ?? "mpesa"}
           onSettled={() => status.refetch()}
         />
       ) : (
@@ -1784,6 +1829,168 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
           </Button>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Connected Mobile Money — the guest enters a mobile number, the configured
+ * provider sends the MNO payment prompt, and the guest confirms with their
+ * own MNO PIN on their phone. LexiBite never receives or stores that PIN.
+ *
+ * The collection/status lifecycle is the same Payment Core used by POS:
+ * request -> provider confirmation -> server-side amount reconciliation ->
+ * restaurant payment -> order settlement -> receipt.
+ */
+function GuestConnectedMobileMoneyPayment({
+  tableId,
+  orderId,
+  amountDue,
+  currency,
+  network,
+  onSettled,
+}: {
+  tableId: string;
+  orderId: string;
+  amountDue: number;
+  currency: string;
+  network: string;
+  onSettled: () => void;
+}) {
+  const requestFn = useServerFn(requestGuestMobileMoneyCollectionFn);
+  const statusFn = useServerFn(getGuestMobileMoneyStatusFn);
+  const [collectionId, setCollectionId] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [phone, setPhone] = useState("");
+  const clientRequestId = useMemo(
+    () =>
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `gmm-${Date.now()}-${Math.random()}`,
+    [tableId, orderId, attempt],
+  );
+
+  const request = useMutation({
+    mutationFn: () =>
+      requestFn({
+        data: {
+          tableId,
+          orderId,
+          customerPhone: phone.trim(),
+          clientRequestId,
+        },
+      }),
+    networkMode: "always",
+    onSuccess: (view) => setCollectionId(view.collectionId),
+  });
+
+  const status = useQuery({
+    queryKey: ["selforder.connectedMobileMoneyStatus", tableId, collectionId],
+    queryFn: () => statusFn({ data: { tableId, collectionId: collectionId! } }),
+    enabled: Boolean(collectionId),
+    refetchInterval: (q) => {
+      const s = q.state.data?.state;
+      return s && ["pending_customer", "processing", "created", "initiated"].includes(s)
+        ? 5_000
+        : false;
+    },
+    networkMode: "always",
+  });
+
+  const view = status.data;
+  useEffect(() => {
+    if (view?.state === "paid") onSettled();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire on the terminal paid transition only
+  }, [view?.state]);
+
+  const normalizedPhone = phone.replace(/\D/g, "");
+  const phoneValid =
+    (normalizedPhone.startsWith("0") && normalizedPhone.length === 10) ||
+    normalizedPhone.startsWith("255") && normalizedPhone.length === 12 ||
+    normalizedPhone.length === 9;
+
+  if (view?.state === "paid") {
+    return (
+      <div className="mt-3 rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm">
+        <p className="font-semibold text-primary">Payment confirmed</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Your payment was received successfully. Preparing your receipt…
+        </p>
+      </div>
+    );
+  }
+
+  if (view?.state === "failed" || view?.state === "expired") {
+    return (
+      <div className="mt-3 space-y-3">
+        <div className="rounded-xl border bg-muted/40 p-3 text-sm">
+          <p className="font-medium">Payment not completed</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {view.state === "expired"
+              ? "The payment prompt expired. You can start another attempt."
+              : "The payment was not completed. You can try again."}
+          </p>
+        </div>
+        <Button
+          className="min-h-11 w-full rounded-full"
+          onClick={() => {
+            setCollectionId(null);
+            setAttempt((value) => value + 1);
+          }}
+        >
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
+  if (collectionId) {
+    return (
+      <div className="mt-3 rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm">
+        <p className="font-medium">Payment prompt sent</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Check {network === "mpesa" ? "M-Pesa" : MM_NETWORK_LABELS[network as keyof typeof MM_NETWORK_LABELS] ?? network}
+          {" "}on <span className="font-medium">{phone}</span> and enter your mobile-money PIN on your phone.
+          LexiBite never sees or stores your PIN.
+        </p>
+        <p className="mt-2 text-xs text-muted-foreground">Waiting for confirmation…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 space-y-3">
+      <div className="rounded-xl border bg-muted/40 p-3 text-sm">
+        <p className="font-medium">
+          Pay with {MM_NETWORK_LABELS[network as keyof typeof MM_NETWORK_LABELS] ?? network}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Amount: {money(amountDue, currency)}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Enter your mobile number. A payment prompt will be sent to your phone.
+        </p>
+      </div>
+      <Input
+        inputMode="tel"
+        autoComplete="tel"
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
+        placeholder="e.g. 0712 345 678"
+        aria-label="Mobile money phone number"
+      />
+      {request.isError && (
+        <p className="text-xs text-destructive">
+          {request.error instanceof Error ? request.error.message : "Couldn't start the payment. Please try again."}
+        </p>
+      )}
+      <Button
+        className="min-h-11 w-full rounded-full"
+        disabled={!phoneValid || request.isPending}
+        onClick={() => request.mutate()}
+      >
+        {request.isPending ? "Sending payment prompt…" : "Pay now"}
+      </Button>
     </div>
   );
 }
