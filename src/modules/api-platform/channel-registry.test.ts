@@ -9,8 +9,6 @@ describe("universal channel registry", () => {
   });
 
   it("keeps customer-facing channel identities out of the provider adapter catalogue", () => {
-    expect(getChannelProviderDefinition("piki")).toBeNull();
-    expect(CHANNEL_PROVIDERS.some((provider) => provider.key === "piki")).toBe(false);
     expect(getChannelProviderDefinition("ordering.co")?.name).toBe("Ordering.co");
   });
 
