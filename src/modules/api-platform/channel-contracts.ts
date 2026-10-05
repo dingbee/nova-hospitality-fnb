@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export type ChannelProviderKey = string;
+export type ChannelConnectionConfig = Record<string, unknown>;
 
 export const CHANNEL_TYPES = ["marketplace", "ordering_platform", "delivery", "aggregator"] as const;
 export type ChannelType = (typeof CHANNEL_TYPES)[number];
@@ -8,13 +9,8 @@ export type ChannelType = (typeof CHANNEL_TYPES)[number];
 export const CHANNEL_STATUSES = ["active", "disabled", "error"] as const;
 export type ChannelStatus = (typeof CHANNEL_STATUSES)[number];
 
-export const channelConnectionConfigSchema = z.object({
-  projectId: z.string().trim().min(1).max(120),
-  languageCode: z.string().trim().min(2).max(10).default("en"),
-  businessId: z.string().trim().max(120).optional(),
-});
-
-export type ChannelConnectionConfig = z.infer<typeof channelConnectionConfigSchema>;
+export const channelConnectionConfigSchema = z.record(z.string().min(1).max(80), z.unknown()).default({});
+export const channelCredentialSchema = z.string().min(8).max(4000);
 
 export const createChannelConnectionSchema = z.object({
   tenantId: z.string().uuid(),
@@ -22,7 +18,7 @@ export const createChannelConnectionSchema = z.object({
   providerKey: z.string().trim().min(2).max(80),
   label: z.string().trim().min(2).max(120),
   config: channelConnectionConfigSchema,
-  apiKey: z.string().min(8).max(4000),
+  credential: channelCredentialSchema,
 });
 
 export const updateChannelConnectionSchema = z.object({
@@ -30,8 +26,8 @@ export const updateChannelConnectionSchema = z.object({
   integrationId: z.string().uuid(),
   propertyId: z.string().uuid().nullish(),
   label: z.string().trim().min(2).max(120).optional(),
-  config: channelConnectionConfigSchema.partial().optional(),
-  apiKey: z.string().min(8).max(4000).optional(),
+  config: channelConnectionConfigSchema.optional(),
+  credential: channelCredentialSchema.optional(),
   status: z.enum(["active", "disabled"]).optional(),
 });
 
@@ -52,6 +48,14 @@ export type ChannelCapability =
   | "order_status.write"
   | "webhooks";
 
+export type ChannelSetupField = {
+  key: string;
+  label: string;
+  type: "text";
+  required?: boolean;
+  placeholder?: string;
+};
+
 export type ChannelProviderDefinition = {
   key: ChannelProviderKey;
   name: string;
@@ -59,9 +63,12 @@ export type ChannelProviderDefinition = {
   type: ChannelType;
   capabilities: readonly ChannelCapability[];
   setup: {
-    credentialLabel: string;
-    projectLabel: string;
-    businessLabel?: string;
+    fields: readonly ChannelSetupField[];
+    credential: {
+      label: string;
+      kind: "api_key" | "secret";
+      required: boolean;
+    };
     docsUrl?: string;
   };
 };
