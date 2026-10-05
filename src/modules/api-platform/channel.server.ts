@@ -4,7 +4,8 @@ import { writeCommercialAudit } from "@/modules/commercial/audit.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UpdateChannelConnectionInput, CreateChannelConnectionInput } from "./channel-contracts";
-import { assertChannelProvider } from "./channel-registry.server";
+import { assertChannelProvider, getChannelProvider } from "./channel-registry.server";
+import { getChannelDefinition } from "./channel-catalog";
 import { getChannelAdapter } from "./adapters/index.server";
 import { registerIntegration, updateIntegration } from "./integrations.server";
 import { testChannelConnection, persistChannelHealth } from "./channel-connectors.server";
@@ -42,7 +43,9 @@ export async function createChannelConnection(sb: any, userId: string, input: Cr
     propertyId: input.propertyId ?? null,
   });
 
-  const provider = assertChannelProvider(input.providerKey);
+  const channel = getChannelDefinition(input.channelKey);
+  if (!channel) throw new Error(`Unsupported channel: ${input.channelKey}`);
+  const provider = assertChannelProvider(channel.providerKey);
   const adapter = getChannelAdapter(provider.key);
   const config = adapter.validateConfig(input.config);
 
