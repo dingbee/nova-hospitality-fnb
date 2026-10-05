@@ -99,7 +99,7 @@ function ConnectionList({ tenantId, properties, connections, canManage, onRefres
   }
 
   return (
-    <SectionCard title="Connected channels" description={\`\${connections.length} connection\${connections.length === 1 ? "" : "s"} configured\`}>
+    <SectionCard title="Connected channels" description={`${connections.length} connection${connections.length === 1 ? "" : "s"} configured`}>
       <div className="space-y-3">
         {connections.map((connection) => (
           <ConnectionRow key={connection.id} tenantId={tenantId} properties={properties} connection={connection} canManage={canManage} onRefresh={onRefresh} />
