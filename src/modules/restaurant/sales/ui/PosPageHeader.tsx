@@ -53,7 +53,7 @@ export function PosPageHeader({ title, description }: { title: string; descripti
   // Deduped with PosWorkspace's own useRestaurantWorkspace() call below it —
   // same react-query cache key, so this never issues a second request.
   const ws = useRestaurantWorkspace();
-  const timeZone = ws.data?.properties?.[0]?.timezone || DEFAULT_TIMEZONE;
+  const timeZone = ws.data?.properties.find((p) => p.id === ws.data?.activePropertyId)?.timezone || DEFAULT_TIMEZONE;
   const clock = useLiveClock(timeZone);
 
   return (

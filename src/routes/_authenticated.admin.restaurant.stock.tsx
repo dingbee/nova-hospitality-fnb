@@ -35,6 +35,8 @@ function StockPage() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
   const qc = useQueryClient();
+  const propertyId = ws.data?.activePropertyId ?? undefined;
+  const locationId = ws.data?.activeLocationId ?? undefined;
 
   const invFn = useServerFn(listRestaurantInventoryFn);
   const listFn = useServerFn(listRestaurantStockMovementsFn);
@@ -47,13 +49,13 @@ function StockPage() {
   const [reason, setReason] = useState("");
 
   const inventory = useQuery({
-    queryKey: ["restaurant.inventory", tenantId],
-    queryFn: () => invFn({ data: { tenantId: tenantId!, lowOnly: false, limit: 200 } }),
+    queryKey: ["restaurant.inventory", tenantId, propertyId, locationId],
+    queryFn: () => invFn({ data: { tenantId: tenantId!, propertyId, locationId, lowOnly: false, limit: 200 } }),
     enabled: Boolean(tenantId),
   });
   const movements = useQuery({
-    queryKey: ["restaurant.movements", tenantId],
-    queryFn: () => listFn({ data: { tenantId: tenantId!, limit: 100 } }),
+    queryKey: ["restaurant.movements", tenantId, propertyId, locationId],
+    queryFn: () => listFn({ data: { tenantId: tenantId!, propertyId, locationId, limit: 100 } }),
     enabled: Boolean(tenantId),
   });
 
@@ -62,10 +64,12 @@ function StockPage() {
       recordFn({
         data: {
           tenantId: tenantId!,
+          propertyId,
+          locationId,
           inventoryItemId: itemId,
           movementType: type,
           quantity: Number(quantity),
-          currency: ws.data?.properties[0]?.currency ?? "TZS",
+          currency: ws.data?.properties.find((p) => p.id === ws.data?.activePropertyId)?.currency ?? "TZS",
           reason: reason || undefined,
         },
       }),
@@ -99,7 +103,7 @@ function StockPage() {
 
   const rows = movements.data ?? [];
   const names = new Map((inventory.data ?? []).map((i: any) => [i.id, i.name]));
-  const currency = ws.data?.properties[0]?.currency ?? "TZS";
+  const currency = ws.data?.properties.find((p) => p.id === ws.data?.activePropertyId)?.currency ?? "TZS";
   const wastageCost = rows.filter((r: any) => r.movement_type === "wastage").reduce((s: any, r: any) => s + Number(r.total_cost ?? 0), 0);
   const consumptionCost = rows.filter((r: any) => r.movement_type === "consumption").reduce((s: any, r: any) => s + Number(r.total_cost ?? 0), 0);
 

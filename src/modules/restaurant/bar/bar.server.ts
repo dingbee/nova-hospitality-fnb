@@ -346,7 +346,10 @@ export async function listBeverages(
   userId: string,
   input: ListBeveragesInput,
 ): Promise<BarBeverage[]> {
-  await assertTenantRead(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   const units = await unitMap(sb, input.tenantId);
 
   let q = sb
@@ -357,6 +360,8 @@ export async function listBeverages(
     .eq("tenant_id", input.tenantId)
     .order("name")
     .limit(input.limit);
+  if (input.propertyId) q = q.eq("property_id", input.propertyId);
+  if (input.locationId) q = q.eq("location_id", input.locationId);
   if (!input.includeNonBeverage) q = q.or("is_beverage.eq.true,item_type.eq.beverage");
   if (input.search) q = q.ilike("name", `%${input.search}%`);
   const { data, error } = await q;

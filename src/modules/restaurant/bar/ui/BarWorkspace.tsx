@@ -43,7 +43,7 @@ function money(currency: string, n: number | null | undefined) {
 export function BarWorkspace({ initialTab }: { initialTab?: string }) {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
-  const currency = ws.data?.properties?.[0]?.currency ?? "TZS";
+  const currency = ws.data?.properties.find((p) => p.id === ws.data?.activePropertyId)?.currency ?? "TZS";
 
   const qc = useQueryClient();
   const snapshotFn = useServerFn(getBarSnapshotFn);
@@ -57,18 +57,20 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
   const [from] = React.useState(() => new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10));
 
   const snapshot = useQuery({
-    queryKey: ["bar.snapshot", tenantId],
-    queryFn: () => snapshotFn({ data: { tenantId: tenantId! } }),
+    queryKey: ["bar.snapshot", tenantId, ws.data?.activePropertyId, ws.data?.activeLocationId],
+    queryFn: () => snapshotFn({ data: { tenantId: tenantId!, propertyId: ws.data?.activePropertyId ?? undefined, locationId: ws.data?.activeLocationId ?? undefined } }),
     enabled: Boolean(tenantId),
     refetchInterval: 30_000,
   });
 
   const beverages = useQuery({
-    queryKey: ["bar.beverages", tenantId, search],
+    queryKey: ["bar.beverages", tenantId, ws.data?.activePropertyId, ws.data?.activeLocationId, search],
     queryFn: () =>
       beveragesFn({
         data: {
           tenantId: tenantId!,
+          propertyId: ws.data?.activePropertyId ?? undefined,
+          locationId: ws.data?.activeLocationId ?? undefined,
           search: search || undefined,
           includeNonBeverage: false,
           limit: 200,
@@ -78,8 +80,8 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
   });
 
   const variance = useQuery({
-    queryKey: ["bar.variance", tenantId, from],
-    queryFn: () => varianceFn({ data: { tenantId: tenantId!, from, limit: 120 } }),
+    queryKey: ["bar.variance", tenantId, ws.data?.activeLocationId, from],
+    queryFn: () => varianceFn({ data: { tenantId: tenantId!, locationId: ws.data?.activeLocationId ?? undefined, from, limit: 120 } }),
     enabled: Boolean(tenantId) && tab === "variance",
   });
 

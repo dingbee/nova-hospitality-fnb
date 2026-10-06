@@ -158,9 +158,16 @@ export interface RestaurantWorkspace {
   roles: RestaurantRole[];
   /** True when the caller is a host-platform owner/admin/manager. */
   platformAdmin: boolean;
+  /** Canonical operating context selected from the caller's accessible scope. */
+  activePropertyId: string | null;
+  activeLocationId: string | null;
 }
 
-export const workspaceSchema = z.object({ tenantId: uuid.optional() });
+export const workspaceSchema = z.object({
+  tenantId: uuid.optional(),
+  propertyId: uuid.optional(),
+  locationId: uuid.optional(),
+});
 
 /* ---------------- Menu ---------------- */
 
@@ -644,6 +651,7 @@ export const listProfitabilitySchema = tenantScopeSchema.extend({
 export const listMembersSchema = z.object({ tenantId: uuid });
 
 export const upsertMemberSchema = z.object({
+  id: uuid.optional(),
   tenantId: uuid,
   userId: uuid,
   role: z.enum(ASSIGNABLE_RESTAURANT_ROLES),

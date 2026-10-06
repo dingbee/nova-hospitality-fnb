@@ -75,6 +75,10 @@ async function recoverStaleClientAssets() {
 }
 
 export const Route = createRootRoute({
+  validateSearch: (search: Record<string, unknown>) => ({
+    propertyId: typeof search.propertyId === "string" ? search.propertyId : undefined,
+    outletId: typeof search.outletId === "string" ? search.outletId : undefined,
+  }),
   head: () => ({
     meta: [
       { charSet: "utf-8" },

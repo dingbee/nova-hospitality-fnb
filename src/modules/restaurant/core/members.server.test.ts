@@ -19,7 +19,7 @@
  * meaningful error message, and still allows every legitimate one.
  */
 import { describe, expect, it } from "vitest";
-import { removeMember, upsertMember } from "./members.server";
+import { listMembers, removeMember, upsertMember } from "./members.server";
 
 const TENANT_A = "tenant-a";
 const PROPERTY_A1 = "property-a1";
@@ -37,12 +37,19 @@ function makeFakeSb(opts: {
     role: string;
     property_id: string | null;
   }[];
+  appUsers?: {
+    user_id: string;
+    tenant_id: string;
+    full_name: string | null;
+    email: string | null;
+  }[];
 }) {
   const properties = opts.properties ?? [
     { id: PROPERTY_A1, tenantId: TENANT_A },
     { id: PROPERTY_A2, tenantId: TENANT_A },
   ];
   const members = [...(opts.members ?? [])];
+  const appUsers = [...(opts.appUsers ?? [])];
   const activityLogs: any[] = [];
 
   function thenable<T>(compute: () => Promise<T>) {
@@ -113,6 +120,20 @@ function makeFakeSb(opts: {
               },
             }),
           }),
+          update: (patch: any) => ({
+            eq: (_c1: string, memberId: string) => ({
+              eq: (_c2: string, tenantId: string) => ({
+                select: (_cols: string) => ({
+                  single: async () => {
+                    const member = members.find((m) => m.id === memberId && m.tenant_id === tenantId);
+                    if (!member) return { data: null, error: { message: "not found" } };
+                    Object.assign(member, patch);
+                    return { data: member, error: null };
+                  },
+                }),
+              }),
+            }),
+          })
           delete: () => ({
             eq: (_c1: string, memberId: string) => ({
               eq: (_c2: string, tenantId: string) =>
@@ -124,6 +145,21 @@ function makeFakeSb(opts: {
                   members.length = 0;
                   members.push(...kept);
                   return { error: null, removed: before !== members.length };
+                }),
+            }),
+          }),
+        };
+      }
+      if (table === "app_users") {
+        return {
+          select: () => ({
+            eq: (_c1: string, tenantId: string) => ({
+              in: (_c2: string, userIds: string[]) =>
+                Promise.resolve({
+                  data: appUsers.filter(
+                    (u) => u.tenant_id === tenantId && userIds.includes(u.user_id),
+                  ),
+                  error: null,
                 }),
             }),
           }),
@@ -263,6 +299,114 @@ describe("removeMember — property-scoped grant cannot revoke another property'
         entity_type: "restaurant_members",
         entity_id: "m-1",
         metadata: { userId: "victim", role: "bartender", propertyId: PROPERTY_A2 },
+      },
+    ]);
+  });
+});
+
+
+describe("upsertMember — existing grant edits", () => {
+  it("updates a property-scoped grant in place without creating a duplicate row", async () => {
+    const sb = makeFakeSb({
+      callerGrants: [{ role: "owner", propertyId: PROPERTY_A1 }],
+      members: [
+        {
+          id: "m-1",
+          tenant_id: TENANT_A,
+          user_id: "target-user",
+          role: "bartender",
+          property_id: PROPERTY_A1,
+        },
+      ],
+    });
+    await expect(
+      upsertMember(sb, "caller", {
+        id: "m-1",
+        tenantId: TENANT_A,
+        userId: "target-user",
+        role: "chef",
+        propertyId: PROPERTY_A1,
+      } as any),
+    ).resolves.toMatchObject({
+      id: "m-1",
+      user_id: "target-user",
+      role: "chef",
+      property_id: PROPERTY_A1,
+    });
+    expect(sb.members).toHaveLength(1);
+    expect(sb.activityLogs).toMatchObject([
+      {
+        action: "restaurant.member.updated",
+        entity_id: "m-1",
+        metadata: {
+          previousRole: "bartender",
+          previousPropertyId: PROPERTY_A1,
+          role: "chef",
+          propertyId: PROPERTY_A1,
+        },
+      },
+    ]);
+  });
+
+  it("blocks a property-scoped administrator from editing a tenant-wide grant", async () => {
+    const sb = makeFakeSb({
+      callerGrants: [{ role: "owner", propertyId: PROPERTY_A1 }],
+      members: [
+        {
+          id: "m-1",
+          tenant_id: TENANT_A,
+          user_id: "target-user",
+          role: "bartender",
+          property_id: null,
+        },
+      ],
+    });
+    await expect(
+      upsertMember(sb, "caller", {
+        id: "m-1",
+        tenantId: TENANT_A,
+        userId: "target-user",
+        role: "chef",
+        propertyId: PROPERTY_A1,
+      } as any),
+    ).rejects.toThrow(/tenant-wide owner\/general manager grant/);
+    expect(sb.members[0].role).toBe("bartender");
+  });
+});
+
+describe("listMembers — human-readable identity contract", () => {
+  it("returns staff identity fields without requiring the UI to render auth UUIDs", async () => {
+    const sb = makeFakeSb({
+      callerGrants: [{ role: "owner", propertyId: null }],
+      members: [
+        {
+          id: "m-1",
+          tenant_id: TENANT_A,
+          user_id: "user-1",
+          role: "restaurant_manager",
+          property_id: PROPERTY_A1,
+        },
+      ],
+      appUsers: [
+        {
+          user_id: "user-1",
+          tenant_id: TENANT_A,
+          full_name: "Amani Mushi",
+          email: "amani@example.com",
+        },
+      ],
+    });
+
+    await expect(
+      listMembers(sb, "caller", { tenantId: TENANT_A } as any),
+    ).resolves.toMatchObject([
+      {
+        id: "m-1",
+        user_id: "user-1",
+        full_name: "Amani Mushi",
+        email: "amani@example.com",
+        role: "restaurant_manager",
+        property_id: PROPERTY_A1,
       },
     ]);
   });

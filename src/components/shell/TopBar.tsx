@@ -5,7 +5,7 @@ import {
   Search,
   Sparkles,
 } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { PRODUCT } from "@/config/product";
 import { ThemeToggle } from "@/components/os/ThemeToggle";
 import type { Workspace } from "./types";
@@ -33,6 +33,29 @@ export function TopBar({
   showAskNova: boolean;
   onOpenAskNova: () => void;
 }) {
+  const navigate = useNavigate();
+  const search = useSearch({ strict: false }) as { propertyId?: string; outletId?: string };
+  const activeProperty = workspace?.properties.find((p) => p.id === workspace.activePropertyId) ?? null;
+  const outletsForProperty = workspace?.activePropertyId
+    ? workspace.locations.filter((l) => l.property_id === workspace.activePropertyId)
+    : [];
+
+  const switchProperty = (propertyId: string) => {
+    void navigate({
+      search: (prev) => ({ ...prev, propertyId, outletId: undefined }),
+    });
+  };
+
+  const switchOutlet = (outletId: string) => {
+    void navigate({
+      search: (prev) => ({
+        ...prev,
+        propertyId: workspace?.activePropertyId ?? search.propertyId,
+        outletId,
+      }),
+    });
+  };
+
   return (
     <header className="sticky top-0 z-30 border-b border-[color:var(--nova-line)] bg-[color:var(--nova-surface)]/90 backdrop-blur-xl">
       <div className="flex h-16 items-center gap-3 px-3 sm:px-5">
@@ -63,10 +86,41 @@ export function TopBar({
                 className="size-5 shrink-0 rounded-sm object-contain"
               />
             )}
-            <span>
-              {workspace.tenant.settings?.business?.tradingName || workspace.tenant.name}
-              {workspace.properties?.[0]?.name && <span>· {workspace.properties[0].name}</span>}
-              {workspace.locations?.[0]?.name && <span>· {workspace.locations[0].name}</span>}
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate">
+                {workspace.tenant.settings?.business?.tradingName || workspace.tenant.name}
+              </span>
+              {workspace.properties.length > 0 && (
+                <select
+                  aria-label="Active property"
+                  value={workspace.activePropertyId ?? ""}
+                  onChange={(e) => switchProperty(e.target.value)}
+                  className="max-w-[12rem] rounded-md border bg-background px-2 py-1 text-xs font-medium"
+                >
+                  {workspace.properties.map((property) => (
+                    <option key={property.id} value={property.id}>
+                      {property.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {outletsForProperty.length > 0 && (
+                <select
+                  aria-label="Active outlet"
+                  value={workspace.activeLocationId ?? ""}
+                  onChange={(e) => switchOutlet(e.target.value)}
+                  className="max-w-[11rem] rounded-md border bg-background px-2 py-1 text-xs"
+                >
+                  {outletsForProperty.map((outlet) => (
+                    <option key={outlet.id} value={outlet.id}>
+                      {outlet.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {activeProperty && outletsForProperty.length === 0 && (
+                <span className="hidden text-xs text-muted-foreground sm:inline">No active outlet</span>
+              )}
             </span>
           </span>
         )}
