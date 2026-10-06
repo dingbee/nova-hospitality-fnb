@@ -58,7 +58,7 @@ const STATUS_TONE: Record<CloseStatus, StatusTone> = {
 export function ReconciliationCentre() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id ?? "";
-  const currency = (ws.data as any)?.properties?.[0]?.currency ?? "TZS";
+  const currency = (ws.data as any)?.properties?.find((p: any) => p.id === ws.data?.activePropertyId)?.currency ?? "TZS";
 
   const [businessDate, setBusinessDate] = useState(today);
   const [declared, setDeclared] = useState<Record<string, string>>({});
