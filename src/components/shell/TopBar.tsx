@@ -36,7 +36,6 @@ export function TopBar({
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as { propertyId?: string; outletId?: string };
   const activeProperty = workspace?.properties.find((p) => p.id === workspace.activePropertyId) ?? null;
-  const activeOutlet = workspace?.locations.find((l) => l.id === workspace.activeLocationId) ?? null;
   const outletsForProperty = workspace?.activePropertyId
     ? workspace.locations.filter((l) => l.property_id === workspace.activePropertyId)
     : [];
