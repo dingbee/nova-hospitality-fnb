@@ -44,6 +44,21 @@ describe("canonical restaurant operating context", () => {
     );
   });
 
+  it("never selects a pending commercial property as an operating context", () => {
+    expect(
+      resolveOperatingContext(
+        [
+          { id: P1, status: "pending_activation" },
+          { id: P2, status: "active" },
+        ],
+        [
+          { id: O1, property_id: P1, status: "active" },
+          { id: O2, property_id: P2, status: "active" },
+        ],
+      ),
+    ).toEqual({ activePropertyId: P2, activeLocationId: O2 });
+  });
+
   it("does not invent a multi-property context when no selection exists", () => {
     expect(resolveOperatingContext(properties, locations)).toEqual({
       activePropertyId: null,
