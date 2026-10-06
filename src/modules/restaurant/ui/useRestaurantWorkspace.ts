@@ -30,5 +30,6 @@ export function useRestaurantWorkspace(tenantId?: string) {
           ...(locationId ? { locationId } : {}),
         },
       }),
+    staleTime: 60_000,
   });
 }
