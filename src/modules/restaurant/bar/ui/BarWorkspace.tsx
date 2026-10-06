@@ -69,6 +69,8 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
       beveragesFn({
         data: {
           tenantId: tenantId!,
+          propertyId: ws.data?.activePropertyId ?? undefined,
+          locationId: ws.data?.activeLocationId ?? undefined,
           search: search || undefined,
           includeNonBeverage: false,
           limit: 200,
