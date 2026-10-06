@@ -149,7 +149,10 @@ export async function upsertTable(
 /* ---------------- Orders ---------------- */
 
 export async function listOrders(sb: Sb, userId: string, input: z.infer<typeof listOrdersSchema>) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   let q = sb
     .from("restaurant_orders")
     .select(
