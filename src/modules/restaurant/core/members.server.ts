@@ -24,7 +24,34 @@ export async function listMembers(
     .eq("tenant_id", input.tenantId)
     .order("created_at");
   if (error) throw new Error(error.message);
-  return (data ?? []) as any[];
+
+  const members = (data ?? []) as any[];
+  const userIds = [...new Set(members.map((member) => member.user_id).filter(Boolean))];
+
+  if (userIds.length === 0) return members;
+
+  // Resolve human-readable identity server-side. The raw auth UUID remains an
+  // internal join key and is never required as a customer-facing identity.
+  const { data: identities, error: identityError } = await sb
+    .from("app_users")
+    .select("user_id, full_name, email")
+    .eq("tenant_id", input.tenantId)
+    .in("user_id", userIds);
+
+  if (identityError) throw new Error(identityError.message);
+
+  const identityByUserId = new Map(
+    ((identities ?? []) as any[]).map((identity) => [identity.user_id, identity]),
+  );
+
+  return members.map((member) => {
+    const identity = identityByUserId.get(member.user_id);
+    return {
+      ...member,
+      full_name: identity?.full_name ?? null,
+      email: identity?.email ?? null,
+    };
+  });
 }
 
 export async function upsertMember(
