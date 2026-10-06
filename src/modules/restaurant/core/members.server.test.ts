@@ -112,7 +112,21 @@ function makeFakeSb(opts: {
                 return { data: inserted, error: null };
               },
             }),
-          }),
+          }),,
+          update: (patch: any) => ({
+            eq: (_c1: string, memberId: string) => ({
+              eq: (_c2: string, tenantId: string) => ({
+                select: (_cols: string) => ({
+                  single: async () => {
+                    const member = members.find((m) => m.id === memberId && m.tenant_id === tenantId);
+                    if (!member) return { data: null, error: { message: "not found" } };
+                    Object.assign(member, patch);
+                    return { data: member, error: null };
+                  },
+                }),
+              }),
+            }),
+          })
           delete: () => ({
             eq: (_c1: string, memberId: string) => ({
               eq: (_c2: string, tenantId: string) =>
@@ -265,5 +279,75 @@ describe("removeMember — property-scoped grant cannot revoke another property'
         metadata: { userId: "victim", role: "bartender", propertyId: PROPERTY_A2 },
       },
     ]);
+  });
+});
+
+
+describe("upsertMember — existing grant edits", () => {
+  it("updates a property-scoped grant in place without creating a duplicate row", async () => {
+    const sb = makeFakeSb({
+      callerGrants: [{ role: "owner", propertyId: PROPERTY_A1 }],
+      members: [
+        {
+          id: "m-1",
+          tenant_id: TENANT_A,
+          user_id: "target-user",
+          role: "bartender",
+          property_id: PROPERTY_A1,
+        },
+      ],
+    });
+    await expect(
+      upsertMember(sb, "caller", {
+        id: "m-1",
+        tenantId: TENANT_A,
+        userId: "target-user",
+        role: "chef",
+        propertyId: PROPERTY_A1,
+      } as any),
+    ).resolves.toMatchObject({
+      id: "m-1",
+      user_id: "target-user",
+      role: "chef",
+      property_id: PROPERTY_A1,
+    });
+    expect(sb.members).toHaveLength(1);
+    expect(sb.activityLogs).toMatchObject([
+      {
+        action: "restaurant.member.updated",
+        entity_id: "m-1",
+        metadata: {
+          previousRole: "bartender",
+          previousPropertyId: PROPERTY_A1,
+          role: "chef",
+          propertyId: PROPERTY_A1,
+        },
+      },
+    ]);
+  });
+
+  it("blocks a property-scoped administrator from editing a tenant-wide grant", async () => {
+    const sb = makeFakeSb({
+      callerGrants: [{ role: "owner", propertyId: PROPERTY_A1 }],
+      members: [
+        {
+          id: "m-1",
+          tenant_id: TENANT_A,
+          user_id: "target-user",
+          role: "bartender",
+          property_id: null,
+        },
+      ],
+    });
+    await expect(
+      upsertMember(sb, "caller", {
+        id: "m-1",
+        tenantId: TENANT_A,
+        userId: "target-user",
+        role: "chef",
+        propertyId: PROPERTY_A1,
+      } as any),
+    ).rejects.toThrow(/tenant-wide owner\/general manager grant/);
+    expect(sb.members[0].role).toBe("bartender");
   });
 });
