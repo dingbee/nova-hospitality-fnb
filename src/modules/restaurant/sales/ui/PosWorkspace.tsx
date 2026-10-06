@@ -310,7 +310,7 @@ function PosWorkspaceBody({
         const op = await offlineSync.queueOpenOrder({
           tenantId: tenantId!,
           propertyId: workspacePropertyId,
-          outletId: workspaceLocationId,
+          locationId: workspaceLocationId,
           tableId: vars.tableId,
           orderType: vars.tableId ? "dine_in" : "bar",
           guestCount: vars.guestCount,
