@@ -19,7 +19,7 @@
  * meaningful error message, and still allows every legitimate one.
  */
 import { describe, expect, it } from "vitest";
-import { removeMember, upsertMember } from "./members.server";
+import { listMembers, removeMember, upsertMember } from "./members.server";
 
 const TENANT_A = "tenant-a";
 const PROPERTY_A1 = "property-a1";
@@ -37,12 +37,19 @@ function makeFakeSb(opts: {
     role: string;
     property_id: string | null;
   }[];
+  appUsers?: {
+    user_id: string;
+    tenant_id: string;
+    full_name: string | null;
+    email: string | null;
+  }[];
 }) {
   const properties = opts.properties ?? [
     { id: PROPERTY_A1, tenantId: TENANT_A },
     { id: PROPERTY_A2, tenantId: TENANT_A },
   ];
   const members = [...(opts.members ?? [])];
+  const appUsers = [...(opts.appUsers ?? [])];
   const activityLogs: any[] = [];
 
   function thenable<T>(compute: () => Promise<T>) {
@@ -112,7 +119,7 @@ function makeFakeSb(opts: {
                 return { data: inserted, error: null };
               },
             }),
-          }),,
+          }),
           update: (patch: any) => ({
             eq: (_c1: string, memberId: string) => ({
               eq: (_c2: string, tenantId: string) => ({
@@ -138,6 +145,21 @@ function makeFakeSb(opts: {
                   members.length = 0;
                   members.push(...kept);
                   return { error: null, removed: before !== members.length };
+                }),
+            }),
+          }),
+        };
+      }
+      if (table === "app_users") {
+        return {
+          select: () => ({
+            eq: (_c1: string, tenantId: string) => ({
+              in: (_c2: string, userIds: string[]) =>
+                Promise.resolve({
+                  data: appUsers.filter(
+                    (u) => u.tenant_id === tenantId && userIds.includes(u.user_id),
+                  ),
+                  error: null,
                 }),
             }),
           }),
@@ -349,5 +371,43 @@ describe("upsertMember — existing grant edits", () => {
       } as any),
     ).rejects.toThrow(/tenant-wide owner\/general manager grant/);
     expect(sb.members[0].role).toBe("bartender");
+  });
+});
+
+describe("listMembers — human-readable identity contract", () => {
+  it("returns staff identity fields without requiring the UI to render auth UUIDs", async () => {
+    const sb = makeFakeSb({
+      callerGrants: [{ role: "owner", propertyId: null }],
+      members: [
+        {
+          id: "m-1",
+          tenant_id: TENANT_A,
+          user_id: "user-1",
+          role: "restaurant_manager",
+          property_id: PROPERTY_A1,
+        },
+      ],
+      appUsers: [
+        {
+          user_id: "user-1",
+          tenant_id: TENANT_A,
+          full_name: "Amani Mushi",
+          email: "amani@example.com",
+        },
+      ],
+    });
+
+    await expect(
+      listMembers(sb, "caller", { tenantId: TENANT_A } as any),
+    ).resolves.toMatchObject([
+      {
+        id: "m-1",
+        user_id: "user-1",
+        full_name: "Amani Mushi",
+        email: "amani@example.com",
+        role: "restaurant_manager",
+        property_id: PROPERTY_A1,
+      },
+    ]);
   });
 });
