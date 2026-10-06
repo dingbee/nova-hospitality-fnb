@@ -134,7 +134,7 @@ function RestaurantOverview() {
 
   const d = ctx.data;
   const b = board.data as any;
-  const currency = ws.data?.properties[0]?.currency ?? "TZS";
+  const currency = ws.data?.properties.find((p) => p.id === ws.data?.activePropertyId)?.currency ?? "TZS";
   const money = (v?: number) => (v == null ? "—" : `${currency} ${v.toLocaleString()}`);
 
   const ticketRows = (tickets.data ?? []) as any[];
