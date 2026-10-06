@@ -64,7 +64,7 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
   });
 
   const beverages = useQuery({
-    queryKey: ["bar.beverages", tenantId, search],
+    queryKey: ["bar.beverages", tenantId, ws.data?.activePropertyId, ws.data?.activeLocationId, search],
     queryFn: () =>
       beveragesFn({
         data: {
