@@ -10,7 +10,7 @@ type Sb = any;
 export async function getWorkspace(
   supabase: Sb,
   userId: string,
-  input: { tenantId?: string } = {},
+  input: { tenantId?: string; propertyId?: string; locationId?: string } = {},
 ): Promise<RestaurantWorkspace> {
   const platformAdmin = await isPlatformAdmin(supabase, userId);
 
@@ -30,6 +30,8 @@ export async function getWorkspace(
       tenants: [],
       properties: [],
       locations: [],
+      activePropertyId: null,
+      activeLocationId: null,
       subscription: null,
       roles: [],
       platformAdmin,
@@ -73,6 +75,36 @@ export async function getWorkspace(
     ? allLocations
     : allLocations.filter((l) => accessiblePropertyIds.has(l.property_id));
 
+  // Resolve the operating context only after the caller's accessible scope is
+  // known. Client-supplied context is a selector, never an authorization
+  // grant. A forged property/outlet id therefore fails closed.
+  const requestedProperty = input.propertyId
+    ? scopedProperties.find((p) => p.id === input.propertyId) ?? null
+    : null;
+  if (input.propertyId && !requestedProperty) {
+    throw new Error("Forbidden — that property is outside your restaurant access scope.");
+  }
+
+  const activePropertyId =
+    requestedProperty?.id ??
+    (scopedProperties.length === 1 ? scopedProperties[0]?.id ?? null : null);
+
+  const requestedLocation = input.locationId
+    ? scopedLocations.find((l) => l.id === input.locationId) ?? null
+    : null;
+  if (input.locationId && !requestedLocation) {
+    throw new Error("Forbidden — that outlet is outside your restaurant access scope.");
+  }
+  if (requestedLocation && activePropertyId && requestedLocation.property_id !== activePropertyId) {
+    throw new Error("That outlet does not belong to the selected property.");
+  }
+
+  const activeLocationId =
+    requestedLocation?.id ??
+    (activePropertyId
+      ? scopedLocations.find((l) => l.property_id === activePropertyId)?.id ?? null
+      : null);
+
   return {
     tenant: {
       id: active.id,
@@ -84,6 +116,8 @@ export async function getWorkspace(
     tenants: tenants.map((t) => ({ id: t.id, slug: t.slug, name: t.name })),
     properties: scopedProperties as any,
     locations: scopedLocations as any,
+    activePropertyId,
+    activeLocationId,
     subscription: (subscription ?? null) as any,
     roles,
     platformAdmin,
