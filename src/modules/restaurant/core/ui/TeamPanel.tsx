@@ -99,7 +99,7 @@ export function TeamPanel({ tenantId, canManage }: { tenantId: string; canManage
             return (
               <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
                 <div className="min-w-0">
-                  <span className="font-medium">{u?.full_name ?? u?.email ?? m.user_id}</span>
+                  <span className="font-medium">{u?.full_name ?? u?.email ?? "Staff member"}</span>
                   <p className="text-xs text-muted-foreground">
                     {RESTAURANT_ROLE_LABELS[m.role as keyof typeof RESTAURANT_ROLE_LABELS] ??
                       m.role}
@@ -166,7 +166,7 @@ export function TeamPanel({ tenantId, canManage }: { tenantId: string; canManage
               <option value="">Select staff member…</option>
               {(staff.data ?? []).map((u: any) => (
                 <option key={u.user_id} value={u.user_id}>
-                  {u.full_name ?? u.email ?? u.user_id}
+                  {u.full_name ?? u.email ?? "Staff member"}
                 </option>
               ))}
             </select>
