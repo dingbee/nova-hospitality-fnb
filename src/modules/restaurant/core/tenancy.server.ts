@@ -10,7 +10,7 @@ type Sb = any;
 export async function getWorkspace(
   supabase: Sb,
   userId: string,
-  input: { tenantId?: string } = {},
+  input: { tenantId?: string; propertyId?: string; locationId?: string } = {},
 ): Promise<RestaurantWorkspace> {
   const platformAdmin = await isPlatformAdmin(supabase, userId);
 
