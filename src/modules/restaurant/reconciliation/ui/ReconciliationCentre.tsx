@@ -58,6 +58,7 @@ const STATUS_TONE: Record<CloseStatus, StatusTone> = {
 export function ReconciliationCentre() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id ?? "";
+  const locationId = ws.data?.activeLocationId ?? undefined;
   const currency = (ws.data as any)?.properties?.[0]?.currency ?? "TZS";
 
   const [businessDate, setBusinessDate] = useState(today);
@@ -74,15 +75,15 @@ export function ReconciliationCentre() {
   const trendsFn = useServerFn(restaurantExceptionTrendsFn);
 
   const day = useQuery({
-    queryKey: ["restaurant.close", tenantId, businessDate],
+    queryKey: ["restaurant.close", tenantId, locationId, businessDate],
     enabled: Boolean(tenantId),
-    queryFn: () => getFn({ data: { tenantId, businessDate } }) as any,
+    queryFn: () => getFn({ data: { tenantId, locationId, businessDate } }) as any,
   });
 
   const trends = useQuery({
-    queryKey: ["restaurant.exception.trends", tenantId],
+    queryKey: ["restaurant.exception.trends", tenantId, locationId],
     enabled: Boolean(tenantId),
-    queryFn: () => trendsFn({ data: { tenantId, days: 30 } }) as any,
+    queryFn: () => trendsFn({ data: { tenantId, locationId, days: 30 } }) as any,
   });
 
   const refresh = () => {
@@ -92,7 +93,7 @@ export function ReconciliationCentre() {
 
   const openDay = useAdminMutation({
     mutationFn: () =>
-      openFn({ data: { tenantId, businessDate, openingFloat: Number(openingFloat) || 0, currency } }),
+      openFn({ data: { tenantId, locationId, businessDate, openingFloat: Number(openingFloat) || 0, currency } }),
     successMessage: "Day opened for closing",
     onSuccess: refresh,
   });
@@ -113,7 +114,7 @@ export function ReconciliationCentre() {
   });
 
   const run = useAdminMutation({
-    mutationFn: () => runFn({ data: { tenantId, businessDate, scope: "full" as const } }),
+    mutationFn: () => runFn({ data: { tenantId, locationId, businessDate, scope: "full" as const } }),
     successMessage: "Reconciliation complete",
     onSuccess: refresh,
   });
