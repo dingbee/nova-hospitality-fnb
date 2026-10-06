@@ -18,11 +18,17 @@ import {
   clearStaffPosPinFn,
 } from "../tenancy.functions";
 import { ASSIGNABLE_RESTAURANT_ROLES } from "../contracts";
-import { RESTAURANT_ROLE_LABELS } from "../permissions";
+import { hasRestaurantCapability, RESTAURANT_ROLE_LABELS } from "../permissions";
 
 export function StaffPanel() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
+  const properties = ws.data?.properties ?? [];
+  const canManage = hasRestaurantCapability(
+    ws.data?.roles ?? [],
+    "tenant.manage",
+    ws.data?.platformAdmin ?? false,
+  );
   const qc = useQueryClient();
 
   const listFn = useServerFn(listRestaurantMembersFn);
@@ -42,6 +48,7 @@ export function StaffPanel() {
     }) =>
       upsertFn({
         data: {
+          id: vars.memberId,
           tenantId: tenantId!,
           userId: vars.userId,
           role: vars.role as never,
@@ -172,7 +179,7 @@ export function StaffPanel() {
                         <select
                           id={`role-${m.id}`}
                           defaultValue={m.role}
-                          disabled={updateRole.isPending}
+                          disabled={!canManage || updateRole.isPending}
                           onChange={(e) =>
                             updateRole.mutate({
                               memberId: m.id,
@@ -191,7 +198,27 @@ export function StaffPanel() {
                         </select>
                       </td>
                       <td className="py-3 pr-4 text-muted-foreground">
-                        {m.property_id ? "One property" : "All properties"}
+                        <select
+                          aria-label={`Property scope for ${m.user_id}`}
+                          value={m.property_id ?? ""}
+                          disabled={!canManage || updateRole.isPending}
+                          onChange={(e) =>
+                            updateRole.mutate({
+                              memberId: m.id,
+                              userId: m.user_id,
+                              role: m.role,
+                              propertyId: e.target.value || null,
+                            })
+                          }
+                          className="min-h-11 max-w-[14rem] rounded-md border bg-background px-2 py-1 text-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
+                        >
+                          <option value="">Every property (tenant-wide)</option>
+                          {properties.map((property) => (
+                            <option key={property.id} value={property.id}>
+                              {property.name}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td className="py-3 pr-4 text-right">
                         {["chef", "kitchen_manager", "bartender"].includes(m.role) && (
@@ -216,7 +243,7 @@ export function StaffPanel() {
                             size="sm"
                             variant="outline"
                             className="min-h-9"
-                            disabled={setPin.isPending || clearPin.isPending}
+                            disabled={!canManage || setPin.isPending || clearPin.isPending}
                             onClick={() => {
                               const pin = window.prompt(m.pos_pin_enabled ? "Enter a new 4–6 digit POS PIN" : "Enter a 4–6 digit POS PIN");
                               if (pin === null) return;
@@ -227,7 +254,7 @@ export function StaffPanel() {
                             {m.pos_pin_enabled ? "Change" : "Set"}
                           </Button>
                           {m.pos_pin_enabled && (
-                            <Button size="sm" variant="ghost" className="min-h-9" disabled={clearPin.isPending} onClick={() => clearPin.mutate(m.id)}>
+                            <Button size="sm" variant="ghost" className="min-h-9" disabled={!canManage || clearPin.isPending} onClick={() => clearPin.mutate(m.id)}>
                               Clear
                             </Button>
                           )}
@@ -261,6 +288,7 @@ export function StaffPanel() {
                             size="sm"
                             variant="ghost"
                             aria-label={`Remove ${m.user_id}`}
+                            disabled={!canManage}
                             onClick={() => setConfirmRemove(m.id)}
                             className="min-h-11 min-w-11"
                           >
