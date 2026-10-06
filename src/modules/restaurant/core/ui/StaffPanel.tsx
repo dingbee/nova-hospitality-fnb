@@ -127,6 +127,8 @@ export function StaffPanel() {
     property_id: string | null;
     created_at: string;
     pos_pin_enabled: boolean;
+    full_name: string | null;
+    email: string | null;
   }[];
 
   return (
@@ -169,12 +171,19 @@ export function StaffPanel() {
                 {rows.map((m) => (
                   <Fragment key={m.id}>
                     <tr className="border-b last:border-0">
-                      <td className="py-3 pr-4 font-mono text-xs text-muted-foreground">
-                        {m.user_id}
+                      <td className="py-3 pr-4">
+                        <div className="min-w-0">
+                          <div className="font-medium">
+                            {m.full_name || m.email || "Staff member"}
+                          </div>
+                          {m.full_name && m.email ? (
+                            <div className="text-xs text-muted-foreground">{m.email}</div>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="py-3 pr-4">
                         <label className="sr-only" htmlFor={`role-${m.id}`}>
-                          Role for {m.user_id}
+                          Role for {m.full_name || m.email || "staff member"}
                         </label>
                         <select
                           id={`role-${m.id}`}
@@ -199,7 +208,7 @@ export function StaffPanel() {
                       </td>
                       <td className="py-3 pr-4 text-muted-foreground">
                         <select
-                          aria-label={`Property scope for ${m.user_id}`}
+                          aria-label={`Property scope for ${m.full_name || m.email || "staff member"}`}
                           value={m.property_id ?? ""}
                           disabled={!canManage || updateRole.isPending}
                           onChange={(e) =>
@@ -287,7 +296,7 @@ export function StaffPanel() {
                           <Button
                             size="sm"
                             variant="ghost"
-                            aria-label={`Remove ${m.user_id}`}
+                            aria-label={`Remove ${m.full_name || m.email || "staff member"}`}
                             disabled={!canManage}
                             onClick={() => setConfirmRemove(m.id)}
                             className="min-h-11 min-w-11"
