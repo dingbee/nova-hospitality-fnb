@@ -57,7 +57,7 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
   const [from] = React.useState(() => new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10));
 
   const snapshot = useQuery({
-    queryKey: ["bar.snapshot", tenantId],
+    queryKey: ["bar.snapshot", tenantId, ws.data?.activePropertyId, ws.data?.activeLocationId],
     queryFn: () => snapshotFn({ data: { tenantId: tenantId! } }),
     enabled: Boolean(tenantId),
     refetchInterval: 30_000,
