@@ -340,8 +340,6 @@ function NewConnection({
                   {channels.map((item) => <SelectItem key={item.key} value={item.key}>{item.name}</SelectItem>)}
                 </SelectContent>
               </Select>
-                </div>
-              ) : null}
             </div>
             <div><Label>Connection name</Label><Input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="e.g. Main external ordering channel" /></div>
             <div><Label>Property scope</Label><PropertySelect value={propertyId} properties={properties} onChange={setPropertyId} /></div>
