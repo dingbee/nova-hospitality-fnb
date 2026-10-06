@@ -73,6 +73,25 @@ export async function getWorkspace(
     ? allLocations
     : allLocations.filter((l) => accessiblePropertyIds.has(l.property_id));
 
+  const requestedPropertyId = input.propertyId ?? null;
+  const activeProperty = requestedPropertyId
+    ? scopedProperties.find((p) => p.id === requestedPropertyId) ?? null
+    : (scopedProperties[0] ?? null);
+  if (requestedPropertyId && !activeProperty) {
+    throw new Error("Forbidden — that property is outside your restaurant access scope.");
+  }
+
+  const propertyLocations = activeProperty
+    ? scopedLocations.filter((l) => l.property_id === activeProperty.id)
+    : [];
+  const requestedLocationId = input.locationId ?? null;
+  const activeLocation = requestedLocationId
+    ? propertyLocations.find((l) => l.id === requestedLocationId) ?? null
+    : (propertyLocations[0] ?? null);
+  if (requestedLocationId && !activeLocation) {
+    throw new Error("Forbidden — that outlet is outside your selected property or access scope.");
+  }
+
   return {
     tenant: {
       id: active.id,
