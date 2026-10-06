@@ -37,19 +37,20 @@ export function TopBar({
 }) {
   const { propertyId, locationId, setOperatingContext } = useRestaurantOperatingContext();
 
+  const operationalProperties = workspace?.properties?.filter((p) => !p.status || p.status === "active") ?? [];
   const activePropertyId = workspace?.activePropertyId ?? propertyId ?? null;
-  const activeProperty = workspace?.properties?.find((p) => p.id === activePropertyId) ?? null;
-  const activeLocations = workspace?.locations?.filter((l) => l.property_id === activePropertyId) ?? [];
+  const activeProperty = operationalProperties.find((p) => p.id === activePropertyId) ?? null;
+  const activeLocations = workspace?.locations?.filter((l) => l.property_id === activePropertyId && (!l.status || l.status === "active")) ?? [];
   const activeLocationId = workspace?.activeLocationId ?? locationId ?? null;
 
   // Establish a deterministic initial context once the workspace is known.
   // This is URL state, not hidden persistence, and the server revalidates it.
   useEffect(() => {
-    if (!workspace?.properties?.length || propertyId) return;
-    const firstProperty = workspace.properties[0];
+    if (!operationalProperties.length || propertyId) return;
+    const firstProperty = operationalProperties[0];
     const firstLocation = workspace.locations.find((l) => l.property_id === firstProperty.id);
     setOperatingContext({ propertyId: firstProperty.id, locationId: firstLocation?.id ?? null });
-  }, [workspace?.properties, workspace?.locations, propertyId, setOperatingContext]);
+  }, [operationalProperties, workspace?.locations, propertyId, setOperatingContext]);
 
   return (
     <header className="sticky top-0 z-30 border-b border-[color:var(--nova-line)] bg-[color:var(--nova-surface)]/90 backdrop-blur-xl">
@@ -91,7 +92,7 @@ export function TopBar({
               </span>
             </span>
 
-            {workspace.properties.length > 1 && (
+            {operationalProperties.length > 1 && (
               <div className="ml-2 hidden items-center gap-1.5 lg:flex">
                 <select
                   aria-label="Active property"
@@ -103,7 +104,7 @@ export function TopBar({
                     setOperatingContext({ propertyId: nextPropertyId, locationId: nextLocation?.id ?? null });
                   }}
                 >
-                  {workspace.properties.map((p) => (
+                  {operationalProperties.map((p) => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
