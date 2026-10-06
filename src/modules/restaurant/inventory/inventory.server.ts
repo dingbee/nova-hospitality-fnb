@@ -13,7 +13,10 @@ export async function listInventory(
   userId: string,
   input: z.infer<typeof listInventorySchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   let q = sb
     .from("restaurant_inventory_items")
     .select(
