@@ -130,8 +130,10 @@ function PosWorkspaceBody({
   const canVoid = hasRestaurantCapability(roles, "sales.void", platformAdmin);
   const canReopen = hasRestaurantCapability(roles, "sales.reopen", platformAdmin);
   const canRoomCharge = hasRestaurantCapability(roles, "sales.room_charge", platformAdmin);
-  const currency = ws.data?.properties?.[0]?.currency ?? "TZS";
-  const workspacePropertyId = ws.data?.properties?.[0]?.id ?? null;
+  const activeProperty = ws.data?.properties.find((p) => p.id === ws.data.activePropertyId) ?? null;
+  const currency = activeProperty?.currency ?? "TZS";
+  const workspacePropertyId = ws.data?.activePropertyId ?? null;
+  const workspaceLocationId = ws.data?.activeLocationId ?? null;
   const ownerOrAdmin = Boolean(platformAdmin) || roles.some((role) =>
     ["owner", "general_manager", "restaurant_manager"].includes(role),
   );
@@ -205,8 +207,8 @@ function PosWorkspaceBody({
   const resolveServiceRequestFnCall = useServerFn(resolveServiceRequestFn);
 
   const board = useQuery({
-    queryKey: ["restaurant.pos.board", tenantId],
-    queryFn: () => boardFn({ data: { tenantId: tenantId!, ...posSession } }),
+    queryKey: ["restaurant.pos.board", tenantId, workspacePropertyId, workspaceLocationId],
+    queryFn: () => boardFn({ data: { tenantId: tenantId!, propertyId: workspacePropertyId ?? undefined, locationId: workspaceLocationId ?? undefined, ...posSession } }),
     enabled: Boolean(tenantId && posActorReady),
     refetchInterval: 8_000,
   });
@@ -254,8 +256,8 @@ function PosWorkspaceBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newlyActiveAttention.join("|")]);
   const catalog = useQuery({
-    queryKey: ["restaurant.pos.catalog", tenantId],
-    queryFn: () => catalogFn({ data: { tenantId: tenantId!, ...posSession } }),
+    queryKey: ["restaurant.pos.catalog", tenantId, workspacePropertyId, workspaceLocationId],
+    queryFn: () => catalogFn({ data: { tenantId: tenantId!, propertyId: workspacePropertyId ?? undefined, locationId: workspaceLocationId ?? undefined, ...posSession } }),
     enabled: Boolean(tenantId && posActorReady),
     staleTime: 120_000,
   });
@@ -299,7 +301,7 @@ function PosWorkspaceBody({
   const offlineSync = useOfflineSync({
     tenantId,
     propertyId: workspacePropertyId,
-    outletId: currentLocationId ?? null,
+    outletId: workspaceLocationId,
   });
 
   const openBill = useAdminMutation({
@@ -310,6 +312,8 @@ function PosWorkspaceBody({
           propertyId: workspacePropertyId,
           locationId: vars.tableId ?? null,
           tableId: vars.tableId,
+          propertyId: workspacePropertyId ?? undefined,
+          locationId: workspaceLocationId ?? undefined,
           orderType: vars.tableId ? "dine_in" : "bar",
           guestCount: vars.guestCount,
           currency,
@@ -327,6 +331,8 @@ function PosWorkspaceBody({
           tenantId: tenantId!,
           ...posSession,
           tableId: vars.tableId,
+          propertyId: workspacePropertyId ?? undefined,
+          locationId: workspaceLocationId ?? undefined,
           orderType: vars.tableId ? "dine_in" : "bar",
           guestCount: vars.guestCount,
           currency,
