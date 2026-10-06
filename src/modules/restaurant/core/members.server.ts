@@ -24,7 +24,33 @@ export async function listMembers(
     .eq("tenant_id", input.tenantId)
     .order("created_at");
   if (error) throw new Error(error.message);
-  return (data ?? []) as any[];
+
+  const members = (data ?? []) as any[];
+  const userIds = [...new Set(members.map((member) => member.user_id).filter(Boolean))];
+  if (userIds.length === 0) return members;
+
+  // Identity is presentation data, never an authorization input. Keep the
+  // canonical UUID in restaurant_members while resolving the person's display
+  // name/email from the tenant-scoped app_users directory.
+  const { data: users, error: usersError } = await sb
+    .from("app_users")
+    .select("user_id, full_name, email")
+    .eq("tenant_id", input.tenantId)
+    .in("user_id", userIds);
+  if (usersError) throw new Error(usersError.message);
+
+  const userById = new Map(
+    ((users ?? []) as any[]).map((user) => [user.user_id, user]),
+  );
+
+  return members.map((member) => {
+    const user = userById.get(member.user_id);
+    return {
+      ...member,
+      display_name: user?.full_name?.trim() || null,
+      email: user?.email ?? null,
+    };
+  });
 }
 
 export async function upsertMember(
