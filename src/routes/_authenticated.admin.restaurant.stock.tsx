@@ -65,7 +65,7 @@ function StockPage() {
           inventoryItemId: itemId,
           movementType: type,
           quantity: Number(quantity),
-          currency: ws.data?.properties[0]?.currency ?? "TZS",
+          currency: ws.data?.properties.find((p) => p.id === ws.data?.activePropertyId)?.currency ?? "TZS",
           reason: reason || undefined,
         },
       }),
@@ -99,7 +99,7 @@ function StockPage() {
 
   const rows = movements.data ?? [];
   const names = new Map((inventory.data ?? []).map((i: any) => [i.id, i.name]));
-  const currency = ws.data?.properties[0]?.currency ?? "TZS";
+  const currency = ws.data?.properties.find((p) => p.id === ws.data?.activePropertyId)?.currency ?? "TZS";
   const wastageCost = rows.filter((r: any) => r.movement_type === "wastage").reduce((s: any, r: any) => s + Number(r.total_cost ?? 0), 0);
   const consumptionCost = rows.filter((r: any) => r.movement_type === "consumption").reduce((s: any, r: any) => s + Number(r.total_cost ?? 0), 0);
 
