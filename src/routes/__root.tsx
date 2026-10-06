@@ -75,6 +75,10 @@ async function recoverStaleClientAssets() {
 }
 
 export const Route = createRootRoute({
+  validateSearch: z.object({
+    property: z.string().uuid().optional(),
+    outlet: z.string().uuid().optional(),
+  }).catch({}),
   head: () => ({
     meta: [
       { charSet: "utf-8" },
