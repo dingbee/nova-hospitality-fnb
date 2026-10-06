@@ -59,7 +59,7 @@ export function ReconciliationCentre() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id ?? "";
   const locationId = ws.data?.activeLocationId ?? undefined;
-  const currency = (ws.data as any)?.properties?.[0]?.currency ?? "TZS";
+  const currency = (ws.data as any)?.properties?.find((p: { id: string }) => p.id === ws.data?.activePropertyId)?.currency ?? "TZS";
 
   const [businessDate, setBusinessDate] = useState(today);
   const [declared, setDeclared] = useState<Record<string, string>>({});
