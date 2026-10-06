@@ -43,7 +43,7 @@ function money(currency: string, n: number | null | undefined) {
 export function BarWorkspace({ initialTab }: { initialTab?: string }) {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
-  const currency = ws.data?.properties?.[0]?.currency ?? "TZS";
+  const currency = ws.data?.properties.find((p) => p.id === ws.data?.activePropertyId)?.currency ?? "TZS";
 
   const qc = useQueryClient();
   const snapshotFn = useServerFn(getBarSnapshotFn);
