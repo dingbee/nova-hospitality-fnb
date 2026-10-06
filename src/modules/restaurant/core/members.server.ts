@@ -35,7 +35,6 @@ export async function listMembers(
   const { data: identities, error: identityError } = await sb
     .from("app_users")
     .select("user_id, full_name, email")
-    .eq("tenant_id", input.tenantId)
     .in("user_id", userIds);
 
   if (identityError) throw new Error(identityError.message);
