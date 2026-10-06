@@ -324,7 +324,7 @@ function NewConnection({
 
   return (
     <SectionCard
-      title="Connect a channel"
+      title="Add a channel"
       description="Connect an external ordering or delivery channel to this restaurant."
     >
       {!provider ? (
