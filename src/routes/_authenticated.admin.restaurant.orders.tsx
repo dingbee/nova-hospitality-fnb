@@ -39,6 +39,7 @@ function OrdersPage() {
   const tenantId = ws.data?.tenant?.id;
   const qc = useQueryClient();
   const [locationId, setLocationId] = useState<string | undefined>(undefined);
+  const activeLocationId = locationId ?? ws.data?.activeLocationId;
 
   const listFn = useServerFn(listRestaurantOrdersFn);
   const tablesFn = useServerFn(listRestaurantTablesFn);
@@ -47,14 +48,14 @@ function OrdersPage() {
   const fireFn = useServerFn(fireRestaurantOrderFn);
 
   const orders = useQuery({
-    queryKey: ["restaurant.orders", tenantId, locationId],
-    queryFn: () => listFn({ data: { tenantId: tenantId!, locationId, limit: 50 } }),
+    queryKey: ["restaurant.orders", tenantId, activeLocationId],
+    queryFn: () => listFn({ data: { tenantId: tenantId!, locationId: activeLocationId, limit: 50 } }),
     enabled: Boolean(tenantId),
     refetchInterval: 30_000,
   });
   const tables = useQuery({
-    queryKey: ["restaurant.tables", tenantId, locationId],
-    queryFn: () => tablesFn({ data: { tenantId: tenantId!, locationId } }),
+    queryKey: ["restaurant.tables", tenantId, activeLocationId],
+    queryFn: () => tablesFn({ data: { tenantId: tenantId!, locationId: activeLocationId } }),
     enabled: Boolean(tenantId),
   });
 
@@ -69,7 +70,8 @@ function OrdersPage() {
       createFn({
         data: {
           tenantId: tenantId!,
-          locationId,
+          locationId: activeLocationId,
+          propertyId: ws.data?.activePropertyId ?? undefined,
           tableId: vars.tableId,
           orderType: "dine_in",
           guestCount: 2,
@@ -129,10 +131,10 @@ function OrdersPage() {
         actions={
           <select
             className="rounded-md border bg-transparent px-2 py-1 text-xs"
-            value={locationId ?? ""}
+            value={locationId ?? ws.data?.activeLocationId ?? ""}
             onChange={(e) => setLocationId(e.target.value || undefined)}
           >
-            <option value="">All outlets</option>
+            <option value="">Use active outlet</option>
             {(ws.data?.locations ?? []).map((l) => (
               <option key={l.id} value={l.id}>
                 {l.name}
