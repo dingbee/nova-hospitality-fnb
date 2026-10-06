@@ -65,7 +65,7 @@ function StockPage() {
           inventoryItemId: itemId,
           movementType: type,
           quantity: Number(quantity),
-          currency: ws.data?.properties[0]?.currency ?? "TZS",
+          currency: ws.data?.properties?.find((p) => p.id === ws.data?.activePropertyId)?.currency ?? "TZS",
           reason: reason || undefined,
         },
       }),
