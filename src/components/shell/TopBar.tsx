@@ -6,9 +6,11 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { PRODUCT } from "@/config/product";
 import { ThemeToggle } from "@/components/os/ThemeToggle";
 import type { Workspace } from "./types";
+import { useRestaurantOperatingContext } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 
 /** The sticky header: mobile nav toggle, product mark, active workspace chip, command palette trigger, theme toggle, identity and sign-out. */
 export function TopBar({
@@ -33,6 +35,22 @@ export function TopBar({
   showAskNova: boolean;
   onOpenAskNova: () => void;
 }) {
+  const { propertyId, locationId, setOperatingContext } = useRestaurantOperatingContext();
+
+  const activePropertyId = workspace?.activePropertyId ?? propertyId ?? null;
+  const activeProperty = workspace?.properties?.find((p) => p.id === activePropertyId) ?? null;
+  const activeLocations = workspace?.locations?.filter((l) => l.property_id === activePropertyId) ?? [];
+  const activeLocationId = workspace?.activeLocationId ?? locationId ?? null;
+
+  // Establish a deterministic initial context once the workspace is known.
+  // This is URL state, not hidden persistence, and the server revalidates it.
+  useEffect(() => {
+    if (!workspace?.properties?.length || propertyId) return;
+    const firstProperty = workspace.properties[0];
+    const firstLocation = workspace.locations.find((l) => l.property_id === firstProperty.id);
+    setOperatingContext({ propertyId: firstProperty.id, locationId: firstLocation?.id ?? null });
+  }, [workspace?.properties, workspace?.locations, propertyId, setOperatingContext]);
+
   return (
     <header className="sticky top-0 z-30 border-b border-[color:var(--nova-line)] bg-[color:var(--nova-surface)]/90 backdrop-blur-xl">
       <div className="flex h-16 items-center gap-3 px-3 sm:px-5">
@@ -55,20 +73,57 @@ export function TopBar({
         </Link>
 
         {workspace?.tenant && (
-          <span className="nova-chip ml-2 hidden items-center gap-1.5 md:inline-flex">
-            {workspace.tenant.settings?.business?.logoUrl && (
-              <img
-                src={workspace.tenant.settings.business.logoUrl}
-                alt=""
-                className="size-5 shrink-0 rounded-sm object-contain"
-              />
-            )}
-            <span>
-              {workspace.tenant.settings?.business?.tradingName || workspace.tenant.name}
-              {workspace.properties?.[0]?.name && <span>· {workspace.properties[0].name}</span>}
-              {workspace.locations?.[0]?.name && <span>· {workspace.locations[0].name}</span>}
+          <>
+            <span className="nova-chip ml-2 hidden items-center gap-1.5 md:inline-flex">
+              {workspace.tenant.settings?.business?.logoUrl && (
+                <img
+                  src={workspace.tenant.settings.business.logoUrl}
+                  alt=""
+                  className="size-5 shrink-0 rounded-sm object-contain"
+                />
+              )}
+              <span>
+                {workspace.tenant.settings?.business?.tradingName || workspace.tenant.name}
+                {activeProperty?.name && <span>· {activeProperty.name}</span>}
+                {workspace.locations?.find((l) => l.id === activeLocationId)?.name && (
+                  <span>· {workspace.locations.find((l) => l.id === activeLocationId)?.name}</span>
+                )}
+              </span>
             </span>
-          </span>
+
+            {workspace.properties.length > 1 && (
+              <div className="ml-2 hidden items-center gap-1.5 lg:flex">
+                <select
+                  aria-label="Active property"
+                  className="nova-chip min-h-9 max-w-44 border bg-[color:var(--nova-surface-2)] px-2 text-xs"
+                  value={activePropertyId ?? ""}
+                  onChange={(e) => {
+                    const nextPropertyId = e.target.value;
+                    const nextLocation = workspace.locations.find((l) => l.property_id === nextPropertyId);
+                    setOperatingContext({ propertyId: nextPropertyId, locationId: nextLocation?.id ?? null });
+                  }}
+                >
+                  {workspace.properties.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                {activeLocations.length > 1 && (
+                  <select
+                    aria-label="Active outlet"
+                    className="nova-chip min-h-9 max-w-40 border bg-[color:var(--nova-surface-2)] px-2 text-xs"
+                    value={activeLocationId ?? ""}
+                    onChange={(e) =>
+                      setOperatingContext({ propertyId: activePropertyId!, locationId: e.target.value })
+                    }
+                  >
+                    {activeLocations.map((l) => (
+                      <option key={l.id} value={l.id}>{l.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
+          </>
         )}
 
         <div className="ml-auto flex items-center gap-2">
