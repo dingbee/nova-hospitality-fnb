@@ -35,6 +35,8 @@ function StockPage() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
   const qc = useQueryClient();
+  const propertyId = ws.data?.activePropertyId ?? undefined;
+  const locationId = ws.data?.activeLocationId ?? undefined;
 
   const invFn = useServerFn(listRestaurantInventoryFn);
   const listFn = useServerFn(listRestaurantStockMovementsFn);
@@ -47,13 +49,13 @@ function StockPage() {
   const [reason, setReason] = useState("");
 
   const inventory = useQuery({
-    queryKey: ["restaurant.inventory", tenantId],
-    queryFn: () => invFn({ data: { tenantId: tenantId!, lowOnly: false, limit: 200 } }),
+    queryKey: ["restaurant.inventory", tenantId, propertyId, locationId],
+    queryFn: () => invFn({ data: { tenantId: tenantId!, propertyId, locationId, lowOnly: false, limit: 200 } }),
     enabled: Boolean(tenantId),
   });
   const movements = useQuery({
-    queryKey: ["restaurant.movements", tenantId],
-    queryFn: () => listFn({ data: { tenantId: tenantId!, limit: 100 } }),
+    queryKey: ["restaurant.movements", tenantId, propertyId, locationId],
+    queryFn: () => listFn({ data: { tenantId: tenantId!, propertyId, locationId, limit: 100 } }),
     enabled: Boolean(tenantId),
   });
 
@@ -62,6 +64,8 @@ function StockPage() {
       recordFn({
         data: {
           tenantId: tenantId!,
+          propertyId,
+          locationId,
           inventoryItemId: itemId,
           movementType: type,
           quantity: Number(quantity),
