@@ -651,6 +651,7 @@ export const listProfitabilitySchema = tenantScopeSchema.extend({
 export const listMembersSchema = z.object({ tenantId: uuid });
 
 export const upsertMemberSchema = z.object({
+  id: uuid.optional(),
   tenantId: uuid,
   userId: uuid,
   role: z.enum(ASSIGNABLE_RESTAURANT_ROLES),
