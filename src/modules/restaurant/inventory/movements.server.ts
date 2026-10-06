@@ -62,7 +62,10 @@ export async function listMovements(
   userId: string,
   input: z.infer<typeof listMovementsSchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
   let q = sb
     .from("restaurant_stock_movements")
     .select(
