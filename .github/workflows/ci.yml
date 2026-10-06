@@ -80,7 +80,8 @@ jobs:
             src/modules/restaurant/payments/mobilemoney/mobilemoney.server.test.ts \
             src/modules/restaurant/payments/mobilemoney/mobilemoney.property-scope.test.ts \
             src/modules/restaurant/payments/mobilemoney/providers/payinAdapter.server.test.ts \
-            src/modules/restaurant/receipts/delivery.server.test.ts
+            src/modules/restaurant/receipts/delivery.server.test.ts \
+            src/modules/restaurant/core/members.server.test.ts
 
       - name: Full test suite (repository baseline)
         id: full_tests
