@@ -34,7 +34,7 @@ const weekAgo = () => new Date(Date.now() - 6 * 864e5).toISOString().slice(0, 10
 export function ReceiptCentre() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id ?? "";
-  const currency = ws.data?.properties?.[0]?.currency ?? "TZS";
+  const currency = ws.data?.properties.find((p) => p.id === ws.data?.activePropertyId)?.currency ?? "TZS";
 
   const listFn = useServerFn(listRestaurantReceiptsFn);
   const receiptFn = useServerFn(posReceiptFn);
