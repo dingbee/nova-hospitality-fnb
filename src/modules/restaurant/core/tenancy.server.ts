@@ -7,6 +7,45 @@ import { getTenantScope, isPlatformAdmin, rolesInTenant } from "./access.server"
 
 type Sb = any;
 
+type ScopedProperty = { id: string };
+type ScopedLocation = { id: string; property_id: string };
+
+export function resolveOperatingContext(
+  properties: ScopedProperty[],
+  locations: ScopedLocation[],
+  requestedPropertyId?: string,
+  requestedLocationId?: string,
+): { activePropertyId: string | null; activeLocationId: string | null } {
+  const requestedProperty = requestedPropertyId
+    ? properties.find((p) => p.id === requestedPropertyId) ?? null
+    : null;
+  if (requestedPropertyId && !requestedProperty) {
+    throw new Error("Forbidden — that property is outside your restaurant access scope.");
+  }
+
+  const activePropertyId =
+    requestedProperty?.id ?? (properties.length === 1 ? properties[0]?.id ?? null : null);
+
+  const requestedLocation = requestedLocationId
+    ? locations.find((l) => l.id === requestedLocationId) ?? null
+    : null;
+  if (requestedLocationId && !requestedLocation) {
+    throw new Error("Forbidden — that outlet is outside your restaurant access scope.");
+  }
+  if (requestedLocation && activePropertyId && requestedLocation.property_id !== activePropertyId) {
+    throw new Error("That outlet does not belong to the selected property.");
+  }
+
+  return {
+    activePropertyId,
+    activeLocationId:
+      requestedLocation?.id ??
+      (activePropertyId
+        ? locations.find((l) => l.property_id === activePropertyId)?.id ?? null
+        : null),
+  };
+}
+
 export async function getWorkspace(
   supabase: Sb,
   userId: string,
@@ -76,34 +115,13 @@ export async function getWorkspace(
     : allLocations.filter((l) => accessiblePropertyIds.has(l.property_id));
 
   // Resolve the operating context only after the caller's accessible scope is
-  // known. Client-supplied context is a selector, never an authorization
-  // grant. A forged property/outlet id therefore fails closed.
-  const requestedProperty = input.propertyId
-    ? scopedProperties.find((p) => p.id === input.propertyId) ?? null
-    : null;
-  if (input.propertyId && !requestedProperty) {
-    throw new Error("Forbidden — that property is outside your restaurant access scope.");
-  }
-
-  const activePropertyId =
-    requestedProperty?.id ??
-    (scopedProperties.length === 1 ? scopedProperties[0]?.id ?? null : null);
-
-  const requestedLocation = input.locationId
-    ? scopedLocations.find((l) => l.id === input.locationId) ?? null
-    : null;
-  if (input.locationId && !requestedLocation) {
-    throw new Error("Forbidden — that outlet is outside your restaurant access scope.");
-  }
-  if (requestedLocation && activePropertyId && requestedLocation.property_id !== activePropertyId) {
-    throw new Error("That outlet does not belong to the selected property.");
-  }
-
-  const activeLocationId =
-    requestedLocation?.id ??
-    (activePropertyId
-      ? scopedLocations.find((l) => l.property_id === activePropertyId)?.id ?? null
-      : null);
+  // known. Client-supplied context is a selector, never an authorization grant.
+  const { activePropertyId, activeLocationId } = resolveOperatingContext(
+    scopedProperties,
+    scopedLocations,
+    input.propertyId,
+    input.locationId,
+  );
 
   return {
     tenant: {
