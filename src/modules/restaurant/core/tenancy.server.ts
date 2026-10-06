@@ -108,6 +108,8 @@ export async function getWorkspace(
     subscription: (subscription ?? null) as any,
     roles,
     platformAdmin,
+    activePropertyId: activeProperty?.id ?? null,
+    activeLocationId: activeLocation?.id ?? null,
   };
 }
 
