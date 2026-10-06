@@ -7,8 +7,8 @@ import { getTenantScope, isPlatformAdmin, rolesInTenant } from "./access.server"
 
 type Sb = any;
 
-type ScopedProperty = { id: string };
-type ScopedLocation = { id: string; property_id: string };
+type ScopedProperty = { id: string; status?: string | null };
+type ScopedLocation = { id: string; property_id: string; status?: string | null };
 
 export function resolveOperatingContext(
   properties: ScopedProperty[],
@@ -16,18 +16,24 @@ export function resolveOperatingContext(
   requestedPropertyId?: string,
   requestedLocationId?: string,
 ): { activePropertyId: string | null; activeLocationId: string | null } {
+  const operationalProperties = properties.filter((p) => !p.status || p.status === "active");
+  const operationalPropertyIds = new Set(operationalProperties.map((p) => p.id));
+  const operationalLocations = locations.filter(
+    (l) => (!l.status || l.status === "active") && operationalPropertyIds.has(l.property_id),
+  );
+
   const requestedProperty = requestedPropertyId
-    ? properties.find((p) => p.id === requestedPropertyId) ?? null
+    ? operationalProperties.find((p) => p.id === requestedPropertyId) ?? null
     : null;
   if (requestedPropertyId && !requestedProperty) {
     throw new Error("Forbidden — that property is outside your restaurant access scope.");
   }
 
   const activePropertyId =
-    requestedProperty?.id ?? (properties.length === 1 ? properties[0]?.id ?? null : null);
+    requestedProperty?.id ?? (operationalProperties.length === 1 ? operationalProperties[0]?.id ?? null : null);
 
   const requestedLocation = requestedLocationId
-    ? locations.find((l) => l.id === requestedLocationId) ?? null
+    ? operationalLocations.find((l) => l.id === requestedLocationId) ?? null
     : null;
   if (requestedLocationId && !requestedLocation) {
     throw new Error("Forbidden — that outlet is outside your restaurant access scope.");
@@ -41,7 +47,7 @@ export function resolveOperatingContext(
     activeLocationId:
       requestedLocation?.id ??
       (activePropertyId
-        ? locations.find((l) => l.property_id === activePropertyId)?.id ?? null
+        ? operationalLocations.find((l) => l.property_id === activePropertyId)?.id ?? null
         : null),
   };
 }
