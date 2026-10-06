@@ -80,8 +80,8 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
   });
 
   const variance = useQuery({
-    queryKey: ["bar.variance", tenantId, from],
-    queryFn: () => varianceFn({ data: { tenantId: tenantId!, from, limit: 120 } }),
+    queryKey: ["bar.variance", tenantId, ws.data?.activeLocationId, from],
+    queryFn: () => varianceFn({ data: { tenantId: tenantId!, locationId: ws.data?.activeLocationId ?? undefined, from, limit: 120 } }),
     enabled: Boolean(tenantId) && tab === "variance",
   });
 
