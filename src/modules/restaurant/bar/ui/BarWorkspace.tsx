@@ -58,7 +58,7 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
 
   const snapshot = useQuery({
     queryKey: ["bar.snapshot", tenantId, ws.data?.activePropertyId, ws.data?.activeLocationId],
-    queryFn: () => snapshotFn({ data: { tenantId: tenantId! } }),
+    queryFn: () => snapshotFn({ data: { tenantId: tenantId!, propertyId: ws.data?.activePropertyId ?? undefined, locationId: ws.data?.activeLocationId ?? undefined } }),
     enabled: Boolean(tenantId),
     refetchInterval: 30_000,
   });
