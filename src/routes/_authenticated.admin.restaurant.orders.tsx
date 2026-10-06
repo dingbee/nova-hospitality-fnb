@@ -73,7 +73,7 @@ function OrdersPage() {
           tableId: vars.tableId,
           orderType: "dine_in",
           guestCount: 2,
-          currency: ws.data?.properties[0]?.currency ?? "TZS",
+          currency: ws.data?.properties?.find((p) => p.id === ws.data?.activePropertyId)?.currency ?? "TZS",
           lines: [],
         },
       }),
