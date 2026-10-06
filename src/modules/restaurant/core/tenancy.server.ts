@@ -33,6 +33,8 @@ export async function getWorkspace(
       subscription: null,
       roles: [],
       platformAdmin,
+      activePropertyId: null,
+      activeLocationId: null,
     };
   }
 
