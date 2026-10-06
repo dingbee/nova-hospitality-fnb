@@ -55,6 +55,8 @@ export type BarSnapshotInput = z.infer<typeof barSnapshotSchema>;
 
 export const listBeveragesSchema = z.object({
   tenantId: uuid,
+  propertyId: uuid.optional(),
+  locationId: uuid.optional(),
   search: z.string().max(120).optional(),
   includeNonBeverage: z.boolean().default(false),
   limit: z.number().int().min(1).max(500).default(200),
