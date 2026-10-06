@@ -76,9 +76,9 @@ async function recoverStaleClientAssets() {
 }
 
 export const Route = createRootRoute({
-  validateSearch: z.object({
-    propertyId: z.string().uuid().optional().catch(undefined),
-    outletId: z.string().uuid().optional().catch(undefined),
+  validateSearch: (search: Record<string, unknown>) => ({
+    propertyId: typeof search.propertyId === "string" ? search.propertyId : undefined,
+    outletId: typeof search.outletId === "string" ? search.outletId : undefined,
   }),
   head: () => ({
     meta: [
