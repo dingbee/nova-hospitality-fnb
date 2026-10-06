@@ -23,6 +23,7 @@ import { RESTAURANT_ROLE_LABELS } from "../permissions";
 export function StaffPanel() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
+  const propertyNames = new Map((ws.data?.properties ?? []).map((p) => [p.id, p.name]));
   const qc = useQueryClient();
 
   const listFn = useServerFn(listRestaurantMembersFn);
@@ -191,7 +192,7 @@ export function StaffPanel() {
                         </select>
                       </td>
                       <td className="py-3 pr-4 text-muted-foreground">
-                        {m.property_id ? "One property" : "All properties"}
+                        {m.property_id ? (propertyNames.get(m.property_id) ?? "One property") : "Every property"}
                       </td>
                       <td className="py-3 pr-4 text-right">
                         {["chef", "kitchen_manager", "bartender"].includes(m.role) && (
