@@ -20,6 +20,8 @@
  */
 import { recordGuestPayment } from "../sales/pos.server";
 import { resolveGuestTableContext } from "./selforder.server";
+import { fireGuestOrder } from "../kitchen/kitchen.server";
+import { isSettledPaymentState, resolveGuestPaymentTiming, type GuestPaymentTiming } from "../payments/payment-timing";
 import { createPesapalAdapter } from "./providers/pesapal.server";
 import type { InitiateGuestPaymentInput } from "./selfpay.contracts";
 
@@ -68,14 +70,17 @@ async function loadOrderByPesapalMerchantReference(sb: Sb, orderId: string) {
 }
 
 /** The redacted shape both the guest confirmation screen and a payment-outcome response share — order number, totals, payment state, nothing internal. */
-function toOrderStatus(order: {
-  order_number: string;
-  status: string;
-  payment_state: string;
-  total: number;
-  paid_total: number;
-  currency: string;
-}) {
+function toOrderStatus(
+  order: {
+    order_number: string;
+    status: string;
+    payment_state: string;
+    total: number;
+    paid_total: number;
+    currency: string;
+  },
+  paymentTiming: GuestPaymentTiming,
+) {
   return {
     orderNumber: order.order_number,
     status: order.status,
@@ -84,6 +89,7 @@ function toOrderStatus(order: {
     paidTotal: Number(order.paid_total),
     amountDue: Math.max(0, Number(order.total) - Number(order.paid_total)),
     currency: order.currency,
+    paymentTiming,
   };
 }
 
@@ -91,7 +97,7 @@ function toOrderStatus(order: {
 export async function guestOrderStatus(sb: Sb, input: { tableId: string; orderId: string }) {
   const table = await resolveGuestTableContext(sb, input.tableId);
   const order = await loadGuestOrder(sb, table.tenantId, input.tableId, input.orderId);
-  return toOrderStatus(order);
+  return toOrderStatus(order, table.guestPaymentTiming);
 }
 
 /** The same redacted status, scoped by tenant + order id only — for a caller (a provider callback) that has no table in hand. */
@@ -102,7 +108,12 @@ async function orderStatusByTenantAndId(sb: Sb, tenantId: string, orderId: strin
     .eq("tenant_id", tenantId)
     .eq("id", orderId)
     .maybeSingle();
-  return toOrderStatus(data);
+  const { data: tenant } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", tenantId)
+    .maybeSingle();
+  return toOrderStatus(data, resolveGuestPaymentTiming(tenant?.settings));
 }
 
 /**
@@ -447,6 +458,18 @@ export async function confirmGuestPayment(
     currency: order.currency,
     providerReference,
   });
+
+  if (
+    resolveGuestPaymentTiming(
+      (await sb
+        .from("restaurant_tenants")
+        .select("settings")
+        .eq("id", order.tenantId)
+        .maybeSingle()).data?.settings,
+    ) === "pay_first"
+  ) {
+    await fireGuestOrder(sb, { tenantId: order.tenantId, orderId: order.id });
+  }
 
   return {
     ok: true,
