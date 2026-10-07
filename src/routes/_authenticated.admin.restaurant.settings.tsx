@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { EmptyState } from "@/components/os/EmptyState";
@@ -50,7 +50,17 @@ function SettingsPage() {
         </dl>
       </SectionCard>
 
-      <SectionCard title="Properties & outlets">
+      <SectionCard
+        title="Properties & outlets"
+        actions={
+          <Link
+            to="/admin/restaurant/setup/foundation"
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            Manage properties & outlets
+          </Link>
+        }
+      >
         <ul className="divide-y text-sm">
           {d.properties.map((p) => (
             <li key={p.id} className="py-2">
