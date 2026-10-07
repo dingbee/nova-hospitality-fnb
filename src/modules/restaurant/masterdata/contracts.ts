@@ -56,6 +56,14 @@ export const upsertGuestPaymentTimingSchema = z.object({
 });
 export type UpsertGuestPaymentTimingInput = z.infer<typeof upsertGuestPaymentTimingSchema>;
 
+export const upsertOperationalServiceConfigSchema = z.object({
+  tenantId: uuid,
+  serviceMode: z.enum(["auto", "table_service", "self_service", "counter_service", "takeaway", "room_service"]),
+  collectionMethod: z.enum(["auto", "staff_serves", "guest_collects", "pickup_counter", "room_delivery"]),
+  readyAlert: z.boolean(),
+});
+export type UpsertOperationalServiceConfigInput = z.infer<typeof upsertOperationalServiceConfigSchema>;
+
 export const listInventoryCategoriesSchema = z.object({
   tenantId: uuid,
   kind: z.string().max(40).optional(),
