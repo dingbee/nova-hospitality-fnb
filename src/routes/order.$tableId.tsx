@@ -1369,6 +1369,7 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
   const progressFn = useServerFn(guestOrderProgressFn);
   const playGuestAttention = useGuestAttentionSignal();
   const lastNotifiedStageRef = useRef<string | null>(null);
+  const [readyAcknowledged, setReadyAcknowledged] = useState(false);
   const progress = useQuery({
     queryKey: ["selforder.progress", tableId, orderId],
     queryFn: () => progressFn({ data: { tableId, orderId } }),
@@ -1389,9 +1390,60 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
     }
     if (current !== lastNotifiedStageRef.current && current === "ready") {
       playGuestAttention([120, 60, 120]);
+      setReadyAcknowledged(false);
+
+      // Progressive enhancement only: never request permission here. If the
+      // guest has already granted notification permission, give them a
+      // second channel; the persistent in-portal alert remains the guarantee.
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        try {
+          new Notification("Your order is ready", {
+            body: "Please collect your order from the service counter.",
+            tag: `lexibite-order-ready-${orderId}`,
+          });
+        } catch {
+          // Browser notification failure must never affect the order tracker.
+        }
+      }
     }
     lastNotifiedStageRef.current = current;
-  }, [progress.data?.overallStage, playGuestAttention]);
+  }, [progress.data?.overallStage, orderId, playGuestAttention]);
+
+  // Keep a self-service/food-court phone awake while the order is ready.
+  // Wake Lock is progressive enhancement and is intentionally best-effort.
+  useEffect(() => {
+    if (progress.data?.overallStage !== "ready") return;
+    const nav = navigator as Navigator & {
+      wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> };
+    };
+    if (!nav.wakeLock?.request) return;
+
+    let lock: { release: () => Promise<void> } | null = null;
+    let cancelled = false;
+    void nav.wakeLock.request("screen").then((next) => {
+      if (cancelled) {
+        void next.release();
+        return;
+      }
+      lock = next;
+    }).catch(() => {
+      // Unsupported/denied Wake Lock is not an error for order tracking.
+    });
+
+    return () => {
+      cancelled = true;
+      if (lock) void lock.release();
+    };
+  }, [progress.data?.overallStage]);
+
+  useEffect(() => {
+    if (progress.data?.overallStage !== "ready") return;
+    const previousTitle = document.title;
+    document.title = "ORDER READY — LexiBite";
+    return () => {
+      document.title = previousTitle;
+    };
+  }, [progress.data?.overallStage]);
 
   if (progress.isPending || progress.isError || !progress.data) return null;
   const { overallStage, streams } = progress.data;
@@ -1410,8 +1462,43 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
   const currentIndex = GUEST_STAGE_STEPS.indexOf(overallStage);
 
   return (
-    <div className="mt-2 w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
-      <p className="text-sm font-semibold text-foreground">{GUEST_STAGE_LABEL[overallStage]}</p>
+    <div
+      className={`mt-2 w-full max-w-sm rounded-2xl border p-4 text-left ${
+        overallStage === "ready" && !readyAcknowledged
+          ? "border-primary bg-primary/10 shadow-lg ring-2 ring-primary/20"
+          : "bg-card"
+      }`}
+      role={overallStage === "ready" && !readyAcknowledged ? "alert" : undefined}
+      aria-live={overallStage === "ready" && !readyAcknowledged ? "assertive" : "polite"}
+    >
+      {overallStage === "ready" && !readyAcknowledged ? (
+        <div className="space-y-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-primary">
+              Collection ready
+            </p>
+            <p className="mt-1 text-2xl font-bold tracking-tight text-foreground">
+              YOUR ORDER IS READY
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Please collect your order from the service counter.
+            </p>
+          </div>
+          <div className="rounded-xl bg-background/80 px-3 py-2 text-sm">
+            <span className="text-muted-foreground">Order </span>
+            <span className="font-bold text-foreground">{progress.data.orderNumber}</span>
+          </div>
+          <Button
+            type="button"
+            className="min-h-11 w-full rounded-full"
+            onClick={() => setReadyAcknowledged(true)}
+          >
+            Got it — I’ll collect my order
+          </Button>
+        </div>
+      ) : (
+        <p className="text-sm font-semibold text-foreground">{GUEST_STAGE_LABEL[overallStage]}</p>
+      )}
 
       <div className="mt-3 flex items-center">
         {GUEST_STAGE_STEPS.map((step, i) => (
@@ -1441,7 +1528,7 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
         ))}
       </div>
 
-      {streams.length > 1 && (
+      {streams.length > 1 && overallStage !== "ready" && (
         <div className="mt-3 space-y-1 border-t pt-3">
           {streams.map((s) => (
             <div key={s.station} className="flex items-center justify-between text-xs">
