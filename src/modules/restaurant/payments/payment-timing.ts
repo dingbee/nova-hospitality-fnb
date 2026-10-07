@@ -10,6 +10,8 @@
  * - explicit settings.payment.guestTiming -> operator override
  */
 
+import { resolveServiceConfiguration } from "../operations/service-config";
+
 export const GUEST_PAYMENT_TIMINGS = ["pay_first", "pay_after_service"] as const;
 export type GuestPaymentTiming = (typeof GUEST_PAYMENT_TIMINGS)[number];
 
@@ -32,6 +34,10 @@ export function resolveGuestPaymentTiming(settings: unknown): GuestPaymentTiming
   const configured = root.payment?.guestTiming;
   if (configured === "pay_first" || configured === "pay_after_service") {
     return configured;
+  }
+  const serviceMode = resolveServiceConfiguration(settings).serviceMode;
+  if (serviceMode === "counter_service" || serviceMode === "takeaway" || serviceMode === "self_service") {
+    return "pay_first";
   }
   return defaultGuestPaymentTimingForOperatingMode(root.onboarding?.operatingMode);
 }
