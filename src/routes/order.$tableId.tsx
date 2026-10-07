@@ -235,6 +235,7 @@ function GuestOrderPage() {
     orderId: string;
     orderNumber: string;
     total: number;
+    paymentTiming: "pay_first" | "pay_after_service";
   } | null>(null);
 
   // Order recovery: read only after mount, never during the initial render,
@@ -303,6 +304,7 @@ function GuestOrderPage() {
         orderId: storedOrderId,
         orderNumber: recovery.data.orderNumber,
         total: recovery.data.total,
+        paymentTiming: recovery.data.paymentTiming,
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- act once when the outcome first resolves, not on every render
@@ -458,6 +460,7 @@ function GuestOrderPage() {
         orderId: order.id,
         orderNumber: order.order_number,
         total: Number(order.total ?? 0),
+        paymentTiming: order.paymentTiming,
       });
       setCart([]);
       setCartOpen(false);
@@ -501,6 +504,7 @@ function GuestOrderPage() {
       <TableSessionScreen
         tableId={tableId}
         justPlacedOrderId={confirmed.orderId}
+        paymentTiming={confirmed.paymentTiming}
         onOrderMore={() => {
           dismissRecovery();
           setConfirmed(null);
@@ -529,6 +533,7 @@ function GuestOrderPage() {
             orderId: storedOrderId,
             orderNumber: recovery.data!.orderNumber,
             total: recovery.data!.total,
+            paymentTiming: recovery.data!.paymentTiming,
           })
         }
         onStartNew={dismissRecovery}
@@ -932,10 +937,12 @@ const SESSION_STAGE_LABEL: Record<string, string> = {
 function TableSessionScreen({
   tableId,
   justPlacedOrderId,
+  paymentTiming,
   onOrderMore,
 }: {
   tableId: string;
   justPlacedOrderId: string | null;
+  paymentTiming: "pay_first" | "pay_after_service";
   onOrderMore: () => void;
 }) {
   const sessionFn = useServerFn(guestSessionProjectionFn);
@@ -974,7 +981,7 @@ function TableSessionScreen({
         <h1 className="font-display mt-2 text-2xl text-foreground">
           {isContinuation
             ? "Continue your table"
-            : order.paymentTiming === "pay_first"
+            : paymentTiming === "pay_first"
               ? "Order received"
               : "Order sent"}
         </h1>
