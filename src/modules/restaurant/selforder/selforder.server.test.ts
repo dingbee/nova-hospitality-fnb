@@ -118,7 +118,15 @@ describe("resolveGuestTableContext", () => {
         active: false,
       },
     ],
-    restaurant_tenants: [{ id: "tenant-1", name: "Demo Tenant", status: "active" }],
+    restaurant_tenants: [
+      {
+        id: "tenant-1",
+        name: "Demo Tenant",
+        status: "active",
+        settings: { business: { defaultCurrency: "USD" } },
+      },
+    ],
+    restaurant_properties: [{ id: "prop-1", tenant_id: "tenant-1", currency: "TZS" }],
     restaurant_currencies: [],
   };
 
@@ -134,6 +142,41 @@ describe("resolveGuestTableContext", () => {
 
   it("uses the owning property's currency, matching the POS operating context", async () => {
     const ctx = await resolveGuestTableContext(fakeSb(baseRows) as any, "table-1");
+    expect(ctx.currency).toBe("TZS");
+  });
+
+  it("uses the tenant Restaurant Setup defaultCurrency when a legacy table has no property", async () => {
+    const rows = {
+      ...baseRows,
+      restaurant_tables: [{ ...baseRows.restaurant_tables[0], property_id: null }],
+      restaurant_properties: [],
+      restaurant_tenants: [
+        {
+          id: "tenant-1",
+          name: "Demo Tenant",
+          status: "active",
+          settings: { business: { defaultCurrency: "TZS" } },
+        },
+      ],
+    };
+    const ctx = await resolveGuestTableContext(fakeSb(rows) as any, "table-1");
+    expect(ctx.currency).toBe("TZS");
+  });
+
+  it("does not let a tenant default override an explicitly configured property's currency", async () => {
+    const rows = {
+      ...baseRows,
+      restaurant_tenants: [
+        {
+          id: "tenant-1",
+          name: "Demo Tenant",
+          status: "active",
+          settings: { business: { defaultCurrency: "USD" } },
+        },
+      ],
+      restaurant_properties: [{ id: "prop-1", tenant_id: "tenant-1", currency: "TZS" }],
+    };
+    const ctx = await resolveGuestTableContext(fakeSb(rows) as any, "table-1");
     expect(ctx.currency).toBe("TZS");
   });
 
