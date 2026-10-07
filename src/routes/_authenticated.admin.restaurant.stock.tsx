@@ -47,13 +47,13 @@ function StockPage() {
   const [reason, setReason] = useState("");
 
   const inventory = useQuery({
-    queryKey: ["restaurant.inventory", tenantId],
-    queryFn: () => invFn({ data: { tenantId: tenantId!, lowOnly: false, limit: 200 } }),
+    queryKey: ["restaurant.inventory", tenantId, ws.data?.activePropertyId],
+    queryFn: () => invFn({ data: { tenantId: tenantId!, propertyId: ws.data?.activePropertyId ?? undefined, lowOnly: false, limit: 200 } }),
     enabled: Boolean(tenantId),
   });
   const movements = useQuery({
-    queryKey: ["restaurant.movements", tenantId],
-    queryFn: () => listFn({ data: { tenantId: tenantId!, limit: 100 } }),
+    queryKey: ["restaurant.movements", tenantId, ws.data?.activePropertyId],
+    queryFn: () => listFn({ data: { tenantId: tenantId!, propertyId: ws.data?.activePropertyId ?? undefined, limit: 100 } }),
     enabled: Boolean(tenantId),
   });
 
@@ -62,6 +62,7 @@ function StockPage() {
       recordFn({
         data: {
           tenantId: tenantId!,
+          propertyId: ws.data?.activePropertyId ?? undefined,
           inventoryItemId: itemId,
           movementType: type,
           quantity: Number(quantity),
