@@ -24,6 +24,8 @@ import {
   NO_MATCH_ID,
 } from "../../core/access.server";
 import { emitRestaurantEvent } from "../../events/emit.server";
+import { fireGuestOrder } from "../../kitchen/kitchen.server";
+import { resolveGuestPaymentTiming } from "../payment-timing";
 import type { MobileMoneyAdapter } from "./adapter";
 import { createLipaNambaAdapter } from "./providers/lipaNambaAdapter.server";
 import { createTestMobileMoneyAdapter } from "./providers/testAdapter.server";
@@ -648,7 +650,21 @@ export async function confirmMobileMoneyCollection(
   const { recalcOrder, transitionOrder } = await import("../../sales/sales.server");
   let totals = await recalcOrder(sb, input.tenantId, collection.order_id);
   const settled = ["paid", "comped", "room_charged"].includes(String(totals.payment_state));
-  if (settled && totals.status !== "closed") {
+  const isGuestPayFirst =
+    collection.created_by == null &&
+    resolveGuestPaymentTiming(
+      (await sb
+        .from("restaurant_tenants")
+        .select("settings")
+        .eq("id", input.tenantId)
+        .maybeSingle()).data?.settings,
+    ) === "pay_first";
+
+  if (settled && isGuestPayFirst) {
+    // Pay-first guest orders are paid before production, so settlement releases
+    // the production gate rather than closing the order.
+    await fireGuestOrder(sb, { tenantId: input.tenantId, orderId: collection.order_id });
+  } else if (settled && totals.status !== "closed") {
     try {
       // Auto-close needs a real principal for assertCapability. A
       // webhook-confirmed payment with no staff session simply leaves the
