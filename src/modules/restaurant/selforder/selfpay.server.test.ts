@@ -156,7 +156,10 @@ const TABLE = "table-1";
 const ORDER = "order-1";
 const RETURN_URL = "https://example.test/order/table-1?pay=return";
 
-function seedFor(orderOverrides: Partial<Record<string, unknown>> = {}) {
+function seedFor(
+  orderOverrides: Partial<Record<string, unknown>> = {},
+  guestTiming: "pay_first" | "pay_after_service" = "pay_first",
+) {
   return fakeDb({
     tables: [
       {
@@ -174,7 +177,7 @@ function seedFor(orderOverrides: Partial<Record<string, unknown>> = {}) {
         id: TENANT,
         name: "Demo",
         status: "active",
-        settings: { payment: { guestTiming: "pay_first" } },
+        settings: { payment: { guestTiming } },
       },
     ],
     orders: [
@@ -265,54 +268,14 @@ describe("initiateGuestPayment", () => {
   });
 
   it("blocks pay-after-service checkout until service or a bill request exists", async () => {
-    const db = seedFor();
-    (db as any).from;
-    const tenant = (db as any);
-    // The fake exposes table rows only through its query surface, so rebuild
-    // the seed with an explicit table-service policy and the same unpaid order.
-    const payAfterDb = fakeDb({
-      tables: [
-        {
-          id: TABLE,
-          code: "T1",
-          name: "T1",
-          tenant_id: TENANT,
-          property_id: null,
-          location_id: null,
-          active: true,
-        },
-      ],
-      tenants: [
-        {
-          id: TENANT,
-          name: "Demo",
-          status: "active",
-          settings: { payment: { guestTiming: "pay_after_service" } },
-        },
-      ],
-      orders: [
-        {
-          id: ORDER,
-          order_number: "ORD-1",
-          status: "open",
-          payment_state: "unpaid",
-          total: 11000,
-          paid_total: 0,
-          currency: "TZS",
-          table_id: TABLE,
-          tenant_id: TENANT,
-        },
-      ],
-    });
+    const db = seedFor({}, "pay_after_service");
     const result = await initiateGuestPayment(
-      payAfterDb as any,
+      db as any,
       { tableId: TABLE, orderId: ORDER, method: "card" },
       RETURN_URL,
       fakeAdapter(),
     );
     expect(result).toEqual({ ok: false, reason: "not_ready_for_payment" });
-    void db;
-    void tenant;
   });
 
   it("does not start a checkout for an order that is already fully paid", async () => {
