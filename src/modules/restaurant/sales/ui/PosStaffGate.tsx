@@ -15,7 +15,7 @@ const STORAGE_KEY = "lexibite.pos.staff-session";
 export function PosStaffGate({ children }: { children: ReactNode }) {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
-  const propertyId = ws.data?.properties?.[0]?.id;
+  const propertyId = ws.data?.activePropertyId ?? undefined;
   const startFn = useServerFn(startPosSessionFn);
   const endFn = useServerFn(endPosSessionFn);
   const [session, setSession] = useState<{ sessionId: string; staffUserId: string } | null>(() => {

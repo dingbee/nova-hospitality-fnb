@@ -3,6 +3,7 @@ import {
   LogOut,
   Menu,
   Search,
+  Building2,
   Sparkles,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
@@ -55,20 +56,43 @@ export function TopBar({
         </Link>
 
         {workspace?.tenant && (
-          <span className="nova-chip ml-2 hidden items-center gap-1.5 md:inline-flex">
-            {workspace.tenant.settings?.business?.logoUrl && (
-              <img
-                src={workspace.tenant.settings.business.logoUrl}
-                alt=""
-                className="size-5 shrink-0 rounded-sm object-contain"
-              />
-            )}
-            <span>
-              {workspace.tenant.settings?.business?.tradingName || workspace.tenant.name}
-              {workspace.properties?.[0]?.name && <span>· {workspace.properties[0].name}</span>}
-              {workspace.locations?.[0]?.name && <span>· {workspace.locations[0].name}</span>}
+          <div className="ml-1 flex min-w-0 items-center gap-2 sm:ml-2">
+            <span className="nova-chip hidden max-w-56 items-center gap-1.5 sm:inline-flex">
+              {workspace.tenant.settings?.business?.logoUrl && (
+                <img
+                  src={workspace.tenant.settings.business.logoUrl}
+                  alt=""
+                  className="size-5 shrink-0 rounded-sm object-contain"
+                />
+              )}
+              <span className="truncate">
+                {workspace.tenant.settings?.business?.tradingName || workspace.tenant.name}
+              </span>
             </span>
-          </span>
+            {workspace.properties.length > 1 ? (
+              <label className="nova-action inline-flex min-h-10 items-center gap-2 bg-[color:var(--nova-surface-2)] px-2.5 text-xs">
+                <Building2 className="size-3.5 text-[color:var(--nova-accent)]" aria-hidden="true" />
+                <span className="sr-only">Active property</span>
+                <select
+                  aria-label="Active property"
+                  value={workspace.activePropertyId ?? ""}
+                  onChange={(event) => workspace.selectProperty(event.target.value)}
+                  className="min-w-36 border-0 bg-transparent px-0 py-1 text-xs font-medium outline-none"
+                >
+                  {workspace.properties.map((property) => (
+                    <option key={property.id} value={property.id}>
+                      {property.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : workspace.activeProperty ? (
+              <span className="nova-chip inline-flex items-center gap-1.5">
+                <Building2 className="size-3.5 text-[color:var(--nova-accent)]" aria-hidden="true" />
+                {workspace.activeProperty.name}
+              </span>
+            ) : null}
+          </div>
         )}
 
         <div className="ml-auto flex items-center gap-2">

@@ -47,14 +47,14 @@ function OrdersPage() {
   const fireFn = useServerFn(fireRestaurantOrderFn);
 
   const orders = useQuery({
-    queryKey: ["restaurant.orders", tenantId, locationId],
-    queryFn: () => listFn({ data: { tenantId: tenantId!, locationId, limit: 50 } }),
+    queryKey: ["restaurant.orders", tenantId, ws.data?.activePropertyId, locationId],
+    queryFn: () => listFn({ data: { tenantId: tenantId!, propertyId: ws.data?.activePropertyId ?? undefined, locationId, limit: 50 } }),
     enabled: Boolean(tenantId),
     refetchInterval: 30_000,
   });
   const tables = useQuery({
-    queryKey: ["restaurant.tables", tenantId, locationId],
-    queryFn: () => tablesFn({ data: { tenantId: tenantId!, locationId } }),
+    queryKey: ["restaurant.tables", tenantId, ws.data?.activePropertyId, locationId],
+    queryFn: () => tablesFn({ data: { tenantId: tenantId!, propertyId: ws.data?.activePropertyId ?? undefined, locationId } }),
     enabled: Boolean(tenantId),
   });
 
@@ -69,11 +69,12 @@ function OrdersPage() {
       createFn({
         data: {
           tenantId: tenantId!,
+          propertyId: ws.data?.activePropertyId ?? undefined,
           locationId,
           tableId: vars.tableId,
           orderType: "dine_in",
           guestCount: 2,
-          currency: ws.data?.properties[0]?.currency ?? "TZS",
+          currency: ws.data?.activeProperty?.currency ?? "TZS",
           lines: [],
         },
       }),
@@ -101,7 +102,7 @@ function OrdersPage() {
 
   const rows = orders.data ?? [];
   const open = rows.filter((r: any) => OPEN_STATES.includes(r.status));
-  const currency = ws.data?.properties[0]?.currency ?? "TZS";
+  const currency = ws.data?.activeProperty?.currency ?? "TZS";
   const money = (v: unknown) => `${currency} ${Number(v ?? 0).toLocaleString()}`;
 
   return (
