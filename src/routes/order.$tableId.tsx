@@ -971,7 +971,13 @@ function TableSessionScreen({
         <CheckCircle2 className="size-9 text-primary" aria-hidden />
       </span>
       <div>
-        <h1 className="font-display mt-2 text-2xl text-foreground">{isContinuation ? "Continue your table" : "Order sent"}</h1>
+        <h1 className="font-display mt-2 text-2xl text-foreground">
+          {isContinuation
+            ? "Continue your table"
+            : order.paymentTiming === "pay_first"
+              ? "Order received"
+              : "Order sent"}
+        </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {data?.session ? `Your table — ${data.session.table.name}` : "Your dining session"}
         </p>
