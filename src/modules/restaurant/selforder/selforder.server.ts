@@ -519,6 +519,7 @@ export async function submitGuestOrder(
         ...(await recalcOrder(sb, table.tenantId, existing.id)),
         guestSessionToken: session.token,
         session: await guestSessionProjection(sb, { tableId: table.tableId }),
+        paymentTiming: table.guestPaymentTiming,
         idempotent: true,
       };
     }
@@ -595,11 +596,9 @@ export async function submitGuestOrder(
     throw err;
   }
 
-  // A guest tapping "Send order" IS the send-to-kitchen action — there is no
-  // separate staff review step in this flow, and the confirmation screen
-  // already tells the guest their order is on its way. Without this, the
-  // order sat at "open" until a staff member happened to notice and fire it
-  // by hand, and the guest's own tracker never advanced past "received".
+  // The guest confirmation is the production handoff only when the active
+  // payment policy is pay-after-service. Under pay-first, the order deliberately
+  // remains un-fired until server-confirmed settlement releases the production gate.
   // Best-effort: the order itself is already the record that matters, so a
   // firing hiccup here must never fail an order the guest already placed
   // successfully — it just leaves the order for a staff member to fire
@@ -623,6 +622,7 @@ export async function submitGuestOrder(
   const { guestSessionProjection } = await import("./selfsession.server");
   return {
     ...order,
+    paymentTiming: table.guestPaymentTiming,
     guestSessionToken: session.token,
     session: await guestSessionProjection(sb, { tableId: table.tableId }),
   };
