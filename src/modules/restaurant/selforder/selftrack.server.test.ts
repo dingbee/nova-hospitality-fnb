@@ -95,7 +95,7 @@ function seedFor(opts: {
       },
     ],
     tenants: [
-      { id: TENANT, name: "Demo", status: "active" },
+      { id: TENANT, name: "Demo", status: "active", settings: { operations: { serviceMode: "self_service", collectionMethod: "guest_collects", readyAlert: true } } },
       { id: OTHER_TENANT, name: "Other tenant", status: "active" },
     ],
     orders: [
@@ -133,6 +133,8 @@ describe("guestOrderProgress", () => {
         { station: "kitchen", stage: "received" },
         { station: "bar", stage: "received" },
       ],
+      readyAlert: true,
+      collectionMethod: "guest_collects",
     });
   });
 
@@ -188,13 +190,13 @@ describe("guestOrderProgress", () => {
       tickets: [{ status: "ready", station_id: STATION_KITCHEN }],
     });
     const result = await guestOrderProgress(sb, { tableId: TABLE, orderId: ORDER });
-    expect(result).toEqual({ orderNumber: "ORD-1", overallStage: "cancelled", streams: [] });
+    expect(result).toEqual({ orderNumber: "ORD-1", overallStage: "cancelled", streams: [], readyAlert: true, collectionMethod: "guest_collects" });
   });
 
   it("a voided order returns the same cancelled-state handling", async () => {
     const sb = seedFor({ orderOverrides: { status: "voided" } });
     const result = await guestOrderProgress(sb, { tableId: TABLE, orderId: ORDER });
-    expect(result).toEqual({ orderNumber: "ORD-1", overallStage: "cancelled", streams: [] });
+    expect(result).toEqual({ orderNumber: "ORD-1", overallStage: "cancelled", streams: [], readyAlert: true, collectionMethod: "guest_collects" });
   });
 
   it("kitchen preparing while bar is ready, end-to-end from raw ticket/station rows", async () => {
@@ -250,7 +252,7 @@ describe("guestOrderProgress", () => {
       ],
     });
     const result = await guestOrderProgress(sb, { tableId: TABLE, orderId: ORDER });
-    expect(Object.keys(result).sort()).toEqual(["orderNumber", "overallStage", "streams"].sort());
+    expect(Object.keys(result).sort()).toEqual(["collectionMethod", "orderNumber", "overallStage", "readyAlert", "streams"].sort());
     for (const stream of result.streams) {
       expect(Object.keys(stream).sort()).toEqual(["station", "stage"].sort());
     }
@@ -274,6 +276,8 @@ describe("guestOrderProgress", () => {
       orderNumber: "ORD-1",
       overallStage: "received",
       streams: [{ station: "kitchen", stage: "received" }],
+      readyAlert: true,
+      collectionMethod: "guest_collects",
     });
   });
 });
