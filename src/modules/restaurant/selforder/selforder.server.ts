@@ -26,6 +26,7 @@
 import { fetchSellableCatalog } from "../sales/pos.server";
 import { createGuestOrder, recalcOrder, type SalesLineInput } from "../sales/sales.server";
 import { fireGuestOrder } from "../kitchen/kitchen.server";
+import { resolveGuestPaymentTiming, type GuestPaymentTiming } from "../payments/payment-timing";
 import type { GuestLineInput } from "./selforder.contracts";
 
 type Sb = any;
@@ -77,6 +78,7 @@ export type GuestTableContext = {
   propertyId: string | null;
   locationId: string | null;
   currency: string;
+  guestPaymentTiming: GuestPaymentTiming;
   /**
    * How long after a service request is resolved before the guest may
    * request staff again — settings.serviceRequests.cooldownSeconds, the
@@ -125,10 +127,12 @@ export async function resolveGuestTableContext(
       defaultCurrency?: string | null;
     };
     serviceRequests?: { cooldownSeconds?: number };
+    payment?: { guestTiming?: string };
   } | null;
   const business = settings?.business;
   const tradingName = (business?.tradingName ?? "").trim();
   const businessLogoUrl = business?.logoUrl?.trim() || null;
+  const guestPaymentTiming = resolveGuestPaymentTiming(settings);
   const configuredCooldown = settings?.serviceRequests?.cooldownSeconds;
   const serviceRequestCooldownSeconds =
     typeof configuredCooldown === "number" && configuredCooldown >= 0
@@ -172,6 +176,7 @@ export async function resolveGuestTableContext(
     propertyId: table.property_id ?? null,
     locationId: table.location_id ?? null,
     currency,
+    guestPaymentTiming,
     serviceRequestCooldownSeconds,
   };
 }
@@ -606,7 +611,7 @@ export async function submitGuestOrder(
   // items still "ordered" are fired; a second call on the same order finds
   // nothing left and returns {fired: 0}), so this is a belt-and-suspenders
   // skip, not a correctness requirement.
-  if (!order.idempotent) {
+  if (!order.idempotent && table.guestPaymentTiming === "pay_after_service") {
     await fireGuestOrder(sb, { tenantId: table.tenantId, orderId: order.id });
   }
 
