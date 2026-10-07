@@ -76,8 +76,8 @@ function RestaurantOverview() {
 
   const contextFn = useServerFn(getRestaurantContextFn);
   const ctx = useQuery({
-    queryKey: ["restaurant.context", tenantId, ws.data?.activePropertyId],
-    queryFn: () => contextFn({ data: { tenantId: tenantId!, propertyId: ws.data?.activePropertyId ?? undefined } }),
+    queryKey: ["restaurant.context", tenantId],
+    queryFn: () => contextFn({ data: { tenantId: tenantId! } }),
     enabled: Boolean(tenantId),
   });
 
