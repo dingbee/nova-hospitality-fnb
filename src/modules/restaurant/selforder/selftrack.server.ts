@@ -44,6 +44,8 @@ export type GuestOrderProgress = {
   orderNumber: string;
   overallStage: GuestOverallStage;
   streams: GuestProductionStream[];
+  readyAlert: boolean;
+  collectionMethod: string;
 };
 
 export async function guestOrderProgress(
@@ -57,7 +59,7 @@ export async function guestOrderProgress(
   // at cancellation, not this order's current story — show the cancellation
   // itself and nothing stale from before it.
   if (order.status === "cancelled" || order.status === "voided") {
-    return { orderNumber: order.order_number, overallStage: "cancelled", streams: [] };
+    return { orderNumber: order.order_number, overallStage: "cancelled", streams: [], readyAlert: table.serviceConfiguration.readyAlert, collectionMethod: table.serviceConfiguration.collectionMethod };
   }
 
   const { data: itemRows } = await sb
@@ -101,5 +103,11 @@ export async function guestOrderProgress(
   const life = deriveLifecycle({ order: { status: order.status }, items, tickets });
   const overallStage = classifyGuestOverallStage(order.status, life);
 
-  return { orderNumber: order.order_number, overallStage, streams };
+  return {
+    orderNumber: order.order_number,
+    overallStage,
+    streams,
+    readyAlert: table.serviceConfiguration.readyAlert,
+    collectionMethod: table.serviceConfiguration.collectionMethod,
+  };
 }
