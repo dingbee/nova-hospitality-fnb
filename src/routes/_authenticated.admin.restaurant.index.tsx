@@ -76,8 +76,8 @@ function RestaurantOverview() {
 
   const contextFn = useServerFn(getRestaurantContextFn);
   const ctx = useQuery({
-    queryKey: ["restaurant.context", tenantId],
-    queryFn: () => contextFn({ data: { tenantId: tenantId! } }),
+    queryKey: ["restaurant.context", tenantId, ws.data?.activePropertyId],
+    queryFn: () => contextFn({ data: { tenantId: tenantId!, propertyId: ws.data?.activePropertyId ?? undefined } }),
     enabled: Boolean(tenantId),
   });
 
@@ -85,8 +85,8 @@ function RestaurantOverview() {
   // data source for "what's happening on the floor right now".
   const boardFn = useServerFn(posBoardFn);
   const board = useQuery({
-    queryKey: ["restaurant.pos.board", tenantId],
-    queryFn: () => boardFn({ data: { tenantId: tenantId! } }),
+    queryKey: ["restaurant.pos.board", tenantId, ws.data?.activePropertyId],
+    queryFn: () => boardFn({ data: { tenantId: tenantId!, propertyId: ws.data?.activePropertyId ?? undefined } }),
     enabled: Boolean(tenantId),
     refetchInterval: 20_000,
   });
@@ -94,8 +94,8 @@ function RestaurantOverview() {
   // Same ticket read Kitchen itself polls every 15s.
   const ticketsFn = useServerFn(listRestaurantKitchenTicketsFn);
   const tickets = useQuery({
-    queryKey: ["restaurant.tickets", tenantId],
-    queryFn: () => ticketsFn({ data: { tenantId: tenantId!, openOnly: true, limit: 200 } }),
+    queryKey: ["restaurant.tickets", tenantId, ws.data?.activePropertyId],
+    queryFn: () => ticketsFn({ data: { tenantId: tenantId!, propertyId: ws.data?.activePropertyId ?? undefined, openOnly: true, limit: 200 } }),
     enabled: Boolean(tenantId),
     refetchInterval: 15_000,
   });
@@ -134,7 +134,7 @@ function RestaurantOverview() {
 
   const d = ctx.data;
   const b = board.data as any;
-  const currency = ws.data?.properties[0]?.currency ?? "TZS";
+  const currency = ws.data?.activeProperty?.currency ?? "TZS";
   const money = (v?: number) => (v == null ? "—" : `${currency} ${v.toLocaleString()}`);
 
   const ticketRows = (tickets.data ?? []) as any[];
