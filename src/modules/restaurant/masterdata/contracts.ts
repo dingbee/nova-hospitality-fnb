@@ -49,6 +49,13 @@ export const upsertServiceRequestSettingsSchema = z.object({
 });
 export type UpsertServiceRequestSettingsInput = z.infer<typeof upsertServiceRequestSettingsSchema>;
 
+
+export const upsertGuestPaymentTimingSchema = z.object({
+  tenantId: uuid,
+  timing: z.enum(["auto", "pay_first", "pay_after_service"]),
+});
+export type UpsertGuestPaymentTimingInput = z.infer<typeof upsertGuestPaymentTimingSchema>;
+
 export const listInventoryCategoriesSchema = z.object({
   tenantId: uuid,
   kind: z.string().max(40).optional(),
