@@ -73,7 +73,7 @@ function OrdersPage() {
           tableId: vars.tableId,
           orderType: "dine_in",
           guestCount: 2,
-          currency: ws.data?.properties[0]?.currency ?? "TZS",
+          currency: ws.data?.activeProperty?.currency ?? "TZS",
           lines: [],
         },
       }),
@@ -101,7 +101,7 @@ function OrdersPage() {
 
   const rows = orders.data ?? [];
   const open = rows.filter((r: any) => OPEN_STATES.includes(r.status));
-  const currency = ws.data?.properties[0]?.currency ?? "TZS";
+  const currency = ws.data?.activeProperty?.currency ?? "TZS";
   const money = (v: unknown) => `${currency} ${Number(v ?? 0).toLocaleString()}`;
 
   return (
