@@ -281,6 +281,9 @@ export async function initiateGuestPayment(
   }
   const amountDue = Math.max(0, Number(order.total) - Number(order.paid_total));
   if (amountDue <= 0) {
+    return { ok: false, reason: "already_paid" };
+  }
+
   const paymentTiming = resolveGuestPaymentTiming(
     (await sb
       .from("restaurant_tenants")
@@ -294,9 +297,6 @@ export async function initiateGuestPayment(
     !order.bill_requested_at
   ) {
     return { ok: false, reason: "not_ready_for_payment" };
-  }
-
-    return { ok: false, reason: "already_paid" };
   }
   if (!provider) {
     return { ok: false, reason: "provider_not_configured" };
@@ -411,7 +411,7 @@ export type ConfirmGuestPaymentResult =
   | { ok: false; reason: "declined" | "expired"; detail?: string }
   | { ok: false; reason: "amount_mismatch" }
   | { ok: false; reason: "already_paid" }
-  | { ok: false; reason: "provider_not_configured" | "not_ready_for_payment" };
+  | { ok: false; reason: "provider_not_configured" };
 
 /** A cent of slack against floating-point/rounding noise — the same tolerance recalcOrder already uses for its own paid/total comparison. */
 const AMOUNT_TOLERANCE = 0.01;
