@@ -53,6 +53,12 @@ const ORDER = "order-1";
 function fakeDb(seed: { orders: any[]; accounts: any[] }) {
   const tables: Record<string, any[]> = {
     restaurant_orders: seed.orders,
+    restaurant_tenants: [
+      {
+        id: TENANT,
+        settings: { payment: { guestTiming: "pay_first" } },
+      },
+    ],
     restaurant_mobile_money_accounts: seed.accounts,
     restaurant_mobile_money_collections: [],
     restaurant_mobile_money_webhook_events: [],

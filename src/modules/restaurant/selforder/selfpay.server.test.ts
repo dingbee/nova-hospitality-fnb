@@ -156,7 +156,10 @@ const TABLE = "table-1";
 const ORDER = "order-1";
 const RETURN_URL = "https://example.test/order/table-1?pay=return";
 
-function seedFor(orderOverrides: Partial<Record<string, unknown>> = {}) {
+function seedFor(
+  orderOverrides: Partial<Record<string, unknown>> = {},
+  guestTiming: "pay_first" | "pay_after_service" = "pay_first",
+) {
   return fakeDb({
     tables: [
       {
@@ -169,7 +172,14 @@ function seedFor(orderOverrides: Partial<Record<string, unknown>> = {}) {
         active: true,
       },
     ],
-    tenants: [{ id: TENANT, name: "Demo", status: "active" }],
+    tenants: [
+      {
+        id: TENANT,
+        name: "Demo",
+        status: "active",
+        settings: { payment: { guestTiming } },
+      },
+    ],
     orders: [
       {
         id: ORDER,
@@ -255,6 +265,17 @@ describe("initiateGuestPayment", () => {
       status: "redirect",
       redirectUrl: "https://pesapal.test/checkout/track-1",
     });
+  });
+
+  it("blocks pay-after-service checkout until service or a bill request exists", async () => {
+    const db = seedFor({}, "pay_after_service");
+    const result = await initiateGuestPayment(
+      db as any,
+      { tableId: TABLE, orderId: ORDER, method: "card" },
+      RETURN_URL,
+      fakeAdapter(),
+    );
+    expect(result).toEqual({ ok: false, reason: "not_ready_for_payment" });
   });
 
   it("does not start a checkout for an order that is already fully paid", async () => {

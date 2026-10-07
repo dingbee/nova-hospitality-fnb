@@ -9,6 +9,7 @@ import type {
   UpsertPropertyInput,
   UpsertProductCategoryInput,
   UpsertServiceRequestSettingsInput,
+  UpsertGuestPaymentTimingInput,
   listAllMasterDataSchema,
   listInventoryCategoriesSchema,
 } from "./contracts";
@@ -154,6 +155,42 @@ export async function upsertServiceRequestSettings(
   if (error) throw new Error(error.message);
   return data;
 }
+
+/**
+ * Guest payment timing is an operational policy, not a client-side hint.
+ * The explicit setting is stored beside the existing tenant settings; "auto"
+ * deliberately falls back to the authoritative onboarding operating model.
+ */
+export async function upsertGuestPaymentTiming(
+  sb: Sb,
+  userId: string,
+  input: UpsertGuestPaymentTimingInput,
+) {
+  await assertCapability(sb, userId, input.tenantId, "tenant.manage");
+  const { data: tenant, error: readErr } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", input.tenantId)
+    .single();
+  if (readErr) throw new Error(readErr.message);
+
+  const settings = {
+    ...(tenant?.settings ?? {}),
+    payment: {
+      ...((tenant?.settings as { payment?: Record<string, unknown> } | null)?.payment ?? {}),
+      guestTiming: input.timing,
+    },
+  };
+  const { data, error } = await sb
+    .from("restaurant_tenants")
+    .update({ settings })
+    .eq("id", input.tenantId)
+    .select("id, name, slug, settings")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 
 /* ---------------- Inventory units ---------------- */
 

@@ -20,6 +20,8 @@
  */
 import { recordGuestPayment } from "../sales/pos.server";
 import { resolveGuestTableContext } from "./selforder.server";
+import { fireGuestOrder } from "../kitchen/kitchen.server";
+import { resolveGuestPaymentTiming, type GuestPaymentTiming } from "../payments/payment-timing";
 import { createPesapalAdapter } from "./providers/pesapal.server";
 import type { InitiateGuestPaymentInput } from "./selfpay.contracts";
 
@@ -40,7 +42,7 @@ export const PAYABLE_ORDER_STATUSES = new Set(["open", "sent", "served"]);
 async function loadGuestOrder(sb: Sb, tenantId: string, tableId: string, orderId: string) {
   const { data: order } = await sb
     .from("restaurant_orders")
-    .select("id, order_number, status, payment_state, total, paid_total, currency, table_id")
+    .select("id, order_number, status, payment_state, total, paid_total, currency, table_id, bill_requested_at")
     .eq("tenant_id", tenantId)
     .eq("id", orderId)
     .eq("table_id", tableId)
@@ -68,14 +70,18 @@ async function loadOrderByPesapalMerchantReference(sb: Sb, orderId: string) {
 }
 
 /** The redacted shape both the guest confirmation screen and a payment-outcome response share — order number, totals, payment state, nothing internal. */
-function toOrderStatus(order: {
-  order_number: string;
-  status: string;
-  payment_state: string;
-  total: number;
-  paid_total: number;
-  currency: string;
-}) {
+function toOrderStatus(
+  order: {
+    order_number: string;
+    status: string;
+    payment_state: string;
+    total: number;
+    paid_total: number;
+    currency: string;
+    bill_requested_at?: string | null;
+  },
+  paymentTiming: GuestPaymentTiming,
+) {
   return {
     orderNumber: order.order_number,
     status: order.status,
@@ -84,6 +90,8 @@ function toOrderStatus(order: {
     paidTotal: Number(order.paid_total),
     amountDue: Math.max(0, Number(order.total) - Number(order.paid_total)),
     currency: order.currency,
+    paymentTiming,
+    billRequested: Boolean(order.bill_requested_at),
   };
 }
 
@@ -91,18 +99,23 @@ function toOrderStatus(order: {
 export async function guestOrderStatus(sb: Sb, input: { tableId: string; orderId: string }) {
   const table = await resolveGuestTableContext(sb, input.tableId);
   const order = await loadGuestOrder(sb, table.tenantId, input.tableId, input.orderId);
-  return toOrderStatus(order);
+  return toOrderStatus(order, table.guestPaymentTiming);
 }
 
 /** The same redacted status, scoped by tenant + order id only — for a caller (a provider callback) that has no table in hand. */
 async function orderStatusByTenantAndId(sb: Sb, tenantId: string, orderId: string) {
   const { data } = await sb
     .from("restaurant_orders")
-    .select("order_number, status, payment_state, total, paid_total, currency")
+.select("order_number, status, payment_state, total, paid_total, currency, bill_requested_at")
     .eq("tenant_id", tenantId)
     .eq("id", orderId)
     .maybeSingle();
-  return toOrderStatus(data);
+  const { data: tenant } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", tenantId)
+    .maybeSingle();
+  return toOrderStatus(data, resolveGuestPaymentTiming(tenant?.settings));
 }
 
 /**
@@ -172,6 +185,7 @@ export type InitiateGuestPaymentResult =
   | { ok: false; reason: "already_paid" }
   | { ok: false; reason: "not_payable"; orderStatus: string }
   | { ok: false; reason: "provider_not_configured" }
+  | { ok: false; reason: "not_ready_for_payment" }
   | { ok: false; reason: "initiation_in_progress" };
 
 /**
@@ -269,6 +283,21 @@ export async function initiateGuestPayment(
   const amountDue = Math.max(0, Number(order.total) - Number(order.paid_total));
   if (amountDue <= 0) {
     return { ok: false, reason: "already_paid" };
+  }
+
+  const paymentTiming = resolveGuestPaymentTiming(
+    (await sb
+      .from("restaurant_tenants")
+      .select("settings")
+      .eq("id", table.tenantId)
+      .maybeSingle()).data?.settings,
+  );
+  if (
+    paymentTiming === "pay_after_service" &&
+    order.status !== "served" &&
+    !order.bill_requested_at
+  ) {
+    return { ok: false, reason: "not_ready_for_payment" };
   }
   if (!provider) {
     return { ok: false, reason: "provider_not_configured" };
@@ -447,6 +476,18 @@ export async function confirmGuestPayment(
     currency: order.currency,
     providerReference,
   });
+
+  if (
+    resolveGuestPaymentTiming(
+      (await sb
+        .from("restaurant_tenants")
+        .select("settings")
+        .eq("id", order.tenantId)
+        .maybeSingle()).data?.settings,
+    ) === "pay_first"
+  ) {
+    await fireGuestOrder(sb, { tenantId: order.tenantId, orderId: order.id });
+  }
 
   return {
     ok: true,

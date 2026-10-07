@@ -26,6 +26,7 @@
 import { fetchSellableCatalog } from "../sales/pos.server";
 import { createGuestOrder, recalcOrder, type SalesLineInput } from "../sales/sales.server";
 import { fireGuestOrder } from "../kitchen/kitchen.server";
+import { resolveGuestPaymentTiming, type GuestPaymentTiming } from "../payments/payment-timing";
 import type { GuestLineInput } from "./selforder.contracts";
 
 type Sb = any;
@@ -77,6 +78,7 @@ export type GuestTableContext = {
   propertyId: string | null;
   locationId: string | null;
   currency: string;
+  guestPaymentTiming: GuestPaymentTiming;
   /**
    * How long after a service request is resolved before the guest may
    * request staff again — settings.serviceRequests.cooldownSeconds, the
@@ -125,10 +127,12 @@ export async function resolveGuestTableContext(
       defaultCurrency?: string | null;
     };
     serviceRequests?: { cooldownSeconds?: number };
+    payment?: { guestTiming?: string };
   } | null;
   const business = settings?.business;
   const tradingName = (business?.tradingName ?? "").trim();
   const businessLogoUrl = business?.logoUrl?.trim() || null;
+  const guestPaymentTiming = resolveGuestPaymentTiming(settings);
   const configuredCooldown = settings?.serviceRequests?.cooldownSeconds;
   const serviceRequestCooldownSeconds =
     typeof configuredCooldown === "number" && configuredCooldown >= 0
@@ -172,6 +176,7 @@ export async function resolveGuestTableContext(
     propertyId: table.property_id ?? null,
     locationId: table.location_id ?? null,
     currency,
+    guestPaymentTiming,
     serviceRequestCooldownSeconds,
   };
 }
@@ -514,6 +519,7 @@ export async function submitGuestOrder(
         ...(await recalcOrder(sb, table.tenantId, existing.id)),
         guestSessionToken: session.token,
         session: await guestSessionProjection(sb, { tableId: table.tableId }),
+        paymentTiming: table.guestPaymentTiming,
         idempotent: true,
       };
     }
@@ -590,11 +596,9 @@ export async function submitGuestOrder(
     throw err;
   }
 
-  // A guest tapping "Send order" IS the send-to-kitchen action — there is no
-  // separate staff review step in this flow, and the confirmation screen
-  // already tells the guest their order is on its way. Without this, the
-  // order sat at "open" until a staff member happened to notice and fire it
-  // by hand, and the guest's own tracker never advanced past "received".
+  // The guest confirmation is the production handoff only when the active
+  // payment policy is pay-after-service. Under pay-first, the order deliberately
+  // remains un-fired until server-confirmed settlement releases the production gate.
   // Best-effort: the order itself is already the record that matters, so a
   // firing hiccup here must never fail an order the guest already placed
   // successfully — it just leaves the order for a staff member to fire
@@ -606,7 +610,7 @@ export async function submitGuestOrder(
   // items still "ordered" are fired; a second call on the same order finds
   // nothing left and returns {fired: 0}), so this is a belt-and-suspenders
   // skip, not a correctness requirement.
-  if (!order.idempotent) {
+  if (!order.idempotent && table.guestPaymentTiming === "pay_after_service") {
     await fireGuestOrder(sb, { tenantId: table.tenantId, orderId: order.id });
   }
 
@@ -618,6 +622,7 @@ export async function submitGuestOrder(
   const { guestSessionProjection } = await import("./selfsession.server");
   return {
     ...order,
+    paymentTiming: table.guestPaymentTiming,
     guestSessionToken: session.token,
     session: await guestSessionProjection(sb, { tableId: table.tableId }),
   };

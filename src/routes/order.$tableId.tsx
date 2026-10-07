@@ -971,7 +971,13 @@ function TableSessionScreen({
         <CheckCircle2 className="size-9 text-primary" aria-hidden />
       </span>
       <div>
-        <h1 className="font-display mt-2 text-2xl text-foreground">{isContinuation ? "Continue your table" : "Order sent"}</h1>
+        <h1 className="font-display mt-2 text-2xl text-foreground">
+          {isContinuation
+            ? "Continue your table"
+            : order.paymentTiming === "pay_first"
+              ? "Order received"
+              : "Order sent"}
+        </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {data?.session ? `Your table — ${data.session.table.name}` : "Your dining session"}
         </p>
@@ -1806,6 +1812,21 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
   const s = status.data;
   const currency = s.currency;
 
+  if (
+    s.paymentTiming === "pay_after_service" &&
+    s.status !== "served" &&
+    !s.billRequested
+  ) {
+    return (
+      <div className="mt-2 w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
+        <p className="text-sm font-semibold">Payment after service</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Your order is still being prepared. Payment will become available after service, or after you request the bill.
+        </p>
+      </div>
+    );
+  }
+
   if (s.paymentState === "paid" || s.amountDue <= 0) {
     return (
       <div className="mt-2 w-full max-w-sm rounded-2xl border border-primary/30 bg-primary/5 p-4 text-left">
@@ -1854,6 +1875,15 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
 
   return (
     <div className="mt-2 w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
+      {s.paymentTiming === "pay_first" && (
+        <div className="mb-3 rounded-xl border border-primary/30 bg-primary/5 p-3">
+          <p className="text-sm font-semibold text-primary">Payment required before preparation</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Pay this order to send it to the kitchen/bar.
+          </p>
+        </div>
+      )}
+
       <div className="flex items-center justify-between text-sm">
         <span className="text-muted-foreground">Amount due</span>
         <span className="font-semibold">{money(s.amountDue, currency)}</span>
@@ -1918,6 +1948,8 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
               {initiateResult.reason === "already_paid" && "This order is already settled."}
               {initiateResult.reason === "initiation_in_progress" &&
                 "A payment is already being started for this order — please wait a moment and try again."}
+              {initiateResult.reason === "not_ready_for_payment" &&
+                "Payment will be available after service or once you request the bill."}
             </p>
           )}
           {(initiate.isError || confirm.isError) && (

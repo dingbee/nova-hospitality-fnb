@@ -26,6 +26,7 @@ import {
 import { emitRestaurantEvent } from "../events/emit.server";
 import { BAR_STATION_TYPES } from "../bar/contracts";
 import { groupItemsByStation } from "./grouping";
+import { isSettledPaymentState, resolveGuestPaymentTiming } from "../payments/payment-timing";
 
 type Sb = any;
 
@@ -299,13 +300,24 @@ async function fireOrderItemsCore(
 ) {
   const { data: order } = await sb
     .from("restaurant_orders")
-    .select("id, order_number, status, location_id, property_id")
+    .select("id, order_number, status, payment_state, location_id, property_id")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.orderId)
     .single();
   if (!order) throw new Error("Order not found.");
   if (["closed", "cancelled", "voided"].includes(order.status)) {
     throw new Error("A closed order cannot be fired to the kitchen.");
+  }
+
+  const { data: tenant, error: tenantError } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", input.tenantId)
+    .maybeSingle();
+  if (tenantError) throw new Error("Payment timing policy could not be resolved.");
+  const paymentTiming = resolveGuestPaymentTiming(tenant?.settings);
+  if (paymentTiming === "pay_first" && !isSettledPaymentState(order.payment_state)) {
+    throw new Error("Payment is required before this order can be sent to production.");
   }
 
   let itemQuery = sb

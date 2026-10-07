@@ -11,6 +11,7 @@ import { Field, FieldRow } from "@/modules/restaurant/ui/forms";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import {
   upsertRestaurantBusinessProfileFn,
+  upsertGuestPaymentTimingFn,
 } from "../../masterdata.functions";
 import { removeTenantLogoFn, uploadTenantLogoFn } from "../../tenant-logo.functions";
 import { validateTenantLogoFile, TENANT_LOGO_MIME_TYPES } from "../../tenant-logo.contracts";
@@ -107,6 +108,9 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
   const business =
     (data.tenant?.settings as { business?: Record<string, unknown> } | null)?.business ?? {};
   const logoUrl = (business.logoUrl as string | null | undefined) ?? null;
+  const paymentSettings =
+    (data.tenant?.settings as { payment?: { guestTiming?: string } } | null)?.payment ?? {};
+  const configuredGuestTiming = paymentSettings.guestTiming ?? "auto";
   const [form, setForm] = React.useState({
     legalName: (business.legalName as string) ?? data.tenant?.name ?? "",
     tradingName: (business.tradingName as string) ?? "",
@@ -118,6 +122,7 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
     email: (business.email as string) ?? "",
     address: (business.address as string) ?? "",
     website: (business.website as string) ?? "",
+    guestPaymentTiming: configuredGuestTiming,
   });
 
   React.useEffect(() => {
@@ -132,12 +137,26 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
       email: (business.email as string) ?? "",
       address: (business.address as string) ?? "",
       website: (business.website as string) ?? "",
+      guestPaymentTiming: configuredGuestTiming,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.tenant?.id]);
 
   const qc = useQueryClient();
   const fn = useServerFn(upsertRestaurantBusinessProfileFn);
+  const timingFn = useServerFn(upsertGuestPaymentTimingFn);
+  const timingMutation = useAdminMutation({
+    mutationFn: () =>
+      timingFn({
+        data: {
+          tenantId,
+          timing: form.guestPaymentTiming as "auto" | "pay_first" | "pay_after_service",
+        },
+      }),
+    successMessage: "Guest payment timing saved.",
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["restaurant.masterdata", tenantId] }),
+  });
+
   const mutation = useAdminMutation({
     mutationFn: fn,
     successMessage: "Business profile saved.",
@@ -164,7 +183,8 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
   });
 
   return (
-    <SectionCard
+    <>
+      <SectionCard
       title="Business profile"
       description="Legal identity used across invoices, receipts and reports."
     >
@@ -291,6 +311,41 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
           </Button>
         </div>
       </form>
-    </SectionCard>
+      </SectionCard>
+      <SectionCard
+        title="Guest payment timing"
+        description="Choose whether guest orders are paid before production or settled after service. Automatic follows the restaurant operating model."
+      >
+        <div className="grid gap-2 md:grid-cols-3">
+          {[
+            ["auto", "Automatic", "Quick/counter service pays first; table/bar service pays after service."],
+            ["pay_first", "Pay first", "Payment is required before the order is sent to production."],
+            ["pay_after_service", "Pay after service", "The order can be produced and served before payment."],
+          ].map(([value, label, description]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={form.guestPaymentTiming === value}
+              onClick={() => setForm((f) => ({ ...f, guestPaymentTiming: value }))}
+              className={`rounded-lg border p-3 text-left transition-colors ${form.guestPaymentTiming === value ? "border-primary bg-primary/10" : "border-border hover:border-primary/40"}`}
+            >
+              <span className="block text-sm font-medium">{label}</span>
+              <span className="mt-1 block text-xs text-muted-foreground">{description}</span>
+            </button>
+          ))}
+        </div>
+        <div className="mt-3 flex justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 min-w-32"
+            disabled={timingMutation.isPending}
+            onClick={() => timingMutation.mutate()}
+          >
+            {timingMutation.isPending ? "Saving…" : "Save timing"}
+          </Button>
+        </div>
+      </SectionCard>
+    </>
   );
 }
