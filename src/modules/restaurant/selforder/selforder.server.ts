@@ -119,7 +119,11 @@ export async function resolveGuestTableContext(
     throw new Error("This table is not available for ordering.");
   }
   const settings = tenant.settings as {
-    business?: { tradingName?: string; logoUrl?: string | null };
+    business?: {
+      tradingName?: string;
+      logoUrl?: string | null;
+      defaultCurrency?: string | null;
+    };
     serviceRequests?: { cooldownSeconds?: number };
   } | null;
   const business = settings?.business;
@@ -130,8 +134,11 @@ export async function resolveGuestTableContext(
     typeof configuredCooldown === "number" && configuredCooldown >= 0
       ? configuredCooldown
       : DEFAULT_SERVICE_REQUEST_COOLDOWN_SECONDS;
-  // Currency follows the table's operating property, matching the POS.
-  // Tenant base currency is only a fallback for legacy tables without a property.
+  // Currency follows the same authority chain as Restaurant Setup:
+  // operating property's currency first, then the tenant's configured
+  // business.defaultCurrency for legacy/unassigned tables, then the
+  // tenant's base-currency registry for older tenants. USD must never be
+  // introduced as a guest-ordering default.
   const currency = await (async () => {
     if (table.property_id) {
       const { data: property } = await sb
@@ -142,6 +149,9 @@ export async function resolveGuestTableContext(
         .maybeSingle();
       if ((property as any)?.currency) return String((property as any).currency).toUpperCase();
     }
+    const configuredTenantCurrency = String(settings?.business?.defaultCurrency ?? "").trim();
+    if (configuredTenantCurrency) return configuredTenantCurrency.toUpperCase();
+
     const { data: base } = await sb
       .from("restaurant_currencies")
       .select("code")
