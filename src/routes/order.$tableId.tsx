@@ -1394,7 +1394,7 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
       lastNotifiedStageRef.current = current;
       return;
     }
-    if (current !== lastNotifiedStageRef.current && current === "ready") {
+    if (current !== lastNotifiedStageRef.current && current === "ready" && progress.data?.readyAlert !== false) {
       playGuestAttention([120, 60, 120]);
       setReadyAcknowledged(false);
 
@@ -1404,7 +1404,11 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
       if (typeof Notification !== "undefined" && Notification.permission === "granted") {
         try {
           new Notification("Your order is ready", {
-            body: "Please collect your order from the service counter.",
+            body: progress.data?.collectionMethod === "room_delivery"
+              ? "Your order is ready for delivery to your room."
+              : progress.data?.collectionMethod === "staff_serves"
+                ? "Your order is ready and will be served shortly."
+                : "Please collect your order from the service counter.",
             tag: `lexibite-order-ready-${orderId}`,
           });
         } catch {
@@ -1413,7 +1417,7 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
       }
     }
     lastNotifiedStageRef.current = current;
-  }, [progress.data?.overallStage, orderId, playGuestAttention]);
+  }, [progress.data?.overallStage, progress.data?.readyAlert, progress.data?.collectionMethod, orderId, playGuestAttention]);
 
   // Keep a self-service/food-court phone awake while the order is ready.
   // Wake Lock is progressive enhancement and is intentionally best-effort.
