@@ -105,6 +105,7 @@ describe("resolveGuestTableContext", () => {
         tenant_id: "tenant-1",
         property_id: "prop-1",
         location_id: "loc-1",
+        currency: "TZS",
         active: true,
       },
       {
@@ -129,6 +130,11 @@ describe("resolveGuestTableContext", () => {
       propertyId: "prop-1",
       locationId: "loc-1",
     });
+  });
+
+  it("uses the owning property's currency, matching the POS operating context", async () => {
+    const ctx = await resolveGuestTableContext(fakeSb(baseRows) as any, "table-1");
+    expect(ctx.currency).toBe("TZS");
   });
 
   it("refuses an inactive table", async () => {
