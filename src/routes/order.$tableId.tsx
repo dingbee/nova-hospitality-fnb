@@ -1422,7 +1422,7 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
   // Keep a self-service/food-court phone awake while the order is ready.
   // Wake Lock is progressive enhancement and is intentionally best-effort.
   useEffect(() => {
-    if (progress.data?.overallStage !== "ready") return;
+    if (progress.data?.overallStage !== "ready" || progress.data?.readyAlert === false) return;
     const nav = navigator as Navigator & {
       wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> };
     };
@@ -1447,7 +1447,7 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
   }, [progress.data?.overallStage]);
 
   useEffect(() => {
-    if (progress.data?.overallStage !== "ready") return;
+    if (progress.data?.overallStage !== "ready" || progress.data?.readyAlert === false) return;
     const previousTitle = document.title;
     document.title = "ORDER READY — LexiBite";
     return () => {
@@ -1457,6 +1457,7 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
 
   if (progress.isPending || progress.isError || !progress.data) return null;
   const { overallStage, streams } = progress.data;
+  const showReadyAlert = overallStage === "ready" && progress.data.readyAlert !== false;
 
   if (overallStage === "cancelled") {
     return (
@@ -1474,14 +1475,14 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
   return (
     <div
       className={`mt-2 w-full max-w-sm rounded-2xl border p-4 text-left ${
-        overallStage === "ready" && !readyAcknowledged
+        showReadyAlert && !readyAcknowledged
           ? "border-primary bg-primary/10 shadow-lg ring-2 ring-primary/20"
           : "bg-card"
       }`}
-      role={overallStage === "ready" && !readyAcknowledged ? "alert" : undefined}
-      aria-live={overallStage === "ready" && !readyAcknowledged ? "assertive" : "polite"}
+      role={showReadyAlert && !readyAcknowledged ? "alert" : undefined}
+      aria-live={showReadyAlert && !readyAcknowledged ? "assertive" : "polite"}
     >
-      {overallStage === "ready" && !readyAcknowledged ? (
+      {showReadyAlert && !readyAcknowledged ? (
         <div className="space-y-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-primary">
@@ -1491,7 +1492,11 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
               YOUR ORDER IS READY
             </p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Please collect your order from the service counter.
+              {progress.data.collectionMethod === "room_delivery"
+                ? "Your order is ready for delivery to your room."
+                : progress.data.collectionMethod === "staff_serves"
+                  ? "Your order is ready and will be served shortly."
+                  : "Please collect your order from the service counter."}
             </p>
           </div>
           <div className="rounded-xl bg-background/80 px-3 py-2 text-sm">
