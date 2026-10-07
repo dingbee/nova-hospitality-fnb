@@ -449,6 +449,7 @@ function GuestOrderPage() {
       order_number: string;
       total: number;
       guestSessionToken?: string;
+      paymentTiming: "pay_first" | "pay_after_service";
     }) => {
       writeStoredOrderId(tableId, order.id);
       if (order.guestSessionToken) {
