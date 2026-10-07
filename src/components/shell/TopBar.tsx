@@ -141,6 +141,56 @@ export function TopBar({
           </button>
         </div>
       </div>
+      {/* Mobile workspace context: intentionally separate from the primary header so the
+          tenant/property controls never compete with navigation, theme or account actions. */}
+      {workspace?.tenant && (
+        <div className="border-t border-[color:var(--nova-line)] px-3 py-2 lg:hidden">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="nova-chip min-w-0 max-w-[52%] flex-1 items-center gap-1.5 truncate">
+              {workspace.tenant.settings?.business?.logoUrl && (
+                <img
+                  src={workspace.tenant.settings.business.logoUrl}
+                  alt=""
+                  className="size-4 shrink-0 rounded-sm object-contain"
+                />
+              )}
+              <span className="truncate">
+                {workspace.tenant.settings?.business?.tradingName || workspace.tenant.name}
+              </span>
+            </span>
+
+            {workspace.properties.length > 1 ? (
+              <label className="nova-action inline-flex min-w-0 flex-1 items-center gap-1.5 bg-[color:var(--nova-surface-2)] px-2.5 text-xs">
+                <Building2
+                  className="size-3.5 shrink-0 text-[color:var(--nova-accent)]"
+                  aria-hidden="true"
+                />
+                <span className="sr-only">Active property</span>
+                <select
+                  aria-label="Active property"
+                  value={workspace.activePropertyId ?? ""}
+                  onChange={(event) => workspace.selectProperty(event.target.value)}
+                  className="min-w-0 flex-1 border-0 bg-transparent px-0 py-1 text-xs font-medium outline-none"
+                >
+                  {workspace.properties.map((property) => (
+                    <option key={property.id} value={property.id}>
+                      {property.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : workspace.activeProperty ? (
+              <span className="nova-chip inline-flex min-w-0 flex-1 items-center gap-1.5 truncate">
+                <Building2
+                  className="size-3.5 shrink-0 text-[color:var(--nova-accent)]"
+                  aria-hidden="true"
+                />
+                <span className="truncate">{workspace.activeProperty.name}</span>
+              </span>
+            ) : null}
+          </div>
+        </div>
+      )}
     </header>
   );
 }
