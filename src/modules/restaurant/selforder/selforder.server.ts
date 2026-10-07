@@ -130,14 +130,25 @@ export async function resolveGuestTableContext(
     typeof configuredCooldown === "number" && configuredCooldown >= 0
       ? configuredCooldown
       : DEFAULT_SERVICE_REQUEST_COOLDOWN_SECONDS;
+  // Currency follows the table's operating property, matching the POS.
+  // Tenant base currency is only a fallback for legacy tables without a property.
   const currency = await (async () => {
-    const { data } = await sb
+    if (table.property_id) {
+      const { data: property } = await sb
+        .from("restaurant_properties")
+        .select("currency")
+        .eq("tenant_id", table.tenant_id)
+        .eq("id", table.property_id)
+        .maybeSingle();
+      if ((property as any)?.currency) return String((property as any).currency).toUpperCase();
+    }
+    const { data: base } = await sb
       .from("restaurant_currencies")
       .select("code")
       .eq("tenant_id", table.tenant_id)
       .eq("is_base", true)
       .limit(1);
-    return ((data ?? []) as any[])[0]?.code ?? "USD";
+    return String(((base ?? []) as any[])[0]?.code ?? "TZS").toUpperCase();
   })();
 
   return {
