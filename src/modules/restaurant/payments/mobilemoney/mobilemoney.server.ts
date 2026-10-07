@@ -302,7 +302,7 @@ export async function requestGuestMobileMoneyCollection(
   const { data: order } = await sb
     .from("restaurant_orders")
     .select(
-      "id, tenant_id, property_id, location_id, currency, status, total, paid_total, table_id",
+      "id, tenant_id, property_id, location_id, currency, status, total, paid_total, table_id, bill_requested_at",
     )
     .eq("tenant_id", table.tenantId)
     .eq("id", input.orderId)
@@ -317,6 +317,21 @@ export async function requestGuestMobileMoneyCollection(
   // is the one place both this path and the POS path share, so a future
   // change to either can never silently reopen the amount-authority gap).
   const amountDue = Math.max(0, Number(order.total) - Number(order.paid_total));
+
+  const paymentTiming = resolveGuestPaymentTiming(
+    (await sb
+      .from("restaurant_tenants")
+      .select("settings")
+      .eq("id", table.tenantId)
+      .maybeSingle()).data?.settings,
+  );
+  if (
+    paymentTiming === "pay_after_service" &&
+    order.status !== "served" &&
+    !order.bill_requested_at
+  ) {
+    throw new Error("Payment will be available after service or once you request the bill.");
+  }
 
   return createCollectionForOrder(
     sb,
