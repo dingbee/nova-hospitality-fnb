@@ -28,7 +28,7 @@ export function LocationsPanel({
   const [open, setOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Location | null>(null);
   const empty = {
-    propertyId: data.properties[0]?.id ?? "",
+    propertyId: data.activePropertyId ?? data.properties[0]?.id ?? "",
     parentId: "" as string | null,
     name: "",
     slug: "",

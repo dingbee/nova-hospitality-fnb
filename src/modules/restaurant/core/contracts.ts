@@ -154,13 +154,20 @@ export interface RestaurantWorkspace {
   properties: RestaurantProperty[];
   locations: RestaurantLocation[];
   subscription: RestaurantSubscription | null;
+  /** Canonical operating context resolved from validated property/outlet selection. */
+  activePropertyId: string | null;
+  activeLocationId: string | null;
   /** Restaurant roles the caller holds in the active tenant. */
   roles: RestaurantRole[];
   /** True when the caller is a host-platform owner/admin/manager. */
   platformAdmin: boolean;
 }
 
-export const workspaceSchema = z.object({ tenantId: uuid.optional() });
+export const workspaceSchema = z.object({
+  tenantId: uuid.optional(),
+  propertyId: uuid.optional(),
+  locationId: uuid.optional(),
+});
 
 /* ---------------- Menu ---------------- */
 

@@ -130,8 +130,10 @@ function PosWorkspaceBody({
   const canVoid = hasRestaurantCapability(roles, "sales.void", platformAdmin);
   const canReopen = hasRestaurantCapability(roles, "sales.reopen", platformAdmin);
   const canRoomCharge = hasRestaurantCapability(roles, "sales.room_charge", platformAdmin);
-  const currency = ws.data?.properties?.[0]?.currency ?? "TZS";
-  const workspacePropertyId = ws.data?.properties?.[0]?.id ?? null;
+  const activeProperty = ws.data?.properties?.find((p) => p.id === ws.data?.activePropertyId) ?? null;
+  const currency = activeProperty?.currency ?? "TZS";
+  const workspacePropertyId = ws.data?.activePropertyId ?? null;
+  const workspaceLocationId = ws.data?.activeLocationId ?? null;
   const ownerOrAdmin = Boolean(platformAdmin) || roles.some((role) =>
     ["owner", "general_manager", "restaurant_manager"].includes(role),
   );
@@ -299,7 +301,7 @@ function PosWorkspaceBody({
   const offlineSync = useOfflineSync({
     tenantId,
     propertyId: workspacePropertyId,
-    outletId: currentLocationId ?? null,
+    outletId: workspaceLocationId,
   });
 
   const openBill = useAdminMutation({
@@ -308,7 +310,7 @@ function PosWorkspaceBody({
         const op = await offlineSync.queueOpenOrder({
           tenantId: tenantId!,
           propertyId: workspacePropertyId,
-          locationId: vars.tableId ?? null,
+          locationId: workspaceLocationId,
           tableId: vars.tableId,
           orderType: vars.tableId ? "dine_in" : "bar",
           guestCount: vars.guestCount,

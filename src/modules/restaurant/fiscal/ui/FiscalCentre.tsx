@@ -56,7 +56,7 @@ export function FiscalCentre() {
   const tenantId = ws.data?.tenant?.id ?? "";
   const locations: any[] = useMemo(() => ws.data?.locations ?? [], [ws.data?.locations]);
   const [locationId, setLocationId] = useState<string>("");
-  const activeLocationId = locationId || locations[0]?.id || "";
+  const activeLocationId = locationId || ws.data?.activeLocationId || "";
   const qc = useQueryClient();
 
   const getConfig = useServerFn(getFiscalConfigurationFn);
