@@ -27,6 +27,7 @@ import { fetchSellableCatalog } from "../sales/pos.server";
 import { createGuestOrder, recalcOrder, type SalesLineInput } from "../sales/sales.server";
 import { fireGuestOrder } from "../kitchen/kitchen.server";
 import { resolveGuestPaymentTiming, type GuestPaymentTiming } from "../payments/payment-timing";
+import { resolveServiceConfiguration, type ResolvedServiceConfiguration } from "../operations/service-config";
 import type { GuestLineInput } from "./selforder.contracts";
 
 type Sb = any;
@@ -79,6 +80,7 @@ export type GuestTableContext = {
   locationId: string | null;
   currency: string;
   guestPaymentTiming: GuestPaymentTiming;
+  serviceConfiguration: ResolvedServiceConfiguration;
   /**
    * How long after a service request is resolved before the guest may
    * request staff again — settings.serviceRequests.cooldownSeconds, the
@@ -133,6 +135,7 @@ export async function resolveGuestTableContext(
   const tradingName = (business?.tradingName ?? "").trim();
   const businessLogoUrl = business?.logoUrl?.trim() || null;
   const guestPaymentTiming = resolveGuestPaymentTiming(settings);
+  const serviceConfiguration = resolveServiceConfiguration(settings);
   const configuredCooldown = settings?.serviceRequests?.cooldownSeconds;
   const serviceRequestCooldownSeconds =
     typeof configuredCooldown === "number" && configuredCooldown >= 0
@@ -177,6 +180,7 @@ export async function resolveGuestTableContext(
     locationId: table.location_id ?? null,
     currency,
     guestPaymentTiming,
+    serviceConfiguration,
     serviceRequestCooldownSeconds,
   };
 }
