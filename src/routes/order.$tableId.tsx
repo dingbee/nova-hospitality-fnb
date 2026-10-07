@@ -308,7 +308,7 @@ function GuestOrderPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- act once when the outcome first resolves, not on every render
   }, [recoveryOutcome]);
 
-  const currency = menu.data?.table.currency ?? "USD";
+  const currency = menu.data?.table.currency ?? "TZS";
   const items = (menu.data?.items ?? []) as MenuItem[];
   const categories = (menu.data?.categories ?? []) as { id: string; name: string }[];
   const groupsById = useMemo(() => {
@@ -951,7 +951,7 @@ function TableSessionScreen({
   });
 
   const data = session.data;
-  const currency = data?.totals.currency ?? "USD";
+  const currency = data?.totals.currency ?? "TZS";
   const orders = data?.orders ?? [];
   // The order just placed is always shown first, whatever the session's own
   // chronological order — it's what the guest came to this screen to see.
