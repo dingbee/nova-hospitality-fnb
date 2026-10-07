@@ -12,10 +12,12 @@ import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import {
   upsertRestaurantBusinessProfileFn,
   upsertGuestPaymentTimingFn,
+  upsertOperationalServiceConfigFn,
 } from "../../masterdata.functions";
 import { removeTenantLogoFn, uploadTenantLogoFn } from "../../tenant-logo.functions";
 import { validateTenantLogoFile, TENANT_LOGO_MIME_TYPES } from "../../tenant-logo.contracts";
 import type { MasterData } from "../types";
+import { resolveServiceConfiguration } from "../../../operations/service-config";
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -111,6 +113,12 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
   const paymentSettings =
     (data.tenant?.settings as { payment?: { guestTiming?: string } } | null)?.payment ?? {};
   const configuredGuestTiming = paymentSettings.guestTiming ?? "auto";
+  const operationsSettings =
+    (data.tenant?.settings as { operations?: { serviceMode?: string; collectionMethod?: string; readyAlert?: boolean } } | null)?.operations ?? {};
+  const resolvedServiceConfiguration = resolveServiceConfiguration(data.tenant?.settings ?? null);
+  const configuredServiceMode = operationsSettings.serviceMode ?? "auto";
+  const configuredCollectionMethod = operationsSettings.collectionMethod ?? "auto";
+  const configuredReadyAlert = operationsSettings.readyAlert ?? resolvedServiceConfiguration.readyAlert;
   const [form, setForm] = React.useState({
     legalName: (business.legalName as string) ?? data.tenant?.name ?? "",
     tradingName: (business.tradingName as string) ?? "",
@@ -123,6 +131,9 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
     address: (business.address as string) ?? "",
     website: (business.website as string) ?? "",
     guestPaymentTiming: configuredGuestTiming,
+    serviceMode: configuredServiceMode,
+    collectionMethod: configuredCollectionMethod,
+    readyAlert: configuredReadyAlert,
   });
 
   React.useEffect(() => {
@@ -138,6 +149,9 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
       address: (business.address as string) ?? "",
       website: (business.website as string) ?? "",
       guestPaymentTiming: configuredGuestTiming,
+      serviceMode: configuredServiceMode,
+      collectionMethod: configuredCollectionMethod,
+      readyAlert: configuredReadyAlert,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.tenant?.id]);
@@ -145,6 +159,21 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
   const qc = useQueryClient();
   const fn = useServerFn(upsertRestaurantBusinessProfileFn);
   const timingFn = useServerFn(upsertGuestPaymentTimingFn);
+  const serviceConfigFn = useServerFn(upsertOperationalServiceConfigFn);
+  const serviceConfigMutation = useAdminMutation({
+    mutationFn: () =>
+      serviceConfigFn({
+        data: {
+          tenantId,
+          serviceMode: form.serviceMode as "auto" | "table_service" | "self_service" | "counter_service" | "takeaway" | "room_service",
+          collectionMethod: form.collectionMethod as "auto" | "staff_serves" | "guest_collects" | "pickup_counter" | "room_delivery",
+          readyAlert: form.readyAlert,
+        },
+      }),
+    successMessage: "Operational service configuration saved.",
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["restaurant.masterdata", tenantId] }),
+  });
+
   const timingMutation = useAdminMutation({
     mutationFn: () =>
       timingFn({
@@ -345,6 +374,62 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
             {timingMutation.isPending ? "Saving…" : "Save timing"}
           </Button>
         </div>
+      <SectionCard
+        title="Operational service"
+        description="Configure how guests are served and how orders are collected. Payment timing remains a separate policy."
+      >
+        <div className="space-y-4">
+          <Field label="Service mode">
+            <select
+              className="h-11 w-full rounded-md border bg-background px-3 text-sm"
+              value={form.serviceMode}
+              onChange={(e) => setForm((f) => ({ ...f, serviceMode: e.target.value }))}
+            >
+              <option value="auto">Automatic — follow operating model</option>
+              <option value="table_service">Table service</option>
+              <option value="self_service">Self-service / collection</option>
+              <option value="counter_service">Counter service</option>
+              <option value="takeaway">Takeaway</option>
+              <option value="room_service">Room service</option>
+            </select>
+          </Field>
+          <Field label="Collection method">
+            <select
+              className="h-11 w-full rounded-md border bg-background px-3 text-sm"
+              value={form.collectionMethod}
+              onChange={(e) => setForm((f) => ({ ...f, collectionMethod: e.target.value }))}
+            >
+              <option value="auto">Automatic — follow service mode</option>
+              <option value="staff_serves">Staff serves</option>
+              <option value="guest_collects">Guest collects</option>
+              <option value="pickup_counter">Pickup counter</option>
+              <option value="room_delivery">Room delivery</option>
+            </select>
+          </Field>
+          <label className="flex items-center justify-between gap-4 rounded-lg border p-3">
+            <span>
+              <span className="block text-sm font-medium">Ready notification</span>
+              <span className="mt-1 block text-xs text-muted-foreground">Use the guest portal sound/vibration alert when an order becomes ready.</span>
+            </span>
+            <input
+              type="checkbox"
+              checked={form.readyAlert}
+              onChange={(e) => setForm((f) => ({ ...f, readyAlert: e.target.checked }))}
+              className="size-5"
+            />
+          </label>
+          <div className="flex justify-end border-t pt-4">
+            <Button
+              type="button"
+              className="h-11 min-w-32"
+              disabled={serviceConfigMutation.isPending}
+              onClick={() => serviceConfigMutation.mutate()}
+            >
+              {serviceConfigMutation.isPending ? "Saving…" : "Save service"}
+            </Button>
+          </div>
+        </div>
+      </SectionCard>
       </SectionCard>
     </>
   );

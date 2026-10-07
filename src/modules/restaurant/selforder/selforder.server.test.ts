@@ -492,6 +492,12 @@ const TABLE_1: GuestTableContext = {
   propertyId: "prop-1",
   locationId: "loc-1",
   currency: "USD",
+  guestPaymentTiming: "pay_after_service",
+  serviceConfiguration: {
+    serviceMode: "table_service",
+    collectionMethod: "staff_serves",
+    readyAlert: false,
+  },
   serviceRequestCooldownSeconds: 300,
 };
 

@@ -43,6 +43,21 @@ describe("guest payment timing policy", () => {
     ).toBe("pay_after_service");
   });
 
+  it("uses explicit service configuration for automatic payment timing", () => {
+    expect(
+      resolveGuestPaymentTiming({
+        onboarding: { operatingMode: "table_service" },
+        operations: { serviceMode: "self_service" },
+      }),
+    ).toBe("pay_first");
+    expect(
+      resolveGuestPaymentTiming({
+        onboarding: { operatingMode: "quick_service" },
+        operations: { serviceMode: "room_service" },
+      }),
+    ).toBe("pay_after_service");
+  });
+
   it("recognizes only settled payment states as paid-for-production", () => {
     expect(isSettledPaymentState("paid")).toBe(true);
     expect(isSettledPaymentState("comped")).toBe(true);

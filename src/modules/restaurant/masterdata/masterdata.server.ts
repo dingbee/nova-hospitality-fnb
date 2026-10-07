@@ -10,6 +10,7 @@ import type {
   UpsertProductCategoryInput,
   UpsertServiceRequestSettingsInput,
   UpsertGuestPaymentTimingInput,
+  UpsertOperationalServiceConfigInput,
   listAllMasterDataSchema,
   listInventoryCategoriesSchema,
 } from "./contracts";
@@ -191,6 +192,42 @@ export async function upsertGuestPaymentTiming(
   return data;
 }
 
+
+/**
+ * Operational service configuration is independent from payment timing.
+ * "auto" values preserve the existing onboarding operating model defaults.
+ */
+export async function upsertOperationalServiceConfig(
+  sb: Sb,
+  userId: string,
+  input: UpsertOperationalServiceConfigInput,
+) {
+  await assertCapability(sb, userId, input.tenantId, "tenant.manage");
+  const { data: tenant, error: readErr } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", input.tenantId)
+    .single();
+  if (readErr) throw new Error(readErr.message);
+
+  const settings = {
+    ...(tenant?.settings ?? {}),
+    operations: {
+      ...((tenant?.settings as { operations?: Record<string, unknown> } | null)?.operations ?? {}),
+      serviceMode: input.serviceMode,
+      collectionMethod: input.collectionMethod,
+      readyAlert: input.readyAlert,
+    },
+  };
+  const { data, error } = await sb
+    .from("restaurant_tenants")
+    .update({ settings })
+    .eq("id", input.tenantId)
+    .select("id, name, slug, settings")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
 
 /* ---------------- Inventory units ---------------- */
 
