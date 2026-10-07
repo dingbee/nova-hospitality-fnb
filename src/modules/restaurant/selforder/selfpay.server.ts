@@ -21,7 +21,7 @@
 import { recordGuestPayment } from "../sales/pos.server";
 import { resolveGuestTableContext } from "./selforder.server";
 import { fireGuestOrder } from "../kitchen/kitchen.server";
-import { isSettledPaymentState, resolveGuestPaymentTiming, type GuestPaymentTiming } from "../payments/payment-timing";
+import { resolveGuestPaymentTiming, type GuestPaymentTiming } from "../payments/payment-timing";
 import { createPesapalAdapter } from "./providers/pesapal.server";
 import type { InitiateGuestPaymentInput } from "./selfpay.contracts";
 
@@ -42,7 +42,7 @@ export const PAYABLE_ORDER_STATUSES = new Set(["open", "sent", "served"]);
 async function loadGuestOrder(sb: Sb, tenantId: string, tableId: string, orderId: string) {
   const { data: order } = await sb
     .from("restaurant_orders")
-    .select("id, order_number, status, payment_state, total, paid_total, currency, table_id")
+    .select("id, order_number, status, payment_state, total, paid_total, currency, table_id, bill_requested_at")
     .eq("tenant_id", tenantId)
     .eq("id", orderId)
     .eq("table_id", tableId)
@@ -78,6 +78,7 @@ function toOrderStatus(
     total: number;
     paid_total: number;
     currency: string;
+    bill_requested_at?: string | null;
   },
   paymentTiming: GuestPaymentTiming,
 ) {
@@ -90,6 +91,7 @@ function toOrderStatus(
     amountDue: Math.max(0, Number(order.total) - Number(order.paid_total)),
     currency: order.currency,
     paymentTiming,
+    billRequested: Boolean(order.bill_requested_at),
   };
 }
 
@@ -104,7 +106,7 @@ export async function guestOrderStatus(sb: Sb, input: { tableId: string; orderId
 async function orderStatusByTenantAndId(sb: Sb, tenantId: string, orderId: string) {
   const { data } = await sb
     .from("restaurant_orders")
-    .select("order_number, status, payment_state, total, paid_total, currency")
+.select("order_number, status, payment_state, total, paid_total, currency, bill_requested_at")
     .eq("tenant_id", tenantId)
     .eq("id", orderId)
     .maybeSingle();
@@ -279,6 +281,21 @@ export async function initiateGuestPayment(
   }
   const amountDue = Math.max(0, Number(order.total) - Number(order.paid_total));
   if (amountDue <= 0) {
+  const paymentTiming = resolveGuestPaymentTiming(
+    (await sb
+      .from("restaurant_tenants")
+      .select("settings")
+      .eq("id", table.tenantId)
+      .maybeSingle()).data?.settings,
+  );
+  if (
+    paymentTiming === "pay_after_service" &&
+    order.status !== "served" &&
+    !order.bill_requested_at
+  ) {
+    return { ok: false, reason: "not_ready_for_payment" };
+  }
+
     return { ok: false, reason: "already_paid" };
   }
   if (!provider) {
@@ -394,7 +411,7 @@ export type ConfirmGuestPaymentResult =
   | { ok: false; reason: "declined" | "expired"; detail?: string }
   | { ok: false; reason: "amount_mismatch" }
   | { ok: false; reason: "already_paid" }
-  | { ok: false; reason: "provider_not_configured" };
+  | { ok: false; reason: "provider_not_configured" | "not_ready_for_payment" };
 
 /** A cent of slack against floating-point/rounding noise — the same tolerance recalcOrder already uses for its own paid/total comparison. */
 const AMOUNT_TOLERANCE = 0.01;
