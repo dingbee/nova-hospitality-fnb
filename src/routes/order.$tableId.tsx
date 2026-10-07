@@ -1498,7 +1498,7 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
         </div>
       ) : (
         <p className="text-sm font-semibold text-foreground">{GUEST_STAGE_LABEL[overallStage]}</p>
-      )
+      )}
 
       <div className="mt-3 flex items-center">
         {GUEST_STAGE_STEPS.map((step, i) => (
