@@ -17,7 +17,7 @@ import {
 import { removeTenantLogoFn, uploadTenantLogoFn } from "../../tenant-logo.functions";
 import { validateTenantLogoFile, TENANT_LOGO_MIME_TYPES } from "../../tenant-logo.contracts";
 import type { MasterData } from "../types";
-import { resolveServiceConfiguration } from "../../operations/service-config";
+import { resolveServiceConfiguration } from "../../../operations/service-config";
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
