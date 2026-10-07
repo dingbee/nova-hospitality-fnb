@@ -24,6 +24,7 @@ export function useRestaurantWorkspace(tenantId?: string) {
 
   const properties = query.data?.properties ?? [];
   useEffect(() => {
+    if (!query.data) return;
     if (!properties.length) {
       if (activePropertyId !== null) setActivePropertyId(null);
       return;
