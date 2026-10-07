@@ -1444,7 +1444,7 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
       cancelled = true;
       if (lock) void lock.release();
     };
-  }, [progress.data?.overallStage]);
+  }, [progress.data?.overallStage, progress.data?.readyAlert]);
 
   useEffect(() => {
     if (progress.data?.overallStage !== "ready" || progress.data?.readyAlert === false) return;
@@ -1453,7 +1453,7 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
     return () => {
       document.title = previousTitle;
     };
-  }, [progress.data?.overallStage]);
+  }, [progress.data?.overallStage, progress.data?.readyAlert]);
 
   if (progress.isPending || progress.isError || !progress.data) return null;
   const { overallStage, streams } = progress.data;
@@ -1508,7 +1508,11 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
             className="min-h-11 w-full rounded-full"
             onClick={() => setReadyAcknowledged(true)}
           >
-            Got it — I’ll collect my order
+            {progress.data.collectionMethod === "room_delivery"
+              ? "Got it — I’ll wait for delivery"
+              : progress.data.collectionMethod === "staff_serves"
+                ? "Got it"
+                : "Got it — I’ll collect my order"}
           </Button>
         </div>
       ) : (
