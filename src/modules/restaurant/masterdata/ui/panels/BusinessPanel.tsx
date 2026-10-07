@@ -183,7 +183,8 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
   });
 
   return (
-    <SectionCard
+    <>
+      <SectionCard
       title="Business profile"
       description="Legal identity used across invoices, receipts and reports."
     >
@@ -310,6 +311,7 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
           </Button>
         </div>
       </form>
+      </SectionCard>
       <SectionCard
         title="Guest payment timing"
         description="Choose whether guest orders are paid before production or settled after service. Automatic follows the restaurant operating model."
@@ -344,6 +346,6 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
           </Button>
         </div>
       </SectionCard>
-    </SectionCard>
+    </>
   );
 }
