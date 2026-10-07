@@ -130,8 +130,8 @@ function PosWorkspaceBody({
   const canVoid = hasRestaurantCapability(roles, "sales.void", platformAdmin);
   const canReopen = hasRestaurantCapability(roles, "sales.reopen", platformAdmin);
   const canRoomCharge = hasRestaurantCapability(roles, "sales.room_charge", platformAdmin);
-  const currency = ws.data?.properties?.[0]?.currency ?? "TZS";
-  const workspacePropertyId = ws.data?.properties?.[0]?.id ?? null;
+  const currency = ws.data?.activeProperty?.currency ?? "TZS";
+  const workspacePropertyId = ws.data?.activePropertyId ?? null;
   const ownerOrAdmin = Boolean(platformAdmin) || roles.some((role) =>
     ["owner", "general_manager", "restaurant_manager"].includes(role),
   );
