@@ -28,6 +28,8 @@ const BAR_STATION = "55555555-5555-5555-5555-555555555555";
 
 function makeFakeSupabase(opts: {
   orderStatus?: string;
+  paymentState?: string;
+  tenantSettings?: Record<string, unknown> | null;
   items: Array<{ id: string; station_id: string | null; status: string; quantity?: number }>;
   restaurantMembers?: Array<{ tenant_id: string; user_id: string; role: string }>;
 }) {
@@ -35,6 +37,7 @@ function makeFakeSupabase(opts: {
     id: ORDER,
     order_number: "ORD-1",
     status: opts.orderStatus ?? "open",
+    payment_state: opts.paymentState ?? "unpaid",
     location_id: null,
     property_id: null,
   };
@@ -126,6 +129,14 @@ function makeFakeSupabase(opts: {
         ticketItems.push(...rows);
         return { data: null, error: null };
       }
+      if (table === "restaurant_tenants") {
+        return {
+          data: {
+            settings: opts.tenantSettings ?? { onboarding: { operatingMode: "table_service" } },
+          },
+          error: null,
+        };
+      }
       if (table === "restaurant_members") {
         const rows = (opts.restaurantMembers ?? []).filter(
           (m) => m.tenant_id === filters.tenant_id && m.user_id === filters.user_id,
@@ -191,6 +202,34 @@ describe("fireGuestOrder — guest-safe entry point, no staff principal required
     });
     expect(result.fired).toBe(0);
     expect((result as any).error).toMatch(/order not found/i);
+  });
+
+  it("blocks an unpaid pay-first order at the canonical production gate", async () => {
+    const fake = makeFakeSupabase({
+      tenantSettings: { onboarding: { operatingMode: "quick_service" } },
+      paymentState: "unpaid",
+      items: [{ id: "item-1", station_id: KITCHEN_STATION, status: "ordered" }],
+    });
+
+    const result = await fireGuestOrder(fake.supabase, { tenantId: TENANT, orderId: ORDER });
+
+    expect(result.fired).toBe(0);
+    expect((result as any).error).toMatch(/payment is required/i);
+    expect(fake.tickets).toHaveLength(0);
+    expect(fake.items[0]!.status).toBe("ordered");
+  });
+
+  it("allows a paid pay-first order through the same gate", async () => {
+    const fake = makeFakeSupabase({
+      tenantSettings: { onboarding: { operatingMode: "quick_service" } },
+      paymentState: "paid",
+      items: [{ id: "item-1", station_id: KITCHEN_STATION, status: "ordered" }],
+    });
+
+    const result = await fireGuestOrder(fake.supabase, { tenantId: TENANT, orderId: ORDER });
+
+    expect(result).toEqual({ fired: 1 });
+    expect(fake.tickets).toHaveLength(1);
   });
 
   it("refuses to fire a closed order, reported as a failure rather than corrupting state", async () => {
