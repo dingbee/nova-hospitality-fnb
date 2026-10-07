@@ -1367,12 +1367,31 @@ const GUEST_STAGE_LABEL: Record<(typeof GUEST_STAGE_STEPS)[number], string> = {
  */
 function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: string }) {
   const progressFn = useServerFn(guestOrderProgressFn);
+  const playGuestAttention = useGuestAttentionSignal();
+  const lastNotifiedStageRef = useRef<string | null>(null);
   const progress = useQuery({
     queryKey: ["selforder.progress", tableId, orderId],
     queryFn: () => progressFn({ data: { tableId, orderId } }),
     refetchInterval: 8_000,
     networkMode: "always",
   });
+
+  // Guest collection alert: the server-derived lifecycle is the source of truth.
+  // Establish a baseline on first observation so an order that was already ready
+  // when the guest opens/reloads the portal does not produce a surprise ping.
+  // A genuine transition into ready produces one subtle tone + vibration.
+  useEffect(() => {
+    const current = progress.data?.overallStage;
+    if (!current) return;
+    if (lastNotifiedStageRef.current === null) {
+      lastNotifiedStageRef.current = current;
+      return;
+    }
+    if (current !== lastNotifiedStageRef.current && current === "ready") {
+      playGuestAttention([120, 60, 120]);
+    }
+    lastNotifiedStageRef.current = current;
+  }, [progress.data?.overallStage, playGuestAttention]);
 
   if (progress.isPending || progress.isError || !progress.data) return null;
   const { overallStage, streams } = progress.data;
