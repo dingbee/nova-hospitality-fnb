@@ -206,7 +206,7 @@ function baseRows(overrides: Partial<Record<string, any[]>> = {}) {
       },
     ],
     restaurant_tenants: [
-      { id: TENANT, name: "Demo", status: "active", settings: null },
+      { id: TENANT, name: "Demo", status: "active", settings: { onboarding: { operatingMode: "table_service" } } },
       { id: OTHER_TENANT, name: "Other tenant", status: "active", settings: null },
     ],
     restaurant_currencies: [],
@@ -375,6 +375,26 @@ describe("submitGuestOrder — double-submission protection (GEP3)", () => {
     });
     expect(sb.store.restaurant_order_items).toHaveLength(1);
     expect(sb.store.restaurant_kitchen_tickets).toHaveLength(1);
+  });
+
+  it("does not fire a pay-first guest order until payment is confirmed", async () => {
+    const rows = baseRows();
+    rows.restaurant_tenants[0] = {
+      ...rows.restaurant_tenants[0],
+      settings: { onboarding: { operatingMode: "quick_service" } },
+    };
+    const sb = makeFakeSupabase(rows);
+
+    const result = await submitGuestOrder(sb, {
+      tableId: TABLE,
+      lines: [colaLine()],
+      clientRequestId: "req-pay-first",
+    });
+
+    expect(result.idempotent).toBe(false);
+    expect(sb.store.restaurant_orders).toHaveLength(1);
+    expect(sb.store.restaurant_kitchen_tickets).toHaveLength(0);
+    expect(sb.store.restaurant_order_items[0]?.status).toBe("ordered");
   });
 
   it("E/F: submitting the same clientRequestId a second time (double-tap / retry) returns the same order — no second row, no second ticket", async () => {
