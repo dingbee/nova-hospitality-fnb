@@ -185,6 +185,7 @@ export type InitiateGuestPaymentResult =
   | { ok: false; reason: "already_paid" }
   | { ok: false; reason: "not_payable"; orderStatus: string }
   | { ok: false; reason: "provider_not_configured" }
+  | { ok: false; reason: "not_ready_for_payment" }
   | { ok: false; reason: "initiation_in_progress" };
 
 /**
