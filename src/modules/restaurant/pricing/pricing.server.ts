@@ -791,7 +791,7 @@ export async function applyDiscount(
         basis: input.basis,
         value: input.value,
         amount: verdict.amount,
-        currency: order.currency ?? "USD",
+        currency: order.currency ?? "TZS",
         reason: input.reason ?? null,
         actor_id: userId,
         actor_role: roles[0] ?? (admin ? "platform_admin" : null),
