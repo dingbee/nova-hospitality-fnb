@@ -132,7 +132,11 @@ export function PricesTab({
   });
   const baseCurrency =
     ((currencies.data as any[] | undefined)?.find((c) => c.is_base)?.code as string | undefined) ??
-    "USD";
+    "TZS";
+
+  const selectedPropertyCurrency =
+    (propertyId ? properties.find((p) => p.id === propertyId)?.currency : null) ??
+    baseCurrency;
 
   const catalogueKey = [
     "restaurant.pricing.catalogue",
@@ -433,7 +437,7 @@ export function PricesTab({
         defaultLocationId={locationId}
         defaultChannel={channel}
         priceLists={(priceLists.data ?? []) as any[]}
-        baseCurrency={baseCurrency}
+        baseCurrency={selectedPropertyCurrency}
         onSaved={() => {
           invalidate();
           closeConfigure();
@@ -451,7 +455,7 @@ export function PricesTab({
         defaultLocationId={locationId}
         defaultChannel={channel}
         priceLists={(priceLists.data ?? []) as any[]}
-        baseCurrency={baseCurrency}
+        baseCurrency={selectedPropertyCurrency}
         onSaved={() => {
           invalidate();
           setBulkOpen(false);
