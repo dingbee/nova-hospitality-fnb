@@ -28,3 +28,69 @@ export function normalizeCurrency(value: string | null | undefined, fallback = "
   const normalized = String(value ?? "").trim().toUpperCase();
   return /^[A-Z]{3}$/.test(normalized) ? normalized : fallback;
 }
+
+
+type CurrencyDb = {
+  from: (table: string) => any;
+};
+
+/**
+ * Authoritative operating-currency resolver.
+ *
+ * Precedence:
+ *   property.currency -> tenant settings.business.defaultCurrency
+ *   -> tenant base currency registry -> product fallback.
+ *
+ * TZS is deliberately the final bootstrap/legacy fallback only; it is never
+ * preferred over an operator-configured tenant or property currency.
+ */
+export async function resolveOperatingCurrency(
+  sb: CurrencyDb,
+  tenantId: string,
+  propertyId?: string | null,
+  locationId?: string | null,
+): Promise<string> {
+  let resolvedPropertyId = propertyId ?? null;
+
+  if (!resolvedPropertyId && locationId) {
+    const { data: location } = await sb
+      .from("restaurant_locations")
+      .select("property_id")
+      .eq("tenant_id", tenantId)
+      .eq("id", locationId)
+      .maybeSingle();
+    resolvedPropertyId = location?.property_id ?? null;
+  }
+
+  if (resolvedPropertyId) {
+    const { data: property } = await sb
+      .from("restaurant_properties")
+      .select("currency")
+      .eq("tenant_id", tenantId)
+      .eq("id", resolvedPropertyId)
+      .maybeSingle();
+    const propertyCurrency = normalizeCurrency(property?.currency, "");
+    if (propertyCurrency) return propertyCurrency;
+  }
+
+  const { data: tenant } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", tenantId)
+    .maybeSingle();
+  const tenantCurrency = normalizeCurrency(
+    (tenant?.settings as { business?: { defaultCurrency?: string | null } } | null)?.business
+      ?.defaultCurrency,
+    "",
+  );
+  if (tenantCurrency) return tenantCurrency;
+
+  const { data: base } = await sb
+    .from("restaurant_currencies")
+    .select("code")
+    .eq("tenant_id", tenantId)
+    .eq("is_base", true)
+    .limit(1);
+  const registryCurrency = normalizeCurrency((base ?? [])[0]?.code, "");
+  return registryCurrency || normalizeCurrency(undefined);
+}
