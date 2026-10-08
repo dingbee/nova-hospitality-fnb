@@ -178,7 +178,9 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
     await assertCapability(sb, userId, input.tenantId, "purchasing.approve");
   }
 
-  const receiptCurrency = po?.currency ?? (await operatingCurrency(sb, input.tenantId, input.propertyId ?? po?.property_id));\n\n  const documentNumber = await nextDocumentNumber(
+  const receiptCurrency = po?.currency ?? (await operatingCurrency(sb, input.tenantId, input.propertyId ?? po?.property_id));
+
+  const documentNumber = await nextDocumentNumber(
     sb,
     input.tenantId,
     "goods_receipt",
