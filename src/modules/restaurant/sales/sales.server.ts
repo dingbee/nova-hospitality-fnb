@@ -47,7 +47,7 @@ function reference(prefix: string) {
   return `${prefix}-${stamp}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 }
 
-/** The tenant's configured base currency; falls back to the order currency. */
+/** The tenant's configured base currency; used for FX accounting only. */
 async function tenantBaseCurrency(sb: Sb, tenantId: string): Promise<string> {
   const { data } = await sb
     .from("restaurant_currencies")
@@ -55,7 +55,35 @@ async function tenantBaseCurrency(sb: Sb, tenantId: string): Promise<string> {
     .eq("tenant_id", tenantId)
     .eq("is_base", true)
     .limit(1);
-  return ((data ?? []) as any[])[0]?.code ?? "USD";
+  return String(((data ?? []) as any[])[0]?.code ?? "TZS").toUpperCase();
+}
+
+/** Property currency is the operational currency for POS, pricing and guest sales. */
+async function operatingPropertyCurrency(
+  sb: Sb,
+  tenantId: string,
+  propertyId?: string | null,
+): Promise<string> {
+  if (propertyId) {
+    const { data: property } = await sb
+      .from("restaurant_properties")
+      .select("currency")
+      .eq("tenant_id", tenantId)
+      .eq("id", propertyId)
+      .maybeSingle();
+    const currency = String(property?.currency ?? "").trim();
+    if (currency.length === 3) return currency.toUpperCase();
+  }
+
+  const { data: tenant } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", tenantId)
+    .maybeSingle();
+  const configured = String((tenant?.settings as any)?.business?.defaultCurrency ?? "").trim();
+  if (configured.length === 3) return configured.toUpperCase();
+
+  return tenantBaseCurrency(sb, tenantId);
 }
 
 /* ---------------- Service periods ---------------- */
@@ -621,6 +649,8 @@ export async function createOrder(
   const scope = await resolveOrderScope(sb, input.tenantId, input);
   await assertCapability(sb, userId, input.tenantId, "sales.manage", scope, tenantScope);
 
+  const operatingCurrency = await operatingPropertyCurrency(sb, input.tenantId, scope.propertyId);
+
   const { data: order, error } = await sb
     .from("restaurant_orders")
     .insert({
@@ -635,7 +665,7 @@ export async function createOrder(
       guest_count: input.guestCount,
       guest_name: input.guestName ?? null,
       booking_id: input.bookingId ?? null,
-      currency: input.currency,
+      currency: operatingCurrency,
       source: input.source,
       external_ref: input.externalRef ?? null,
       notes: input.notes ?? null,
@@ -673,7 +703,7 @@ export async function createOrder(
   // The exchange rate in force at open time is pinned to the order and every
   // line, so historical receipts are never revalued.
   const baseCurrency = await tenantBaseCurrency(sb, input.tenantId);
-  const exchangeRate = await currentFxRate(sb, input.tenantId, baseCurrency, input.currency);
+  const exchangeRate = await currentFxRate(sb, input.tenantId, baseCurrency, operatingCurrency);
   await sb
     .from("restaurant_orders")
     .update({ base_currency: baseCurrency, exchange_rate: exchangeRate })
@@ -682,7 +712,7 @@ export async function createOrder(
 
   if (input.lines.length > 0) {
     await insertLines(sb, input.tenantId, order.id, input.lines, {
-      currency: input.currency,
+      currency: operatingCurrency,
       propertyId: scope.propertyId,
       locationId: scope.locationId,
       orderType: input.orderType,
@@ -764,6 +794,8 @@ export async function createGuestOrder(
     guestSessionId?: string | null;
   },
 ) {
+  const operatingCurrency = await operatingPropertyCurrency(sb, input.tenantId, input.propertyId);
+
   const { data: order, error } = await sb
     .from("restaurant_orders")
     .insert({
@@ -776,7 +808,7 @@ export async function createGuestOrder(
       status: "open",
       guest_count: 1,
       guest_name: input.guestName ?? null,
-      currency: input.currency,
+      currency: operatingCurrency,
       source: "self_order",
       server_user_id: null,
       created_by: null,
@@ -815,7 +847,7 @@ export async function createGuestOrder(
   }
 
   const baseCurrency = await tenantBaseCurrency(sb, input.tenantId);
-  const exchangeRate = await currentFxRate(sb, input.tenantId, baseCurrency, input.currency);
+  const exchangeRate = await currentFxRate(sb, input.tenantId, baseCurrency, operatingCurrency);
   await sb
     .from("restaurant_orders")
     .update({ base_currency: baseCurrency, exchange_rate: exchangeRate })
@@ -824,7 +856,7 @@ export async function createGuestOrder(
 
   try {
     await insertLines(sb, input.tenantId, order.id, input.lines, {
-      currency: input.currency,
+      currency: operatingCurrency,
       propertyId: input.propertyId,
       locationId: input.locationId,
       orderType: "dine_in",
@@ -881,7 +913,7 @@ export async function addOrderItems(sb: Sb, userId: string, input: AddOrderItems
     throw new Error("This order is closed and can no longer be modified.");
   }
   await insertLines(sb, input.tenantId, input.orderId, input.lines, {
-    currency: order.currency ?? "USD",
+    currency: order.currency ?? "TZS",
     propertyId: order.property_id,
     locationId: order.location_id,
     orderType: order.order_type,
