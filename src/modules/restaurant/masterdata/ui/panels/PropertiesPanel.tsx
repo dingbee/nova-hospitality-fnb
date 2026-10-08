@@ -13,6 +13,7 @@ import type { MasterData } from "../types";
 type Property = MasterData["properties"][number];
 
 import { DEFAULT_CURRENCY, DEFAULT_TIMEZONE } from "@/modules/restaurant/core/product";
+import { SUPPORTED_CURRENCIES } from "@/modules/restaurant/core/currency";
 
 const EMPTY = { name: "", slug: "", timezone: DEFAULT_TIMEZONE, currency: DEFAULT_CURRENCY, status: "pending_activation" as const };
 
@@ -37,7 +38,7 @@ export function PropertiesPanel({ tenantId, data }: { tenantId: string; data: Ma
 
   function openCreate() {
     setEditing(null);
-    setForm(EMPTY);
+    setForm({ ...EMPTY, currency: ((data.tenant?.settings as { business?: { defaultCurrency?: string } } | null)?.business?.defaultCurrency ?? DEFAULT_CURRENCY).toUpperCase() });
     setOpen(true);
   }
   function openEdit(id: string) {
@@ -102,8 +103,19 @@ export function PropertiesPanel({ tenantId, data }: { tenantId: string; data: Ma
           <Field label="Timezone" required>
             <Input className="h-11" value={form.timezone} onChange={(e) => setForm((f) => ({ ...f, timezone: e.target.value }))} required />
           </Field>
-          <Field label="Currency" required>
-            <Input className="h-11" maxLength={3} value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))} required />
+          <Field label="Operating currency" required hint="Defaults from the tenant currency for new properties. You can override it per property.">
+            <select
+              className="h-11 w-full rounded-md border bg-background px-3 text-sm"
+              value={form.currency}
+              onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
+              required
+            >
+              {SUPPORTED_CURRENCIES.map((currency) => (
+                <option key={currency.code} value={currency.code}>
+                  {currency.code} — {currency.name} ({currency.symbol})
+                </option>
+              ))}
+            </select>
           </Field>
         </FieldRow>
         <Field label="Active">
