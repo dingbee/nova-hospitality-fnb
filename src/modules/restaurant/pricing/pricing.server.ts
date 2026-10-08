@@ -41,6 +41,49 @@ import type {
 
 type Sb = any;
 
+/** Resolve the currency of the commercial scope. Property currency is authoritative. */
+async function resolvePricingCurrency(
+  sb: Sb,
+  tenantId: string,
+  propertyId?: string | null,
+  locationId?: string | null,
+): Promise<string> {
+  let resolvedPropertyId = propertyId ?? null;
+  if (!resolvedPropertyId && locationId) {
+    const { data: location } = await sb
+      .from("restaurant_locations")
+      .select("property_id")
+      .eq("tenant_id", tenantId)
+      .eq("id", locationId)
+      .maybeSingle();
+    resolvedPropertyId = location?.property_id ?? null;
+  }
+  if (resolvedPropertyId) {
+    const { data: property } = await sb
+      .from("restaurant_properties")
+      .select("currency")
+      .eq("tenant_id", tenantId)
+      .eq("id", resolvedPropertyId)
+      .maybeSingle();
+    const currency = String(property?.currency ?? "").trim();
+    if (currency.length === 3) return currency.toUpperCase();
+  }
+  const { data: tenant } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", tenantId)
+    .maybeSingle();
+  const configured = String((tenant?.settings as any)?.business?.defaultCurrency ?? "").trim();
+  if (configured.length === 3) return configured.toUpperCase();
+  const { data: base } = await sb
+    .from("restaurant_currencies")
+    .select("code")
+    .eq("tenant_id", tenantId)
+    .eq("is_base", true)
+    .limit(1);
+  return String(((base ?? []) as any[])[0]?.code ?? "TZS").toUpperCase();
+}
+
 /** Exported so decisions/actions.server.ts's I6 pricing-review executor writes to the exact same audit trail the human pricing UI does. */
 export async function audit(
   sb: Sb,
@@ -221,6 +264,13 @@ export async function upsertPrice(
   if (!input.productId && !input.menuItemId)
     throw new Error("A price needs a product or a menu item.");
 
+  const operatingCurrency = await resolvePricingCurrency(
+    sb,
+    input.tenantId,
+    input.propertyId,
+    input.locationId,
+  );
+
   let q = sb
     .from("restaurant_prices")
     .select("id, version, amount, currency, status")
@@ -254,7 +304,7 @@ export async function upsertPrice(
       location_id: input.locationId ?? null,
       price_list_id: input.priceListId ?? null,
       channel: input.channel ?? null,
-      currency: input.currency.toUpperCase(),
+      currency: operatingCurrency,
       amount: input.amount,
       tax_inclusive: input.taxInclusive,
       version: (current?.version ?? 0) + 1,
@@ -700,7 +750,7 @@ export async function applyDiscount(
         basis: input.basis,
         value: input.value,
         amount: verdict.amount,
-        currency: order.currency ?? "USD",
+        currency: order.currency ?? "TZS",
         reason: input.reason ?? null,
         actor_id: userId,
         actor_role: roles[0] ?? (admin ? "platform_admin" : null),
