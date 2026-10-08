@@ -2,6 +2,7 @@
 import { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { classifyProperty } from "@/modules/commercial/property-classification.server";
+import { SUPPORTED_CURRENCIES, normalizeCurrency } from "../core/currency";
 import type {
   UpsertBusinessProfileInput,
   UpsertInventoryCategoryInput,
@@ -32,7 +33,7 @@ export async function upsertProperty(sb: Sb, userId: string, input: UpsertProper
     slug: input.slug,
     name: input.name,
     timezone: input.timezone,
-    currency: input.currency,
+    currency: normalizeCurrency(input.currency),
     status: isNewProperty ? "pending_activation" : input.status,
   };
   const q = input.id
@@ -92,6 +93,8 @@ export async function upsertBusinessProfile(
   const existingLogoUrl =
     (tenant?.settings as { business?: { logoUrl?: string | null } } | null)?.business?.logoUrl ??
     null;
+  const operatingCurrency = normalizeCurrency(input.defaultCurrency);
+  const currencyMeta = SUPPORTED_CURRENCIES.find((item) => item.code === operatingCurrency);
   const settings = {
     ...(tenant?.settings ?? {}),
     business: {
@@ -99,7 +102,7 @@ export async function upsertBusinessProfile(
       tradingName: input.tradingName ?? null,
       code: input.code ?? null,
       taxId: input.taxId ?? null,
-      defaultCurrency: input.defaultCurrency,
+      defaultCurrency: operatingCurrency,
       timezone: input.timezone,
       phone: input.phone ?? null,
       email: input.email ?? null,
