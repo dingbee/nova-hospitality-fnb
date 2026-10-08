@@ -67,7 +67,8 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
   await assertCapability(sb, userId, input.tenantId, "purchasing.manage");
   await assertCapability(sb, userId, input.tenantId, "purchasing.approve");
 
-  const operating = await operatingCurrency(sb, input.tenantId, input.propertyId);\n  const subtotal = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
+  const operating = await operatingCurrency(sb, input.tenantId, input.propertyId);
+  const subtotal = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
 
   // An explicit reference is client-supplied (e.g. a supplier's own PO
   // number) and never comes from the sequence — a retry that resubmits the
