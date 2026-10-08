@@ -158,7 +158,7 @@ export const upsertPriceSchema = tenantScope.extend({
   scope: z.enum(PRICE_SCOPES).default("tenant"),
   priceListId: uuid.nullish(),
   channel: z.enum(SALES_CHANNELS).nullish(),
-  currency: z.string().min(3).max(8).default("USD"),
+  currency: z.string().min(3).max(8).default("TZS"),
   amount: money.min(0),
   taxInclusive: z.boolean().default(false),
   effectiveFrom: z.string().optional(),
