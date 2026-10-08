@@ -36,22 +36,26 @@ export function TopBar({
 }) {
   return (
     <header className="sticky top-0 z-30 border-b border-[color:var(--nova-line)] bg-[color:var(--nova-surface)]/90 backdrop-blur-xl">
-      <div className="flex h-16 items-center gap-3 px-3 sm:px-5">
+      <div className="flex h-16 min-w-0 items-center gap-2 overflow-hidden px-2 sm:gap-3 sm:px-5">
         <button
           type="button"
           aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
           aria-expanded={mobileOpen}
           onClick={onToggleMobile}
-          className="nova-action inline-flex size-11 items-center justify-center bg-[color:var(--nova-surface-2)] lg:hidden"
+          className="nova-action inline-flex size-10 shrink-0 items-center justify-center bg-[color:var(--nova-surface-2)] lg:size-11 lg:hidden"
         >
           <Menu className="size-5" />
         </button>
 
-        <Link to="/admin/restaurant" className="flex shrink-0 items-center" aria-label="LexiBite">
+        <Link
+          to="/admin/restaurant"
+          className="flex min-w-0 shrink-0 items-center"
+          aria-label="LexiBite"
+        >
           <img
             src="/brand/lexibite-wordmark.svg"
             alt="LexiBite"
-            className="h-10 w-auto max-w-[11rem] object-contain"
+            className="h-8 w-auto max-w-[8rem] object-contain sm:h-10 sm:max-w-[11rem]"
           />
         </Link>
 
@@ -95,12 +99,13 @@ export function TopBar({
           </div>
         )}
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
           {showAskNova && (
             <button
               type="button"
               onClick={onOpenAskNova}
-              className="nova-action inline-flex min-h-10 items-center gap-2 bg-[color:var(--nova-accent)]/10 px-3 text-xs font-medium text-[color:var(--nova-accent)]"
+              aria-label={`Ask ${PRODUCT.aiName}`}
+              className="nova-action inline-flex size-10 items-center justify-center bg-[color:var(--nova-accent)]/10 text-xs font-medium text-[color:var(--nova-accent)] sm:min-h-10 sm:w-auto sm:gap-2 sm:px-3"
             >
               <Sparkles className="size-3.5" />
               <span className="hidden sm:inline">Ask {PRODUCT.aiName}</span>
@@ -134,7 +139,7 @@ export function TopBar({
             type="button"
             onClick={onSignOut}
             aria-label="Sign out"
-            className="nova-action inline-flex min-h-10 items-center gap-1.5 bg-[color:var(--nova-surface-2)] px-3 text-sm text-[color:var(--nova-ink-2)]"
+            className="nova-action inline-flex size-10 items-center justify-center bg-[color:var(--nova-surface-2)] text-sm text-[color:var(--nova-ink-2)] sm:min-h-10 sm:h-auto sm:w-auto sm:gap-1.5 sm:px-3"
           >
             <LogOut className="size-4" />
             <span className="hidden sm:inline">Sign out</span>
