@@ -25,6 +25,25 @@ import { raiseVariance } from "./variances.server";
 import { DOCUMENT_PREFIX, type CreateReceiptInput, type listReceiptsSchema } from "./contracts";
 
 type Sb = any;
+async function operatingCurrency(sb: Sb, tenantId: string, propertyId?: string | null): Promise<string> {
+  if (propertyId) {
+    const { data: property } = await sb
+      .from("restaurant_properties")
+      .select("currency")
+      .eq("tenant_id", tenantId)
+      .eq("id", propertyId)
+      .maybeSingle();
+    const currency = String(property?.currency ?? "").trim();
+    if (currency.length === 3) return currency.toUpperCase();
+  }
+  const { data: tenant } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", tenantId)
+    .maybeSingle();
+  const configured = String((tenant?.settings as any)?.business?.defaultCurrency ?? "").trim();
+  return configured.length === 3 ? configured.toUpperCase() : "TZS";
+}
 
 const RECEIPT_SELECT =
   "id, document_number, status, purchase_order_id, supplier_id, delivery_note_ref, received_at, expected_at, posted_at, currency, subtotal, accepted_value, notes, property_id, location_id, created_at";
@@ -159,7 +178,7 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
     await assertCapability(sb, userId, input.tenantId, "purchasing.approve");
   }
 
-  const documentNumber = await nextDocumentNumber(
+  const receiptCurrency = po?.currency ?? (await operatingCurrency(sb, input.tenantId, input.propertyId ?? po?.property_id));\n\n  const documentNumber = await nextDocumentNumber(
     sb,
     input.tenantId,
     "goods_receipt",
@@ -196,7 +215,7 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
       received_at: input.receivedAt ?? new Date().toISOString(),
       expected_at: po?.expected_at ?? null,
       received_by: userId,
-      currency: input.currency ?? po?.currency ?? "TZS",
+      currency: receiptCurrency,
       subtotal,
       accepted_value: acceptedValue,
       notes: input.notes ?? null,
@@ -251,7 +270,7 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
       damaged_quantity: l.damagedQuantity,
       ordered_unit_cost: l.orderedUnitCost,
       unit_cost: l.unitCost,
-      currency: input.currency ?? po?.currency ?? "TZS",
+      currency: receiptCurrency,
       batch_code: l.batchCode ?? null,
       expiry_date: l.expiryDate ?? null,
       rejection_reason: l.rejectionReason ?? null,
