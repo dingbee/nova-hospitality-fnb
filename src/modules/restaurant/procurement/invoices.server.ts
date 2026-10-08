@@ -70,7 +70,8 @@ export async function listSupplierInvoices(sb: Sb, userId: string, input: z.infe
 export async function recordSupplierInvoice(sb: Sb, userId: string, input: RecordInvoiceInput) {
   await assertCapability(sb, userId, input.tenantId, "invoice.manage");
 
-  const operating = await operatingCurrency(sb, input.tenantId, input.propertyId);\n  const subtotal = input.lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+  const operating = await operatingCurrency(sb, input.tenantId, input.propertyId);
+  const subtotal = input.lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
   const taxTotal = input.taxTotal || input.lines.reduce((s, l) => s + (l.taxAmount ?? 0), 0);
   const total = subtotal + taxTotal;
 
