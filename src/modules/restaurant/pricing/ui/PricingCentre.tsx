@@ -246,7 +246,7 @@ function ReadinessTab({
                     {r.menuName} · {r.locationName}
                     {r.reason ? ` · ${r.reason}` : ""}
                     {r.ready && r.divergent
-                      ? ` · menu card shows ${money(r.menuCardPrice, r.currency ?? "USD")}`
+                      ? ` · menu card shows ${money(r.menuCardPrice, r.currency ?? "TZS")}`
                       : ""}
                   </span>
                 </span>
@@ -254,7 +254,7 @@ function ReadinessTab({
                   {r.ready ? (
                     <>
                       <span className="text-sm tabular-nums">
-                        {money(r.unitPrice, r.currency ?? "USD")}
+                        {money(r.unitPrice, r.currency ?? "TZS")}
                       </span>
                       <StatusChip tone="neutral">{String(r.priceSource ?? "rule")}</StatusChip>
                       {r.divergent ? (
