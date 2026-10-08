@@ -144,6 +144,8 @@ export type PricingContext = {
   orderType?: string;
   /** Sales channel: dine_in, takeaway, delivery, room_charge, event, corporate. */
   channel?: string | null;
+  /** Currency required by the operating property. A price in another currency is never eligible. */
+  currency?: string | null;
   /** Price lists explicitly requested for this sale (e.g. a corporate account). */
   priceListIds?: string[];
   quantity: number;
@@ -235,6 +237,7 @@ export function eligiblePriceLists(lists: PriceListRule[], ctx: PricingContext):
         l.status === "active" &&
         withinDates(l.effectiveFrom, l.effectiveTo, ctx.at) &&
         withinScope(l.propertyId, l.locationId, ctx) &&
+        (!ctx.currency || !l.currency || l.currency.toUpperCase() === ctx.currency.toUpperCase()) &&
         (!l.channel || l.channel === activeChannel(ctx)) &&
         (requested.size === 0 || requested.has(l.id) || !l.channel),
     )
@@ -288,6 +291,7 @@ export function resolveBasePrice(
       c.status === "active" &&
       withinDates(c.effectiveFrom, c.effectiveTo, ctx.at) &&
       withinScope(c.propertyId, c.locationId, ctx) &&
+      (!ctx.currency || c.currency.toUpperCase() === ctx.currency.toUpperCase()) &&
       (!c.channel || c.channel === activeChannel(ctx)) &&
       (!c.priceListId || listRank.has(c.priceListId)) &&
       (ctx.variantId ? c.variantId === ctx.variantId || c.variantId === null : true),
@@ -461,7 +465,7 @@ export function quoteLine(args: {
       { menuItemId: ctx.menuItemId, productId: ctx.productId, channel: activeChannel(ctx) },
     );
   }
-  const currency = base?.currency ?? args.fallbackCurrency ?? "USD";
+  const currency = base?.currency ?? ctx.currency ?? args.fallbackCurrency ?? "TZS";
   const basePrice = base ? base.amount : (args.fallbackUnitPrice ?? 0);
   trace.push({
     step: "base_price",
