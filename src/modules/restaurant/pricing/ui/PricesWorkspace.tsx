@@ -130,9 +130,19 @@ export function PricesTab({
     queryKey: ["restaurant.pricing.currencies", tenantId],
     queryFn: () => currenciesFn({ data: { tenantId, activeOnly: true } }),
   });
-  const baseCurrency =
+  const configuredTenantCurrency =
+    String(
+      ((ws.data?.tenant?.settings as { business?: { defaultCurrency?: string | null } } | null)?.business
+        ?.defaultCurrency ?? ""),
+    )
+      .trim()
+      .toUpperCase();
+
+  const registryBaseCurrency =
     ((currencies.data as any[] | undefined)?.find((c) => c.is_base)?.code as string | undefined) ??
-    "TZS";
+    "";
+
+  const baseCurrency = configuredTenantCurrency || registryBaseCurrency || "TZS";
 
   const selectedPropertyCurrency =
     (propertyId ? properties.find((p) => p.id === propertyId)?.currency : null) ??
