@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DEFAULT_TIMEZONE } from "@/modules/restaurant/core/product";
+import { SUPPORTED_CURRENCIES } from "@/modules/restaurant/core/currency";
 import { SectionCard } from "@/components/os/SectionCard";
 import { Field, FieldRow } from "@/modules/restaurant/ui/forms";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
@@ -215,7 +216,7 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
     <>
       <SectionCard
       title="Business profile"
-      description="Legal identity used across invoices, receipts and reports."
+      description="Legal identity used across invoices, receipts and reports. The operating currency is configurable per tenant."
     >
       <LogoField
         logoUrl={logoUrl}
@@ -279,16 +280,19 @@ export function BusinessPanel({ tenantId, data }: { tenantId: string; data: Mast
           </Field>
         </FieldRow>
         <FieldRow>
-          <Field label="Default currency" required>
-            <Input
-              className="h-11"
+          <Field label="Operating currency" required hint="Used as the tenant default when a transaction is not tied to a property-specific currency.">
+            <select
+              className="h-11 w-full rounded-md border bg-background px-3 text-sm"
               value={form.defaultCurrency}
-              maxLength={3}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, defaultCurrency: e.target.value.toUpperCase() }))
-              }
+              onChange={(e) => setForm((f) => ({ ...f, defaultCurrency: e.target.value }))}
               required
-            />
+            >
+              {SUPPORTED_CURRENCIES.map((currency) => (
+                <option key={currency.code} value={currency.code}>
+                  {currency.code} — {currency.name} ({currency.symbol})
+                </option>
+              ))}
+            </select>
           </Field>
           <Field label="Timezone" required>
             <Input
