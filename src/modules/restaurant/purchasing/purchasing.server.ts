@@ -16,6 +16,25 @@ import { DOCUMENT_PREFIX } from "../procurement/contracts";
 import type { PurchaseOrderStatus } from "../core/contracts";
 
 type Sb = any;
+async function operatingCurrency(sb: Sb, tenantId: string, propertyId?: string | null): Promise<string> {
+  if (propertyId) {
+    const { data: property } = await sb
+      .from("restaurant_properties")
+      .select("currency")
+      .eq("tenant_id", tenantId)
+      .eq("id", propertyId)
+      .maybeSingle();
+    const currency = String(property?.currency ?? "").trim();
+    if (currency.length === 3) return currency.toUpperCase();
+  }
+  const { data: tenant } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", tenantId)
+    .maybeSingle();
+  const configured = String((tenant?.settings as any)?.business?.defaultCurrency ?? "").trim();
+  return configured.length === 3 ? configured.toUpperCase() : "TZS";
+}
 
 /** The exact Postgres constraint name from restaurant_purchase_orders' `UNIQUE (tenant_id, reference)`. */
 const PO_REFERENCE_CONSTRAINT = "restaurant_purchase_orders_tenant_id_reference_key";
@@ -48,7 +67,7 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
   await assertCapability(sb, userId, input.tenantId, "purchasing.manage");
   await assertCapability(sb, userId, input.tenantId, "purchasing.approve");
 
-  const subtotal = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
+  const operating = await operatingCurrency(sb, input.tenantId, input.propertyId);\n  const subtotal = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
 
   // An explicit reference is client-supplied (e.g. a supplier's own PO
   // number) and never comes from the sequence — a retry that resubmits the
@@ -86,7 +105,7 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
           expected_at: input.expectedAt ?? null,
           subtotal,
           total: subtotal,
-          currency: input.currency,
+          currency: operating,
           notes: input.notes ?? null,
           created_by: userId,
           buyer_id: userId,
