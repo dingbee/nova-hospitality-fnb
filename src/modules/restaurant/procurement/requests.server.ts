@@ -22,6 +22,25 @@ import {
 } from "./contracts";
 
 type Sb = any;
+async function operatingCurrency(sb: Sb, tenantId: string, propertyId?: string | null): Promise<string> {
+  if (propertyId) {
+    const { data: property } = await sb
+      .from("restaurant_properties")
+      .select("currency")
+      .eq("tenant_id", tenantId)
+      .eq("id", propertyId)
+      .maybeSingle();
+    const currency = String(property?.currency ?? "").trim();
+    if (currency.length === 3) return currency.toUpperCase();
+  }
+  const { data: tenant } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", tenantId)
+    .maybeSingle();
+  const configured = String((tenant?.settings as any)?.business?.defaultCurrency ?? "").trim();
+  return configured.length === 3 ? configured.toUpperCase() : "TZS";
+}
 
 const REQUEST_SELECT =
   "id, document_number, status, priority, category, reason, notes, currency, estimated_total, requested_by, requested_date, required_by_date, submitted_at, approved_at, approved_by, rejected_at, rejected_by, rejection_reason, converted_purchase_order_id, converted_at, property_id, location_id, correlation_id, version, created_at, updated_at";
@@ -78,7 +97,7 @@ export async function getPurchaseRequest(sb: Sb, userId: string, tenantId: strin
 export async function savePurchaseRequest(sb: Sb, userId: string, input: SavePurchaseRequestInput) {
   await assertCapability(sb, userId, input.tenantId, "purchase.request");
 
-  const estimatedTotal = input.lines.reduce(
+  const operating = await operatingCurrency(sb, input.tenantId, input.propertyId);\n\n  const estimatedTotal = input.lines.reduce(
     (s, l) => s + l.quantity * (l.estimatedUnitCost ?? 0),
     0,
   );
@@ -111,7 +130,7 @@ export async function savePurchaseRequest(sb: Sb, userId: string, input: SavePur
         category: input.category ?? null,
         reason: input.reason ?? null,
         notes: input.notes ?? null,
-        currency: input.currency,
+        currency: operating,
         required_by_date: input.requiredByDate ?? null,
         estimated_total: estimatedTotal,
         version: Number(existing.version ?? 1) + 1,
@@ -143,7 +162,7 @@ export async function savePurchaseRequest(sb: Sb, userId: string, input: SavePur
         category: input.category ?? null,
         reason: input.reason ?? null,
         notes: input.notes ?? null,
-        currency: input.currency,
+        currency: operating,
         estimated_total: estimatedTotal,
         requested_by: userId,
         required_by_date: input.requiredByDate ?? null,
