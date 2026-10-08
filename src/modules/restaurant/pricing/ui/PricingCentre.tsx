@@ -59,7 +59,7 @@ type TabId = (typeof TABS)[number]["id"];
 
 const num = (n: unknown, dp = 2) =>
   Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: dp });
-const money = (n: unknown, currency = "USD") => `${currency} ${num(n)}`;
+const money = (n: unknown, currency = "TZS") => `${currency} ${num(n)}`;
 
 const PRICE_TONE: Record<string, StatusTone> = {
   active: "success",
