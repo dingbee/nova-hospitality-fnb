@@ -70,7 +70,7 @@ export const upsertPriceListSchema = tenantScope.extend({
   code: z.string().min(1).max(40),
   name: z.string().min(1).max(120),
   description: z.string().max(1000).optional(),
-  currency: z.string().min(3).max(8).default("TZS"),
+  currency: z.string().min(3).max(8).optional(),
   channel: z.enum(SALES_CHANNELS).nullish(),
   priority: z.number().int().default(100),
   status: z.enum(PRICE_LIST_STATUSES).default("draft"),
