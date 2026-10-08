@@ -118,6 +118,33 @@ export async function upsertBusinessProfile(
     .select("id, name, slug, settings")
     .single();
   if (error) throw new Error(error.message);
+
+  // Keep the tenant preference and currency registry in lockstep. The
+  // registry remains the accounting/FX catalogue, while settings is the
+  // tenant-facing source of truth for operating currency.
+  await sb
+    .from("restaurant_currencies")
+    .update({ is_base: false })
+    .eq("tenant_id", input.tenantId);
+
+  const { error: currencyError } = await sb
+    .from("restaurant_currencies")
+    .upsert(
+      {
+        tenant_id: input.tenantId,
+        code: operatingCurrency,
+        symbol: currencyMeta?.symbol ?? operatingCurrency,
+        name: currencyMeta?.name ?? operatingCurrency,
+        decimals: 2,
+        rounding: 0.01,
+        is_base: true,
+        active: true,
+        created_by: userId,
+      },
+      { onConflict: "tenant_id,code" },
+    );
+  if (currencyError) throw new Error(currencyError.message);
+
   return data;
 }
 
