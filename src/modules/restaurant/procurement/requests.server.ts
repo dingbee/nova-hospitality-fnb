@@ -97,7 +97,9 @@ export async function getPurchaseRequest(sb: Sb, userId: string, tenantId: strin
 export async function savePurchaseRequest(sb: Sb, userId: string, input: SavePurchaseRequestInput) {
   await assertCapability(sb, userId, input.tenantId, "purchase.request");
 
-  const operating = await operatingCurrency(sb, input.tenantId, input.propertyId);\n\n  const estimatedTotal = input.lines.reduce(
+  const operating = await operatingCurrency(sb, input.tenantId, input.propertyId);
+
+  const estimatedTotal = input.lines.reduce(
     (s, l) => s + l.quantity * (l.estimatedUnitCost ?? 0),
     0,
   );
