@@ -22,6 +22,25 @@ import {
 } from "./contracts";
 
 type Sb = any;
+async function operatingCurrency(sb: Sb, tenantId: string, propertyId?: string | null): Promise<string> {
+  if (propertyId) {
+    const { data: property } = await sb
+      .from("restaurant_properties")
+      .select("currency")
+      .eq("tenant_id", tenantId)
+      .eq("id", propertyId)
+      .maybeSingle();
+    const currency = String(property?.currency ?? "").trim();
+    if (currency.length === 3) return currency.toUpperCase();
+  }
+  const { data: tenant } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", tenantId)
+    .maybeSingle();
+  const configured = String((tenant?.settings as any)?.business?.defaultCurrency ?? "").trim();
+  return configured.length === 3 ? configured.toUpperCase() : "TZS";
+}
 
 const INVOICE_SELECT =
   "id, document_number, supplier_invoice_number, supplier_id, purchase_order_id, status, payment_status, match_status, matched_at, invoice_date, due_date, currency, subtotal, tax_total, total, amount_paid, attachment_url, notes, created_at";
@@ -51,7 +70,7 @@ export async function listSupplierInvoices(sb: Sb, userId: string, input: z.infe
 export async function recordSupplierInvoice(sb: Sb, userId: string, input: RecordInvoiceInput) {
   await assertCapability(sb, userId, input.tenantId, "invoice.manage");
 
-  const subtotal = input.lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+  const operating = await operatingCurrency(sb, input.tenantId, input.propertyId);\n  const subtotal = input.lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
   const taxTotal = input.taxTotal || input.lines.reduce((s, l) => s + (l.taxAmount ?? 0), 0);
   const total = subtotal + taxTotal;
 
@@ -77,7 +96,7 @@ export async function recordSupplierInvoice(sb: Sb, userId: string, input: Recor
       match_status: "unmatched",
       invoice_date: input.invoiceDate,
       due_date: input.dueDate ?? null,
-      currency: input.currency,
+      currency: operating,
       subtotal,
       tax_total: taxTotal,
       total,
