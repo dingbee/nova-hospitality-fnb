@@ -56,7 +56,7 @@ export function TopBar({
         </Link>
 
         {workspace?.tenant && (
-          <div className="ml-1 flex min-w-0 items-center gap-2 sm:ml-2">
+          <div className="ml-1 hidden min-w-0 items-center gap-2 sm:flex sm:ml-2">
             <span className="nova-chip hidden max-w-56 items-center gap-1.5 sm:inline-flex">
               {workspace.tenant.settings?.business?.logoUrl && (
                 <img
