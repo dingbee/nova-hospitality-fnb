@@ -96,12 +96,8 @@ export async function verifyUnit(
 }
 
 /** The tenant's own configured currency, never a hardcoded literal — reused so a prepared purchase request lands in the currency the tenant actually operates in. */
+import { resolveOperatingCurrency } from "../core/currency";
+
 export async function resolveTenantCurrency(sb: Sb, tenantId: string): Promise<string> {
-  const { data } = await sb
-    .from("restaurant_tenants")
-    .select("settings")
-    .eq("id", tenantId)
-    .maybeSingle();
-  const currency = (data?.settings as any)?.business?.defaultCurrency;
-  return typeof currency === "string" && currency.trim().length === 3 ? currency : "TZS";
+  return resolveOperatingCurrency(sb, tenantId);
 }
