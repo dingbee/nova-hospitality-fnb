@@ -188,6 +188,27 @@ describe("price resolution precedence", () => {
     );
     expect(winner).toBeNull();
   });
+
+  it("rejects a price in the wrong operating currency", () => {
+    const winner = resolveBasePrice(
+      [price({ id: "usd", currency: "USD", amount: 25 })],
+      ctx({ currency: "TZS" }),
+    );
+    expect(winner).toBeNull();
+  });
+
+  it("uses the operating currency for an open-item fallback", () => {
+    const q = quote({
+      ctx: ctx({ currency: "TZS" }),
+      prices: [],
+      promotions: [],
+      taxes: [],
+      serviceCharges: [],
+      fallbackUnitPrice: 12_000,
+      fallbackCurrency: "USD",
+    });
+    expect(q.currency).toBe("TZS");
+  });
 });
 
 describe("tax treatment", () => {
