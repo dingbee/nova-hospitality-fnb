@@ -9,7 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getRequest: vi.fn(),
-  getClaims: vi.fn(),\n  rpc: vi.fn(),
+  getClaims: vi.fn(),
+  rpc: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-start/server", () => ({ getRequest: mocks.getRequest }));
@@ -24,7 +25,8 @@ describe("requireSupabaseAuth denial logging", () => {
     process.env.SUPABASE_URL = "https://example.test";
     process.env.SUPABASE_PUBLISHABLE_KEY = "publishable-key";
     mocks.getRequest.mockReset();
-    mocks.getClaims.mockReset();\n    mocks.rpc.mockReset();
+    mocks.getClaims.mockReset();
+    mocks.rpc.mockReset();
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -87,7 +89,8 @@ describe("requireSupabaseAuth denial logging", () => {
     mocks.getRequest.mockReturnValue({
       headers: new Headers({ authorization: "Bearer valid-token" }),
     });
-    mocks.getClaims.mockResolvedValue({ data: { claims: { sub: "user-1" } }, error: null });\n    mocks.rpc.mockResolvedValue({ data: { platformAdmin: true, owner: false, hasRestaurantMembership: false }, error: null });
+    mocks.getClaims.mockResolvedValue({ data: { claims: { sub: "user-1" } }, error: null });
+    mocks.rpc.mockResolvedValue({ data: { platformAdmin: true, owner: false, hasRestaurantMembership: false }, error: null });
     const requireSupabaseAuth = await loadMiddleware();
     const next = vi.fn(async (opts) => ({ context: opts.context }));
 
