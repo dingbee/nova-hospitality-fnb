@@ -288,6 +288,17 @@ export function StaffAccessGateway() {
     );
   }
 
+  if (
+    sessionIsBound &&
+    sessionRole &&
+    STAFF_WORKSPACES[sessionRole] &&
+    sessionRole !== "general_manager" &&
+    sessionRole !== "restaurant_manager" &&
+    !allowedForRole(sessionRole, pathname)
+  ) {
+    return <div className="flex min-h-screen items-center justify-center p-6 text-sm text-muted-foreground">Opening your authorised workspace…</div>;
+  }
+
   if (sessionIsBound && sessionRole && STAFF_WORKSPACES[sessionRole]) {
     const workspace = STAFF_WORKSPACES[sessionRole];
     return (
