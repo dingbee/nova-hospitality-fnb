@@ -128,7 +128,7 @@ export function StaffPanel() {
         title="Staff & roles"
         description="Who has access, and what they can do. Add staff before you need shift coverage."
       />
-      <SectionCard title="Team" description="Everyone with access to this business.">
+      <SectionCard title="Team" description="Manage staff roles, station access, and POS PINs. A POS PIN is separate from an account password.">
         {members.isLoading ? (
           <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" /> Loading…
