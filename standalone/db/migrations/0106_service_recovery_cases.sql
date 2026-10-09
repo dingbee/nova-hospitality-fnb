@@ -38,17 +38,49 @@ ALTER TABLE public.restaurant_service_recovery_cases ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS restaurant_service_recovery_read ON public.restaurant_service_recovery_cases;
 CREATE POLICY restaurant_service_recovery_read ON public.restaurant_service_recovery_cases
   FOR SELECT TO authenticated
-  USING (public.restaurant_can_read(tenant_id));
+  USING (
+    public.restaurant_can_read_scoped(
+      tenant_id,
+      (SELECT property_id FROM public.restaurant_orders o
+       WHERE o.id = restaurant_service_recovery_cases.order_id
+         AND o.tenant_id = restaurant_service_recovery_cases.tenant_id)
+    )
+  );
 
 DROP POLICY IF EXISTS restaurant_service_recovery_insert ON public.restaurant_service_recovery_cases;
 CREATE POLICY restaurant_service_recovery_insert ON public.restaurant_service_recovery_cases
   FOR INSERT TO authenticated
-  WITH CHECK (public.restaurant_can_read(tenant_id) AND reported_by = auth.uid());
+  WITH CHECK (
+    reported_by = auth.uid()
+    AND public.restaurant_can_write_scoped(
+      tenant_id,
+      ARRAY['owner','general_manager','restaurant_manager']::restaurant_role[],
+      (SELECT property_id FROM public.restaurant_orders o
+       WHERE o.id = restaurant_service_recovery_cases.order_id
+         AND o.tenant_id = restaurant_service_recovery_cases.tenant_id)
+    )
+  );
 
 DROP POLICY IF EXISTS restaurant_service_recovery_update ON public.restaurant_service_recovery_cases;
 CREATE POLICY restaurant_service_recovery_update ON public.restaurant_service_recovery_cases
   FOR UPDATE TO authenticated
-  USING (public.restaurant_can_read(tenant_id))
-  WITH CHECK (public.restaurant_can_read(tenant_id));
+  USING (
+    public.restaurant_can_write_scoped(
+      tenant_id,
+      ARRAY['owner','general_manager','restaurant_manager']::restaurant_role[],
+      (SELECT property_id FROM public.restaurant_orders o
+       WHERE o.id = restaurant_service_recovery_cases.order_id
+         AND o.tenant_id = restaurant_service_recovery_cases.tenant_id)
+    )
+  )
+  WITH CHECK (
+    public.restaurant_can_write_scoped(
+      tenant_id,
+      ARRAY['owner','general_manager','restaurant_manager']::restaurant_role[],
+      (SELECT property_id FROM public.restaurant_orders o
+       WHERE o.id = restaurant_service_recovery_cases.order_id
+         AND o.tenant_id = restaurant_service_recovery_cases.tenant_id)
+    )
+  );
 
 COMMIT;
