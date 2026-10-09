@@ -136,7 +136,7 @@ export function StaffAccessGateway() {
   const access = bootstrap.data;
   const properties = access?.properties ?? [];
   const selectedProperty = properties.find((property) => property.id === propertyId) ?? properties[0] ?? null;
-  const activeSession = access?.activeSession ?? null;
+  const activeSession = access?.activeSession ?? null;\n  const refetchBootstrap = bootstrap.refetch;
   const cookieSessionId = readSessionCookie();
   const sessionIsBound = Boolean(activeSession && cookieSessionId === activeSession.sessionId);
   const sessionRole = sessionIsBound ? activeSession?.role ?? null : null;
@@ -154,7 +154,7 @@ export function StaffAccessGateway() {
   const endSession = useCallback(async () => {
     if (!activeSession) {
       clearSessionCookie();
-      await bootstrap.refetch();
+      await refetchBootstrap();
       return;
     }
     setBusy(true);
@@ -165,14 +165,14 @@ export function StaffAccessGateway() {
       await endFn({ data: { sessionId: activeSession.sessionId } });
       clearSessionCookie();
       await queryClient.invalidateQueries({ queryKey: ["staff-access.bootstrap"] });
-      await bootstrap.refetch();
+      await refetchBootstrap();
       setPin("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "The session could not be ended safely.");
     } finally {
       setBusy(false);
     }
-  }, [activeSession, bootstrap, endFn, queryClient]);
+  }, [activeSession?.sessionId, endFn, queryClient, refetchBootstrap]);
 
   useEffect(() => {
     if (!sessionIsBound) return;
@@ -191,7 +191,7 @@ export function StaffAccessGateway() {
   }, [sessionIsBound, activeSession?.sessionId, endSession]);
 
   useEffect(() => {
-    if (!sessionIsBound || !sessionRole || sessionRole in { owner: true, general_manager: true, restaurant_manager: true }) return;
+    if (!sessionIsBound || !sessionRole || sessionRole === "general_manager" || sessionRole === "restaurant_manager") return;
     const workspace = STAFF_WORKSPACES[sessionRole];
     if (!workspace) return;
     if (!allowedForRole(sessionRole, pathname)) {
@@ -379,7 +379,7 @@ export function StaffAccessGateway() {
           placeholder="••••"
         />
         {error ? <p role="alert" className="mb-4 text-sm text-destructive">{error}</p> : null}
-        <Button className="h-12 w-full bg-[#2f7139] text-white hover:bg-[#275f30]" disabled={busy || pin.length < 4 || !selectedProperty?.pinConfigured} onClick={() => void submitPin()}>
+        <Button className="h-12 w-full bg-[#2f7139] text-white hover:bg-[#275f30]" disabled={busy || pin.length < 4 || !selectedProperty} onClick={() => void submitPin()}>
           {busy ? "Verifying…" : "Open my workspace"}
         </Button>
         {activeSession && !sessionIsBound ? (
