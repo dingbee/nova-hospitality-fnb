@@ -258,8 +258,10 @@ as $$
         and m.user_id = s.staff_user_id
         and public.restaurant_member_active(m.user_id, _tenant_id)
         and (
-          (_property_id is not null and s.property_id = _property_id
-            and (m.property_id is null or m.property_id = _property_id))
+          (_property_id is not null and (
+            m.property_id is null
+            or (m.property_id = _property_id and s.property_id = _property_id)
+          ))
           or (_property_id is null and m.property_id is null)
         )
     )
