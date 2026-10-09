@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";\nimport { useServerFn } from "@tanstack/react-start";\nimport { toast } from "sonner";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, LogOut, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { usePrincipal } from "@/lib/rbac/usePermissions";
-import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
+import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";\nimport { useStaffAccessSession, clearStaffAccessSessionCookie } from "@/modules/restaurant/core/staff-access-context";\nimport { endPosSessionFn } from "@/modules/restaurant/sales/pos-session.functions";
 import { hasRestaurantCapability } from "@/modules/restaurant/core/permissions";
 import { StaffNovaPanel } from "@/modules/restaurant/staffnova/ui/StaffNovaPanel";
 import { activeItem, groupOf, visibleGroups } from "./navigation";
@@ -18,7 +18,7 @@ export function NovaShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: principal, error: principalError } = usePrincipal();
-  const { data: workspace } = useRestaurantWorkspace();
+  const { data: workspace } = useRestaurantWorkspace();\n  const { sessionId: staffSessionId } = useStaffAccessSession();\n  const endPosSession = useServerFn(endPosSessionFn);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -76,6 +76,15 @@ export function NovaShell({ children }: { children: ReactNode }) {
   useEffect(() => setMobileOpen(false), [pathname]);
 
   const signOut = async () => {
+    if (staffSessionId) {
+      try {
+        await endPosSession({ data: { sessionId: staffSessionId } });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not safely end the staff session. Try again.");
+        return;
+      }
+    }
+    clearStaffAccessSessionCookie();
     await queryClient.cancelQueries();
     queryClient.clear();
     await supabase.auth.signOut();
