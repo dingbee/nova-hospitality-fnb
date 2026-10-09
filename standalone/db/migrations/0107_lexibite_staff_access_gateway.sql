@@ -8,6 +8,8 @@ begin;
 alter table public.restaurant_pos_sessions
   add column if not exists staff_member_id uuid
     references public.restaurant_members(id) on delete cascade;
+alter table public.restaurant_pos_sessions
+  add column if not exists session_token_hash text;
 
 create index if not exists restaurant_pos_sessions_actor_lookup_idx
   on public.restaurant_pos_sessions (created_by, tenant_id, active, expires_at, started_at desc);
@@ -27,6 +29,10 @@ as $$
    and m.tenant_id = s.tenant_id
    and m.user_id = s.staff_user_id
   where auth.uid() is not null
+    and s.session_token_hash is not null
+    and s.session_token_hash = encode(extensions.digest(convert_to(
+      coalesce((nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-lexibite-staff-session'), ''), 'UTF8'
+    ), 'sha256'), 'hex')
     and s.created_by = auth.uid()
     and s.tenant_id = _tenant_id
     and s.active = true
@@ -450,6 +456,7 @@ declare
   member public.restaurant_members%rowtype;
   match_count integer;
   session_id uuid;
+  session_token text;
 begin
   if auth.uid() is null then raise exception 'Authentication required'; end if;
   if p_pin is null or p_pin !~ '^[0-9]{4,6}$' then
@@ -490,19 +497,24 @@ begin
     and extensions.crypt(p_pin, m.pos_pin_hash) = m.pos_pin_hash
   limit 1;
 
+  -- Switching staff ends only this terminal's session, never sessions on other devices.
   update public.restaurant_pos_sessions
   set active = false, ended_at = now()
-  where created_by = auth.uid() and active = true;
+  where created_by = auth.uid() and tenant_id = p_tenant_id
+    and property_id = p_property_id
+    and terminal_id = coalesce(nullif(p_terminal_id,''),'pos-web') and active = true;
 
+  session_token := encode(extensions.gen_random_bytes(32), 'hex');
   insert into public.restaurant_pos_sessions
-    (tenant_id, property_id, staff_user_id, staff_member_id, created_by, terminal_id, expires_at)
+    (tenant_id, property_id, staff_user_id, staff_member_id, created_by, terminal_id, expires_at, session_token_hash)
   values
     (p_tenant_id, p_property_id, member.user_id, member.id, auth.uid(),
-     coalesce(nullif(p_terminal_id,''),'pos-web'), now() + interval '12 hours')
+     coalesce(nullif(p_terminal_id,''),'pos-web'), now() + interval '12 hours',
+     encode(extensions.digest(convert_to(session_token, 'UTF8'), 'sha256'), 'hex'))
   returning id into session_id;
 
   return jsonb_build_object(
-    'sessionId', session_id, 'staffUserId', member.user_id,
+    'sessionId', session_id, 'sessionToken', session_token, 'staffUserId', member.user_id,
     'staffMemberId', member.id, 'role', member.role,
     'tenantId', p_tenant_id, 'propertyId', p_property_id,
     'terminalId', coalesce(nullif(p_terminal_id,''),'pos-web')
@@ -560,6 +572,10 @@ begin
   from public.restaurant_pos_sessions s
   join public.restaurant_members m on m.id = s.staff_member_id
   where s.created_by = caller and s.active = true and s.expires_at > now()
+    and s.session_token_hash is not null
+    and s.session_token_hash = encode(extensions.digest(convert_to(
+      coalesce((nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-lexibite-staff-session'), ''), 'UTF8'
+    ), 'sha256'), 'hex')
     and s.staff_member_id is not null
     and m.tenant_id = s.tenant_id and m.user_id = s.staff_user_id
     and (m.property_id is null or m.property_id = s.property_id)
