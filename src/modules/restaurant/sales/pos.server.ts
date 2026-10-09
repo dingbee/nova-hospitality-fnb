@@ -594,7 +594,7 @@ export async function voidPosLine(sb: Sb, userId: string, input: VoidPosLineInpu
   // Only an un-fired line can safely unwind its stock movements. Once a line
   // has reached a production/service state, consumption remains in the ledger:
   // reversing it would put already-prepared/served goods back into inventory.
-  const stockDisposition = ["sent", "preparing", "ready", "served"].includes(String(item.status))
+  const stockDisposition = ["fired", "sent", "preparing", "ready", "served"].includes(String(item.status))
     ? "preserve_consumption"
     : "reverse_unprepared";
   const reversal = stockDisposition === "reverse_unprepared"
