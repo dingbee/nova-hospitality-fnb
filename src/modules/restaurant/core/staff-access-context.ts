@@ -17,3 +17,9 @@ export const StaffAccessSessionContext = createContext<StaffAccessSessionValue>(
 });
 
 export const useStaffAccessSession = () => useContext(StaffAccessSessionContext);
+
+export function clearStaffAccessSessionCookie() {
+  if (typeof document === "undefined") return;
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `lexibite_staff_session=; Max-Age=0; Path=/; SameSite=Strict${secure}`;
+}
