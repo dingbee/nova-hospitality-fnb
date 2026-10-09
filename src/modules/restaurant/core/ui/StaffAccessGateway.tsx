@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { NovaShell } from "@/components/shell/NovaShell";
 import { getStaffAccessBootstrapFn } from "../staff-access.functions";
 import { startPosSessionFn, endPosSessionFn } from "@/modules/restaurant/sales/pos-session.functions";
-import { RESTAURANT_ROLE_LABELS } from "../permissions";\nimport { StaffAccessSessionContext, type StaffAccessSessionValue } from "../staff-access-context";
+import { RESTAURANT_ROLE_LABELS } from "../permissions";
+import { StaffAccessSessionContext, type StaffAccessSessionValue } from "../staff-access-context";
 
 type ActiveStaffSession = {
   sessionId: string;
@@ -136,7 +137,8 @@ export function StaffAccessGateway() {
   const access = bootstrap.data;
   const properties = access?.properties ?? [];
   const selectedProperty = properties.find((property) => property.id === propertyId) ?? properties[0] ?? null;
-  const activeSession = access?.activeSession ?? null;\n  const refetchBootstrap = bootstrap.refetch;
+  const activeSession = access?.activeSession ?? null;
+  const refetchBootstrap = bootstrap.refetch;
   const cookieSessionId = readSessionCookie();
   const sessionIsBound = Boolean(activeSession && cookieSessionId === activeSession.sessionId);
   const sessionRole = sessionIsBound ? activeSession?.role ?? null : null;
