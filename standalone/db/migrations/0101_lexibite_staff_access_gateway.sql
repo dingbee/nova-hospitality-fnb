@@ -33,6 +33,7 @@ as $$
     and s.expires_at > now()
     and s.staff_member_id is not null
     and (m.property_id is null or m.property_id = s.property_id)
+    and public.restaurant_member_active(m.user_id, _tenant_id)
   order by s.started_at desc
   limit 1;
 $$;
