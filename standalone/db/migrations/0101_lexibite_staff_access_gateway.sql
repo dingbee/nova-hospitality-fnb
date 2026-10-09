@@ -633,7 +633,7 @@ begin
     'canActivate', can_activate,
     'tenantId', selected_tenant,
     'tenantName', selected_name,
-    'pinConfigured', coalesce((select bool_or((p->>'pinConfigured')::boolean) from jsonb_array_elements(properties) p), false),
+    'pinConfigured', coalesce((select bool_or((x.value->>'pinConfigured')::boolean) from jsonb_array_elements(properties) as x(value)), false),
     'properties', properties,
     'activeSession', active_session
   );
