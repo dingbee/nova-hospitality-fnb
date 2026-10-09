@@ -50,11 +50,28 @@ export async function memberGrantsInTenant(
   userId: string,
   tenantId: string,
 ): Promise<MemberGrant[]> {
-  const { data } = await supabase
+  // A shared-terminal PIN selects one exact restaurant_members row. Do not
+  // aggregate every role the manager-authenticated browser account may hold:
+  // doing so would let a staff PIN inherit another membership's permissions.
+  const { data: activeMemberId, error: sessionError } = await supabase.rpc(
+    "restaurant_effective_staff_member_id",
+    { _tenant_id: tenantId },
+  );
+  if (sessionError) throw new Error("Unable to verify the active staff role.");
+
+  let query = supabase
     .from("restaurant_members")
     .select("role, property_id")
-    .eq("tenant_id", tenantId)
-    .eq("user_id", userId);
+    .eq("tenant_id", tenantId);
+
+  if (activeMemberId) {
+    query = query.eq("id", activeMemberId).eq("user_id", userId);
+  } else {
+    query = query.eq("user_id", userId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
   return (data ?? []).map((r: any) => ({
     role: r.role as RestaurantRole,
     propertyId: r.property_id ?? null,
