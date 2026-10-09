@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { serviceRecoverySchema } from "./service-recovery.contracts";
+import { serviceRecoverySchema, serviceRecoveryResolutionSchema } from "./service-recovery.contracts";
 import { z } from "zod";
 
 const listCasesSchema = z.object({
@@ -23,4 +23,13 @@ export const recordServiceRecoveryFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./service-recovery.server");
     return mod.recordServiceRecovery(context.supabase, context.userId, data);
+  });
+
+
+export const resolveServiceRecoveryFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => serviceRecoveryResolutionSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./service-recovery.server");
+    return mod.resolveServiceRecovery(context.supabase, context.userId, data);
   });
