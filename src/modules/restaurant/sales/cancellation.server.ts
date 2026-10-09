@@ -11,7 +11,7 @@ import { assertCapability } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { cancelKitchenTicketItemsForOrderItems } from "../kitchen/kitchen.server";
 import { REASON_CODES } from "../inventory/policy";
-import { reverseMovementsForOrder } from "../inventory/reversal.server";
+import { reverseMovementsForOrderItem } from "../inventory/reversal.server";
 import { closeActiveGuestSession } from "../selforder/selforder.server";
 import { recalcOrder } from "./sales.server";
 import { evaluateCancellation } from "./cancellation";
@@ -63,7 +63,7 @@ export async function cancelOrder(sb: Sb, userId: string, input: CancelOrderInpu
     paymentState: String(order.payment_state),
     outstandingPaid,
     preparedLines: lines.filter((l) =>
-      ["sent", "preparing", "ready", "served"].includes(String(l.status)),
+      ["fired", "sent", "preparing", "ready", "served"].includes(String(l.status)),
     ).length,
     consumedMovements: ((movements ?? []) as any[]).length,
   });
@@ -75,15 +75,33 @@ export async function cancelOrder(sb: Sb, userId: string, input: CancelOrderInpu
     throw new Error(decision.message);
   }
 
-  // Ledger correction first — if stock cannot be unwound, nothing is cancelled.
+  // Correct stock per line, not per order. Only lines that never reached
+  // production/service can safely return their recorded consumption to stock.
+  // Prepared/served lines retain their stock deduction because those goods are
+  // no longer reusable; their cost remains visible in the inventory ledger.
+  const preparedStatuses = ["fired", "sent", "preparing", "ready", "served"];
+  const stockLines = lines.filter((line) => line.status !== "voided");
   const reversal = decision.reverseStock
-    ? await reverseMovementsForOrder(sb, userId, {
-        tenantId: input.tenantId,
-        orderId: input.orderId,
-        reason: `Order cancelled: ${input.reason}`,
-        reasonCode: REASON_CODES.orderCancellation,
-      })
+    ? await (async () => {
+        const combined = { reversed: 0, alreadyReversed: 0, costRestored: 0, movementIds: [] as string[] };
+        for (const line of stockLines) {
+          if (preparedStatuses.includes(String(line.status))) continue;
+          const part = await reverseMovementsForOrderItem(sb, userId, {
+            tenantId: input.tenantId,
+            orderItemId: line.id,
+            reason: `Order cancelled: ${input.reason}`,
+            reasonCode: REASON_CODES.orderCancellation,
+          });
+          combined.reversed += part.reversed;
+          combined.alreadyReversed += part.alreadyReversed;
+          combined.costRestored += part.costRestored;
+          combined.movementIds.push(...part.movementIds);
+        }
+        combined.costRestored = Number(combined.costRestored.toFixed(4));
+        return combined;
+      })()
     : null;
+  const preparedLinesPreserved = stockLines.filter((line) => preparedStatuses.includes(String(line.status))).length;
 
   const now = new Date().toISOString();
   const liveLineIds = lines.filter((l) => l.status !== "voided").map((l) => l.id);
@@ -146,6 +164,8 @@ export async function cancelOrder(sb: Sb, userId: string, input: CancelOrderInpu
       stock_movements_reversed: reversal?.reversed ?? 0,
       cost_restored: reversal?.costRestored ?? 0,
       wastage_likely: decision.wastageLikely,
+      prepared_lines_stock_preserved: preparedLinesPreserved,
+      wastage_follow_up_required: preparedLinesPreserved > 0,
     },
     dedupeKey: `order-cancelled:${order.id}`,
   });

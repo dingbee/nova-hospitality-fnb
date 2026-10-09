@@ -47,6 +47,7 @@ vi.mock("./sales.server", () => ({
   transitionOrder: vi.fn(),
 }));
 
+import { reverseMovementsForOrderItem } from "../inventory/reversal.server";
 import { voidPosLine } from "./pos.server";
 import { cancelOrder } from "./cancellation.server";
 
@@ -191,6 +192,26 @@ describe("voidPosLine — syncs the kitchen/bar ticket, never leaves a phantom p
     } as any);
 
     expect(tables.restaurant_kitchen_ticket_items[0]!.status).toBe("served");
+    // The guest received this item: a bill void must not put its consumed
+    // ingredients back into available stock.
+    expect(reverseMovementsForOrderItem).not.toHaveBeenCalled();
+  });
+
+  it("reverses stock only for an un-fired line", async () => {
+    const tables = {
+      restaurant_order_items: [
+        {
+          id: "item-1", order_id: ORDER, description: "Coffee", quantity: 1,
+          line_total: 100, line_cost: 0, status: "ordered", tenant_id: TENANT,
+        },
+      ],
+      restaurant_orders: [orderRow()],
+      restaurant_kitchen_ticket_items: [],
+    };
+    await voidPosLine(fakeDb(tables), USER, {
+      tenantId: TENANT, orderId: ORDER, orderItemId: "item-1", reason: "Wrong item",
+    } as any);
+    expect(reverseMovementsForOrderItem).toHaveBeenCalledTimes(1);
   });
 });
 
