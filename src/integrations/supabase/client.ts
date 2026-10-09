@@ -53,7 +53,7 @@ function createSupabaseClient() {
           const item = document.cookie.split('; ').find((part) => part.startsWith('lexibite_staff_token='));
           if (item) {
             const token = decodeURIComponent(item.slice('lexibite_staff_token='.length));
-            if (token) headers.set('x-lexibite-staff-session', token);
+            if (token) headers.set('x-client-info', (headers.get('x-client-info') ?? '') + '; lexibite-staff-session=' + token);
           } else {
             headers.delete('x-lexibite-staff-session');
           }
