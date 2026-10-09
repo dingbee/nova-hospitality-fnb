@@ -204,10 +204,6 @@ export function StaffAccessGateway() {
       setError("This account is not authorised to activate staff access.");
       return;
     }
-    if (!selectedProperty.pinConfigured) {
-      setError("A manager PIN has not been assigned for this property. Ask the owner to set it in Staff & Roles.");
-      return;
-    }
     if (!/^\d{4,6}$/.test(pin)) {
       setError("Enter your 4–6 digit PIN.");
       return;
@@ -226,7 +222,7 @@ export function StaffAccessGateway() {
       writeSessionCookie(result.sessionId);
       setPin("");
       await queryClient.invalidateQueries({ queryKey: ["staff-access.bootstrap"] });
-      await bootstrap.refetch();
+      await refetchBootstrap();
     } catch (e) {
       setError(e instanceof Error ? e.message : "PIN verification failed.");
     } finally {
@@ -361,7 +357,7 @@ export function StaffAccessGateway() {
         </select>
         {selectedProperty && !selectedProperty.pinConfigured ? (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            A manager PIN has not been assigned for this property. Ask the owner to set the manager PIN in Staff & Roles.
+            No manager PIN is assigned yet. Staff may still use their own PINs; the manager workspace remains locked until the owner assigns a manager PIN in Staff & Roles.
           </div>
         ) : null}
         <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-[#59645d]" htmlFor="staff-access-pin">Personal PIN</label>
