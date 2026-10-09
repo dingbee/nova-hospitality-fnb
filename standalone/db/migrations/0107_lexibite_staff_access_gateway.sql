@@ -314,7 +314,7 @@ create or replace function public.restaurant_can_manage_membership(
 returns boolean
 language sql stable security definer
 set search_path = public, pg_temp
-as $
+as $$
   select auth.uid() is not null and (
     public.restaurant_is_platform_admin(auth.uid())
     or exists (
@@ -341,7 +341,7 @@ as $
         and public.restaurant_member_active(actor.user_id, _tenant_id)
     )
   );
-$;
+$$;
 
 revoke all on function public.restaurant_can_manage_membership(uuid, public.restaurant_role[], uuid) from public, anon;
 grant execute on function public.restaurant_can_manage_membership(uuid, public.restaurant_role[], uuid) to authenticated, service_role;
