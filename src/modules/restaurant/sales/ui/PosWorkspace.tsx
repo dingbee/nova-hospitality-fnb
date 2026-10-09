@@ -83,7 +83,7 @@ import { PosMenuItemCard } from "./PosMenuItemCard";
 import { beverageCategories } from "@/modules/restaurant/bar/lens";
 import { BAR_STATION_TYPES } from "@/modules/restaurant/bar/contracts";
 import { sendToStationLabel } from "../stationRouting";
-import { useStaffAccessSession } from "@/modules/restaurant/core/ui/StaffAccessGateway";
+import { useStaffAccessSession } from "@/modules/restaurant/core/staff-access-context";
 
 const newRequestId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
