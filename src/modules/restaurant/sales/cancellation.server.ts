@@ -63,7 +63,7 @@ export async function cancelOrder(sb: Sb, userId: string, input: CancelOrderInpu
     paymentState: String(order.payment_state),
     outstandingPaid,
     preparedLines: lines.filter((l) =>
-      ["sent", "preparing", "ready", "served"].includes(String(l.status)),
+      ["fired", "sent", "preparing", "ready", "served"].includes(String(l.status)),
     ).length,
     consumedMovements: ((movements ?? []) as any[]).length,
   });
