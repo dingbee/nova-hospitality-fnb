@@ -22,6 +22,7 @@ type ActiveStaffSession = {
 };
 
 const SESSION_COOKIE = "lexibite_staff_session";
+const SESSION_TOKEN_COOKIE = "lexibite_staff_token";
 const SESSION_TTL_SECONDS = 12 * 60 * 60;
 
 type StaffWorkspaceLink = { label: string; path: string };
@@ -93,16 +94,18 @@ function readSessionCookie(): string | null {
   return item ? decodeURIComponent(item.slice(SESSION_COOKIE.length + 1)) : null;
 }
 
-function writeSessionCookie(sessionId: string) {
+function writeSessionCookie(sessionId: string, sessionToken: string) {
   if (typeof document === "undefined") return;
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
   document.cookie = `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Max-Age=${SESSION_TTL_SECONDS}; Path=/; SameSite=Strict${secure}`;
+  document.cookie = `${SESSION_TOKEN_COOKIE}=${encodeURIComponent(sessionToken)}; Max-Age=${SESSION_TTL_SECONDS}; Path=/; SameSite=Strict${secure}`;
 }
 
 function clearSessionCookie() {
   if (typeof document === "undefined") return;
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
   document.cookie = `${SESSION_COOKIE}=; Max-Age=0; Path=/; SameSite=Strict${secure}`;
+  document.cookie = `${SESSION_TOKEN_COOKIE}=; Max-Age=0; Path=/; SameSite=Strict${secure}`;
 }
 
 function allowedForRole(role: string, pathname: string): boolean {
@@ -221,7 +224,8 @@ export function StaffAccessGateway() {
           terminalId: "pos-web",
         },
       });
-      writeSessionCookie(result.sessionId);
+      if (!result.sessionToken) throw new Error("PIN session proof was not returned. Try again.");
+      writeSessionCookie(result.sessionId, result.sessionToken);
       setPin("");
       await queryClient.invalidateQueries({ queryKey: ["staff-access.bootstrap"] });
       await refetchBootstrap();
