@@ -33,18 +33,77 @@ export async function upsertMember(
   input: z.infer<typeof upsertMemberSchema>,
 ) {
   const propertyId = input.propertyId ?? null;
+
+  // A selected property must belong to this tenant. Never accept a forged
+  // property id or silently save a membership that resolves to no property.
   if (propertyId) {
-    // A property id must actually belong to this tenant — otherwise a typo
-    // or a forged id would silently scope a member to nothing (or, worse,
-    // a hierarchy-inconsistent property from a different tenant).
-    const { data: property } = await sb
+    const { data: property, error: propertyError } = await sb
       .from("restaurant_properties")
       .select("id")
       .eq("id", propertyId)
       .eq("tenant_id", input.tenantId)
       .maybeSingle();
+    if (propertyError) throw new Error(propertyError.message);
     if (!property) throw new Error("That property does not belong to this tenant.");
   }
+
+  if (input.memberId) {
+    // Edit the existing grant in place: preserve its id/created_at, so role
+    // changes and property rotations do not create duplicate membership rows.
+    const { data: current, error: currentError } = await sb
+      .from("restaurant_members")
+      .select("id, user_id, role, property_id")
+      .eq("id", input.memberId)
+      .eq("tenant_id", input.tenantId)
+      .maybeSingle();
+    if (currentError) throw new Error(currentError.message);
+    if (!current) throw new Error("That staff assignment was not found in this tenant.");
+    if (current.user_id !== input.userId) {
+      throw new Error(
+        "That staff assignment no longer matches the selected person. Refresh and try again.",
+      );
+    }
+
+    // A rotation crosses two security boundaries. The actor must be authorised
+    // for both the current assignment and the destination (including tenant-wide).
+    await assertCanManageMembership(sb, input.tenantId, current.property_id ?? null);
+    await assertCanManageMembership(sb, input.tenantId, propertyId);
+
+    const { data, error } = await sb
+      .from("restaurant_members")
+      .update({ role: input.role, property_id: propertyId })
+      .eq("id", input.memberId)
+      .eq("tenant_id", input.tenantId)
+      .select("id, user_id, role, property_id")
+      .single();
+    if (error) {
+      if (/duplicate key/i.test(error.message)) {
+        throw new Error(
+          propertyId
+            ? "That person already holds this role at the destination property."
+            : "That person already holds this role tenant-wide.",
+        );
+      }
+      throw new Error(error.message);
+    }
+
+    await logActivity(sb, {
+      actorId: userId,
+      tenantId: input.tenantId,
+      action: "restaurant.member.updated",
+      entityType: "restaurant_members",
+      entityId: data.id,
+      metadata: {
+        userId: input.userId,
+        previousRole: current.role,
+        role: input.role,
+        previousPropertyId: current.property_id ?? null,
+        propertyId,
+      },
+    });
+    return data;
+  }
+
   await assertCanManageMembership(sb, input.tenantId, propertyId);
   const { data, error } = await sb
     .from("restaurant_members")

@@ -75,6 +75,7 @@ jobs:
       - name: Scoped GTM functional tests
         run: |
           bunx vitest run \
+            src/modules/restaurant/core/members.server.test.ts \
             src/modules/api-platform/channel-registry.test.ts \
             src/modules/api-platform/adapters/channel-adapter.test.ts \
             src/modules/restaurant/payments/mobilemoney/mobilemoney.server.test.ts \

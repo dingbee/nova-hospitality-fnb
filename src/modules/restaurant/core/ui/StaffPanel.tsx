@@ -7,6 +7,7 @@ import { SectionCard } from "@/components/os/SectionCard";
 import { EmptyState } from "@/components/os/EmptyState";
 import { Button } from "@/components/ui/button";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
+import { listStaffUsers } from "@/lib/staff.functions";
 import { useRestaurantWorkspace } from "../../ui/useRestaurantWorkspace";
 import {
   listRestaurantMembersFn,
@@ -26,6 +27,12 @@ export function StaffPanel() {
   const qc = useQueryClient();
 
   const listFn = useServerFn(listRestaurantMembersFn);
+  const staffFn = useServerFn(listStaffUsers);
+  const staff = useQuery({
+    queryKey: ["staff.users"],
+    queryFn: () => staffFn(),
+    enabled: Boolean(tenantId),
+  });
   const members = useQuery({
     queryKey: ["restaurant.members", tenantId],
     queryFn: () => listFn({ data: { tenantId: tenantId! } }),
@@ -33,7 +40,7 @@ export function StaffPanel() {
   });
 
   const upsertFn = useServerFn(upsertRestaurantMemberFn);
-  const updateRole = useAdminMutation({
+  const updateMember = useAdminMutation({
     mutationFn: (vars: {
       memberId: string;
       userId: string;
@@ -44,12 +51,16 @@ export function StaffPanel() {
         data: {
           tenantId: tenantId!,
           userId: vars.userId,
+          memberId: vars.memberId,
           role: vars.role as never,
           propertyId: vars.propertyId,
         },
       }),
-    successMessage: "Role updated.",
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["restaurant.members", tenantId] }),
+    successMessage: "Staff access updated.",
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["restaurant.members", tenantId] });
+      void qc.invalidateQueries({ queryKey: ["restaurant.member-stations", tenantId] });
+    },
   });
 
   const stationScopeFn = useServerFn(listMemberStationAssignmentsFn);
@@ -113,6 +124,9 @@ export function StaffPanel() {
     );
   }
 
+  const properties = (ws.data?.properties ?? []) as { id: string; name: string }[];
+  const staffById = new Map((staff.data ?? []).map((person) => [person.user_id, person]));
+
   const rows = (members.data ?? []) as {
     id: string;
     user_id: string;
@@ -165,8 +179,17 @@ export function StaffPanel() {
                 {rows.map((m) => (
                   <Fragment key={m.id}>
                     <tr className="border-b last:border-0">
-                      <td className="py-3 pr-4 font-mono text-xs text-muted-foreground">
-                        {m.user_id}
+                      <td className="py-3 pr-4">
+                        <span className="block font-medium">
+                          {staffById.get(m.user_id)?.full_name ??
+                            staffById.get(m.user_id)?.email ??
+                            m.user_id}
+                        </span>
+                        {staffById.get(m.user_id)?.email ? (
+                          <span className="block text-xs text-muted-foreground">
+                            {staffById.get(m.user_id)?.email}
+                          </span>
+                        ) : null}
                       </td>
                       <td className="py-3 pr-4">
                         <label className="sr-only" htmlFor={`role-${m.id}`}>
@@ -174,10 +197,14 @@ export function StaffPanel() {
                         </label>
                         <select
                           id={`role-${m.id}`}
-                          defaultValue={m.role}
-                          disabled={updateRole.isPending}
+                          value={m.role}
+                          disabled={
+                            updateMember.isPending ||
+                            (m.property_id !== null &&
+                              !properties.some((property) => property.id === m.property_id))
+                          }
                           onChange={(e) =>
-                            updateRole.mutate({
+                            updateMember.mutate({
                               memberId: m.id,
                               userId: m.user_id,
                               role: e.target.value,
@@ -193,8 +220,40 @@ export function StaffPanel() {
                           ))}
                         </select>
                       </td>
-                      <td className="py-3 pr-4 text-muted-foreground">
-                        {m.property_id ? "One property" : "All properties"}
+                      <td className="py-3 pr-4">
+                        <label className="sr-only" htmlFor={`scope-${m.id}`}>
+                          Property scope for {staffById.get(m.user_id)?.full_name ?? m.user_id}
+                        </label>
+                        <select
+                          id={`scope-${m.id}`}
+                          value={m.property_id ?? "__tenant_wide__"}
+                          disabled={
+                            updateMember.isPending ||
+                            (m.property_id !== null &&
+                              !properties.some((property) => property.id === m.property_id))
+                          }
+                          onChange={(e) =>
+                            updateMember.mutate({
+                              memberId: m.id,
+                              userId: m.user_id,
+                              role: m.role,
+                              propertyId:
+                                e.target.value === "__tenant_wide__" ? null : e.target.value,
+                            })
+                          }
+                          className="min-h-11 max-w-64 rounded-md border bg-background px-2 py-1 text-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
+                        >
+                          <option value="__tenant_wide__">Every property</option>
+                          {m.property_id &&
+                          !properties.some((property) => property.id === m.property_id) ? (
+                            <option value={m.property_id}>Current property (restricted)</option>
+                          ) : null}
+                          {properties.map((property) => (
+                            <option key={property.id} value={property.id}>
+                              {property.name}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td className="py-3 pr-4 text-right">
                         {["chef", "kitchen_manager", "bartender"].includes(m.role) && (
