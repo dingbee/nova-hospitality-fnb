@@ -609,10 +609,10 @@ begin
         'name', p.name,
         'pinConfigured', exists (
           select 1 from public.restaurant_members m
-          where m.user_id = caller and m.tenant_id = selected_tenant
-            and m.role in ('general_manager','restaurant_manager')
+          where m.tenant_id = selected_tenant
             and m.pos_pin_enabled = true and m.pos_pin_hash is not null
             and (m.property_id is null or m.property_id = p.id)
+            and public.restaurant_member_active(m.user_id, selected_tenant)
         )
       ) order by p.name
     ), '[]'::jsonb) into properties
