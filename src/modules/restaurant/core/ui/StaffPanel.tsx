@@ -151,7 +151,10 @@ export function StaffPanel() {
                     Scope
                   </th>
                   <th scope="col" className="py-2 pr-4 text-right">
-                    Production
+                    Stations
+                  </th>
+                  <th scope="col" className="py-2 pr-4 text-right">
+                    POS PIN
                   </th>
                   <th scope="col" className="py-2 pr-4 text-right">
                     <span className="sr-only">Actions</span>
