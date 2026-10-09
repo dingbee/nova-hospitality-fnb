@@ -590,14 +590,21 @@ export async function voidPosLine(sb: Sb, userId: string, input: VoidPosLineInpu
     locationId: order?.location_id ?? null,
   });
 
-  // Ledger first: if the correction cannot be written, the line stays live and
-  // the operator sees why, rather than money and stock disagreeing.
-  const reversal = await reverseMovementsForOrderItem(sb, userId, {
-    tenantId: input.tenantId,
-    orderItemId: item.id,
-    reason: `Line void: ${input.reason}`,
-    reasonCode: REASON_CODES.saleReversal,
-  });
+  // A void is a bill correction, not proof that physical stock is reusable.
+  // Only an un-fired line can safely unwind its stock movements. Once a line
+  // has reached a production/service state, consumption remains in the ledger:
+  // reversing it would put already-prepared/served goods back into inventory.
+  const stockDisposition = ["sent", "preparing", "ready", "served"].includes(String(item.status))
+    ? "preserve_consumption"
+    : "reverse_unprepared";
+  const reversal = stockDisposition === "reverse_unprepared"
+    ? await reverseMovementsForOrderItem(sb, userId, {
+        tenantId: input.tenantId,
+        orderItemId: item.id,
+        reason: `Line void: ${input.reason}`,
+        reasonCode: REASON_CODES.saleReversal,
+      })
+    : { reversed: 0, alreadyReversed: 0, costRestored: 0, movementIds: [] as string[] };
 
   const { error } = await sb
     .from("restaurant_order_items")
@@ -633,6 +640,8 @@ export async function voidPosLine(sb: Sb, userId: string, input: VoidPosLineInpu
       stock_movements_reversed: reversal.reversed,
       stock_already_reversed: reversal.alreadyReversed,
       cost_restored: reversal.costRestored,
+      stock_disposition: stockDisposition,
+      wastage_follow_up_required: stockDisposition === "preserve_consumption",
     },
     dedupeKey: `void:${item.id}`,
   });
