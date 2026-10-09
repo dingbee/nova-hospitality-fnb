@@ -79,7 +79,7 @@ export async function cancelOrder(sb: Sb, userId: string, input: CancelOrderInpu
   // production/service can safely return their recorded consumption to stock.
   // Prepared/served lines retain their stock deduction because those goods are
   // no longer reusable; their cost remains visible in the inventory ledger.
-  const preparedStatuses = ["sent", "preparing", "ready", "served"];
+  const preparedStatuses = ["fired", "sent", "preparing", "ready", "served"];
   const stockLines = lines.filter((line) => line.status !== "voided");
   const reversal = decision.reverseStock
     ? await (async () => {
