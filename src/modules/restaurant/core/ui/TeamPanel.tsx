@@ -54,7 +54,12 @@ export function TeamPanel({ tenantId, canManage }: { tenantId: string; canManage
   const add = useAdminMutation({
     mutationFn: () =>
       addFn({
-        data: { tenantId, userId, role: role as any, propertyId: propertyId || undefined },
+        data: {
+          tenantId,
+          userId,
+          role: role as any,
+          propertyId: propertyId === "__tenant_wide__" ? null : propertyId,
+        },
       }),
     successMessage: "Role granted",
     onSuccess: () => {
@@ -75,6 +80,7 @@ export function TeamPanel({ tenantId, canManage }: { tenantId: string; canManage
     onSuccess: (result: any) => {
       setInviteEmail("");
       setInviteName("");
+      setPropertyId("");
       setUserId(result?.userId ?? "");
       void qc.invalidateQueries({ queryKey: ["staff.users"] });
     },
@@ -186,7 +192,8 @@ export function TeamPanel({ tenantId, canManage }: { tenantId: string; canManage
               value={propertyId}
               onChange={(e) => setPropertyId(e.target.value)}
             >
-              <option value="">Every property (tenant-wide)</option>
+              <option value="">Choose property scope…</option>
+              <option value="__tenant_wide__">Every property (tenant-wide)</option>
               {properties.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -195,15 +202,15 @@ export function TeamPanel({ tenantId, canManage }: { tenantId: string; canManage
             </select>
             <Button
               size="sm"
-              disabled={!userId || add.isPending}
+              disabled={!userId || !propertyId || add.isPending}
               onClick={() => add.mutate(undefined)}
             >
               Grant role
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Pick a property to scope this role to it only — the person will have no access to the
-            tenant&apos;s other properties. Leave "Every property" for oversight roles like owner or
+            Choose a property for operational staff. "Every property" must be selected explicitly
+            and is intended for authorised cross-property oversight roles such as owner or
             general manager.
           </p>
         </div>

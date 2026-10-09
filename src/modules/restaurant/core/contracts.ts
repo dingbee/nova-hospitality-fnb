@@ -645,15 +645,17 @@ export const listMembersSchema = z.object({ tenantId: uuid });
 
 export const upsertMemberSchema = z.object({
   tenantId: uuid,
+  /** Present when editing an existing grant; preserves the membership identity and history. */
+  memberId: uuid.optional(),
   userId: uuid,
   role: z.enum(ASSIGNABLE_RESTAURANT_ROLES),
   /**
-   * Which property this role applies to. Omitted/null = tenant-wide — the
-   * role applies at every property in the tenant (the correct choice for
-   * owner/GM-style oversight roles). Set it to scope a role like
-   * restaurant_manager/bartender/chef/cashier to one property only.
+   * Which property this role applies to. Explicit null = tenant-wide — the
+   * role applies at every property in the tenant (intended for oversight roles).
+   * A concrete property id scopes the role to that property only. Requiring
+   * this field prevents omitted scope from accidentally granting tenant-wide access.
    */
-  propertyId: uuid.nullish(),
+  propertyId: uuid.nullable(),
 });
 
 export const removeMemberSchema = z.object({ tenantId: uuid, memberId: uuid });

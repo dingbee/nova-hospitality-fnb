@@ -88,11 +88,51 @@ function makeFakeSb(opts: {
                   const found = members.find((m) => m.id === memberId && m.tenant_id === tenantId);
                   return {
                     data: found
-                      ? { user_id: found.user_id, role: found.role, property_id: found.property_id }
+                      ? {
+                          id: found.id,
+                          user_id: found.user_id,
+                          role: found.role,
+                          property_id: found.property_id,
+                        }
                       : null,
                     error: null,
                   };
                 },
+              }),
+            }),
+          }),
+          update: (patch: any) => ({
+            eq: (_c1: string, memberId: string) => ({
+              eq: (_c2: string, tenantId: string) => ({
+                select: () => ({
+                  single: async () => {
+                    const index = members.findIndex(
+                      (m) => m.id === memberId && m.tenant_id === tenantId,
+                    );
+                    if (index < 0) return { data: null, error: { message: "not found" } };
+                    const current = members[index];
+                    const duplicate = members.some(
+                      (m, i) =>
+                        i !== index &&
+                        m.tenant_id === current.tenant_id &&
+                        m.user_id === current.user_id &&
+                        m.role === patch.role &&
+                        m.property_id === (patch.property_id ?? null),
+                    );
+                    if (duplicate)
+                      return { data: null, error: { message: "duplicate key value violates" } };
+                    Object.assign(current, patch);
+                    return {
+                      data: {
+                        id: current.id,
+                        user_id: current.user_id,
+                        role: current.role,
+                        property_id: current.property_id,
+                      },
+                      error: null,
+                    };
+                  },
+                }),
               }),
             }),
           }),
@@ -213,6 +253,82 @@ describe("upsertMember — property-scoped grant cannot reach another property (
         propertyId: null,
       } as any),
     ).resolves.toMatchObject({ property_id: null });
+  });
+});
+
+describe("upsertMember — property scope rotation updates the existing grant", () => {
+  it("rotates a staff grant to another property in place and records the before/after scope", async () => {
+    const sb = makeFakeSb({
+      callerGrants: [{ role: "owner", propertyId: null }],
+      members: [
+        {
+          id: "m-1",
+          tenant_id: TENANT_A,
+          user_id: "bartender-user",
+          role: "bartender",
+          property_id: PROPERTY_A1,
+        },
+      ],
+    });
+
+    const result = await upsertMember(sb, "caller", {
+      tenantId: TENANT_A,
+      memberId: "m-1",
+      userId: "bartender-user",
+      role: "bartender",
+      propertyId: PROPERTY_A2,
+    } as any);
+
+    expect(result).toMatchObject({
+      id: "m-1",
+      user_id: "bartender-user",
+      role: "bartender",
+      property_id: PROPERTY_A2,
+    });
+    expect(sb.members).toHaveLength(1);
+    expect(sb.members[0]).toMatchObject({ id: "m-1", property_id: PROPERTY_A2 });
+    expect(sb.activityLogs).toMatchObject([
+      {
+        actor_id: "caller",
+        action: "restaurant.member.updated",
+        entity_type: "restaurant_members",
+        entity_id: "m-1",
+        metadata: {
+          userId: "bartender-user",
+          previousRole: "bartender",
+          role: "bartender",
+          previousPropertyId: PROPERTY_A1,
+          propertyId: PROPERTY_A2,
+        },
+      },
+    ]);
+  });
+
+  it("denies a manager who controls only the destination property from moving a grant out of another property", async () => {
+    const sb = makeFakeSb({
+      callerGrants: [{ role: "owner", propertyId: PROPERTY_A2 }],
+      members: [
+        {
+          id: "m-1",
+          tenant_id: TENANT_A,
+          user_id: "bartender-user",
+          role: "bartender",
+          property_id: PROPERTY_A1,
+        },
+      ],
+    });
+
+    await expect(
+      upsertMember(sb, "caller", {
+        tenantId: TENANT_A,
+        memberId: "m-1",
+        userId: "bartender-user",
+        role: "bartender",
+        propertyId: PROPERTY_A2,
+      } as any),
+    ).rejects.toThrow(/not have owner\/general manager authority at this property/);
+    expect(sb.members[0].property_id).toBe(PROPERTY_A1);
+    expect(sb.activityLogs).toHaveLength(0);
   });
 });
 
