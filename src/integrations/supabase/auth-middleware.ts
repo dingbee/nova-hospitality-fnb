@@ -74,8 +74,12 @@ async function authenticateRequest(requestId: string | null) {
     throw new Error("Unauthorized: No token provided");
   }
 
+  const staffSessionToken = cookieValue(request.headers.get("cookie"), "lexibite_staff_token");
+  const requestHeaders: Record<string, string> = { Authorization: `Bearer ${token}` };
+  if (staffSessionToken) requestHeaders["x-lexibite-staff-session"] = staffSessionToken;
+
   const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
+    global: { headers: requestHeaders },
     auth: { storage: undefined, persistSession: false, autoRefreshToken: false },
   });
 
