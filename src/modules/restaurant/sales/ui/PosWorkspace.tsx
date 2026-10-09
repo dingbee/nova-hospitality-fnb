@@ -83,7 +83,7 @@ import { PosMenuItemCard } from "./PosMenuItemCard";
 import { beverageCategories } from "@/modules/restaurant/bar/lens";
 import { BAR_STATION_TYPES } from "@/modules/restaurant/bar/contracts";
 import { sendToStationLabel } from "../stationRouting";
-import { PosStaffGate, usePosStaffSession } from "./PosStaffGate";
+import { useStaffAccessSession } from "@/modules/restaurant/core/ui/StaffAccessGateway";
 
 const newRequestId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -122,7 +122,7 @@ function PosWorkspaceBody({
   className,
 }: { lens?: PosLens; className?: string } = {}) {
   const isBar = lens === "bar";
-  const { sessionId } = usePosStaffSession();
+  const { sessionId } = useStaffAccessSession();
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
   const roles = (ws.data?.roles ?? []) as readonly string[];
@@ -132,13 +132,9 @@ function PosWorkspaceBody({
   const canRoomCharge = hasRestaurantCapability(roles, "sales.room_charge", platformAdmin);
   const currency = ws.data?.activeProperty?.currency ?? "TZS";
   const workspacePropertyId = ws.data?.activePropertyId ?? null;
-  const ownerOrAdmin = Boolean(platformAdmin) || roles.some((role) =>
-    ["owner", "general_manager", "restaurant_manager"].includes(role),
-  );
-  // Authenticated owners/managers bypass the staff-PIN gate. For that path
-  // there is intentionally no POS staff session, so optional posSessionId
-  // must be omitted rather than sent as null. Staff sessions still carry the
-  // real session id and are validated server-side.
+  const ownerOrAdmin = Boolean(platformAdmin) || roles.includes("owner");
+  // Owner/platform-admin direct access has no staff session. Manager and
+  // operational access both carry the server-validated gateway session.
   const posSession = sessionId ? { posSessionId: sessionId } : {};
   const posActorReady = ownerOrAdmin || Boolean(sessionId);
   const qc = useQueryClient();
@@ -1644,5 +1640,5 @@ function PosWorkspaceBody({
 
 
 export function PosWorkspace(props: { lens?: PosLens; className?: string } = {}) {
-  return <PosStaffGate><PosWorkspaceBody {...props} /></PosStaffGate>;
+  return <PosWorkspaceBody {...props} />;
 }
