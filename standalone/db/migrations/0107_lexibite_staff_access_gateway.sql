@@ -31,7 +31,7 @@ as $$
   where auth.uid() is not null
     and s.session_token_hash is not null
     and s.session_token_hash = encode(extensions.digest(convert_to(
-      coalesce((nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-lexibite-staff-session'), ''), 'UTF8'
+      coalesce(substring((nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-client-info') from 'lexibite-staff-session=([0-9a-f]{64})'), ''), 'UTF8'
     ), 'sha256'), 'hex')
     and s.created_by = auth.uid()
     and s.tenant_id = _tenant_id
@@ -574,7 +574,7 @@ begin
   where s.created_by = caller and s.active = true and s.expires_at > now()
     and s.session_token_hash is not null
     and s.session_token_hash = encode(extensions.digest(convert_to(
-      coalesce((nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-lexibite-staff-session'), ''), 'UTF8'
+      coalesce(substring((nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-client-info') from 'lexibite-staff-session=([0-9a-f]{64})'), ''), 'UTF8'
     ), 'sha256'), 'hex')
     and s.staff_member_id is not null
     and m.tenant_id = s.tenant_id and m.user_id = s.staff_user_id
