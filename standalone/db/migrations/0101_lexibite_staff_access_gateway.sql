@@ -284,6 +284,67 @@ grant execute on function public.restaurant_can_write_scoped(uuid, public.restau
 revoke all on function public.restaurant_can_read_scoped_strict(uuid, uuid) from public, anon;
 grant execute on function public.restaurant_can_read_scoped_strict(uuid, uuid) to authenticated, service_role;
 
+-- A PIN session can see its exact membership row even when the browser's
+-- authenticated account is the manager who authorised the terminal.
+drop policy if exists "members read active staff session self" on public.restaurant_members;
+create policy "members read active staff session self"
+on public.restaurant_members for select to authenticated
+using (id = public.restaurant_effective_staff_member_id(tenant_id));
+
+-- Workspace bootstrap after PIN needs only the tenant label; property and
+-- operational rows remain subject to their property-aware policies.
+drop policy if exists restaurant_tenants_active_staff_session_select on public.restaurant_tenants;
+create policy restaurant_tenants_active_staff_session_select
+on public.restaurant_tenants for select to authenticated
+using (
+  exists (
+    select 1 from public.restaurant_pos_sessions s
+    where s.tenant_id = restaurant_tenants.id
+      and s.created_by = auth.uid()
+      and s.active = true
+      and s.expires_at > now()
+      and s.staff_member_id = public.restaurant_effective_staff_member_id(restaurant_tenants.id)
+  )
+);
+
+create or replace function public.restaurant_can_manage_membership(
+  _tenant_id uuid, _roles public.restaurant_role[], _target_property_id uuid
+)
+returns boolean
+language sql stable security definer
+set search_path = public, pg_temp
+as $
+  select auth.uid() is not null and (
+    public.restaurant_is_platform_admin(auth.uid())
+    or exists (
+      select 1 from public.restaurant_members m
+      where m.tenant_id = _tenant_id
+        and m.user_id = auth.uid()
+        and m.role = 'owner'
+        and m.role = any(_roles)
+        and (
+          (_target_property_id is null and m.property_id is null)
+          or (_target_property_id is not null and (m.property_id is null or m.property_id = _target_property_id))
+        )
+        and public.restaurant_member_active(auth.uid(), _tenant_id)
+    )
+    or exists (
+      select 1 from public.restaurant_members actor
+      where actor.id = public.restaurant_effective_staff_member_id(_tenant_id)
+        and actor.tenant_id = _tenant_id
+        and actor.role = any(_roles)
+        and (
+          (_target_property_id is null and actor.property_id is null)
+          or (_target_property_id is not null and (actor.property_id is null or actor.property_id = _target_property_id))
+        )
+        and public.restaurant_member_active(actor.user_id, _tenant_id)
+    )
+  );
+$;
+
+revoke all on function public.restaurant_can_manage_membership(uuid, public.restaurant_role[], uuid) from public, anon;
+grant execute on function public.restaurant_can_manage_membership(uuid, public.restaurant_role[], uuid) to authenticated, service_role;
+
 -- PIN administration requires either direct owner/platform-admin access or a
 -- currently PIN-authenticated manager session. A staff session cannot manage PINs.
 create or replace function public.restaurant_set_pos_pin(
