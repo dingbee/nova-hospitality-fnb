@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { NovaShell } from "@/components/shell/NovaShell";
 import { getStaffAccessBootstrapFn } from "../staff-access.functions";
 import { startPosSessionFn, endPosSessionFn } from "@/modules/restaurant/sales/pos-session.functions";
-import { RESTAURANT_ROLE_LABELS } from "../permissions";
+import { RESTAURANT_ROLE_LABELS } from "../permissions";\nimport { StaffAccessSessionContext, type StaffAccessSessionValue } from "../staff-access-context";
 
 type ActiveStaffSession = {
   sessionId: string;
@@ -19,24 +19,6 @@ type ActiveStaffSession = {
   terminalId: string;
   expiresAt: string;
 };
-
-type StaffAccessSessionValue = {
-  sessionId: string | null;
-  staffUserId: string | null;
-  staffMemberId: string | null;
-  role: string | null;
-  propertyId: string | null;
-};
-
-const StaffAccessSessionContext = createContext<StaffAccessSessionValue>({
-  sessionId: null,
-  staffUserId: null,
-  staffMemberId: null,
-  role: null,
-  propertyId: null,
-});
-
-export const useStaffAccessSession = () => useContext(StaffAccessSessionContext);
 
 const SESSION_COOKIE = "lexibite_staff_session";
 const SESSION_TTL_SECONDS = 12 * 60 * 60;
