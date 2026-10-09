@@ -111,7 +111,7 @@ export function StaffPanel() {
   });
   const clearPin = useAdminMutation({
     mutationFn: (memberId: string) => clearPinFn({ data: { tenantId: tenantId!, memberId } }),
-    successMessage: "POS PIN cleared.",
+    successMessage: "Access PIN cleared.",
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["restaurant.members", tenantId] }),
   });
 
@@ -168,7 +168,7 @@ export function StaffPanel() {
                     Stations
                   </th>
                   <th scope="col" className="py-2 pr-4 text-right">
-                    POS PIN
+                    Access PIN
                   </th>
                   <th scope="col" className="py-2 pr-4 text-right">
                     <span className="sr-only">Actions</span>
