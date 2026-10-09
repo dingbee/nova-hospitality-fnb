@@ -1,5 +1,6 @@
 /** Canonical operational navigation. Visibility is permission-derived; routes enforce permissions server-side. */
 import {
+  AlertTriangle,
   BookOpen,
   Boxes,
   Brain,
@@ -107,6 +108,13 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: ScrollText,
         permission: "ORDERS:READ",
         hint: "Delivery and reprint of receipts",
+      },
+      {
+        to: "/admin/restaurant/service-recovery",
+        label: "Service recovery",
+        icon: AlertTriangle,
+        permission: "ORDERS:READ",
+        hint: "Guest complaints, recovery cases and stock disposition",
       },
     ],
   },
