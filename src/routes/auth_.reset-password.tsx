@@ -1,16 +1,90 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, CheckCircle2, Loader2, LockKeyhole } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Loader2, LockKeyhole, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { PRODUCT } from "@/config/product";
 import { presentUserFacingError } from "@/lib/errors/present-error";
 
-export const Route=createFileRoute("/auth_/reset-password")({head:()=>({meta:[{title:"Choose a new password — "+PRODUCT.shortName},{name:"robots",content:"noindex,nofollow"}]}),component:ResetPasswordPage});
-function ResetPasswordPage(){
- const navigate=useNavigate(); const [password,setPassword]=useState(""); const [confirmPassword,setConfirmPassword]=useState(""); const [loading,setLoading]=useState(false); const [ready,setReady]=useState(false); const [updated,setUpdated]=useState(false);
- useEffect(()=>{let active=true;supabase.auth.getSession().then(({data})=>{if(active&&data.session)setReady(true);});const listener=supabase.auth.onAuthStateChange((event,session)=>{if(active&&(event==="PASSWORD_RECOVERY"||session)&&session)setReady(true);});return()=>{active=false;listener.data.subscription.unsubscribe();};},[]);
- const submit=async(e:FormEvent)=>{e.preventDefault();if(password.length<8){toast.error("Your password needs to be at least 8 characters.");return;}if(password!==confirmPassword){toast.error("Those passwords don't match.");return;}setLoading(true);const {error}=await supabase.auth.updateUser({password});setLoading(false);if(error){toast.error(presentUserFacingError(error,"Password update failed.").message);return;}setUpdated(true);};
- if(updated)return <main className="min-h-screen bg-[#f7f8f5] text-[#172019]"><div className="mx-auto flex min-h-screen max-w-[560px] items-center justify-center px-5"><div className="w-full rounded-2xl border border-[#dfe4df] bg-white p-8 text-center shadow-[0_18px_50px_rgba(23,61,34,0.08)]"><CheckCircle2 className="mx-auto size-8 text-[#2f7139]"/><h1 className="mt-5 text-2xl font-semibold">Password updated</h1><p className="mt-2 text-sm text-[#667069]">Your LexiBite password has been changed successfully.</p><button onClick={()=>navigate({to:"/admin/restaurant"})} className="mt-7 h-12 w-full rounded-lg bg-[#2f7139] text-sm font-semibold text-white">Continue to LexiBite</button></div></div></main>;
- return <main className="min-h-screen bg-[#f7f8f5] text-[#172019]"><div className="mx-auto flex min-h-screen max-w-[560px] items-center justify-center px-5 py-10 sm:px-8"><div className="w-full"><img src="/brand/lexibite-wordmark.svg" alt="LexiBite" className="h-10 w-auto max-w-[11rem]"/><p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#55705a]">{PRODUCT.tagline}</p><div className="mb-8 mt-10"><p className="text-sm font-medium text-[#55705a]">Account recovery</p><h1 className="mt-2 text-3xl font-semibold">Choose a new password</h1><p className="mt-2 text-sm text-[#667069]">Use a strong password with at least 8 characters.</p></div><form onSubmit={submit} className="rounded-2xl border border-[#dfe4df] bg-white p-8 shadow-[0_18px_50px_rgba(23,61,34,0.08)]"><label className="block"><span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#59645d]">New password</span><input type="password" required minLength={8} autoComplete="new-password" value={password} onChange={e=>setPassword(e.target.value)} className="mt-2 h-12 w-full rounded-lg border border-[#d5dbd6] px-4 text-sm outline-none focus:border-[#2f7139] focus:ring-4 focus:ring-[#2f7139]/10"/></label><label className="mt-5 block"><span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#59645d]">Confirm new password</span><input type="password" required minLength={8} autoComplete="new-password" value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} className="mt-2 h-12 w-full rounded-lg border border-[#d5dbd6] px-4 text-sm outline-none focus:border-[#2f7139] focus:ring-4 focus:ring-[#2f7139]/10"/></label><button disabled={loading||!ready} className="mt-7 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#2f7139] text-sm font-semibold text-white disabled:opacity-60">{loading?<Loader2 className="size-4 animate-spin"/>:<LockKeyhole className="size-4"/>}{!ready?"Verifying reset link…":loading?"Updating…":"Update password"}</button><Link to="/auth" className="mt-5 inline-flex w-full items-center justify-center gap-2 text-sm font-semibold text-[#55705a] hover:text-[#2f7139] hover:underline"><ArrowLeft className="size-4"/>Back to sign in</Link></form></div></div></main>;
+export const Route = createFileRoute("/auth_/reset-password")({
+  head: () => ({ meta: [{ title: "Choose a new password — " + PRODUCT.shortName }, { name: "robots", content: "noindex,nofollow" }] }),
+  component: ResetPasswordPage,
+});
+
+function ResetPasswordPage() {
+  const navigate = useNavigate();
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [updated, setUpdated] = useState(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    // Supabase's implicit recovery flow returns credentials in the URL fragment.
+    // Never treat an unrelated, already-signed-in session as proof of a recovery link.
+    const query = new URLSearchParams(window.location.search);
+    const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const recoveryMarker = query.get("type") === "recovery" || fragment.get("type") === "recovery";
+    const urlError = query.get("error_description") || query.get("error") ||
+      fragment.get("error_description") || fragment.get("error");
+
+    if (urlError) {
+      setRecoveryError("This password-reset link is invalid or has expired. Request a new reset link and open it from the same browser.");
+      return () => { active = false; };
+    }
+
+    if (!recoveryMarker) {
+      setRecoveryError("No password-reset session was found. Request a new reset link and open the link from your email.");
+    }
+
+    const listener = supabase.auth.onAuthStateChange((event, session) => {
+      if (!active) return;
+      if (event === "PASSWORD_RECOVERY" && session) {
+        setRecoveryError(null);
+        setReady(true);
+      } else if (recoveryMarker && event === "SIGNED_OUT") {
+        setReady(false);
+        setRecoveryError("This password-reset link is invalid or has expired. Request a new reset link.");
+      }
+    });
+
+    // The auth listener handles the recovery event; getSession also covers a session
+    // already established by Supabase while parsing the callback URL.
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        setReady(false);
+        if (recoveryMarker) setRecoveryError("We couldn't verify this reset link. Request a new one and try again.");
+        return;
+      }
+      if (recoveryMarker && data.session) {
+        setRecoveryError(null);
+        setReady(true);
+      }
+    });
+
+    return () => {
+      active = false;
+      listener.data.subscription.unsubscribe();
+    };
+  }, []);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!ready || recoveryError) return;
+    if (password.length < 8) { toast.error("Your password needs to be at least 8 characters."); return; }
+    if (password !== confirmPassword) { toast.error("Those passwords don't match."); return; }
+    setLoading(true);
+    const { error } = await supabase.auth.updateUser({ password });
+    setLoading(false);
+    if (error) { toast.error(presentUserFacingError(error, "Password update failed.").message); return; }
+    setUpdated(true);
+  };
+
+  if (updated) return <main className="min-h-screen bg-[#f7f8f5] text-[#172019]"><div className="mx-auto flex min-h-screen max-w-[560px] items-center justify-center px-5"><div className="w-full rounded-2xl border border-[#dfe4df] bg-white p-8 text-center shadow-[0_18px_50px_rgba(23,61,34,0.08)]"><CheckCircle2 className="mx-auto size-8 text-[#2f7139]"/><h1 className="mt-5 text-2xl font-semibold">Password updated</h1><p className="mt-2 text-sm text-[#667069]">Your LexiBite password has been changed successfully.</p><button onClick={() => navigate({ to: "/admin/restaurant" })} className="mt-7 h-12 w-full rounded-lg bg-[#2f7139] text-sm font-semibold text-white">Continue to LexiBite</button></div></div></main>;
+
+  return <main className="min-h-screen bg-[#f7f8f5] text-[#172019]"><div className="mx-auto flex min-h-screen max-w-[560px] items-center justify-center px-5 py-10 sm:px-8"><div className="w-full"><img src="/brand/lexibite-wordmark.svg" alt="LexiBite" className="h-10 w-auto max-w-[11rem]"/><p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#55705a]">{PRODUCT.tagline}</p><div className="mb-8 mt-10"><p className="text-sm font-medium text-[#55705a]">Account recovery</p><h1 className="mt-2 text-3xl font-semibold">Choose a new password</h1><p className="mt-2 text-sm text-[#667069]">Use a strong password with at least 8 characters.</p></div>{recoveryError ? <div role="alert" className="rounded-2xl border border-amber-200 bg-white p-8 shadow-[0_18px_50px_rgba(23,61,34,0.08)]"><AlertCircle className="size-6 text-amber-600"/><h2 className="mt-4 text-lg font-semibold">Reset link needs attention</h2><p className="mt-2 text-sm leading-6 text-[#667069]">{recoveryError}</p><Link to="/auth/forgot-password" className="mt-6 inline-flex h-12 w-full items-center justify-center rounded-lg bg-[#2f7139] text-sm font-semibold text-white">Request a new reset link</Link><Link to="/auth" className="mt-4 inline-flex w-full items-center justify-center gap-2 text-sm font-semibold text-[#55705a] hover:underline"><ArrowLeft className="size-4"/>Back to sign in</Link></div> : <form onSubmit={submit} className="rounded-2xl border border-[#dfe4df] bg-white p-8 shadow-[0_18px_50px_rgba(23,61,34,0.08)]"><label className="block"><span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#59645d]">New password</span><input type="password" required minLength={8} autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} className="mt-2 h-12 w-full rounded-lg border border-[#d5dbd6] px-4 text-sm outline-none focus:border-[#2f7139] focus:ring-4 focus:ring-[#2f7139]/10"/></label><label className="mt-5 block"><span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#59645d]">Confirm new password</span><input type="password" required minLength={8} autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="mt-2 h-12 w-full rounded-lg border border-[#d5dbd6] px-4 text-sm outline-none focus:border-[#2f7139] focus:ring-4 focus:ring-[#2f7139]/10"/></label><button disabled={loading || !ready} className="mt-7 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#2f7139] text-sm font-semibold text-white disabled:opacity-60">{loading ? <Loader2 className="size-4 animate-spin"/> : <LockKeyhole className="size-4"/>}{!ready ? "Verifying reset link…" : loading ? "Updating…" : "Update password"}</button><Link to="/auth" className="mt-5 inline-flex w-full items-center justify-center gap-2 text-sm font-semibold text-[#55705a] hover:text-[#2f7139] hover:underline"><ArrowLeft className="size-4"/>Back to sign in</Link></form>}</div></div></main>;
 }
