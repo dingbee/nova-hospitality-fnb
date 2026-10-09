@@ -46,6 +46,21 @@ function createSupabaseClient() {
   }
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+    global: {
+      fetch: (input, init) => {
+        const headers = new Headers(init?.headers);
+        if (typeof document !== 'undefined') {
+          const item = document.cookie.split('; ').find((part) => part.startsWith('lexibite_staff_token='));
+          if (item) {
+            const token = decodeURIComponent(item.slice('lexibite_staff_token='.length));
+            if (token) headers.set('x-lexibite-staff-session', token);
+          } else {
+            headers.delete('x-lexibite-staff-session');
+          }
+        }
+        return fetch(input, { ...init, headers });
+      },
+    },
     auth: {
       storage: typeof window !== 'undefined' ? localStorage : undefined,
       persistSession: true,
