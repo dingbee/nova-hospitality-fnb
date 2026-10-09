@@ -1,6 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
-import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { setPosPinSchema, clearPosPinSchema, startPosSessionSchema, endPosSessionSchema } from "./pos-session.contracts";
+import {
+  requireSupabaseAuth,
+  requireSupabaseAuthForGateway,
+} from "@/integrations/supabase/auth-middleware";
+import {
+  setPosPinSchema,
+  clearPosPinSchema,
+  startPosSessionSchema,
+  endPosSessionSchema,
+} from "./pos-session.contracts";
 
 export const setPosPinFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -18,20 +26,19 @@ export const clearPosPinFn = createServerFn({ method: "POST" })
     return mod.clearPosPin(context.supabase, context.userId, data);
   });
 
+// Only these session lifecycle calls may run before the PIN gateway is unlocked.
 export const startPosSessionFn = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireSupabaseAuthForGateway])
   .inputValidator((d: unknown) => startPosSessionSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./pos-session.server");
-    return mod.startPosSession(context.supabase, context.userId, data);
+    return mod.startPosSession(context.supabase, context.authenticatedUserId, data);
   });
 
 export const endPosSessionFn = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireSupabaseAuthForGateway])
   .inputValidator((d: unknown) => endPosSessionSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./pos-session.server");
-    return mod.endPosSession(context.supabase, context.userId, data.sessionId);
+    return mod.endPosSession(context.supabase, context.authenticatedUserId, data.sessionId);
   });
-
-
