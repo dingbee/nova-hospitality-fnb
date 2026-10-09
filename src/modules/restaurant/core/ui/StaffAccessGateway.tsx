@@ -370,7 +370,7 @@ export function StaffAccessGateway() {
         </select>
         {selectedProperty && !selectedProperty.pinConfigured ? (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            No manager PIN is assigned yet. Staff may still use their own PINs; the manager workspace remains locked until the owner assigns a manager PIN in Staff & Roles.
+            No staff PIN is assigned for this property yet. Ask an authorised manager to assign personal PINs in Staff & Roles.
           </div>
         ) : null}
         <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-[#59645d]" htmlFor="staff-access-pin">Personal PIN</label>
