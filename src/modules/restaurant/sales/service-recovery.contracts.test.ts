@@ -36,3 +36,26 @@ describe("service recovery contract", () => {
     expect(() => serviceRecoverySchema.parse({ ...valid, resolutionReason: "no" })).toThrow();
   });
 });
+
+
+import { serviceRecoveryResolutionSchema } from "./service-recovery.contracts";
+
+describe("service recovery resolution contract", () => {
+  const base = {
+    tenantId: "11111111-1111-4111-8111-111111111111",
+    caseId: "22222222-2222-4222-8222-222222222222",
+    resolution: "replace",
+    reason: "Supervisor approved replacement",
+  };
+  it("accepts a supervisor resolution with an explicit reason", () => {
+    expect(serviceRecoveryResolutionSchema.parse(base)).toMatchObject({ resolution: "replace", reason: base.reason });
+  });
+  it("requires a payment and positive amount for refund workflows at the service boundary", () => {
+    expect(serviceRecoveryResolutionSchema.parse({ ...base, resolution: "refund", paymentId: "33333333-3333-4333-8333-333333333333", amount: 10 }).amount).toBe(10);
+    expect(() => serviceRecoveryResolutionSchema.parse({ ...base, resolution: "refund", amount: 0 })).toThrow();
+  });
+  it("rejects unsupported outcomes and empty resolution reasons", () => {
+    expect(() => serviceRecoveryResolutionSchema.parse({ ...base, resolution: "pending" })).toThrow();
+    expect(() => serviceRecoveryResolutionSchema.parse({ ...base, reason: "  " })).toThrow();
+  });
+});
