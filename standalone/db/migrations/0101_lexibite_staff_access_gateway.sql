@@ -148,8 +148,10 @@ as $$
           (_property_id is null and m.property_id is null)
           or (
             _property_id is not null
-            and s.property_id = _property_id
-            and (m.property_id is null or m.property_id = _property_id)
+            and (
+              m.property_id is null
+              or (m.property_id = _property_id and s.property_id = _property_id)
+            )
           )
         )
     )
@@ -202,8 +204,10 @@ as $$
           (_property_id is null and m.property_id is null)
           or (
             _property_id is not null
-            and s.property_id = _property_id
-            and (m.property_id is null or m.property_id = _property_id)
+            and (
+              m.property_id is null
+              or (m.property_id = _property_id and s.property_id = _property_id)
+            )
           )
         )
     )
