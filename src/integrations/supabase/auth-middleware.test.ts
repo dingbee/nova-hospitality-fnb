@@ -102,4 +102,65 @@ describe("requireSupabaseAuth denial logging", () => {
     expect(warnSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
   });
+  it("locks a manager account until a matching PIN session exists", async () => {
+    mocks.getRequest.mockReturnValue({
+      headers: new Headers({ authorization: "Bearer valid-token" }),
+    });
+    mocks.getClaims.mockResolvedValue({ data: { claims: { sub: "manager-1" } }, error: null });
+    mocks.rpc.mockResolvedValue({
+      data: { platformAdmin: false, owner: false, hasRestaurantMembership: true, canActivate: true, activeSession: null },
+      error: null,
+    });
+    const requireSupabaseAuth = await loadMiddleware();
+    const next = vi.fn();
+
+    await expect(
+      requireSupabaseAuth.options.server!({ next, context: {} } as never),
+    ).rejects.toThrow("Staff Access Gateway is locked");
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("uses the selected staff actor only when the browser cookie matches the active session", async () => {
+    mocks.getRequest.mockReturnValue({
+      headers: new Headers({
+        authorization: "Bearer valid-token",
+        cookie: "lexibite_staff_session=session-1",
+      }),
+    });
+    mocks.getClaims.mockResolvedValue({ data: { claims: { sub: "manager-1" } }, error: null });
+    mocks.rpc.mockResolvedValue({
+      data: {
+        platformAdmin: false,
+        owner: false,
+        hasRestaurantMembership: true,
+        canActivate: true,
+        activeSession: {
+          sessionId: "session-1",
+          tenantId: "tenant-1",
+          propertyId: "property-1",
+          staffUserId: "bartender-1",
+          staffMemberId: "membership-1",
+          role: "bartender",
+          terminalId: "pos-web",
+          expiresAt: "2099-01-01T00:00:00Z",
+        },
+      },
+      error: null,
+    });
+    const requireSupabaseAuth = await loadMiddleware();
+    const next = vi.fn(async (opts) => ({ context: opts.context }));
+
+    await requireSupabaseAuth.options.server!({ next, context: {} } as never);
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          userId: "bartender-1",
+          authenticatedUserId: "manager-1",
+          staffSession: expect.objectContaining({ staffMemberId: "membership-1" }),
+        }),
+      }),
+    );
+  });
+
 });
