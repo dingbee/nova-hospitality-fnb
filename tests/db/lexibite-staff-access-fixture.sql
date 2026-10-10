@@ -14,7 +14,7 @@ end $$;
 do $$
 begin
   if not exists (select 1 from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname='public' and t.typname='restaurant_role') then
-    create type public.restaurant_role as enum ('owner','general_manager','restaurant_manager','api_service','bartender','server','cashier','chef');
+    create type public.restaurant_role as enum ('owner','general_manager','restaurant_manager','chef','kitchen_manager','bartender','inventory_manager','purchasing_officer','accountant','viewer','api_service');
   end if;
 end $$;
 
@@ -32,7 +32,6 @@ create table public.restaurant_members (
   user_id uuid not null,
   role public.restaurant_role not null,
   property_id uuid references public.restaurant_properties(id),
-  active boolean not null default true,
   pos_pin_hash text,
   pos_pin_enabled boolean not null default false
 );
@@ -51,9 +50,16 @@ create table public.restaurant_pos_sessions (
   constraint restaurant_pos_sessions_expiry_ck check (expires_at > started_at)
 );
 
+create table public.lexibite_demo_sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null,
+  tenant_id uuid not null,
+  status text not null default 'active',
+  expires_at timestamptz not null default now() + interval '12 hours'
+);
 create or replace function public.restaurant_member_active(_user_id uuid, _tenant_id uuid)
 returns boolean language sql stable security definer set search_path=public,pg_temp
-as $$ select exists(select 1 from public.restaurant_members m where m.user_id=_user_id and m.tenant_id=_tenant_id and m.active) $$;
+as $ select not exists(select 1 from public.lexibite_demo_sessions ds where ds.user_id=_user_id and ds.tenant_id=_tenant_id and (ds.status <> 'active' or ds.expires_at <= now())) $;
 create or replace function public.restaurant_is_platform_admin(_user_id uuid)
 returns boolean language sql stable
 as $$ select false $$;
