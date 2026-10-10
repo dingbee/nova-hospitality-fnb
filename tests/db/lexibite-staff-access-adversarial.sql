@@ -17,7 +17,8 @@ insert into public.restaurant_members(id,tenant_id,user_id,role,property_id,pos_
  ('30000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001','general_manager',null,null,false),
  ('30000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000002','bartender','20000000-0000-0000-0000-000000000001',extensions.crypt('1234',extensions.gen_salt('bf',4)),true),
  ('30000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000003','accountant','20000000-0000-0000-0000-000000000002',extensions.crypt('5678',extensions.gen_salt('bf',4)),true),
- ('30000000-0000-0000-0000-000000000004','10000000-0000-0000-0000-000000000002','40000000-0000-0000-0000-000000000004','bartender','20000000-0000-0000-0000-000000000003',extensions.crypt('9012',extensions.gen_salt('bf',4)),true);
+ ('30000000-0000-0000-0000-000000000004','10000000-0000-0000-0000-000000000002','40000000-0000-0000-0000-000000000004','bartender','20000000-0000-0000-0000-000000000003',extensions.crypt('9012',extensions.gen_salt('bf',4)),true),
+ ('30000000-0000-0000-0000-000000000005','10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000005','owner',null,null,false);
 insert into public.staff_access_test_data(id,tenant_id,property_id) values
  (1,'10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001'),
  (2,'10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000002'),
@@ -85,8 +86,6 @@ begin
     if sqlerrm like 'FAIL:%' then raise; end if;
   end;
   -- Owner mode is direct only without terminal proof; PIN activation must switch to staff-scoped RLS.
-  insert into public.restaurant_members(id,tenant_id,user_id,role,property_id,pos_pin_hash,pos_pin_enabled) values
-   ('30000000-0000-0000-0000-000000000005','10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000005','owner',null,null,false);
   perform set_config('request.jwt.claim.sub','40000000-0000-0000-0000-000000000005',false);
   perform set_config('request.headers','{}',false);
   select count(*) into visible from public.staff_access_test_data;
