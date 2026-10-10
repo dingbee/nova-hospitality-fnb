@@ -91,6 +91,12 @@ begin
   perform set_config('request.headers','{}',false);
   select count(*) into visible from public.staff_access_test_data;
   if visible <> 2 then raise exception 'FAIL: owner direct mode expected 2 tenant rows, got %',visible; end if;
+  begin
+    perform public.restaurant_set_pos_pin('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000005','2468');
+    raise exception 'FAIL: owner membership could be configured as a staff PIN actor';
+  exception when others then
+    if sqlerrm like 'FAIL:%' then raise; end if;
+  end;
   session_a := public.restaurant_start_pos_session_by_pin('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','1234','owner-terminal');
   token_a := session_a->>'sessionToken';
   perform set_config('request.headers',jsonb_build_object('x-lexibite-staff-session',token_a)::text,true);
@@ -108,6 +114,6 @@ begin
   exception when others then
     if sqlerrm like 'FAIL:%' then raise; end if;
   end;
-end $;
+end $$;
 reset role;
 select 'PASS: migration 0107 applied and adversarial staff-session/RLS cases passed' as result;

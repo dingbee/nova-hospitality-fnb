@@ -394,6 +394,7 @@ begin
   if p_pin !~ '^[0-9]{4,6}$' then raise exception 'PIN must contain 4 to 6 digits'; end if;
   select * into target from public.restaurant_members where id = p_member_id and tenant_id = p_tenant_id;
   if not found then raise exception 'Staff member not found'; end if;
+  if target.role in ('owner','api_service') then raise exception 'Owner and service accounts cannot be PIN-authenticated staff actors'; end if;
 
   owner_access := not public.restaurant_staff_mode_requested() and (public.restaurant_is_platform_admin(auth.uid()) or exists (
     select 1 from public.restaurant_members m
@@ -506,6 +507,7 @@ begin
   from public.restaurant_members m
   where m.tenant_id = p_tenant_id
     and (m.property_id is null or m.property_id = p_property_id)
+    and m.role not in ('owner','api_service')
     and m.pos_pin_enabled = true and m.pos_pin_hash is not null
     and public.restaurant_member_active(m.user_id, p_tenant_id)
     and extensions.crypt(p_pin, m.pos_pin_hash) = m.pos_pin_hash;
@@ -516,6 +518,7 @@ begin
   from public.restaurant_members m
   where m.tenant_id = p_tenant_id
     and (m.property_id is null or m.property_id = p_property_id)
+    and m.role not in ('owner','api_service')
     and m.pos_pin_enabled = true and m.pos_pin_hash is not null
     and public.restaurant_member_active(m.user_id, p_tenant_id)
     and extensions.crypt(p_pin, m.pos_pin_hash) = m.pos_pin_hash
