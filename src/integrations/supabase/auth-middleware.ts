@@ -124,7 +124,10 @@ export const requireSupabaseAuth = createMiddleware({ type: "function" }).server
     }
 
     const access = data as StaffAccessBootstrap;
-    if (access.platformAdmin || access.owner || !access.hasRestaurantMembership) {
+    const cookieSessionId = cookieValue(auth.request.headers.get("cookie"), STAFF_SESSION_COOKIE);
+    const staffTokenCookie = cookieValue(auth.request.headers.get("cookie"), "lexibite_staff_token");
+    const staffModeRequested = Boolean(cookieSessionId || staffTokenCookie);
+    if ((access.platformAdmin || access.owner || !access.hasRestaurantMembership) && !staffModeRequested) {
       return next({
         context: {
           supabase: auth.supabase,
@@ -138,10 +141,6 @@ export const requireSupabaseAuth = createMiddleware({ type: "function" }).server
       });
     }
 
-    const cookieSessionId = cookieValue(
-      auth.request.headers.get("cookie"),
-      STAFF_SESSION_COOKIE,
-    );
     const session = access.activeSession;
     if (
       !access.canActivate ||

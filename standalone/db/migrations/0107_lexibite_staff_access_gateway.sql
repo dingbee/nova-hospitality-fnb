@@ -14,6 +14,19 @@ alter table public.restaurant_pos_sessions
 create index if not exists restaurant_pos_sessions_actor_lookup_idx
   on public.restaurant_pos_sessions (created_by, tenant_id, active, expires_at, started_at desc);
 
+-- Any supplied terminal proof opts the request into staff mode, even when forged or expired.
+-- That suppresses direct owner/admin/API bypasses and makes invalid proof fail closed.
+create or replace function public.restaurant_staff_mode_requested()
+returns boolean
+language sql stable
+set search_path = public, pg_temp
+as $
+  select coalesce((nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-lexibite-staff-session'), '') <> ''
+      or coalesce((nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-client-info'), '') like '%lexibite-staff-session=%';
+$;
+revoke all on function public.restaurant_staff_mode_requested() from public, anon;
+grant execute on function public.restaurant_staff_mode_requested() to authenticated, service_role;
+
 -- Resolve the exact membership row selected by the PIN, not every role the
 -- same auth user may hold. Only the manager-authenticated terminal can create
 -- this session; the browser's authenticated user remains created_by.
@@ -57,11 +70,12 @@ language sql stable security definer
 set search_path = public, pg_temp
 as $$
   select auth.uid() is not null and (
-    public.restaurant_is_platform_admin(auth.uid())
+    (not public.restaurant_staff_mode_requested() and public.restaurant_is_platform_admin(auth.uid()))
     or exists (
       select 1 from public.restaurant_members m
       where m.tenant_id = _tenant_id
         and m.user_id = auth.uid()
+        and not public.restaurant_staff_mode_requested()
         and m.role = 'owner'
         and public.restaurant_member_active(auth.uid(), _tenant_id)
     )
@@ -76,6 +90,7 @@ as $$
       select 1 from public.restaurant_members m
       where m.tenant_id = _tenant_id
         and m.user_id = auth.uid()
+        and not public.restaurant_staff_mode_requested()
         and m.role = 'api_service'
         and m.property_id is null
         and public.restaurant_member_active(auth.uid(), _tenant_id)
@@ -92,11 +107,12 @@ language sql stable security definer
 set search_path = public, pg_temp
 as $$
   select auth.uid() is not null and (
-    public.restaurant_is_platform_admin(auth.uid())
+    (not public.restaurant_staff_mode_requested() and public.restaurant_is_platform_admin(auth.uid()))
     or exists (
       select 1 from public.restaurant_members m
       where m.tenant_id = _tenant_id
         and m.user_id = auth.uid()
+        and not public.restaurant_staff_mode_requested()
         and m.role = 'owner'
         and m.role = any(_roles)
         and public.restaurant_member_active(auth.uid(), _tenant_id)
@@ -113,6 +129,7 @@ as $$
       select 1 from public.restaurant_members m
       where m.tenant_id = _tenant_id
         and m.user_id = auth.uid()
+        and not public.restaurant_staff_mode_requested()
         and m.role = 'api_service'
         and m.role = any(_roles)
         and m.property_id is null
@@ -130,11 +147,12 @@ language sql stable security definer
 set search_path = public, pg_temp
 as $$
   select auth.uid() is not null and (
-    public.restaurant_is_platform_admin(auth.uid())
+    (not public.restaurant_staff_mode_requested() and public.restaurant_is_platform_admin(auth.uid()))
     or exists (
       select 1 from public.restaurant_members m
       where m.tenant_id = _tenant_id
         and m.user_id = auth.uid()
+        and not public.restaurant_staff_mode_requested()
         and m.role = 'owner'
         and (_property_id is null or m.property_id is null or m.property_id = _property_id)
         and public.restaurant_member_active(auth.uid(), _tenant_id)
@@ -164,6 +182,7 @@ as $$
       select 1 from public.restaurant_members m
       where m.tenant_id = _tenant_id
         and m.user_id = auth.uid()
+        and not public.restaurant_staff_mode_requested()
         and m.role = 'api_service'
         and (_property_id is null and m.property_id is null
           or _property_id is not null and (m.property_id is null or m.property_id = _property_id))
@@ -182,11 +201,12 @@ language sql stable security definer
 set search_path = public, pg_temp
 as $$
   select auth.uid() is not null and (
-    public.restaurant_is_platform_admin(auth.uid())
+    (not public.restaurant_staff_mode_requested() and public.restaurant_is_platform_admin(auth.uid()))
     or exists (
       select 1 from public.restaurant_members m
       where m.tenant_id = _tenant_id
         and m.user_id = auth.uid()
+        and not public.restaurant_staff_mode_requested()
         and m.role = 'owner'
         and m.role = any(_roles)
         and (_property_id is null or m.property_id is null or m.property_id = _property_id)
@@ -218,6 +238,7 @@ as $$
       select 1 from public.restaurant_members m
       where m.tenant_id = _tenant_id
         and m.user_id = auth.uid()
+        and not public.restaurant_staff_mode_requested()
         and m.role = 'api_service'
         and m.role = any(_roles)
         and (_property_id is null and m.property_id is null
@@ -236,11 +257,12 @@ language sql stable security definer
 set search_path = public, pg_temp
 as $$
   select auth.uid() is not null and (
-    public.restaurant_is_platform_admin(auth.uid())
+    (not public.restaurant_staff_mode_requested() and public.restaurant_is_platform_admin(auth.uid()))
     or exists (
       select 1 from public.restaurant_members m
       where m.tenant_id = _tenant_id
         and m.user_id = auth.uid()
+        and not public.restaurant_staff_mode_requested()
         and m.role = 'owner'
         and (
           (_property_id is not null and (m.property_id is null or m.property_id = _property_id))
@@ -270,6 +292,7 @@ as $$
       select 1 from public.restaurant_members m
       where m.tenant_id = _tenant_id
         and m.user_id = auth.uid()
+        and not public.restaurant_staff_mode_requested()
         and m.role = 'api_service'
         and (
           (_property_id is not null and (m.property_id is null or m.property_id = _property_id))
@@ -322,11 +345,12 @@ language sql stable security definer
 set search_path = public, pg_temp
 as $$
   select auth.uid() is not null and (
-    public.restaurant_is_platform_admin(auth.uid())
+    (not public.restaurant_staff_mode_requested() and public.restaurant_is_platform_admin(auth.uid()))
     or exists (
       select 1 from public.restaurant_members m
       where m.tenant_id = _tenant_id
         and m.user_id = auth.uid()
+        and not public.restaurant_staff_mode_requested()
         and m.role = 'owner'
         and m.role = any(_roles)
         and (
@@ -371,7 +395,7 @@ begin
   select * into target from public.restaurant_members where id = p_member_id and tenant_id = p_tenant_id;
   if not found then raise exception 'Staff member not found'; end if;
 
-  owner_access := public.restaurant_is_platform_admin(auth.uid()) or exists (
+  owner_access := (not public.restaurant_staff_mode_requested() and public.restaurant_is_platform_admin(auth.uid())) or exists (
     select 1 from public.restaurant_members m
     where m.tenant_id = p_tenant_id and m.user_id = auth.uid()
       and m.role = 'owner' and public.restaurant_member_active(auth.uid(), p_tenant_id)
@@ -418,7 +442,7 @@ begin
   select * into target from public.restaurant_members where id = p_member_id and tenant_id = p_tenant_id;
   if not found then raise exception 'Staff member not found'; end if;
 
-  owner_access := public.restaurant_is_platform_admin(auth.uid()) or exists (
+  owner_access := (not public.restaurant_staff_mode_requested() and public.restaurant_is_platform_admin(auth.uid())) or exists (
     select 1 from public.restaurant_members m
     where m.tenant_id = p_tenant_id and m.user_id = auth.uid()
       and m.role = 'owner' and public.restaurant_member_active(auth.uid(), p_tenant_id)
@@ -466,7 +490,7 @@ begin
   if not exists (
     select 1 from public.restaurant_members m
     where m.tenant_id = p_tenant_id and m.user_id = auth.uid()
-      and m.role in ('general_manager','restaurant_manager')
+      and m.role in ('owner','general_manager','restaurant_manager')
       and (m.property_id is null or m.property_id = p_property_id)
       and public.restaurant_member_active(auth.uid(), p_tenant_id)
   ) then
@@ -560,14 +584,6 @@ begin
   select exists (select 1 from public.restaurant_members m where m.user_id = caller)
     into has_membership;
 
-  if tenant_owner then
-    return jsonb_build_object(
-      'platformAdmin', false, 'owner', true, 'hasRestaurantMembership', true,
-      'canActivate', false, 'tenantId', null, 'tenantName', null,
-      'pinConfigured', false, 'properties', '[]'::jsonb, 'activeSession', null
-    );
-  end if;
-
   select s.* into session_row
   from public.restaurant_pos_sessions s
   join public.restaurant_members m on m.id = s.staff_member_id
@@ -585,7 +601,7 @@ begin
 
   can_activate := exists (
     select 1 from public.restaurant_members m
-    where m.user_id = caller and m.role in ('general_manager','restaurant_manager')
+    where m.user_id = caller and m.role in ('owner','general_manager','restaurant_manager')
       and public.restaurant_member_active(caller, m.tenant_id)
   );
 
@@ -605,7 +621,7 @@ begin
   else
     select m.tenant_id into selected_tenant
     from public.restaurant_members m
-    where m.user_id = caller and m.role in ('general_manager','restaurant_manager')
+    where m.user_id = caller and m.role in ('owner','general_manager','restaurant_manager')
       and public.restaurant_member_active(caller, m.tenant_id)
     order by m.tenant_id
     limit 1;
@@ -631,14 +647,14 @@ begin
       and exists (
         select 1 from public.restaurant_members m
         where m.user_id = caller and m.tenant_id = selected_tenant
-          and m.role in ('general_manager','restaurant_manager')
+          and m.role in ('owner','general_manager','restaurant_manager')
           and (m.property_id is null or m.property_id = p.id)
       );
   end if;
 
   return jsonb_build_object(
     'platformAdmin', false,
-    'owner', false,
+    'owner', tenant_owner,
     'hasRestaurantMembership', has_membership,
     'canActivate', can_activate,
     'tenantId', selected_tenant,

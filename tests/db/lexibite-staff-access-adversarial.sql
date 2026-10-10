@@ -84,6 +84,24 @@ begin
   exception when others then
     if sqlerrm like 'FAIL:%' then raise; end if;
   end;
-end $$;
+  -- Owner mode is direct only without terminal proof; PIN activation must switch to staff-scoped RLS.
+  insert into public.restaurant_members(id,tenant_id,user_id,role,property_id,pos_pin_hash,pos_pin_enabled) values
+   ('30000000-0000-0000-0000-000000000005','10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000005','owner',null,null,false);
+  perform set_config('request.jwt.claim.sub','40000000-0000-0000-0000-000000000005',false);
+  perform set_config('request.headers','{}',false);
+  select count(*) into visible from public.staff_access_test_data;
+  if visible <> 2 then raise exception 'FAIL: owner direct mode expected 2 tenant rows, got %',visible; end if;
+  session_a := public.restaurant_start_pos_session_by_pin('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','1234','owner-terminal');
+  token_a := session_a->>'sessionToken';
+  perform set_config('request.headers',jsonb_build_object('x-lexibite-staff-session',token_a)::text,true);
+  actor := public.restaurant_effective_staff_member_id('10000000-0000-0000-0000-000000000001');
+  if actor <> '30000000-0000-0000-0000-000000000002' then raise exception 'FAIL: owner staff mode resolved wrong actor %',actor; end if;
+  select count(*) into visible from public.staff_access_test_data;
+  if visible <> 1 or not exists(select 1 from public.staff_access_test_data where id=1) then raise exception 'FAIL: owner inherited owner scope in staff mode'; end if;
+  perform set_config('request.headers',jsonb_build_object('x-lexibite-staff-session',repeat('f',64))::text,true);
+  select count(*) into visible from public.staff_access_test_data;
+  if visible <> 0 then raise exception 'FAIL: invalid staff token fell back to owner access'; end if;
+  if public.restaurant_staff_mode_requested() is not true then raise exception 'FAIL: invalid token did not select fail-closed staff mode'; end if;
+end $;
 reset role;
 select 'PASS: migration 0107 applied and adversarial staff-session/RLS cases passed' as result;

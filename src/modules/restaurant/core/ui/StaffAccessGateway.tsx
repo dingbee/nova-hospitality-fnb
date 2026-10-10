@@ -136,6 +136,7 @@ export function StaffAccessGateway() {
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [ownerMode, setOwnerMode] = useState<"choice" | "direct" | "staff">("choice");
 
   const access = bootstrap.data;
   const properties = access?.properties ?? [];
@@ -261,9 +262,29 @@ export function StaffAccessGateway() {
     );
   }
 
-  // Owner and founder/platform-admin access remains direct and does not require a PIN.
-  if (access.platformAdmin || access.owner || !access.hasRestaurantMembership) {
+  // Platform admins and principals without a restaurant membership remain on direct access.
+  // Tenant owners explicitly choose direct owner access or staff-terminal mode.
+  if (access.platformAdmin || !access.hasRestaurantMembership) {
     return <NovaShell><Outlet /></NovaShell>;
+  }
+
+  if (access.owner && !sessionIsBound && ownerMode === "direct") {
+    clearSessionCookie();
+    return <NovaShell><Outlet /></NovaShell>;
+  }
+
+  if (access.owner && !sessionIsBound && ownerMode !== "staff") {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background p-4">
+        <section className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-sm">
+          <ShieldCheck className="mb-3 size-6" />
+          <h1 className="text-lg font-semibold">Choose LexiBite access mode</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Use your owner account directly, or explicitly activate this terminal for individual staff PIN access.</p>
+          <Button className="mt-5 w-full" onClick={() => { clearSessionCookie(); setOwnerMode("direct"); }}>Continue as owner</Button>
+          <Button variant="outline" className="mt-3 w-full" onClick={() => setOwnerMode("staff")}>Activate staff terminal</Button>
+        </section>
+      </main>
+    );
   }
 
   if (!access.canActivate) {
