@@ -6,7 +6,7 @@ import { KeyRound, LockKeyhole, LogOut, RefreshCw, ShieldCheck } from "lucide-re
 import { Button } from "@/components/ui/button";
 import { NovaShell } from "@/components/shell/NovaShell";
 import { getStaffAccessBootstrapFn } from "../staff-access.functions";
-import { startPosSessionFn, endPosSessionFn } from "@/modules/restaurant/sales/pos-session.functions";
+import { startPosSessionFn, endPosSessionFn, clearStaffTokenCookieFn } from "@/modules/restaurant/sales/pos-session.functions";
 import { RESTAURANT_ROLE_LABELS } from "../permissions";
 import { StaffAccessSessionContext, type StaffAccessSessionValue } from "../staff-access-context";
 
@@ -22,7 +22,6 @@ type ActiveStaffSession = {
 };
 
 const SESSION_COOKIE = "lexibite_staff_session";
-const SESSION_TOKEN_COOKIE = "lexibite_staff_token";
 const SESSION_TTL_SECONDS = 12 * 60 * 60;
 
 type StaffWorkspaceLink = { label: string; path: string };
@@ -94,18 +93,16 @@ function readSessionCookie(): string | null {
   return item ? decodeURIComponent(item.slice(SESSION_COOKIE.length + 1)) : null;
 }
 
-function writeSessionCookie(sessionId: string, sessionToken: string) {
+function writeSessionCookie(sessionId: string) {
   if (typeof document === "undefined") return;
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
   document.cookie = `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Max-Age=${SESSION_TTL_SECONDS}; Path=/; SameSite=Strict${secure}`;
-  document.cookie = `${SESSION_TOKEN_COOKIE}=${encodeURIComponent(sessionToken)}; Max-Age=${SESSION_TTL_SECONDS}; Path=/; SameSite=Strict${secure}`;
 }
 
 function clearSessionCookie() {
   if (typeof document === "undefined") return;
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
   document.cookie = `${SESSION_COOKIE}=; Max-Age=0; Path=/; SameSite=Strict${secure}`;
-  document.cookie = `${SESSION_TOKEN_COOKIE}=; Max-Age=0; Path=/; SameSite=Strict${secure}`;
 }
 
 function allowedForRole(role: string, pathname: string): boolean {
@@ -125,6 +122,7 @@ export function StaffAccessGateway() {
   const bootstrapFn = useServerFn(getStaffAccessBootstrapFn);
   const startFn = useServerFn(startPosSessionFn);
   const endFn = useServerFn(endPosSessionFn);
+  const clearTokenFn = useServerFn(clearStaffTokenCookieFn);
   const bootstrap = useQuery({
     queryKey: ["staff-access.bootstrap"],
     queryFn: () => bootstrapFn(),
@@ -159,8 +157,17 @@ export function StaffAccessGateway() {
 
   const endSession = useCallback(async () => {
     if (!activeSession) {
-      clearSessionCookie();
-      await refetchBootstrap();
+      setBusy(true);
+      setError("");
+      try {
+        await clearTokenFn();
+        clearSessionCookie();
+        await refetchBootstrap();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not safely clear terminal state.");
+      } finally {
+        setBusy(false);
+      }
       return;
     }
     setBusy(true);
@@ -178,7 +185,7 @@ export function StaffAccessGateway() {
     } finally {
       setBusy(false);
     }
-  }, [activeSession?.sessionId, endFn, queryClient, refetchBootstrap]);
+  }, [activeSession?.sessionId, clearTokenFn, endFn, queryClient, refetchBootstrap]);
 
   useEffect(() => {
     if (!sessionIsBound) return;
@@ -225,8 +232,8 @@ export function StaffAccessGateway() {
           terminalId: "pos-web",
         },
       });
-      if (!result.sessionToken) throw new Error("PIN session proof was not returned. Try again.");
-      writeSessionCookie(result.sessionId, result.sessionToken);
+      if (!result.sessionId) throw new Error("PIN session could not be established. Try again.");
+      writeSessionCookie(result.sessionId);
       setPin("");
       await queryClient.invalidateQueries({ queryKey: ["staff-access.bootstrap"] });
       await refetchBootstrap();
@@ -269,7 +276,6 @@ export function StaffAccessGateway() {
   }
 
   if (access.owner && !sessionIsBound && ownerMode === "direct") {
-    clearSessionCookie();
     return <NovaShell><Outlet /></NovaShell>;
   }
 
@@ -280,7 +286,8 @@ export function StaffAccessGateway() {
           <ShieldCheck className="mb-3 size-6" />
           <h1 className="text-lg font-semibold">Choose LexiBite access mode</h1>
           <p className="mt-2 text-sm text-muted-foreground">Use your owner account directly, or explicitly activate this terminal for individual staff PIN access.</p>
-          <Button className="mt-5 w-full" onClick={() => { clearSessionCookie(); setOwnerMode("direct"); }}>Continue as owner</Button>
+          <Button className="mt-5 w-full" onClick={() => { void (async () => { try { await clearTokenFn(); clearSessionCookie(); setOwnerMode("direct"); } catch (e) { setError(e instanceof Error ? e.message : "Could not clear terminal state."); } })(); }}>Continue as owner</Button>
+          {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
           <Button variant="outline" className="mt-3 w-full" onClick={() => setOwnerMode("staff")}>Activate staff terminal</Button>
         </section>
       </main>

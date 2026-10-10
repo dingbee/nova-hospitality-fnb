@@ -102,6 +102,26 @@ describe("requireSupabaseAuth denial logging", () => {
     expect(warnSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
   });
+  it("resolves an owner into the selected staff actor when the session cookie and proof are present", async () => {
+    mocks.getRequest.mockReturnValue({ headers: new Headers({ authorization: "Bearer valid-token", cookie: "lexibite_staff_session=session-owner-1; lexibite_staff_token=proof" }) });
+    mocks.getClaims.mockResolvedValue({ data: { claims: { sub: "owner-1" } }, error: null });
+    mocks.rpc.mockResolvedValue({ data: { platformAdmin: false, owner: true, hasRestaurantMembership: true, canActivate: true, activeSession: { sessionId: "session-owner-1", tenantId: "tenant-1", propertyId: "property-1", staffUserId: "staff-1", staffMemberId: "member-1", role: "bartender", terminalId: "pos-web", expiresAt: "2099-01-01T00:00:00Z" } }, error: null });
+    const middleware = await loadMiddleware();
+    const next = vi.fn(async (opts) => ({ context: opts.context }));
+    await middleware.options.server!({ next, context: {} } as never);
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ context: expect.objectContaining({ userId: "staff-1", authenticatedUserId: "owner-1", tenantOwner: false, platformAdmin: false }) }));
+  });
+
+  it("fails closed for an owner who presents a token but has no valid staff session", async () => {
+    mocks.getRequest.mockReturnValue({ headers: new Headers({ authorization: "Bearer valid-token", cookie: "lexibite_staff_token=forged-proof" }) });
+    mocks.getClaims.mockResolvedValue({ data: { claims: { sub: "owner-1" } }, error: null });
+    mocks.rpc.mockResolvedValue({ data: { platformAdmin: false, owner: true, hasRestaurantMembership: true, canActivate: true, activeSession: null }, error: null });
+    const middleware = await loadMiddleware();
+    const next = vi.fn();
+    await expect(middleware.options.server!({ next, context: {} } as never)).rejects.toThrow("Staff Access Gateway is locked");
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it("locks a manager account until a matching PIN session exists", async () => {
     mocks.getRequest.mockReturnValue({
       headers: new Headers({ authorization: "Bearer valid-token" }),
