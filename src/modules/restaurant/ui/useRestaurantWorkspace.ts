@@ -2,81 +2,41 @@ import { useCallback, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { getRestaurantWorkspaceFn } from "../core/tenancy.functions";
+import { createActivePropertyStore } from "./active-property-store";
 
-const ACTIVE_PROPERTY_STORAGE_KEY = "lexibite.active-property";
+const browserStorage = {
+  getItem(key: string) {
+    return typeof window === "undefined" ? null : window.localStorage.getItem(key);
+  },
+  setItem(key: string, value: string) {
+    if (typeof window !== "undefined") window.localStorage.setItem(key, value);
+  },
+  removeItem(key: string) {
+    if (typeof window !== "undefined") window.localStorage.removeItem(key);
+  },
+};
 
-type PropertyListener = () => void;
-
-// All hook instances must share one selection. The shell and individual pages
-// each call this hook; independent useState instances let one stale instance
-// restore the previous property after navigation or refresh.
-let sharedActivePropertyId: string | null = null;
-let storeInitialized = false;
-const listeners = new Set<PropertyListener>();
-
-function readStoredPropertyId(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(ACTIVE_PROPERTY_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function persistPropertyId(propertyId: string | null) {
-  if (typeof window === "undefined") return;
-  try {
-    if (propertyId) {
-      window.localStorage.setItem(ACTIVE_PROPERTY_STORAGE_KEY, propertyId);
-    } else {
-      window.localStorage.removeItem(ACTIVE_PROPERTY_STORAGE_KEY);
-    }
-  } catch {
-    // The shared in-memory selection remains usable if storage is unavailable.
-  }
-}
-
-function initializeStore() {
-  if (storeInitialized || typeof window === "undefined") return;
-  storeInitialized = true;
-  sharedActivePropertyId = readStoredPropertyId();
-}
-
-function publishPropertyId(propertyId: string | null, persist = true) {
-  initializeStore();
-  if (sharedActivePropertyId === propertyId) {
-    // Re-write the chosen value in case a browser extension or another tab
-    // removed the key, without triggering needless React renders.
-    if (persist) persistPropertyId(propertyId);
-    return;
-  }
-  sharedActivePropertyId = propertyId;
-  if (persist) persistPropertyId(propertyId);
-  listeners.forEach((listener) => listener());
-}
-
-function subscribe(listener: PropertyListener) {
-  initializeStore();
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
+// One module-level store is shared by the shell and page-level hook instances.
+// The adapter resolves localStorage lazily, keeping SSR safe.
+const activePropertyStore = createActivePropertyStore(browserStorage);
 
 export function useRestaurantWorkspace(tenantId?: string) {
   const fn = useServerFn(getRestaurantWorkspaceFn);
-  initializeStore();
-
   const [activePropertyId, setActivePropertyId] = useState<string | null>(
-    sharedActivePropertyId,
+    () => activePropertyStore.get(),
   );
 
-  useEffect(() => subscribe(() => setActivePropertyId(sharedActivePropertyId)), []);
+  useEffect(
+    () => activePropertyStore.subscribe(() => setActivePropertyId(activePropertyStore.get())),
+    [],
+  );
 
-  // Keep selections in sync across browser tabs. The value is still validated
-  // against the properties returned for this authenticated workspace below.
+  // Keep selections in sync across browser tabs. Storage is only a preference;
+  // the server-provided workspace remains the source of authorization.
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key === ACTIVE_PROPERTY_STORAGE_KEY) {
-        publishPropertyId(event.newValue, false);
+      if (event.key === "lexibite.active-property") {
+        activePropertyStore.set(event.newValue, false);
       }
     };
     window.addEventListener("storage", onStorage);
@@ -90,28 +50,27 @@ export function useRestaurantWorkspace(tenantId?: string) {
   });
 
   const properties = query.data?.properties ?? [];
+  const propertyIds = properties.map((property) => property.id);
 
   useEffect(() => {
-    if (!query.data || properties.length === 0) return;
-
-    // Retain the user's last property whenever it remains in this workspace.
-    // Only fall back when the stored property is not accessible here.
-    const selected =
-      sharedActivePropertyId && properties.some((property) => property.id === sharedActivePropertyId)
-        ? sharedActivePropertyId
-        : properties[0].id;
-
-    if (selected !== sharedActivePropertyId) publishPropertyId(selected);
-    else if (readStoredPropertyId() !== selected) persistPropertyId(selected);
-  }, [query.data, properties]);
+    // An empty list here means the workspace is still loading or has no
+    // properties. Never erase a stored choice while data is temporarily absent.
+    if (!query.data || propertyIds.length === 0) return;
+    activePropertyStore.resolve(propertyIds);
+  }, [query.data, propertyIds.join("\u0000")]);
 
   const selectProperty = useCallback((propertyId: string) => {
-    if (!properties.some((property) => property.id === propertyId)) return;
-    publishPropertyId(propertyId);
-  }, [properties]);
+    if (!propertyIds.includes(propertyId)) return;
+    activePropertyStore.set(propertyId);
+  }, [propertyIds.join("\u0000")]);
 
+  const selectedId = propertyIds.includes(activePropertyId ?? "")
+    ? activePropertyId
+    : propertyIds.includes(activePropertyStore.get() ?? "")
+      ? activePropertyStore.get()
+      : propertyIds[0] ?? null;
   const activeProperty =
-    properties.find((property) => property.id === activePropertyId) ?? properties[0] ?? null;
+    properties.find((property) => property.id === selectedId) ?? null;
 
   return {
     ...query,
