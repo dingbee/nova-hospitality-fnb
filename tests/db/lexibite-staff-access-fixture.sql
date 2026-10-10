@@ -37,7 +37,7 @@ create table public.restaurant_members (
   pos_pin_enabled boolean not null default false
 );
 create table public.restaurant_pos_sessions (
-  id uuid primary key default extensions.gen_random_uuid(),
+  id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references public.restaurant_tenants(id) on delete cascade,
   property_id uuid references public.restaurant_properties(id) on delete set null,
   staff_user_id uuid not null,
