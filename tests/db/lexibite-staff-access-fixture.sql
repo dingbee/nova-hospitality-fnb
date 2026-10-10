@@ -59,7 +59,7 @@ create table public.lexibite_demo_sessions (
 );
 create or replace function public.restaurant_member_active(_user_id uuid, _tenant_id uuid)
 returns boolean language sql stable security definer set search_path=public,pg_temp
-as $ select not exists(select 1 from public.lexibite_demo_sessions ds where ds.user_id=_user_id and ds.tenant_id=_tenant_id and (ds.status <> 'active' or ds.expires_at <= now())) $;
+as $$ select not exists(select 1 from public.lexibite_demo_sessions ds where ds.user_id=_user_id and ds.tenant_id=_tenant_id and (ds.status <> 'active' or ds.expires_at <= now())) $$;
 create or replace function public.restaurant_is_platform_admin(_user_id uuid)
 returns boolean language sql stable
 as $$ select false $$;
