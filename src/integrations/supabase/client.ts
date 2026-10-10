@@ -45,22 +45,12 @@ function createSupabaseClient() {
     throw new Error(message);
   }
 
+  // Staff-session proof is deliberately HttpOnly. Never try to read it from
+  // document.cookie or attach it from browser JavaScript: that path can never
+  // work for an HttpOnly cookie and would invite weakening the cookie policy.
+  // Protected server functions forward the proof from the incoming cookie to
+  // Postgres as x-lexibite-staff-session in auth-middleware.ts.
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-    global: {
-      fetch: (input, init) => {
-        const headers = new Headers(init?.headers);
-        if (typeof document !== 'undefined') {
-          const item = document.cookie.split('; ').find((part) => part.startsWith('lexibite_staff_token='));
-          if (item) {
-            const token = decodeURIComponent(item.slice('lexibite_staff_token='.length));
-            if (token) headers.set('x-client-info', (headers.get('x-client-info') ?? '') + '; lexibite-staff-session=' + token);
-          } else {
-            headers.delete('x-lexibite-staff-session');
-          }
-        }
-        return fetch(input, { ...init, headers });
-      },
-    },
     auth: {
       storage: typeof window !== 'undefined' ? localStorage : undefined,
       persistSession: true,
@@ -79,4 +69,3 @@ export const supabase = new Proxy({} as ReturnType<typeof createSupabaseClient>,
     return Reflect.get(_supabase, prop, receiver);
   },
 });
-
