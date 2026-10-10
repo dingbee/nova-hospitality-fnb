@@ -20,15 +20,11 @@ export function resolveActivePropertyId(
   accessiblePropertyIds: readonly string[],
 ): string | null {
   if (accessiblePropertyIds.length === 0) return null;
-  return storedId && accessiblePropertyIds.includes(storedId)
-    ? storedId
-    : accessiblePropertyIds[0];
+  return storedId && accessiblePropertyIds.includes(storedId) ? storedId : accessiblePropertyIds[0];
 }
 
 /** Store is injectable so persistence, reload hydration, and workspace scoping can be tested. */
-export function createActivePropertyStore(
-  storage: PropertyStorage | null,
-): ActivePropertyStore {
+export function createActivePropertyStore(storage: PropertyStorage | null): ActivePropertyStore {
   const listeners = new Set<PropertyListener>();
   let initialized = false;
   let activePropertyId: string | null = null;
