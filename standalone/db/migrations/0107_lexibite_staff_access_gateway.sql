@@ -20,10 +20,10 @@ create or replace function public.restaurant_staff_mode_requested()
 returns boolean
 language sql stable
 set search_path = public, pg_temp
-as $
+as $$
   select coalesce((nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-lexibite-staff-session'), '') <> ''
       or coalesce((nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-client-info'), '') like '%lexibite-staff-session=%';
-$;
+$$;
 revoke all on function public.restaurant_staff_mode_requested() from public, anon;
 grant execute on function public.restaurant_staff_mode_requested() to authenticated, service_role;
 
@@ -395,11 +395,11 @@ begin
   select * into target from public.restaurant_members where id = p_member_id and tenant_id = p_tenant_id;
   if not found then raise exception 'Staff member not found'; end if;
 
-  owner_access := (not public.restaurant_staff_mode_requested() and public.restaurant_is_platform_admin(auth.uid())) or exists (
+  owner_access := not public.restaurant_staff_mode_requested() and (public.restaurant_is_platform_admin(auth.uid()) or exists (
     select 1 from public.restaurant_members m
     where m.tenant_id = p_tenant_id and m.user_id = auth.uid()
       and m.role = 'owner' and public.restaurant_member_active(auth.uid(), p_tenant_id)
-  );
+  ));
   actor_member_id := public.restaurant_effective_staff_member_id(p_tenant_id);
   if not owner_access then
     select * into actor_member from public.restaurant_members where id = actor_member_id;
@@ -442,11 +442,11 @@ begin
   select * into target from public.restaurant_members where id = p_member_id and tenant_id = p_tenant_id;
   if not found then raise exception 'Staff member not found'; end if;
 
-  owner_access := (not public.restaurant_staff_mode_requested() and public.restaurant_is_platform_admin(auth.uid())) or exists (
+  owner_access := not public.restaurant_staff_mode_requested() and (public.restaurant_is_platform_admin(auth.uid()) or exists (
     select 1 from public.restaurant_members m
     where m.tenant_id = p_tenant_id and m.user_id = auth.uid()
       and m.role = 'owner' and public.restaurant_member_active(auth.uid(), p_tenant_id)
-  );
+  ));
   actor_member_id := public.restaurant_effective_staff_member_id(p_tenant_id);
   if not owner_access then
     select * into actor_member from public.restaurant_members where id = actor_member_id;

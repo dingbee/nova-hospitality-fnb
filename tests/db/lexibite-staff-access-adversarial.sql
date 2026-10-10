@@ -102,6 +102,12 @@ begin
   select count(*) into visible from public.staff_access_test_data;
   if visible <> 0 then raise exception 'FAIL: invalid staff token fell back to owner access'; end if;
   if public.restaurant_staff_mode_requested() is not true then raise exception 'FAIL: invalid token did not select fail-closed staff mode'; end if;
+  begin
+    perform public.restaurant_set_pos_pin('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000003','2468');
+    raise exception 'FAIL: owner retained PIN administration in staff mode';
+  exception when others then
+    if sqlerrm like 'FAIL:%' then raise; end if;
+  end;
 end $;
 reset role;
 select 'PASS: migration 0107 applied and adversarial staff-session/RLS cases passed' as result;
