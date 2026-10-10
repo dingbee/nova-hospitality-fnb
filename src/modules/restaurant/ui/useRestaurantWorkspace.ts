@@ -22,8 +22,8 @@ const activePropertyStore = createActivePropertyStore(browserStorage);
 
 export function useRestaurantWorkspace(tenantId?: string) {
   const fn = useServerFn(getRestaurantWorkspaceFn);
-  const [activePropertyId, setActivePropertyId] = useState<string | null>(
-    () => activePropertyStore.get(),
+  const [activePropertyId, setActivePropertyId] = useState<string | null>(() =>
+    activePropertyStore.get(),
   );
 
   useEffect(() => {
