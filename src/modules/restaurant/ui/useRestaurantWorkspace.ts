@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { getRestaurantWorkspaceFn } from "../core/tenancy.functions";
@@ -50,27 +50,30 @@ export function useRestaurantWorkspace(tenantId?: string) {
   });
 
   const properties = query.data?.properties ?? [];
-  const propertyIds = properties.map((property) => property.id);
+  const propertyIds = useMemo(() => properties.map((property) => property.id), [properties]);
 
   useEffect(() => {
-    // An empty list here means the workspace is still loading or has no
-    // properties. Never erase a stored choice while data is temporarily absent.
+    // Do not erase a stored choice while data is loading or the workspace has
+    // no accessible properties. A non-empty server response validates it.
     if (!query.data || propertyIds.length === 0) return;
     activePropertyStore.resolve(propertyIds);
-  }, [query.data, propertyIds.join("\u0000")]);
+  }, [query.data, propertyIds]);
 
-  const selectProperty = useCallback((propertyId: string) => {
-    if (!propertyIds.includes(propertyId)) return;
-    activePropertyStore.set(propertyId);
-  }, [propertyIds.join("\u0000")]);
+  const selectProperty = useCallback(
+    (propertyId: string) => {
+      if (!propertyIds.includes(propertyId)) return;
+      activePropertyStore.set(propertyId);
+    },
+    [propertyIds],
+  );
 
+  const storedPropertyId = activePropertyStore.get();
   const selectedId = propertyIds.includes(activePropertyId ?? "")
     ? activePropertyId
-    : propertyIds.includes(activePropertyStore.get() ?? "")
-      ? activePropertyStore.get()
-      : propertyIds[0] ?? null;
-  const activeProperty =
-    properties.find((property) => property.id === selectedId) ?? null;
+    : propertyIds.includes(storedPropertyId ?? "")
+      ? storedPropertyId
+      : (propertyIds[0] ?? null);
+  const activeProperty = properties.find((property) => property.id === selectedId) ?? null;
 
   return {
     ...query,
