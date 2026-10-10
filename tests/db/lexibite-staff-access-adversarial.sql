@@ -63,6 +63,11 @@ begin
   perform set_config('request.headers',jsonb_build_object('x-lexibite-staff-session',token_a)::text,true);
   if public.restaurant_effective_staff_member_id('10000000-0000-0000-0000-000000000001') <> '30000000-0000-0000-0000-000000000002' then raise exception 'FAIL: terminal A identity changed after terminal B start'; end if;
 
+  -- Ending terminal A must not terminate terminal B's active session.
+  perform public.restaurant_end_pos_session((session_a->>'sessionId')::uuid);
+  perform set_config('request.headers',jsonb_build_object('x-lexibite-staff-session',token_b)::text,true);
+  if public.restaurant_effective_staff_member_id('10000000-0000-0000-0000-000000000001') <> '30000000-0000-0000-0000-000000000003' then raise exception 'FAIL: ending terminal A disrupted terminal B'; end if;
+
   if public.restaurant_effective_staff_member_id('10000000-0000-0000-0000-000000000002') is not null then raise exception 'FAIL: cross-tenant actor resolution'; end if;
   select count(*) into visible from public.staff_access_test_data where id=3;
   if visible <> 0 then raise exception 'FAIL: cross-tenant data leaked'; end if;
