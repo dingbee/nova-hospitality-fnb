@@ -94,3 +94,51 @@ jobs:
 
       - name: Verify bundle origin
         run: bun run verify:bundle -- .output
+
+  staff-access-adversarial:
+    name: Staff Access Migration / Adversarial RLS Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: staff_access_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d staff_access_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Build Supabase-compatible isolated schema
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: staff_access_test
+        run: psql -v ON_ERROR_STOP=1 -f tests/db/lexibite-staff-access-fixture.sql
+      - name: Apply the real Staff Access Gateway migration
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: staff_access_test
+        run: psql -v ON_ERROR_STOP=1 -f standalone/db/migrations/0107_lexibite_staff_access_gateway.sql
+      - name: Run adversarial session-token and RLS cases
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: staff_access_test
+        run: psql -v ON_ERROR_STOP=1 -f tests/db/lexibite-staff-access-adversarial.sql

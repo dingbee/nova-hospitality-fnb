@@ -1,21 +1,17 @@
-import { createFileRoute, Outlet } from "@tanstack/react-router";
-import { NovaShell } from "@/components/shell/NovaShell";
+import { createFileRoute } from "@tanstack/react-router";
+import { StaffAccessGateway } from "@/modules/restaurant/core/ui/StaffAccessGateway";
 import { ComingSoon } from "@/components/os/ComingSoon";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({ meta: [{ name: "robots", content: "noindex,nofollow" }] }),
-  component: () => (
-    <NovaShell>
-      <Outlet />
-    </NovaShell>
-  ),
+  component: StaffAccessGateway,
   errorComponent: ({ error }) => (
-    <NovaShell>
+    <div className="min-h-screen bg-background p-6">
       <ComingSoon title="Something went wrong" description={error.message} />
-    </NovaShell>
+    </div>
   ),
   notFoundComponent: () => (
-    <NovaShell>
+    <div className="min-h-screen bg-background p-6">
       <div className="space-y-6">
         <div>
           <h1 className="font-display text-2xl text-foreground">Page not found</h1>
@@ -29,6 +25,6 @@ export const Route = createFileRoute("/_authenticated/admin")({
           </p>
         </div>
       </div>
-    </NovaShell>
+    </div>
   ),
 });
