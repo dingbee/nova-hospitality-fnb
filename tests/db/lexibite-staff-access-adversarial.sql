@@ -74,8 +74,8 @@ begin
 
   -- Preserve the table constraint while testing expiration in the past.
   update public.restaurant_pos_sessions set started_at=now()-interval '2 hours', expires_at=now()-interval '1 hour'
-   where id=(session_a->>'sessionId')::uuid;
-  perform set_config('request.headers',jsonb_build_object('x-lexibite-staff-session',token_a)::text,true);
+   where id=(session_b->>'sessionId')::uuid;
+  perform set_config('request.headers',jsonb_build_object('x-lexibite-staff-session',token_b)::text,true);
   if public.restaurant_effective_staff_member_id('10000000-0000-0000-0000-000000000001') is not null then raise exception 'FAIL: expired token resolved actor'; end if;
 
   begin
