@@ -26,10 +26,11 @@ export function useRestaurantWorkspace(tenantId?: string) {
     () => activePropertyStore.get(),
   );
 
-  useEffect(
-    () => activePropertyStore.subscribe(() => setActivePropertyId(activePropertyStore.get())),
-    [],
-  );
+  useEffect(() => {
+    return activePropertyStore.subscribe(() => {
+      setActivePropertyId(activePropertyStore.get());
+    });
+  }, []);
 
   // Keep selections in sync across browser tabs. Storage is only a preference;
   // the server-provided workspace remains the source of authorization.
@@ -49,7 +50,7 @@ export function useRestaurantWorkspace(tenantId?: string) {
     staleTime: 60_000,
   });
 
-  const properties = query.data?.properties ?? [];
+  const properties = useMemo(() => query.data?.properties ?? [], [query.data?.properties]);
   const propertyIds = useMemo(() => properties.map((property) => property.id), [properties]);
 
   useEffect(() => {
