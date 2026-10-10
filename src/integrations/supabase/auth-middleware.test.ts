@@ -11,11 +11,12 @@ const mocks = vi.hoisted(() => ({
   getRequest: vi.fn(),
   getClaims: vi.fn(),
   rpc: vi.fn(),
+  createClient: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-start/server", () => ({ getRequest: mocks.getRequest }));
 vi.mock("@supabase/supabase-js", () => ({
-  createClient: () => ({ auth: { getClaims: mocks.getClaims }, rpc: mocks.rpc }),
+  createClient: mocks.createClient,
 }));
 
 const ORIGINAL_ENV = { ...process.env };
@@ -27,6 +28,13 @@ describe("requireSupabaseAuth denial logging", () => {
     mocks.getRequest.mockReset();
     mocks.getClaims.mockReset();
     mocks.rpc.mockReset();
+    mocks.createClient.mockReset().mockImplementation((_url, _key, options) => {
+      return {
+        auth: { getClaims: mocks.getClaims },
+        rpc: mocks.rpc,
+        __options: options,
+      };
+    });
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -102,6 +110,41 @@ describe("requireSupabaseAuth denial logging", () => {
     expect(warnSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
   });
+  it("forwards the HttpOnly staff proof only from the server request cookie to Supabase", async () => {
+    const proof = "opaque-session-proof-never-exposed-to-browser-code";
+    mocks.getRequest.mockReturnValue({
+      headers: new Headers({
+        authorization: "Bearer valid-token",
+        cookie: `lexibite_staff_session=session-1; lexibite_staff_token=${proof}`,
+      }),
+    });
+    mocks.getClaims.mockResolvedValue({ data: { claims: { sub: "manager-1" } }, error: null });
+    mocks.rpc.mockResolvedValue({
+      data: {
+        platformAdmin: false,
+        owner: false,
+        hasRestaurantMembership: true,
+        canActivate: true,
+        activeSession: {
+          sessionId: "session-1", tenantId: "tenant-1", propertyId: "property-1",
+          staffUserId: "staff-1", staffMemberId: "member-1", role: "cashier",
+          terminalId: "pos-web", expiresAt: "2099-01-01T00:00:00Z",
+        },
+      },
+      error: null,
+    });
+
+    const middleware = await loadMiddleware();
+    const next = vi.fn(async (opts) => ({ context: opts.context }));
+    await middleware.options.server!({ next, context: {} } as never);
+
+    expect(mocks.createClient).toHaveBeenCalledTimes(1);
+    const clientOptions = mocks.createClient.mock.calls[0]![2] as { global: { headers: Record<string, string> } };
+    expect(clientOptions.global.headers["x-lexibite-staff-session"]).toBe(proof);
+    expect(clientOptions.global.headers.Authorization).toBe("Bearer valid-token");
+    expect(JSON.stringify(next.mock.calls)).not.toContain(proof);
+  });
+
   it("resolves an owner into the selected staff actor when the session cookie and proof are present", async () => {
     mocks.getRequest.mockReturnValue({ headers: new Headers({ authorization: "Bearer valid-token", cookie: "lexibite_staff_session=session-owner-1; lexibite_staff_token=proof" }) });
     mocks.getClaims.mockResolvedValue({ data: { claims: { sub: "owner-1" } }, error: null });
