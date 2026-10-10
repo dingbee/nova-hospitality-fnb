@@ -79,6 +79,9 @@ export function createActivePropertyStore(
     },
     resolve(accessiblePropertyIds) {
       initialize();
+      // Workspace data is not ready yet (or the response has no properties).
+      // Keep the persisted preference until a non-empty authorized list exists.
+      if (accessiblePropertyIds.length === 0) return null;
       const resolved = resolveActivePropertyId(activePropertyId, accessiblePropertyIds);
       if (resolved !== activePropertyId) this.set(resolved);
       else if (resolved && read() !== resolved) persist(resolved);
