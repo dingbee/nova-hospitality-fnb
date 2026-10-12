@@ -43,6 +43,7 @@ function money(currency: string, n: number | null | undefined) {
 export function BarWorkspace({ initialTab }: { initialTab?: string }) {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
+  const propertyId = ws.data?.activeProperty?.id;
   const currency = ws.data?.activeProperty?.currency ?? "TZS";
 
   const qc = useQueryClient();
@@ -57,8 +58,9 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
   const [from] = React.useState(() => new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10));
 
   const snapshot = useQuery({
-    queryKey: ["bar.snapshot", tenantId],
-    queryFn: () => snapshotFn({ data: { tenantId: tenantId! } }),
+    queryKey: ["bar.snapshot", tenantId, propertyId ?? "all-properties"],
+    queryFn: () =>
+      snapshotFn({ data: { tenantId: tenantId!, propertyId: propertyId || undefined } }),
     enabled: Boolean(tenantId),
     refetchInterval: 30_000,
   });
