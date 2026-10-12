@@ -29,7 +29,6 @@ export async function getWorkspace(
   // account is a verified platform administrator. Do not broaden discovery to
   // every tenant and do not mutate data; perform a server-only, ID-pinned read.
   if (platformAdmin && tenants.length === 0) {
-    const { DEMO_TENANT_ID } = await import("@/modules/lexibite-demo/constants");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: demoTenant, error: demoTenantError } = await supabaseAdmin
       .from("restaurant_tenants")
