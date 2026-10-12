@@ -370,11 +370,15 @@ export async function executeRestaurantAction(
     const executingAt = Date.parse(String(action.executing_at ?? ""));
     const ageMs = Date.now() - executingAt;
     if (Number.isFinite(executingAt) && ageMs < EXECUTION_RECOVERY_AFTER_MS) {
-      throw new Error("Action execution is already in progress; refusing a concurrent duplicate execution.");
+      throw new Error(
+        "Action execution is already in progress; refusing a concurrent duplicate execution.",
+      );
     }
     const claimed = await claimStaleExecution(sb, action);
     if (!claimed) {
-      throw new Error("Another worker already claimed recovery of this action; refusing duplicate execution.");
+      throw new Error(
+        "Another worker already claimed recovery of this action; refusing duplicate execution.",
+      );
     }
     action = claimed;
     ownsExecution = true;
@@ -431,7 +435,9 @@ export async function executeRestaurantAction(
 
     if (action.status === "executing") {
       if (!ownsExecution) {
-        throw new Error("Action execution is already in progress; refusing a concurrent duplicate execution.");
+        throw new Error(
+          "Action execution is already in progress; refusing a concurrent duplicate execution.",
+        );
       }
       if (action.action_type === "restaurant.menu.reprice_review") {
         return runMenuRepriceExecution(sb, userId, action, decision, tenantId, module);
@@ -523,7 +529,9 @@ async function runProcurementDraftExecution(
   }
 
   const unitCost =
-    typeof estimatedUnitCost === "number" && Number.isFinite(estimatedUnitCost) && estimatedUnitCost > 0
+    typeof estimatedUnitCost === "number" &&
+    Number.isFinite(estimatedUnitCost) &&
+    estimatedUnitCost > 0
       ? estimatedUnitCost
       : typeof estimatedCost === "number" && Number.isFinite(estimatedCost) && estimatedCost >= 0
         ? estimatedCost / recommendedQuantity
@@ -654,7 +662,9 @@ async function runProcurementDraftExecution(
 
   const { data: existingLines, error: lineReadErr } = await sb
     .from("restaurant_purchase_request_items")
-    .select("id, tenant_id, purchase_request_id, inventory_item_id, preferred_supplier_id, quantity, estimated_unit_cost")
+    .select(
+      "id, tenant_id, purchase_request_id, inventory_item_id, preferred_supplier_id, quantity, estimated_unit_cost",
+    )
     .eq("tenant_id", tenantId)
     .eq("purchase_request_id", requestId);
   if (lineReadErr) {
@@ -1694,10 +1704,7 @@ async function verifyProcurementDraft(
     };
   }
 
-  if (
-    expectedSupplierId &&
-    matchingItem.preferred_supplier_id !== expectedSupplierId
-  ) {
+  if (expectedSupplierId && matchingItem.preferred_supplier_id !== expectedSupplierId) {
     return {
       verified: false,
       outcome: "supplier_mismatch",
