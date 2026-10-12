@@ -131,6 +131,7 @@ export interface BarTicket {
   targetMinutes: number | null;
   waitingSeconds: number;
   notes: string | null;
+  items: Array<{ orderItemId: string; name: string; quantity: number; status: string }>;
 }
 
 export interface BarBeverage {

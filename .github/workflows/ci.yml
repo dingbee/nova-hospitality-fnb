@@ -25,6 +25,20 @@ jobs:
     name: Install / Typecheck / Lint / Test / Build
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lexibite_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d lexibite_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout
@@ -72,7 +86,13 @@ jobs:
         if: steps.lint.outcome == 'failure'
         run: echo "::warning::Changed-source lint has existing formatting debt; scoped functional test and build gates remain blocking."
 
-      - name: Scoped GTM functional tests
+      - name: Verify service-recovery quantity migration in isolated PostgreSQL
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-service-recovery-affected-quantity-migration.sql
+
+      - name: Scoped GTM and changed-path functional tests
         run: |
           bunx vitest run \
             src/modules/restaurant/core/members.server.test.ts \
@@ -81,7 +101,11 @@ jobs:
             src/modules/restaurant/payments/mobilemoney/mobilemoney.server.test.ts \
             src/modules/restaurant/payments/mobilemoney/mobilemoney.property-scope.test.ts \
             src/modules/restaurant/payments/mobilemoney/providers/payinAdapter.server.test.ts \
-            src/modules/restaurant/receipts/delivery.server.test.ts
+            src/modules/restaurant/receipts/delivery.server.test.ts \
+            src/modules/restaurant/bar/bar.test.ts \
+            src/modules/restaurant/bar/ticket-items.test.ts \
+            src/modules/restaurant/sales/service-recovery.contracts.test.ts \
+            src/modules/restaurant/ui/useRestaurantWorkspace.test.ts
 
       - name: Full test suite (repository baseline)
         id: full_tests
@@ -90,7 +114,7 @@ jobs:
 
       - name: Report full test baseline
         if: steps.full_tests.outcome == 'failure'
-        run: echo "::warning::Full repository test suite remains non-clean outside the scoped GTM functional gate; scoped changed-path tests passed."
+        run: echo "::warning::Full repository test suite remains non-clean outside the scoped functional gate; scoped changed-path tests remain blocking."
 
       - name: Verify bundle origin
         run: bun run verify:bundle -- .output

@@ -19,6 +19,24 @@ function storageKey(scope: string) {
   return `${ACTIVE_PROPERTY_STORAGE_PREFIX}${scope}`;
 }
 
+/** Read the scoped preference, migrating the legacy key when necessary. */
+export function readAndMigratePropertySelection(
+  storage: Pick<Storage, "getItem" | "setItem">,
+  scopedKey: string,
+): string | null {
+  const scopedValue = storage.getItem(scopedKey);
+  if (scopedValue) return scopedValue;
+
+  const legacyValue = storage.getItem("lexibite.active-property");
+  if (!legacyValue) return null;
+  try {
+    storage.setItem(scopedKey, legacyValue);
+  } catch {
+    // The legacy value remains usable in memory when storage is read-only.
+  }
+  return legacyValue;
+}
+
 function getStore(scope: string): PropertyStore {
   const existing = stores.get(scope);
   if (existing) return existing;
@@ -26,7 +44,9 @@ function getStore(scope: string): PropertyStore {
   let value: string | null = null;
   if (typeof window !== "undefined") {
     try {
-      value = window.localStorage.getItem(storageKey(scope));
+      // The caller validates any restored value against the server-authorized
+      // property list before it can become active.
+      value = readAndMigratePropertySelection(window.localStorage, storageKey(scope));
     } catch {
       // Private browsing / disabled storage: retain an in-memory selection.
     }

@@ -43,6 +43,7 @@ function money(currency: string, n: number | null | undefined) {
 export function BarWorkspace({ initialTab }: { initialTab?: string }) {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
+  const propertyId = ws.data?.activeProperty?.id;
   const currency = ws.data?.activeProperty?.currency ?? "TZS";
 
   const qc = useQueryClient();
@@ -57,8 +58,9 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
   const [from] = React.useState(() => new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10));
 
   const snapshot = useQuery({
-    queryKey: ["bar.snapshot", tenantId],
-    queryFn: () => snapshotFn({ data: { tenantId: tenantId! } }),
+    queryKey: ["bar.snapshot", tenantId, propertyId ?? "all-properties"],
+    queryFn: () =>
+      snapshotFn({ data: { tenantId: tenantId!, propertyId: propertyId || undefined } }),
     enabled: Boolean(tenantId),
     refetchInterval: 30_000,
   });
@@ -206,6 +208,18 @@ export function BarWorkspace({ initialTab }: { initialTab?: string }) {
                       {t.stationName} · waiting {Math.round(t.waitingSeconds / 60)} min
                       {t.targetMinutes ? ` of ${t.targetMinutes} min` : ""}
                     </p>
+                    {t.items.length > 0 ? (
+                      <ul className="mt-2 space-y-1 rounded-lg border border-border/60 bg-background/50 p-2 text-sm">
+                        {t.items.map((item) => (
+                          <li key={item.orderItemId} className="flex items-start justify-between gap-3">
+                            <span className="min-w-0">{item.name}</span>
+                            <span className="shrink-0 font-semibold tabular-nums">× {item.quantity}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-2 text-xs text-amber-700">Ticket items unavailable — verify the originating order before preparation.</p>
+                    )}
                     {t.notes ? (
                       <p className="mt-1 text-xs text-muted-foreground">{t.notes}</p>
                     ) : null}

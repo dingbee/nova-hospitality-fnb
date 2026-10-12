@@ -27,6 +27,7 @@ function ServiceRecoveryPage() {
   const qc = useQueryClient();
   const [orderId, setOrderId] = useState("");
   const [lineId, setLineId] = useState("");
+  const [affectedQuantity, setAffectedQuantity] = useState("1");
   const [category, setCategory] = useState("quality");
   const [complaint, setComplaint] = useState("");
   const [reason, setReason] = useState("");
@@ -62,7 +63,7 @@ function ServiceRecoveryPage() {
       const line = (detail.data?.items ?? []).find((x: any) => x.id === lineId);
       const isPrepared = ["fired", "sent", "preparing", "ready", "served"].includes(String(line?.status));
       return recordFn({ data: {
-        tenantId: tenantId!, orderId, originalOrderItemId: lineId,
+        tenantId: tenantId!, orderId, originalOrderItemId: lineId, affectedQuantity: Number(affectedQuantity),
         clientRequestId: crypto.randomUUID(),
         complaintCategory: category as any, complaint, resolution: "pending",
         resolutionReason: reason, stockDisposition: (isPrepared ? "preserve_consumption" : disposition) as any,
@@ -70,7 +71,7 @@ function ServiceRecoveryPage() {
     },
     successMessage: "Complaint recorded for follow-up",
     onSuccess: () => {
-      setComplaint(""); setReason(""); setLineId("");
+      setComplaint(""); setReason(""); setLineId(""); setAffectedQuantity("1");
       void qc.invalidateQueries({ queryKey: ["service-recovery.cases"] });
     },
   });
@@ -97,16 +98,20 @@ function ServiceRecoveryPage() {
     <SectionCard title="Record a complaint" description="This records the incident only. Process replacement, comp, refund, or void through the existing POS/bill workflow before recording any completed financial outcome.">
       <div className="grid gap-3 md:grid-cols-2">
         <label className="space-y-1 text-sm"><span>Order</span>
-          <select className="w-full rounded-md border bg-background p-2" value={orderId} onChange={e => { setOrderId(e.target.value); setLineId(""); }}>
+          <select className="w-full rounded-md border bg-background p-2" value={orderId} onChange={e => { setOrderId(e.target.value); setLineId(""); setAffectedQuantity("1"); }}>
             <option value="">Select order…</option>
             {(orders.data ?? []).map((o: any) => <option key={o.id} value={o.id}>{o.order_number} · {o.status} · {o.currency} {o.total}</option>)}
           </select>
         </label>
         <label className="space-y-1 text-sm"><span>Order item</span>
-          <select className="w-full rounded-md border bg-background p-2" value={lineId} onChange={e => setLineId(e.target.value)} disabled={!orderId}>
+          <select className="w-full rounded-md border bg-background p-2" value={lineId} onChange={e => { setLineId(e.target.value); setAffectedQuantity("1"); }} disabled={!orderId}>
             <option value="">Select affected item…</option>
             {(detail.data?.items ?? []).filter((x: any) => x.status !== "voided").map((x: any) => <option key={x.id} value={x.id}>{x.description} × {x.quantity} · {x.status}</option>)}
           </select>
+        </label>
+        <label className="space-y-1 text-sm"><span>Affected quantity</span>
+          <Input inputType="number" value={affectedQuantity} onChange={e => setAffectedQuantity(e.target.value)} min={0.001} max={Number(selectedLine?.quantity ?? 1)} step={0.001} disabled={!selectedLine} />
+          <span className="block text-xs text-muted-foreground">Select only the number of units affected. Full-line void and comp remain restricted to the full original quantity.</span>
         </label>
         <label className="space-y-1 text-sm"><span>Complaint category</span>
           <select className="w-full rounded-md border bg-background p-2" value={category} onChange={e => setCategory(e.target.value)}>
@@ -128,7 +133,7 @@ function ServiceRecoveryPage() {
       </div>
       <div className="mt-3 flex items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">New cases remain OPEN until a supervisor confirms the outcome.</p>
-        <Button disabled={!tenantId || !orderId || !lineId || complaint.trim().length < 3 || reason.trim().length < 3 || submit.isPending} onClick={() => submit.mutate()}><AlertTriangle className="mr-2 h-4 w-4" /> Record case</Button>
+        <Button disabled={!tenantId || !orderId || !lineId || !Number.isFinite(Number(affectedQuantity)) || Number(affectedQuantity) <= 0 || Number(affectedQuantity) > Number(selectedLine?.quantity ?? 0) || complaint.trim().length < 3 || reason.trim().length < 3 || submit.isPending} onClick={() => submit.mutate()}><AlertTriangle className="mr-2 h-4 w-4" /> Record case</Button>
       </div>
     </SectionCard>
     <SectionCard title="Recovery case register" description="Most recent incidents for the active property/tenant.">

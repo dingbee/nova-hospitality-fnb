@@ -6,6 +6,7 @@ export const serviceRecoverySchema = z.object({
   tenantId: uuid,
   orderId: uuid,
   originalOrderItemId: uuid,
+  affectedQuantity: z.number().positive().max(999),
   replacementOrderItemId: uuid.optional(),
   refundPaymentId: uuid.optional(),
   clientRequestId: z.string().min(6).max(80),

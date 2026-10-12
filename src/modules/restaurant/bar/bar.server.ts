@@ -20,6 +20,7 @@ import {
 } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import type { UnitRow } from "../inventory/units";
+import { buildBarTicketItems } from "./ticket-items";
 import { pourCost as computePourCost, pourMaths, poursAvailable, round6 } from "./pour";
 import {
   BAR_LOCATION_TYPES,
@@ -161,7 +162,7 @@ export async function getBarSnapshot(
     const { data } = await sb
       .from("restaurant_kitchen_tickets")
       .select(
-        "id, ticket_number, station_id, status, queued_at, started_at, ready_at, served_at, is_delayed, target_minutes, notes",
+        "id, ticket_number, order_id, station_id, status, queued_at, started_at, ready_at, served_at, is_delayed, target_minutes, notes",
       )
       .eq("tenant_id", input.tenantId)
       .in("station_id", stationIds)
@@ -170,6 +171,44 @@ export async function getBarSnapshot(
       .limit(60);
     tickets = (data ?? []) as any[];
   }
+  // Read ticket-item records first. Some deployments apply kitchen-only RLS
+  // to this table, so an authorized bartender can see the ticket header but
+  // receive an empty item list. In that case, reconstruct the same ticket's
+  // lines from its order and bar station using the sales-scoped order-item
+  // read path. Never broaden the fallback beyond these visible ticket IDs'
+  // orders and authorized bar stations.
+  const ticketIds = tickets.map((t) => t.id);
+  let ticketItemRows: any[] = [];
+  if (ticketIds.length > 0) {
+    const { data, error } = await sb
+      .from("restaurant_kitchen_ticket_items")
+      .select("id, ticket_id, order_item_id, description, quantity, status")
+      .eq("tenant_id", input.tenantId)
+      .in("ticket_id", ticketIds);
+    if (error) throw new Error(error.message);
+    ticketItemRows = (data ?? []) as any[];
+  }
+
+  const orderIds = [...new Set(tickets.map((t) => t.order_id).filter(Boolean))];
+  let orderLines: any[] = [];
+  if (orderIds.length > 0 && stationIds.length > 0) {
+    const { data, error } = await sb
+      .from("restaurant_order_items")
+      .select("id, order_id, station_id, description, quantity, status")
+      .eq("tenant_id", input.tenantId)
+      .in("order_id", orderIds)
+      .in("station_id", stationIds);
+    if (error) throw new Error(error.message);
+    orderLines = ((data ?? []) as any[]).filter((row) =>
+      ["fired", "ready", "served"].includes(String(row.status ?? "").toLowerCase()),
+    );
+  }
+
+  const ticketItemsByTicket = new Map<string, ReturnType<typeof buildBarTicketItems>>();
+  for (const ticket of tickets) {
+    ticketItemsByTicket.set(ticket.id, buildBarTicketItems(ticket, ticketItemRows, orderLines));
+  }
+
   const now = Date.now();
 
   /* Bar requisitions — the existing requisition engine, kind = bar. */
@@ -302,6 +341,7 @@ export async function getBarSnapshot(
       targetMinutes: t.target_minutes ?? null,
       waitingSeconds: t.waitingSeconds,
       notes: t.notes ?? null,
+      items: ticketItemsByTicket.get(t.id) ?? [],
     })),
     openTicketCount: tickets.length,
     delayedTicketCount: ticketsWithLiveDelay.filter((t) => t.isDelayed).length,
