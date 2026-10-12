@@ -510,8 +510,49 @@ describe("executeRestaurantAction — Act", () => {
       procurementRequestStatus: "draft",
     });
     expect(fake.getRequestInsertCount()).toBe(0); // never a second draft
-    expect(fake.getLineInsertCount()).toBe(0);
+    expect(fake.getLineInsertCount()).toBe(1); // repair the missing line on retry
+    expect(fake.getItems()).toHaveLength(1);
+    expect(fake.getItems()[0]).toMatchObject({
+      tenant_id: TENANT_A,
+      purchase_request_id: "recovered-request-id",
+      inventory_item_id: INVENTORY_ITEM_ID,
+      preferred_supplier_id: SUPPLIER_ID,
+      quantity: 30,
+    });
     expect(fake.getAction()?.status).toBe("executed");
+  });
+
+  it("fails closed when a recovered request already has a mismatched line", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({ status: "failed", failure_reason: "previous line insert failed" }),
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequestByCorrelation: {
+        id: "recovered-request-id",
+        tenant_id: TENANT_A,
+        correlation_id: actionRow().id,
+        status: "draft",
+      },
+      existingItems: [{
+        id: "wrong-line",
+        tenant_id: TENANT_A,
+        purchase_request_id: "recovered-request-id",
+        inventory_item_id: OTHER_ITEM_ID,
+        preferred_supplier_id: SUPPLIER_ID,
+        quantity: 30,
+      }],
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: actionRow().id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/existing procurement line does not match/i);
+    expect(fake.getRequestInsertCount()).toBe(0);
+    expect(fake.getLineInsertCount()).toBe(0);
+    expect(fake.getItems()).toHaveLength(1);
+    expect(fake.getAction()?.status).toBe("failed");
   });
 
   it("protects against two concurrent executions of the same action — exactly one request, both callers converge", async () => {
