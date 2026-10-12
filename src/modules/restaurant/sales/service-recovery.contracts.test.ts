@@ -5,6 +5,7 @@ const valid = {
   tenantId: "11111111-1111-4111-8111-111111111111",
   orderId: "22222222-2222-4222-8222-222222222222",
   originalOrderItemId: "33333333-3333-4333-8333-333333333333",
+  affectedQuantity: 1,
   clientRequestId: "recovery-request-001",
   complaintCategory: "quality",
   complaint: "Meal arrived cold",
@@ -24,6 +25,11 @@ describe("service recovery contract", () => {
 
   it("rejects an unknown complaint category", () => {
     expect(() => serviceRecoverySchema.parse({ ...valid, complaintCategory: "bad_mood" })).toThrow();
+  });
+
+  it("requires a positive affected quantity", () => {
+    expect(() => serviceRecoverySchema.parse({ ...valid, affectedQuantity: 0 })).toThrow();
+    expect(() => serviceRecoverySchema.parse({ ...valid, affectedQuantity: -1 })).toThrow();
   });
 
   it("requires an idempotency key", () => {
