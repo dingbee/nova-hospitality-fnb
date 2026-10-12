@@ -1394,7 +1394,7 @@ function PosWorkspaceBody({
                   <div className="grid gap-2 border-t pt-3">
                     <Button
                       className="min-h-11"
-                      disabled={cart.length === 0 || sendLines.isPending}
+                      disabled={(cart.length === 0 && !live.some((item) => item.status === "ordered")) || sendLines.isPending}
                       onClick={() => sendLines.mutate({ fire: true })}
                     >
                       <Send className="size-4" /> {sendLabel}
