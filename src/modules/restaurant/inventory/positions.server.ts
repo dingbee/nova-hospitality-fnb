@@ -51,7 +51,9 @@ export async function incomingIndex(sb: Sb, tenantId: string): Promise<Map<strin
     .eq("tenant_id", tenantId)
     .in("purchase_order_id", ids);
   if (linesError) {
-    throw new Error(`Stock positions could not load inbound purchase-order lines: ${linesError.message}`);
+    throw new Error(
+      `Stock positions could not load inbound purchase-order lines: ${linesError.message}`,
+    );
   }
   for (const l of (lines ?? []) as any[]) {
     if (!l.inventory_item_id) continue;
