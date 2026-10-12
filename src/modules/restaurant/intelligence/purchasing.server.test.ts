@@ -79,7 +79,7 @@ describe("Purchasing Intelligence — inventory-to-procurement regression", () =
   });
 
   it(
-    "never selects an inactive supplier or a non-positive price when an active valid option exists",
+    "never selects inactive suppliers, invalid prices, or mismatched currencies",
     async () => {
       const result = await getPurchasingIntelligence(
         fakeSupabase({
@@ -88,6 +88,7 @@ describe("Purchasing Intelligence — inventory-to-procurement regression", () =
               supplier_id: SUPPLIER,
               inventory_item_id: ITEM,
               unit_price: 100,
+              currency: "TZS",
               lead_time_days: 2,
               active: true,
             },
@@ -102,6 +103,15 @@ describe("Purchasing Intelligence — inventory-to-procurement regression", () =
               supplier_id: "bad-price-supplier",
               inventory_item_id: ITEM,
               unit_price: 0,
+              currency: "TZS",
+              lead_time_days: 1,
+              active: true,
+            },
+            {
+              supplier_id: "foreign-currency-supplier",
+              inventory_item_id: ITEM,
+              unit_price: 1,
+              currency: "USD",
               lead_time_days: 1,
               active: true,
             },
@@ -128,6 +138,13 @@ describe("Purchasing Intelligence — inventory-to-procurement regression", () =
               reliability_score: 99,
               status: "active",
             },
+            {
+              id: "foreign-currency-supplier",
+              name: "Foreign Currency Supplier",
+              lead_time_days: 1,
+              reliability_score: 99,
+              status: "active",
+            },
           ],
         }) as any,
         USER,
@@ -140,6 +157,40 @@ describe("Purchasing Intelligence — inventory-to-procurement regression", () =
       expect(result.suggestions[0].estimatedCost).toBeGreaterThan(0);
     },
   );
+
+  it("ignores invalid supplier lead times and falls back to a valid declared lead time", async () => {
+    const result = await getPurchasingIntelligence(
+      fakeSupabase({
+        restaurant_supplier_products: [
+          {
+            supplier_id: SUPPLIER,
+            inventory_item_id: ITEM,
+            unit_price: 100,
+            currency: "TZS",
+            lead_time_days: -2,
+            active: true,
+          },
+        ],
+        restaurant_suppliers: [
+          {
+            id: SUPPLIER,
+            name: "Fresh Supplier",
+            lead_time_days: 2,
+            reliability_score: 90,
+            status: "active",
+          },
+        ],
+      }) as any,
+      USER,
+      { tenantId: TENANT, windowDays: 7 },
+    );
+
+    expect(result.suggestions[0]).toMatchObject({
+      leadTimeDays: 2,
+      recommendedQuantity: 5,
+      estimatedCost: 500,
+    });
+  });
 
   it("does not suppress a zero-stock item solely because consumption history is absent", async () => {
     const result = await getPurchasingIntelligence(fakeSupabase({
