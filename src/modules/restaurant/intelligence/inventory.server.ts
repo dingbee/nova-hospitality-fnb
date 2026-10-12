@@ -92,7 +92,7 @@ export async function getInventoryIntelligence(
   runway.sort((a, b) => (a.daysOfCover ?? 9999) - (b.daysOfCover ?? 9999));
 
   const atRisk = runway
-    .filter((r) => (r.daysOfCover != null && r.daysOfCover <= 5) || r.belowReorder)
+    .filter((r) => r.currentQuantity <= 0 || (r.daysOfCover != null && r.daysOfCover <= 5) || r.belowReorder)
     .slice(0, 12);
 
   const wasteRows = moves.filter((m) => m.movement_type === "wastage");
