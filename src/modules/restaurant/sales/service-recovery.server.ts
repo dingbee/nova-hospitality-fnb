@@ -129,8 +129,20 @@ export async function resolveServiceRecovery(sb: Sb, userId: string, input: Serv
       .eq("tenant_id", input.tenantId).eq("id", recovery.original_order_item_id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!line) throw new Error("Original order item not found; case remains open.");
+    const replacementRequestKey = "recovery-replace-" + recovery.id;
+    const { data: priorReplacementLines, error: priorReplacementError } = await sb.from("restaurant_order_items")
+      .select("id, menu_item_id, quantity, status, is_comp, line_total")
+      .eq("tenant_id", input.tenantId).eq("order_id", recovery.order_id)
+      .eq("client_request_id", replacementRequestKey);
+    if (priorReplacementError) throw new Error(priorReplacementError.message);
+    if ((priorReplacementLines ?? []).some((item: any) =>
+      item.menu_item_id !== replacementProduct.id ||
+      Number(item.quantity) !== Number(recovery.affected_quantity ?? 1)
+    )) {
+      throw new Error("A previous replacement attempt used a different product or quantity. Reconcile that line through canonical POS void/replacement handling before retrying; no new replacement was added.");
+    }
     const result = await addPosLines(sb, userId, {
-      tenantId: input.tenantId, orderId: recovery.order_id, clientRequestId: "recovery-replace-" + recovery.id,
+      tenantId: input.tenantId, orderId: recovery.order_id, clientRequestId: replacementRequestKey,
       lines: [{
         menuItemId: replacementProduct.id, variantId: undefined,
         stationId: undefined, description: replacementProduct.name,
@@ -142,6 +154,11 @@ export async function resolveServiceRecovery(sb: Sb, userId: string, input: Serv
     } as any);
     replacementOrderItemId = result.items?.[0]?.id ?? replacementOrderItemId;
     if (!replacementOrderItemId) throw new Error("Replacement line was not confirmed; case remains open.");
+    const createdReplacement = (result.items ?? []).find((item: any) => item.id === replacementOrderItemId);
+    if (!createdReplacement || createdReplacement.menu_item_id !== replacementProduct.id ||
+      Number(createdReplacement.quantity) !== Number(recovery.affected_quantity ?? 1)) {
+      throw new Error("The persisted replacement product/quantity does not match the approved selection. Case remains open; no comp was applied by this attempt.");
+    }
     // A recovery replacement must not charge the guest a second time. Comp
     // only the replacement line; keep its inventory consumption in the ledger.
     await assertCapability(sb, userId, input.tenantId, "sales.discount", { propertyId: order.property_id ?? null, locationId: order.location_id ?? null });
