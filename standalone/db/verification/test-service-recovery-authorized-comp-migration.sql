@@ -11,6 +11,9 @@ RETURNS text LANGUAGE sql AS $$ SELECT 'test-only stub'::text $$;
 CREATE OR REPLACE FUNCTION public.restaurant_reverse_giveaway(uuid, uuid, text, text)
 RETURNS text LANGUAGE sql AS $$ SELECT 'test-only stub'::text $$;
 
+REVOKE EXECUTE ON FUNCTION public.restaurant_request_giveaway(uuid, uuid, uuid, text, uuid, text, numeric, text, text) FROM PUBLIC, anon;
+REVOKE EXECUTE ON FUNCTION public.restaurant_reverse_giveaway(uuid, uuid, text, text) FROM PUBLIC, anon;
+
 \i standalone/db/migrations/0108_service_recovery_authorized_comp.sql
 
 DO $$
@@ -21,9 +24,16 @@ BEGIN
   IF NOT has_function_privilege('authenticated', 'public.restaurant_reverse_giveaway(uuid,uuid,text,text)', 'EXECUTE') THEN
     RAISE EXCEPTION 'authenticated must be able to call the role-checked giveaway reversal RPC';
   END IF;
-  IF NOT has_function_privilege('anon', 'public.restaurant_request_giveaway(uuid,uuid,uuid,text,uuid,text,numeric,text,text)', 'EXECUTE') THEN
-    NULL; -- anon must remain unable to execute; this branch intentionally does not grant it.
-  ELSE
+  IF has_function_privilege('anon', 'public.restaurant_request_giveaway(uuid,uuid,uuid,text,uuid,text,numeric,text,text)', 'EXECUTE') THEN
     RAISE EXCEPTION 'anon must not be able to call giveaway request RPC';
+  END IF;
+  IF has_function_privilege('anon', 'public.restaurant_reverse_giveaway(uuid,uuid,text,text)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'anon must not be able to call giveaway reversal RPC';
+  END IF;
+  IF has_function_privilege('public', 'public.restaurant_request_giveaway(uuid,uuid,uuid,text,uuid,text,numeric,text,text)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'PUBLIC must not retain giveaway request EXECUTE';
+  END IF;
+  IF has_function_privilege('public', 'public.restaurant_reverse_giveaway(uuid,uuid,text,text)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'PUBLIC must not retain giveaway reversal EXECUTE';
   END IF;
 END $$;
