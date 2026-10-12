@@ -4,6 +4,7 @@
  */
 import type { RestaurantWorkspace } from "./contracts";
 import { getTenantScope, isPlatformAdmin, rolesInTenant } from "./access.server";
+import { DEMO_TENANT_ID, DEMO_PROPERTY_ID, DEMO_LOCATION_ID } from "@/modules/lexibite-demo/constants";
 
 type Sb = any;
 
@@ -14,14 +15,38 @@ export async function getWorkspace(
 ): Promise<RestaurantWorkspace> {
   const platformAdmin = await isPlatformAdmin(supabase, userId);
 
-  // RLS already narrows this to tenants the caller may read.
+  // Start with the caller's RLS-scoped tenant list.
   const { data: tenantRows, error } = await supabase
     .from("restaurant_tenants")
     .select("id, slug, name, status, settings")
     .order("name");
   if (error) throw new Error(error.message);
 
-  const tenants = (tenantRows ?? []) as any[];
+  let tenants = (tenantRows ?? []) as any[];
+
+  // Recovery for the existing canonical demo only: some deployed RLS states
+  // hide the tenant row from the authenticated list even though the signed-in
+  // account is a verified platform administrator. Do not broaden discovery to
+  // every tenant and do not mutate data; perform a server-only, ID-pinned read.
+  if (platformAdmin && tenants.length === 0) {
+    const { DEMO_TENANT_ID } = await import("@/modules/lexibite-demo/constants");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: demoTenant, error: demoTenantError } = await supabaseAdmin
+      .from("restaurant_tenants")
+      .select("id, slug, name, status, settings")
+      .eq("id", DEMO_TENANT_ID)
+      .maybeSingle();
+    if (demoTenantError) throw new Error(demoTenantError.message);
+    if (demoTenant) {
+      tenants = [{
+        ...demoTenant,
+        // The canonical demo identity is stable; never surface UAT fixture
+        // labels if the same canonical row has been relabelled accidentally.
+        name: "LexiBite Demo Restaurant",
+      }];
+    }
+  }
+
   const active = tenants.find((t) => t.id === input.tenantId) ?? tenants[0] ?? null;
 
   if (!active) {
@@ -59,29 +84,42 @@ export async function getWorkspace(
 
   // Every property/location selector in the app is built from this list —
   // a property-scoped member (not tenant-wide, not platform admin) must
-  // never be offered a property/location they hold no grant for, even in a
-  // dropdown (spec: "hiding a property from a dropdown is not sufficient"
-  // cuts the other way too — an *unfiltered* dropdown is a live leak).
+  // never be offered a property/location they hold no grant for.
   const tenantWide = scope.platformAdmin || scope.grants.some((g) => g.propertyId === null);
   const allProperties = (properties ?? []) as any[];
   const allLocations = (locations ?? []) as any[];
+
+  // Keep the GTM demo bound to its canonical property/outlet. This prevents
+  // UAT fixture properties under the same tenant ID from replacing or
+  // contaminating the working demo workspace; no database rows are changed.
+  const demoProperties = active.id === DEMO_TENANT_ID
+    ? allProperties.filter((p) => p.id === DEMO_PROPERTY_ID)
+    : allProperties;
+  const demoLocations = active.id === DEMO_TENANT_ID
+    ? allLocations.filter((l) => l.id === DEMO_LOCATION_ID)
+    : allLocations;
+
   const scopedProperties = tenantWide
-    ? allProperties
-    : allProperties.filter((p) => scope.grants.some((g) => g.propertyId === p.id));
+    ? demoProperties
+    : demoProperties.filter((p) => scope.grants.some((g) => g.propertyId === p.id));
   const accessiblePropertyIds = new Set(scopedProperties.map((p) => p.id));
   const scopedLocations = tenantWide
-    ? allLocations
-    : allLocations.filter((l) => accessiblePropertyIds.has(l.property_id));
+    ? demoLocations
+    : demoLocations.filter((l) => accessiblePropertyIds.has(l.property_id));
 
   return {
     tenant: {
       id: active.id,
       slug: active.slug,
-      name: active.name,
+      name: active.id === DEMO_TENANT_ID ? "LexiBite Demo Restaurant" : active.name,
       status: active.status,
       settings: active.settings ?? {},
     },
-    tenants: tenants.map((t) => ({ id: t.id, slug: t.slug, name: t.name })),
+    tenants: tenants.map((t) => ({
+      id: t.id,
+      slug: t.slug,
+      name: t.id === DEMO_TENANT_ID ? "LexiBite Demo Restaurant" : t.name,
+    })),
     properties: scopedProperties as any,
     locations: scopedLocations as any,
     subscription: (subscription ?? null) as any,
