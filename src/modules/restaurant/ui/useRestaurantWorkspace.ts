@@ -26,7 +26,19 @@ function getStore(scope: string): PropertyStore {
   let value: string | null = null;
   if (typeof window !== "undefined") {
     try {
-      value = window.localStorage.getItem(storageKey(scope));
+      const scopedKey = storageKey(scope);
+      value = window.localStorage.getItem(scopedKey);
+
+      // Migrate the pre-tenant-scoped preference exactly once. The caller
+      // validates this ID against the server-authorized property list before
+      // it can become active, so a legacy value cannot grant cross-tenant access.
+      if (!value) {
+        const legacyValue = window.localStorage.getItem("lexibite.active-property");
+        if (legacyValue) {
+          value = legacyValue;
+          window.localStorage.setItem(scopedKey, legacyValue);
+        }
+      }
     } catch {
       // Private browsing / disabled storage: retain an in-memory selection.
     }
