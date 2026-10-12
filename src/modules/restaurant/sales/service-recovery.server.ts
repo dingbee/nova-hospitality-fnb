@@ -37,6 +37,9 @@ export async function recordServiceRecovery(sb: Sb, userId: string, input: Servi
     .eq("tenant_id", input.tenantId).eq("id", input.originalOrderItemId).maybeSingle();
   if (itemError) throw new Error(itemError.message);
   if (!original || original.order_id !== order.id) throw new Error("Original line not found on this order.");
+  if (!Number.isFinite(input.affectedQuantity) || input.affectedQuantity <= 0 || input.affectedQuantity > Number(original.quantity)) {
+    throw new Error("Affected quantity must be positive and cannot exceed the original order-line quantity.");
+  }
 
   const prepared = ["fired", "sent", "preparing", "ready", "served"].includes(String(original.status));
   const expectedDisposition = prepared ? "preserve_consumption" : "reverse_unprepared";
@@ -49,7 +52,7 @@ export async function recordServiceRecovery(sb: Sb, userId: string, input: Servi
 
   const row = {
     tenant_id: input.tenantId, property_id: order.property_id ?? null, location_id: order.location_id ?? null,
-    order_id: order.id, original_order_item_id: original.id,
+    order_id: order.id, original_order_item_id: original.id, affected_quantity: input.affectedQuantity,
     replacement_order_item_id: null, refund_payment_id: null,
     client_request_id: input.clientRequestId, complaint_category: input.complaintCategory,
     complaint: input.complaint.trim(), resolution: "pending",
@@ -67,6 +70,7 @@ export async function recordServiceRecovery(sb: Sb, userId: string, input: Servi
       if (existing) {
         const sameRequest = existing.order_id === input.orderId &&
           existing.original_order_item_id === input.originalOrderItemId &&
+          Number(existing.affected_quantity) === input.affectedQuantity &&
           existing.complaint_category === input.complaintCategory &&
           existing.complaint === input.complaint.trim();
         if (!sameRequest) throw new Error("This request ID was already used for a different service-recovery case.");
@@ -82,9 +86,10 @@ export async function recordServiceRecovery(sb: Sb, userId: string, input: Servi
     entityType: "restaurant_service_recovery_case", entityId: data.id, source: "restaurant-pos",
     payload: {
       order_id: order.id, order_number: order.order_number, original_order_item_id: original.id,
-      original_description: original.description, complaint_category: input.complaintCategory,
+      original_description: original.description, affected_quantity: input.affectedQuantity,
+      complaint_category: input.complaintCategory,
       resolution: "pending", stock_disposition: input.stockDisposition,
-      value_at_report: Number(original.line_total ?? 0),
+      value_at_report: Number(original.quantity) > 0 ? Number(original.line_total ?? 0) * input.affectedQuantity / Number(original.quantity) : 0,
     },
     dedupeKey: `service-recovery:${input.tenantId}:${input.clientRequestId}`,
   });
@@ -124,7 +129,7 @@ export async function resolveServiceRecovery(sb: Sb, userId: string, input: Serv
       lines: [{
         menuItemId: line.menu_item_id ?? undefined, variantId: line.variant_id ?? undefined,
         stationId: line.station_id ?? undefined, description: line.description,
-        quantity: Number(line.quantity ?? 1), unitPrice: Number(line.unit_price ?? 0),
+        quantity: Number(recovery.affected_quantity ?? line.quantity ?? 1), unitPrice: Number(line.unit_price ?? 0),
         discount: Number(line.discount ?? 0), seatNumber: line.seat_number ?? undefined,
         course: line.course ?? undefined, guestNotes: line.guest_notes ?? undefined,
         notes: "Service recovery replacement: " + reason, modifiers: [],
@@ -132,8 +137,15 @@ export async function resolveServiceRecovery(sb: Sb, userId: string, input: Serv
     } as any);
     replacementOrderItemId = result.items?.[0]?.id ?? replacementOrderItemId;
     if (!replacementOrderItemId) throw new Error("Replacement line was not confirmed; case remains open.");
+    // A recovery replacement must not charge the guest a second time. Comp
+    // only the replacement line; keep its inventory consumption in the ledger.
+    await assertCapability(sb, userId, input.tenantId, "sales.discount", { propertyId: order.property_id ?? null, locationId: order.location_id ?? null });
+    await compOrderItem(sb, userId, { tenantId: input.tenantId, orderItemId: replacementOrderItemId, reason: "Service recovery replacement: " + reason, comp: true });
     if (["fired", "sent", "preparing", "ready", "served"].includes(String(line.status))) stockDisposition = "preserve_consumption";
   } else if (input.resolution === "comp") {
+    const { data: originalLine, error: originalLineError } = await sb.from("restaurant_order_items").select("quantity").eq("tenant_id", input.tenantId).eq("id", recovery.original_order_item_id).maybeSingle();
+    if (originalLineError) throw new Error(originalLineError.message);
+    if (!originalLine || Number(recovery.affected_quantity ?? originalLine.quantity) !== Number(originalLine.quantity)) throw new Error("Partial-quantity comp is not supported by the canonical POS workflow. Use a quantity-specific replacement or the approved finance adjustment workflow.");
     await assertCapability(sb, userId, input.tenantId, "sales.discount", { propertyId: order.property_id ?? null, locationId: order.location_id ?? null });
     await compOrderItem(sb, userId, { tenantId: input.tenantId, orderItemId: recovery.original_order_item_id, reason, comp: true });
   } else if (input.resolution === "refund") {
@@ -153,6 +165,9 @@ export async function resolveServiceRecovery(sb: Sb, userId: string, input: Serv
       .eq("tenant_id", input.tenantId).eq("id", recovery.original_order_item_id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!line) throw new Error("Original order item not found; case remains open.");
+    const { data: quantityLine, error: quantityError } = await sb.from("restaurant_order_items").select("quantity").eq("tenant_id", input.tenantId).eq("id", recovery.original_order_item_id).maybeSingle();
+    if (quantityError) throw new Error(quantityError.message);
+    if (!quantityLine || Number(recovery.affected_quantity ?? quantityLine.quantity) !== Number(quantityLine.quantity)) throw new Error("Partial-quantity void is not supported by the canonical inventory reversal workflow; the original line remains unchanged.");
     if (line.status === "voided") {
       if (String(line.void_reason ?? "") !== reason) throw new Error("The line is already voided for a different reason.");
     } else {
