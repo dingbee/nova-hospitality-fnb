@@ -78,6 +78,23 @@ describe("Purchasing Intelligence — inventory-to-procurement regression", () =
     });
   });
 
+  it("never selects an inactive supplier even when its active product is cheaper", async () => {
+    const result = await getPurchasingIntelligence(fakeSupabase({
+      restaurant_supplier_products: [
+        { supplier_id: SUPPLIER, inventory_item_id: ITEM, unit_price: 100, lead_time_days: 2, active: true },
+        { supplier_id: "inactive-supplier", inventory_item_id: ITEM, unit_price: 1, lead_time_days: 1, active: true },
+      ],
+      restaurant_suppliers: [
+        { id: SUPPLIER, name: "Fresh Supplier", lead_time_days: 2, reliability_score: 90, status: "active" },
+        { id: "inactive-supplier", name: "Inactive Supplier", lead_time_days: 1, reliability_score: 99, status: "inactive" },
+      ],
+    }) as any, USER, { tenantId: TENANT, windowDays: 7 });
+
+    expect(result.suggestions).toHaveLength(1);
+    expect(result.suggestions[0].supplierId).toBe(SUPPLIER);
+    expect(result.suggestions[0].supplierName).toBe("Fresh Supplier");
+  });
+
   it("does not suppress a zero-stock item solely because consumption history is absent", async () => {
     const result = await getPurchasingIntelligence(fakeSupabase({
       restaurant_inventory_items: [{
