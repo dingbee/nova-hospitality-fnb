@@ -170,6 +170,43 @@ export async function getBarSnapshot(
       .limit(60);
     tickets = (data ?? []) as any[];
   }
+  // Resolve the order lines behind each ticket so bar staff can identify
+  // every drink and quantity without opening the originating order.
+  const ticketIds = tickets.map((t) => t.id);
+  let ticketItems: any[] = [];
+  if (ticketIds.length > 0) {
+    const { data: ticketItemRows, error: ticketItemError } = await sb
+      .from("restaurant_kitchen_ticket_items")
+      .select("id, ticket_id, order_item_id, quantity, status")
+      .eq("tenant_id", input.tenantId)
+      .in("ticket_id", ticketIds);
+    if (ticketItemError) throw new Error(ticketItemError.message);
+    const ticketItemRowsList = (ticketItemRows ?? []) as any[];
+    const orderItemIds = [...new Set(ticketItemRowsList.map((row) => row.order_item_id).filter(Boolean))];
+    let orderItemRows: any[] = [];
+    if (orderItemIds.length > 0) {
+      const { data, error } = await sb
+        .from("restaurant_order_items")
+        .select("id, description")
+        .eq("tenant_id", input.tenantId)
+        .in("id", orderItemIds);
+      if (error) throw new Error(error.message);
+      orderItemRows = (data ?? []) as any[];
+    }
+    const names = new Map(orderItemRows.map((row) => [row.id, row.description]));
+    ticketItems = ticketItemRowsList.map((row) => ({
+      ticketId: row.ticket_id,
+      orderItemId: row.order_item_id,
+      name: names.get(row.order_item_id) ?? "Order item",
+      quantity: Number(row.quantity ?? 1),
+      status: String(row.status ?? "queued"),
+    }));
+  }
+  const ticketItemsByTicket = new Map<string, typeof ticketItems>();
+  for (const item of ticketItems) {
+    ticketItemsByTicket.set(item.ticketId, [...(ticketItemsByTicket.get(item.ticketId) ?? []), item]);
+  }
+
   const now = Date.now();
 
   /* Bar requisitions — the existing requisition engine, kind = bar. */
@@ -302,6 +339,12 @@ export async function getBarSnapshot(
       targetMinutes: t.target_minutes ?? null,
       waitingSeconds: t.waitingSeconds,
       notes: t.notes ?? null,
+      items: (ticketItemsByTicket.get(t.id) ?? []).map((item) => ({
+        orderItemId: item.orderItemId,
+        name: item.name,
+        quantity: item.quantity,
+        status: item.status,
+      })),
     })),
     openTicketCount: tickets.length,
     delayedTicketCount: ticketsWithLiveDelay.filter((t) => t.isDelayed).length,
