@@ -93,7 +93,11 @@ export async function getPurchasingIntelligence(
   // An active supplier-product row is not enough: never recommend a supplier
   // that the restaurant has deactivated.
   const products = ((productsRes.data ?? []) as any[]).filter(
-    (p) => p.active !== false && supplierById.get(p.supplier_id)?.status === "active",
+    (p) =>
+      p.active !== false &&
+      supplierById.get(p.supplier_id)?.status === "active" &&
+      Number.isFinite(Number(p.unit_price)) &&
+      Number(p.unit_price) > 0,
   );
 
   const bestProduct = new Map<string, any>();
