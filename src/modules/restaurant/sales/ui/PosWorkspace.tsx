@@ -396,9 +396,15 @@ function PosWorkspaceBody({
         return { queued: true as const };
       }
 
-      const res = await addFn({
-        data: { tenantId: tenantId!, ...posSession, orderId: orderId!, lines },
-      });
+      // Existing bills may contain pending lines without any locally staged
+      // cart lines (e.g. a complimentary service-recovery replacement).
+      // Never submit lines: [] to addPosLines; fire the existing ordered
+      // lines directly when the operator chooses Send to bar/kitchen.
+      const res = lines.length > 0
+        ? await addFn({
+            data: { tenantId: tenantId!, ...posSession, orderId: orderId!, lines },
+          })
+        : null;
       if (vars.fire) {
         await fireFn({
           data: { tenantId: tenantId!, orderId: orderId!, orderItemIds: [], priority: 0 },
