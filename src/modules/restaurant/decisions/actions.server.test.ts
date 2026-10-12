@@ -1273,6 +1273,7 @@ describe("restaurant.inventory.replenish_review — I5", () => {
       existingItems: [
         {
           id: "item-replenish-1",
+          supplier_id: SUPPLIER_ID,
           purchase_request_id: "req-replenish-1",
           inventory_item_id: INVENTORY_ITEM_ID,
           quantity: 30,
@@ -1312,6 +1313,7 @@ describe("restaurant.inventory.replenish_review — I5", () => {
       existingItems: [
         {
           id: "item-replenish-2",
+          supplier_id: SUPPLIER_ID,
           purchase_request_id: "req-replenish-2",
           inventory_item_id: INVENTORY_ITEM_ID,
           quantity: 5,
@@ -1356,6 +1358,7 @@ describe("restaurant.inventory.replenish_review — I5", () => {
       existingItems: [
         {
           id: "item-replenish-3",
+          supplier_id: SUPPLIER_ID,
           purchase_request_id: "req-replenish-3",
           inventory_item_id: INVENTORY_ITEM_ID,
           quantity: 30,
@@ -1394,13 +1397,16 @@ describe("restaurant.inventory.replenish_review — I5", () => {
       restaurantMembers: OWNER_MEMBER,
     });
 
-    const [a, b] = await Promise.all([
+    const results = await Promise.allSettled([
       executeRestaurantAction(fake.supabase, MANAGER, { actionId: REPLENISH_ACTION.id }),
       executeRestaurantAction(fake.supabase, MANAGER, { actionId: REPLENISH_ACTION.id }),
     ]);
 
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
     expect(fake.getRequests()).toHaveLength(1);
-    expect(a.procurementRequestId).toBe(b.procurementRequestId);
+    expect(fake.getItems()).toHaveLength(1);
+    expect(fake.getAction()?.status).toBe("executed");
   });
 
   it("recovers an existing replenish_review request by correlation_id after a partial failure", async () => {
@@ -1867,13 +1873,14 @@ describe("restaurant.menu.reprice_review — I6", () => {
       menuItem: menuItemRow(),
     });
 
-    const [a, b] = await Promise.all([
+    const results = await Promise.allSettled([
       executeRestaurantAction(fake.supabase, MANAGER, { actionId: REPRICE_ACTION.id }),
       executeRestaurantAction(fake.supabase, MANAGER, { actionId: REPRICE_ACTION.id }),
     ]);
 
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
     expect(fake.getPriceReviews()).toHaveLength(1);
-    expect(a.priceReviewId).toBe(b.priceReviewId);
     expect(fake.getAction()?.status).toBe("executed");
   });
 
@@ -2345,13 +2352,14 @@ describe("restaurant.kitchen.workflow_review — I7", () => {
       station: stationRow(),
     });
 
-    const [a, b] = await Promise.all([
+    const results = await Promise.allSettled([
       executeRestaurantAction(fake.supabase, MANAGER, { actionId: WORKFLOW_REVIEW_ACTION.id }),
       executeRestaurantAction(fake.supabase, MANAGER, { actionId: WORKFLOW_REVIEW_ACTION.id }),
     ]);
 
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
     expect(fake.getReviews()).toHaveLength(1);
-    expect(a.workflowReviewId).toBe(b.workflowReviewId);
     expect(fake.getAction()?.status).toBe("executed");
   });
 
@@ -2796,13 +2804,14 @@ describe("restaurant.kitchen.staffing_review — I8", () => {
       station: stationRow(),
     });
 
-    const [a, b] = await Promise.all([
+    const results = await Promise.allSettled([
       executeRestaurantAction(fake.supabase, MANAGER, { actionId: STAFFING_REVIEW_ACTION.id }),
       executeRestaurantAction(fake.supabase, MANAGER, { actionId: STAFFING_REVIEW_ACTION.id }),
     ]);
 
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
     expect(fake.getReviews()).toHaveLength(1);
-    expect((a as any).staffingReviewId).toBe((b as any).staffingReviewId);
     expect(fake.getAction()?.status).toBe("executed");
   });
 
