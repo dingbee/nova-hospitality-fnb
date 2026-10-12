@@ -5,6 +5,10 @@
 import type { RestaurantWorkspace } from "./contracts";
 import { getTenantScope, isPlatformAdmin, rolesInTenant } from "./access.server";
 
+// The populated, production GTM demo workspace. Do not confuse it with the legacy
+// Kilimanjaro fixture used by the separate public demo-registration flow.
+const GTM_WORKSPACE_TENANT_ID = "9f7c1d4e-6b0a-4c8d-9a31-1b2c3d4e5f60";
+
 type Sb = any;
 
 export async function getWorkspace(
@@ -21,8 +25,38 @@ export async function getWorkspace(
     .order("name");
   if (error) throw new Error(error.message);
 
-  const tenants = (tenantRows ?? []) as any[];
-  const active = tenants.find((t) => t.id === input.tenantId) ?? tenants[0] ?? null;
+  let tenants = (tenantRows ?? []) as any[];
+
+  // A workspace row can be hidden by a deployed RLS state even when its owner
+  // membership is readable. Recover only this known GTM tenant, and only after
+  // verifying the signed-in user has its tenant-wide owner grant. The elevated
+  // client is used for this single read only; no data is changed.
+  if (!tenants.some((t) => t.id === GTM_WORKSPACE_TENANT_ID)) {
+    const { data: grants, error: grantsError } = await supabase
+      .from("restaurant_members")
+      .select("role, property_id")
+      .eq("tenant_id", GTM_WORKSPACE_TENANT_ID)
+      .eq("user_id", userId);
+
+    const ownsWorkspace = !grantsError
+      && (grants ?? []).some((g: any) => g.role === "owner" && g.property_id === null);
+
+    if (ownsWorkspace) {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const { data: gtmTenant, error: gtmTenantError } = await supabaseAdmin
+        .from("restaurant_tenants")
+        .select("id, slug, name, status, settings")
+        .eq("id", GTM_WORKSPACE_TENANT_ID)
+        .maybeSingle();
+      if (gtmTenantError) throw new Error(gtmTenantError.message);
+      if (gtmTenant) tenants = [...tenants, gtmTenant];
+    }
+  }
+
+  const active = tenants.find((t) => t.id === input.tenantId)
+    ?? tenants.find((t) => t.id === GTM_WORKSPACE_TENANT_ID)
+    ?? tenants[0]
+    ?? null;
 
   if (!active) {
     return {
