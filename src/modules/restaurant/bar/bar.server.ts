@@ -20,6 +20,7 @@ import {
 } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import type { UnitRow } from "../inventory/units";
+import { buildBarTicketItems } from "./ticket-items";
 import { pourCost as computePourCost, pourMaths, poursAvailable, round6 } from "./pour";
 import {
   BAR_LOCATION_TYPES,
@@ -203,34 +204,9 @@ export async function getBarSnapshot(
     );
   }
 
-  const orderLineById = new Map(orderLines.map((row) => [row.id, row]));
-  const ticketItemsByTicket = new Map<string, Array<{
-    orderItemId: string;
-    name: string;
-    quantity: number;
-    status: string;
-  }>>();
+  const ticketItemsByTicket = new Map<string, ReturnType<typeof buildBarTicketItems>>();
   for (const ticket of tickets) {
-    const recorded = ticketItemRows.filter((row) => row.ticket_id === ticket.id);
-    const lines = recorded.length > 0
-      ? recorded.map((row) => {
-          const orderLine = row.order_item_id ? orderLineById.get(row.order_item_id) : undefined;
-          return {
-            orderItemId: String(row.order_item_id ?? row.id),
-            name: String(row.description ?? orderLine?.description ?? "Order item"),
-            quantity: Number(row.quantity ?? orderLine?.quantity ?? 1),
-            status: String(row.status ?? "queued"),
-          };
-        })
-      : orderLines
-          .filter((row) => row.order_id === ticket.order_id && row.station_id === ticket.station_id)
-          .map((row) => ({
-            orderItemId: String(row.id),
-            name: String(row.description ?? "Order item"),
-            quantity: Number(row.quantity ?? 1),
-            status: String(row.status ?? "queued"),
-          }));
-    ticketItemsByTicket.set(ticket.id, lines);
+    ticketItemsByTicket.set(ticket.id, buildBarTicketItems(ticket, ticketItemRows, orderLines));
   }
 
   const now = Date.now();
