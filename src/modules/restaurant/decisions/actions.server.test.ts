@@ -786,8 +786,10 @@ function draftRequest(overrides: Partial<Record<string, unknown>> = {}) {
 function requestItem(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "item-verify-1",
+    tenant_id: TENANT_A,
     purchase_request_id: "req-verify-1",
     inventory_item_id: INVENTORY_ITEM_ID,
+    preferred_supplier_id: SUPPLIER_ID,
     quantity: 30,
     ...overrides,
   };
@@ -820,6 +822,46 @@ describe("verifyRestaurantAction — Verify", () => {
     expect(fake.getAction()?.verified_at).toBeTruthy();
     expect(fake.getAction()?.verification_result).toEqual(result);
     expect(fake.getEvents().map((e) => e.event_type)).toEqual(["intelligence.action.verified"]);
+  });
+
+  it("detects duplicate procurement lines even when one line is correct", async () => {
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [draftRequest()],
+      existingItems: [requestItem(), requestItem({ id: "item-verify-2" })],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: EXECUTED_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      verified: false,
+      outcome: "unexpected_line_count",
+    });
+    expect(fake.getAction()?.status).toBe("verification_failed");
+  });
+
+  it("detects a supplier mismatch on the procurement line", async () => {
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [draftRequest()],
+      existingItems: [requestItem({ preferred_supplier_id: OTHER_ITEM_ID })],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: EXECUTED_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      verified: false,
+      outcome: "supplier_mismatch",
+    });
+    expect(fake.getAction()?.status).toBe("verification_failed");
   });
 
   it("detects a wrong quantity (expected 30, found 20)", async () => {
