@@ -6,6 +6,10 @@ import type { RestaurantWorkspace } from "./contracts";
 import { getTenantScope, isPlatformAdmin, rolesInTenant } from "./access.server";
 import { DEMO_TENANT_ID, DEMO_PROPERTY_ID, DEMO_LOCATION_ID } from "@/modules/lexibite-demo/constants";
 
+// Canonical populated GTM workspace. Keep this separate from the legacy public-demo
+// grant IDs: that RPC is database-pinned to the older Kilimanjaro fixture.
+const GTM_WORKSPACE_TENANT_ID = "9f7c1d4e-6b0a-4c8d-9a31-1b2c3d4e5f60";
+
 type Sb = any;
 
 export async function getWorkspace(
@@ -24,29 +28,22 @@ export async function getWorkspace(
 
   let tenants = (tenantRows ?? []) as any[];
 
-  // Recovery for the existing canonical demo only: some deployed RLS states
-  // hide the tenant row from the authenticated list even though the signed-in
-  // account is a verified platform administrator. Do not broaden discovery to
-  // every tenant and do not mutate data; perform a server-only, ID-pinned read.
-  if (platformAdmin && tenants.length === 0) {
+  // Recovery for the canonical GTM workspace: some deployed RLS states hide
+  // its row from the authenticated tenant list even for a verified platform
+  // administrator. Resolve only this ID with the server-only client; never
+  // broaden tenant discovery and never mutate database state.
+  if (platformAdmin && !tenants.some((t) => t.id === GTM_WORKSPACE_TENANT_ID)) {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: demoTenant, error: demoTenantError } = await supabaseAdmin
+    const { data: gtmTenant, error: gtmTenantError } = await supabaseAdmin
       .from("restaurant_tenants")
       .select("id, slug, name, status, settings")
-      .eq("id", DEMO_TENANT_ID)
+      .eq("id", GTM_WORKSPACE_TENANT_ID)
       .maybeSingle();
-    if (demoTenantError) throw new Error(demoTenantError.message);
-    if (demoTenant) {
-      tenants = [{
-        ...demoTenant,
-        // The canonical demo identity is stable; never surface UAT fixture
-        // labels if the same canonical row has been relabelled accidentally.
-        name: "LexiBite Demo Restaurant",
-      }];
-    }
+    if (gtmTenantError) throw new Error(gtmTenantError.message);
+    if (gtmTenant) tenants = [...tenants, gtmTenant];
   }
 
-  const active = tenants.find((t) => t.id === input.tenantId) ?? tenants[0] ?? null;
+  const active = tenants.find((t) => t.id === input.tenantId)\n    ?? tenants.find((t) => t.id === GTM_WORKSPACE_TENANT_ID)\n    ?? tenants[0]\n    ?? null;
 
   if (!active) {
     return {
