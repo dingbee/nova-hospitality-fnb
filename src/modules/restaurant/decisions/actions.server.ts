@@ -623,6 +623,21 @@ async function runProcurementDraftExecution(
     }
   }
 
+  if (createdRequest && documentNumber) {
+    // Audit the parent as soon as it exists, even if the following line-item
+    // insert fails. A retry can repair the line but must not erase the fact
+    // that the draft was created.
+    await recordProcurementAudit(sb, userId, {
+      tenantId,
+      documentType: "purchase_request",
+      documentId: requestId,
+      documentNumber,
+      action: "created",
+      newState: "draft",
+      metadata: { origin: "intelligence", decision_id: decision.id, action_id: action.id },
+    });
+  }
+
   // The action may be retrying after the request insert succeeded but the
   // line insert failed. Read existing lines before deciding whether to repair.
   // Fail closed if the request has moved beyond the governed draft state.
@@ -698,18 +713,6 @@ async function runProcurementDraftExecution(
     }
   }
 
-  if (createdRequest && documentNumber) {
-    await recordProcurementAudit(sb, userId, {
-      tenantId,
-      documentType: "purchase_request",
-      documentId: requestId,
-      documentNumber,
-      action: "created",
-      newState: "draft",
-      metadata: { origin: "intelligence", decision_id: decision.id, action_id: action.id },
-    });
-  }
-
   return finishExecution(sb, userId, action, decision, tenantId, module, requestId, requestStatus);
 }
 
@@ -724,14 +727,23 @@ async function finishExecution(
   requestId: string,
   requestStatus: string,
 ): Promise<ExecuteRestaurantActionResult> {
-  await sb
+  const { data: finalized, error: finalizeError } = await sb
     .from("intelligence_actions")
     .update({
       status: "executed",
       completed_at: now(),
       result: { procurement_request_id: requestId, procurement_request_status: requestStatus },
     })
-    .eq("id", action.id);
+    .eq("id", action.id)
+    .eq("status", "executing")
+    .select("id")
+    .maybeSingle();
+  if (finalizeError) {
+    throw new Error(`Could not mark procurement action executed: ${finalizeError.message}`);
+  }
+  if (!finalized) {
+    throw new Error("Could not mark procurement action executed: action is no longer executing.");
+  }
 
   await emitActionEvent(sb, userId, {
     type: "intelligence.action.executed",
