@@ -30,5 +30,9 @@ export const serviceRecoveryResolutionSchema = z.object({
   replacementMenuItemId: uuid.optional(),
   paymentId: uuid.optional(),
   amount: z.number().positive().optional(),
+}).superRefine((value, ctx) => {
+  if (value.resolution === "replace" && !value.replacementMenuItemId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["replacementMenuItemId"], message: "Select the actual replacement product." });
+  }
 });
 export type ServiceRecoveryResolutionInput = z.infer<typeof serviceRecoveryResolutionSchema>;
