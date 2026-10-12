@@ -119,6 +119,11 @@ export async function resolveServiceRecovery(sb: Sb, userId: string, input: Serv
   const reason = input.reason.trim();
 
   if (input.resolution === "replace") {
+    if (!input.replacementMenuItemId) throw new Error("Select the actual replacement product; the original item is never substituted automatically.");
+    const { data: replacementProduct, error: replacementProductError } = await sb.from("restaurant_menu_items")
+      .select("id, name, price, currency, available").eq("tenant_id", input.tenantId).eq("id", input.replacementMenuItemId).maybeSingle();
+    if (replacementProductError) throw new Error(replacementProductError.message);
+    if (!replacementProduct || replacementProduct.available === false) throw new Error("Selected replacement product is unavailable in this tenant.");
     const { data: line, error } = await sb.from("restaurant_order_items")
       .select("id, menu_item_id, variant_id, station_id, description, quantity, unit_price, discount, seat_number, course, guest_notes, status")
       .eq("tenant_id", input.tenantId).eq("id", recovery.original_order_item_id).maybeSingle();
@@ -127,10 +132,10 @@ export async function resolveServiceRecovery(sb: Sb, userId: string, input: Serv
     const result = await addPosLines(sb, userId, {
       tenantId: input.tenantId, orderId: recovery.order_id, clientRequestId: "recovery-replace-" + recovery.id,
       lines: [{
-        menuItemId: line.menu_item_id ?? undefined, variantId: line.variant_id ?? undefined,
-        stationId: line.station_id ?? undefined, description: line.description,
-        quantity: Number(recovery.affected_quantity ?? line.quantity ?? 1), unitPrice: Number(line.unit_price ?? 0),
-        discount: Number(line.discount ?? 0), seatNumber: line.seat_number ?? undefined,
+        menuItemId: replacementProduct.id, variantId: undefined,
+        stationId: undefined, description: replacementProduct.name,
+        quantity: Number(recovery.affected_quantity ?? line.quantity ?? 1), unitPrice: Number(replacementProduct.price ?? 0),
+        discount: 0, seatNumber: line.seat_number ?? undefined,
         course: line.course ?? undefined, guestNotes: line.guest_notes ?? undefined,
         notes: "Service recovery replacement: " + reason, modifiers: [],
       }],
