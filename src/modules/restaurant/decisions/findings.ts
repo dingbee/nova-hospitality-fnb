@@ -171,7 +171,9 @@ export function inventoryFindings(
       headline:
         days != null
           ? `${row.name} is forecast to run out in ${days} day${days === 1 ? "" : "s"}`
-          : `${row.name} is already below its reorder point`,
+          : row.belowReorder
+            ? `${row.name} is already below its reorder point`
+            : `${row.name} is at zero or negative stock with no measured consumption`,
       detail: `${row.currentQuantity} on hand against ${row.dailyVelocity}/day consumption${row.belowReorder ? ", already below the reorder point" : ""}.`,
       metric: days != null ? `${days} days of cover` : "below reorder point",
       evidence: [
