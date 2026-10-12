@@ -1148,7 +1148,7 @@ function PosWorkspaceBody({
                           header row only shown once md+ has room for it —
                           below that the same data still renders per row, just
                           without the redundant column headings. */}
-                      <div className="hidden grid-cols-[2rem_1fr_8rem_5.5rem_5.5rem_2.25rem] gap-2 px-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground md:grid">
+                      <div className="hidden grid-cols-[2rem_minmax(0,1fr)_minmax(6rem,8rem)_minmax(5rem,6rem)_minmax(5rem,6rem)_2.25rem] gap-2 px-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground 2xl:grid">
                         <span>Qty</span>
                         <span>Item</span>
                         <span>Notes / Modifiers</span>
@@ -1165,20 +1165,20 @@ function PosWorkspaceBody({
                           return (
                             <div
                               key={i.id}
-                              className="grid grid-cols-[2rem_1fr_2.25rem] items-start gap-2 p-1.5 text-sm md:grid-cols-[2rem_1fr_8rem_5.5rem_5.5rem_2.25rem] md:items-center md:py-1"
+                              className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)_auto] items-start gap-2 p-2 text-sm 2xl:grid-cols-[2rem_minmax(0,1fr)_minmax(6rem,8rem)_minmax(5rem,6rem)_minmax(5rem,6rem)_2.25rem] 2xl:items-center 2xl:py-1"
                             >
                               <span className="tabular-nums text-muted-foreground">
                                 {Number(i.quantity)}
                               </span>
                               <span className="min-w-0">
-                                <span className="block truncate font-medium">{i.description}</span>
+                                <span className="block break-words font-medium 2xl:truncate">{i.description}</span>
                                 {/* Status/seat/notes only stack onto a second
                                     line on mobile, where there's no separate
                                     Notes column to hold them — at md+ they'd
                                     just double every row's height for no
                                     reason, since Notes/Modifiers already has
                                     its own column there. */}
-                                <span className="mt-0.5 flex flex-wrap items-center gap-1.5 md:hidden">
+                                <span className="mt-0.5 flex flex-wrap items-center gap-1.5 2xl:hidden">
                                   {i.seat_number && (
                                     <span className="text-xs text-muted-foreground">
                                       Seat {i.seat_number}
@@ -1190,7 +1190,7 @@ function PosWorkspaceBody({
                                   <span className="text-xs text-muted-foreground">{noteText}</span>
                                 </span>
                               </span>
-                              <span className="hidden truncate text-xs text-muted-foreground md:block">
+                              <span className="hidden truncate text-xs text-muted-foreground 2xl:block">
                                 {noteText}
                               </span>
                               <span className="hidden text-right tabular-nums text-muted-foreground md:block">
@@ -1199,7 +1199,7 @@ function PosWorkspaceBody({
                               <span className="hidden text-right font-medium tabular-nums md:block">
                                 {money(Number(i.line_total ?? 0), currency)}
                               </span>
-                              <span className="flex items-start justify-end gap-1 md:contents">
+                              <span className="flex items-start justify-end gap-1 2xl:contents">
                                 <span className="text-right font-medium tabular-nums md:hidden">
                                   {money(Number(i.line_total ?? 0), currency)}
                                 </span>
