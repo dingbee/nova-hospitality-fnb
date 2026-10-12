@@ -116,17 +116,44 @@ export const requireSupabaseAuth = createMiddleware({ type: "function" }).server
   async ({ next, context }) => {
     const requestId = (context as { requestId?: string } | undefined)?.requestId ?? null;
     const auth = await authenticateRequest(requestId);
+    const cookieSessionId = cookieValue(auth.request.headers.get("cookie"), STAFF_SESSION_COOKIE);
+    const staffTokenCookie = cookieValue(auth.request.headers.get("cookie"), "lexibite_staff_token");
+    const staffModeRequested = Boolean(cookieSessionId || staffTokenCookie);
     const { data, error } = await (auth.supabase as any).rpc("restaurant_staff_access_bootstrap");
 
     if (error || !data) {
+      // Staff Access Gateway was added after the existing production schema.
+      // Keep the previously working authenticated workspace available when the
+      // new bootstrap RPC is absent, but only for requests with no staff-session
+      // cookies. A request claiming staff mode must fail closed.
+      const missingBootstrap =
+        error?.code === "PGRST202" ||
+        error?.code === "42883" ||
+        /could not find the function.*restaurant_staff_access_bootstrap|restaurant_staff_access_bootstrap.*does not exist/i.test(
+          error?.message ?? "",
+        );
+      if (missingBootstrap && !staffModeRequested) {
+        logServerDenial("auth", requestId, {
+          reason: "staff_gateway_not_installed_legacy_access",
+          userId: auth.authenticatedUserId,
+        });
+        return next({
+          context: {
+            supabase: auth.supabase,
+            userId: auth.authenticatedUserId,
+            authenticatedUserId: auth.authenticatedUserId,
+            claims: auth.claims,
+            staffSession: null,
+            platformAdmin: false,
+            tenantOwner: false,
+          },
+        });
+      }
       logServerFailure("auth", requestId, { reason: "staff_access_context_unavailable" }, error);
       throw new Error("Access could not be verified. Refresh and try again.");
     }
 
     const access = data as StaffAccessBootstrap;
-    const cookieSessionId = cookieValue(auth.request.headers.get("cookie"), STAFF_SESSION_COOKIE);
-    const staffTokenCookie = cookieValue(auth.request.headers.get("cookie"), "lexibite_staff_token");
-    const staffModeRequested = Boolean(cookieSessionId || staffTokenCookie);
     if ((access.platformAdmin || access.owner || !access.hasRestaurantMembership) && !staffModeRequested) {
       return next({
         context: {
