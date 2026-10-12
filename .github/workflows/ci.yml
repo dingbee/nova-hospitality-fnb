@@ -92,6 +92,12 @@ jobs:
         run: |
           psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-service-recovery-affected-quantity-migration.sql
 
+      - name: Verify authorised comp migration in isolated PostgreSQL
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-service-recovery-authorized-comp-migration.sql
+
       - name: Scoped GTM and changed-path functional tests
         run: |
           bunx vitest run \
