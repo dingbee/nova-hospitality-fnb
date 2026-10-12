@@ -95,6 +95,9 @@ const RESUMABLE_STATUSES = new Set(["approved", "queued", "executing", "failed"]
 const VERIFIABLE_STATUSES = new Set(["executed", "completed", "verified", "verification_failed"]);
 
 const now = () => new Date().toISOString();
+// Recent executing actions may still have a live worker. Only recover stale
+// executions, and atomically claim recovery before retrying their side effect.
+const EXECUTION_RECOVERY_AFTER_MS = 5 * 60 * 1000;
 
 export interface ExecuteRestaurantActionResult {
   actionId: string;
@@ -193,6 +196,33 @@ async function guardedTransition(
     .update(patch)
     .eq("id", actionId)
     .eq("status", fromStatus)
+    .select(
+      "id, decision_id, module, action_type, status, result, queued_at, executing_at, completed_at, verified_at, verification_result",
+    )
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ?? null;
+}
+
+/**
+ * Atomically claims recovery of a stale execution. Matching the old
+ * executing_at value means two retry workers cannot both claim the same
+ * crashed execution. This reuses the existing row and needs no schema change.
+ */
+async function claimStaleExecution(
+  sb: Sb,
+  action: Record<string, any>,
+): Promise<Record<string, any> | null> {
+  let query = sb
+    .from("intelligence_actions")
+    .update({ executing_at: now() })
+    .eq("id", action.id)
+    .eq("status", "executing");
+  query =
+    action.executing_at == null
+      ? query.is("executing_at", null)
+      : query.eq("executing_at", action.executing_at);
+  const { data, error } = await query
     .select(
       "id, decision_id, module, action_type, status, result, queued_at, executing_at, completed_at, verified_at, verification_result",
     )
@@ -303,6 +333,8 @@ export async function executeRestaurantAction(
 ): Promise<ExecuteRestaurantActionResult> {
   const { action: initialAction, decision } = await loadActionAndDecision(sb, input.actionId);
   let action = initialAction;
+  const beganExecuting = initialAction.status === "executing";
+  let ownsExecution = false;
 
   if (action.module !== "restaurant") {
     throw new Error(`No executor registered for module "${action.module}".`);
@@ -334,10 +366,24 @@ export async function executeRestaurantAction(
     );
   }
 
+  if (beganExecuting) {
+    const executingAt = Date.parse(String(action.executing_at ?? ""));
+    const ageMs = Date.now() - executingAt;
+    if (Number.isFinite(executingAt) && ageMs < EXECUTION_RECOVERY_AFTER_MS) {
+      throw new Error("Action execution is already in progress; refusing a concurrent duplicate execution.");
+    }
+    const claimed = await claimStaleExecution(sb, action);
+    if (!claimed) {
+      throw new Error("Another worker already claimed recovery of this action; refusing duplicate execution.");
+    }
+    action = claimed;
+    ownsExecution = true;
+  }
+
   // Advance approved/failed -> queued -> executing, guarded against a
-  // concurrent competitor at every step. Bounded so a persistently
-  // inconsistent row (which should never happen against a real database)
-  // cannot spin forever.
+  // concurrent competitor at every step. Only the caller that wins the
+  // queued -> executing transition may perform the side effect. Stale
+  // executing rows must first be atomically claimed above before recovery.
   for (let attempt = 0; attempt < 5; attempt += 1) {
     if (action.status === "approved" || action.status === "failed") {
       const won = await guardedTransition(sb, action.id, action.status, {
@@ -369,6 +415,7 @@ export async function executeRestaurantAction(
       });
       if (won) {
         action = won;
+        ownsExecution = true;
         await emitActionEvent(sb, userId, {
           type: "intelligence.action.executing",
           tenantId,
@@ -383,6 +430,9 @@ export async function executeRestaurantAction(
     }
 
     if (action.status === "executing") {
+      if (!ownsExecution) {
+        throw new Error("Action execution is already in progress; refusing a concurrent duplicate execution.");
+      }
       if (action.action_type === "restaurant.menu.reprice_review") {
         return runMenuRepriceExecution(sb, userId, action, decision, tenantId, module);
       }
