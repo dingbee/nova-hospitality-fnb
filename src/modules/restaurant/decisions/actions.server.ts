@@ -537,6 +537,16 @@ async function runProcurementDraftExecution(
         ? estimatedCost / recommendedQuantity
         : 0;
   const estimatedTotal = recommendedQuantity * unitCost;
+  if (!Number.isFinite(unitCost) || unitCost <= 0 || !Number.isFinite(estimatedTotal) || estimatedTotal <= 0) {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The replenishment recommendation has no valid positive estimated cost; refusing to create a zero-cost or invalid purchase request.",
+    );
+  }
 
   let requestId: string;
   let requestStatus: string;
