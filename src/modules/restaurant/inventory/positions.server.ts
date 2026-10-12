@@ -34,18 +34,25 @@ async function reservationIndex(sb: Sb, tenantId: string) {
 
 /** Quantity expected from open purchase orders (ordered minus received). */
 export async function incomingIndex(sb: Sb, tenantId: string): Promise<Map<string, number>> {
-  const { data: orders } = await sb
+  const { data: orders, error: ordersError } = await sb
     .from("restaurant_purchase_orders")
     .select("id, status")
     .eq("tenant_id", tenantId)
     .in("status", OPEN_PO_STATUSES);
+  if (ordersError) {
+    throw new Error(`Stock positions could not load open purchase orders: ${ordersError.message}`);
+  }
   const ids = ((orders ?? []) as any[]).map((o) => o.id);
   const map = new Map<string, number>();
   if (ids.length === 0) return map;
-  const { data: lines } = await sb
+  const { data: lines, error: linesError } = await sb
     .from("restaurant_purchase_order_items")
     .select("inventory_item_id, quantity, received_quantity")
+    .eq("tenant_id", tenantId)
     .in("purchase_order_id", ids);
+  if (linesError) {
+    throw new Error(`Stock positions could not load inbound purchase-order lines: ${linesError.message}`);
+  }
   for (const l of (lines ?? []) as any[]) {
     if (!l.inventory_item_id) continue;
     const outstanding = Number(l.quantity ?? 0) - Number(l.received_quantity ?? 0);
