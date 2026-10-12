@@ -96,6 +96,7 @@ function makeFakeSupabase(opts: {
   existingItems?: Array<Record<string, any>>;
   failRequestInsert?: boolean;
   failLineInsert?: boolean;
+  failActionFinishUpdate?: boolean;
   failEventInsert?: boolean;
   // I6
   menuItem?: Record<string, any> | null;
@@ -241,6 +242,9 @@ function makeFakeSupabase(opts: {
 
       if (op === "update") {
         if (table === "intelligence_actions") {
+          if (opts.failActionFinishUpdate && payload?.status === "executed") {
+            return { data: null, error: { message: "finalize failed" } };
+          }
           if (!action || !matchesFilters(action, filters)) return { data: null, error: null };
           action = { ...action, ...payload };
           return { data: mode === "many" ? [action] : action, error: null };
@@ -724,6 +728,24 @@ describe("executeRestaurantAction — Act", () => {
     expect(result.status).toBe("failed");
     expect(result.failureReason).toBe("line insert failed");
     expect(fake.getAction()?.status).toBe("failed");
+    expect(fake.calls.some((call) => call.table === "restaurant_procurement_audit" && call.op === "insert")).toBe(true);
+  });
+
+  it("does not report success when finalizing the action status fails", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow(),
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      failActionFinishUpdate: true,
+    });
+
+    await expect(
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: actionRow().id }),
+    ).rejects.toThrow(/could not mark procurement action executed: finalize failed/i);
+
+    expect(fake.getRequests()).toHaveLength(1);
+    expect(fake.getItems()).toHaveLength(1);
+    expect(fake.getAction()?.status).toBe("executing");
   });
 
   it("a failed action can be retried and reaches executed", async () => {
