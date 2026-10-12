@@ -119,24 +119,46 @@ export async function resolveServiceRecovery(sb: Sb, userId: string, input: Serv
   const reason = input.reason.trim();
 
   if (input.resolution === "replace") {
+    if (!input.replacementMenuItemId) throw new Error("Select the actual replacement product; the original item is never substituted automatically.");
+    const { data: replacementProduct, error: replacementProductError } = await sb.from("restaurant_menu_items")
+      .select("id, name, price, currency, available").eq("tenant_id", input.tenantId).eq("id", input.replacementMenuItemId).maybeSingle();
+    if (replacementProductError) throw new Error(replacementProductError.message);
+    if (!replacementProduct || replacementProduct.available === false) throw new Error("Selected replacement product is unavailable in this tenant.");
     const { data: line, error } = await sb.from("restaurant_order_items")
       .select("id, menu_item_id, variant_id, station_id, description, quantity, unit_price, discount, seat_number, course, guest_notes, status")
       .eq("tenant_id", input.tenantId).eq("id", recovery.original_order_item_id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!line) throw new Error("Original order item not found; case remains open.");
+    const replacementRequestKey = "recovery-replace-" + recovery.id;
+    const { data: priorReplacementLines, error: priorReplacementError } = await sb.from("restaurant_order_items")
+      .select("id, menu_item_id, quantity, status, is_comp, line_total")
+      .eq("tenant_id", input.tenantId).eq("order_id", recovery.order_id)
+      .eq("client_request_id", replacementRequestKey);
+    if (priorReplacementError) throw new Error(priorReplacementError.message);
+    if ((priorReplacementLines ?? []).some((item: any) =>
+      item.menu_item_id !== replacementProduct.id ||
+      Number(item.quantity) !== Number(recovery.affected_quantity ?? 1)
+    )) {
+      throw new Error("A previous replacement attempt used a different product or quantity. Reconcile that line through canonical POS void/replacement handling before retrying; no new replacement was added.");
+    }
     const result = await addPosLines(sb, userId, {
-      tenantId: input.tenantId, orderId: recovery.order_id, clientRequestId: "recovery-replace-" + recovery.id,
+      tenantId: input.tenantId, orderId: recovery.order_id, clientRequestId: replacementRequestKey,
       lines: [{
-        menuItemId: line.menu_item_id ?? undefined, variantId: line.variant_id ?? undefined,
-        stationId: line.station_id ?? undefined, description: line.description,
-        quantity: Number(recovery.affected_quantity ?? line.quantity ?? 1), unitPrice: Number(line.unit_price ?? 0),
-        discount: Number(line.discount ?? 0), seatNumber: line.seat_number ?? undefined,
+        menuItemId: replacementProduct.id, variantId: undefined,
+        stationId: undefined, description: replacementProduct.name,
+        quantity: Number(recovery.affected_quantity ?? line.quantity ?? 1), unitPrice: Number(replacementProduct.price ?? 0),
+        discount: 0, seatNumber: line.seat_number ?? undefined,
         course: line.course ?? undefined, guestNotes: line.guest_notes ?? undefined,
         notes: "Service recovery replacement: " + reason, modifiers: [],
       }],
     } as any);
     replacementOrderItemId = result.items?.[0]?.id ?? replacementOrderItemId;
     if (!replacementOrderItemId) throw new Error("Replacement line was not confirmed; case remains open.");
+    const createdReplacement = (result.items ?? []).find((item: any) => item.id === replacementOrderItemId);
+    if (!createdReplacement || createdReplacement.menu_item_id !== replacementProduct.id ||
+      Number(createdReplacement.quantity) !== Number(recovery.affected_quantity ?? 1)) {
+      throw new Error("The persisted replacement product/quantity does not match the approved selection. Case remains open; no comp was applied by this attempt.");
+    }
     // A recovery replacement must not charge the guest a second time. Comp
     // only the replacement line; keep its inventory consumption in the ledger.
     await assertCapability(sb, userId, input.tenantId, "sales.discount", { propertyId: order.property_id ?? null, locationId: order.location_id ?? null });
@@ -175,6 +197,23 @@ export async function resolveServiceRecovery(sb: Sb, userId: string, input: Serv
       await voidPosLine(sb, userId, { tenantId: input.tenantId, orderId: recovery.order_id, orderItemId: line.id, reason });
     }
     stockDisposition = "reverse_unprepared";
+  }
+
+  if (input.resolution === "replace" && replacementOrderItemId) {
+    const { data: replacement, error: replacementError } = await sb.from("restaurant_order_items")
+      .select("id, status, is_comp, line_total").eq("tenant_id", input.tenantId)
+      .eq("order_id", recovery.order_id).eq("id", replacementOrderItemId).maybeSingle();
+    if (replacementError) throw new Error(replacementError.message);
+    if (!replacement) throw new Error("Replacement line could not be verified; recovery case remains open.");
+    if (!replacement.is_comp || Number(replacement.line_total ?? 0) !== 0) {
+      throw new Error("Replacement must be confirmed complimentary at zero charge before closing the recovery case.");
+    }
+    if (String(replacement.status) === "ordered") {
+      throw new Error("Replacement is recorded and complimentary, but has not been fired to its station. Fire it from POS first; the recovery case remains open.");
+    }
+    if (["voided", "void", "cancelled"].includes(String(replacement.status))) {
+      throw new Error("Replacement was voided before dispatch; recovery case remains open.");
+    }
   }
 
   const { data: closed, error: closeError } = await sb.from("restaurant_service_recovery_cases").update({

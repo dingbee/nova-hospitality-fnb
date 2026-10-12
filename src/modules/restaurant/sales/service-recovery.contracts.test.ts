@@ -52,9 +52,15 @@ describe("service recovery resolution contract", () => {
     caseId: "22222222-2222-4222-8222-222222222222",
     resolution: "replace",
     reason: "Supervisor approved replacement",
+    replacementMenuItemId: "33333333-3333-4333-8333-333333333333",
   };
   it("accepts a supervisor resolution with an explicit reason", () => {
     expect(serviceRecoveryResolutionSchema.parse(base)).toMatchObject({ resolution: "replace", reason: base.reason });
+  });
+  it("requires an explicit replacement product for replacement outcomes", () => {
+    const { replacementMenuItemId: _replacement, ...withoutProduct } = base;
+    expect(() => serviceRecoveryResolutionSchema.parse(withoutProduct)).toThrow();
+    expect(serviceRecoveryResolutionSchema.parse(base).replacementMenuItemId).toBe(base.replacementMenuItemId);
   });
   it("requires a payment and positive amount for refund workflows at the service boundary", () => {
     expect(serviceRecoveryResolutionSchema.parse({ ...base, resolution: "refund", paymentId: "33333333-3333-4333-8333-333333333333", amount: 10 }).amount).toBe(10);

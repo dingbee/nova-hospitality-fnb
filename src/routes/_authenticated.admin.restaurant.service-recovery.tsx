@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import { listRestaurantOrdersFn, getRestaurantOrderFn } from "@/modules/restaurant/sales/sales.functions";
+import { listRestaurantMenuItemsFn } from "@/modules/restaurant/menu/menu.functions";
 import { recordServiceRecoveryFn, listServiceRecoveryCasesFn, resolveServiceRecoveryFn } from "@/modules/restaurant/sales/service-recovery.functions";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/service-recovery")({
@@ -37,11 +38,13 @@ function ServiceRecoveryPage() {
   const [outcomeReason, setOutcomeReason] = useState("");
   const [paymentId, setPaymentId] = useState("");
   const [refundAmount, setRefundAmount] = useState("");
+  const [replacementMenuItemId, setReplacementMenuItemId] = useState("");
   const ordersFn = useServerFn(listRestaurantOrdersFn);
   const detailFn = useServerFn(getRestaurantOrderFn);
   const listCasesFn = useServerFn(listServiceRecoveryCasesFn);
   const recordFn = useServerFn(recordServiceRecoveryFn);
   const resolveFn = useServerFn(resolveServiceRecoveryFn);
+  const menuItemsFn = useServerFn(listRestaurantMenuItemsFn);
   const orders = useQuery({
     queryKey: ["service-recovery.orders", tenantId, propertyId],
     queryFn: () => ordersFn({ data: { tenantId: tenantId!, propertyId, limit: 100 } }),
@@ -51,6 +54,11 @@ function ServiceRecoveryPage() {
     queryKey: ["service-recovery.order", tenantId, orderId],
     queryFn: () => detailFn({ data: { tenantId: tenantId!, orderId } }),
     enabled: Boolean(tenantId && orderId),
+  });
+  const menuItems = useQuery({
+    queryKey: ["service-recovery.menu-items", tenantId],
+    queryFn: () => menuItemsFn({ data: { tenantId: tenantId!, limit: 500 } }),
+    enabled: Boolean(tenantId),
   });
   const cases = useQuery({
     queryKey: ["service-recovery.cases", tenantId, propertyId],
@@ -78,11 +86,11 @@ function ServiceRecoveryPage() {
   const resolveMutation = useAdminMutation({
     mutationFn: () => resolveFn({ data: {
       tenantId: tenantId!, caseId: resolveCaseId, resolution: outcome as any,
-      reason: outcomeReason, ...(outcome === "refund" ? { paymentId, amount: Number(refundAmount) } : {}),
+      reason: outcomeReason, ...(outcome === "replace" ? { replacementMenuItemId } : {}), ...(outcome === "refund" ? { paymentId, amount: Number(refundAmount) } : {}),
     }}),
     successMessage: "Recovery action completed and case closed",
     onSuccess: () => {
-      setResolveCaseId(""); setOutcomeReason(""); setPaymentId(""); setRefundAmount("");
+      setResolveCaseId(""); setOutcomeReason(""); setPaymentId(""); setRefundAmount(""); setReplacementMenuItemId("");
       void qc.invalidateQueries({ queryKey: ["service-recovery.cases"] });
       void qc.invalidateQueries({ queryKey: ["service-recovery.orders"] });
     },
@@ -145,19 +153,20 @@ function ServiceRecoveryPage() {
             <p className="text-xs text-muted-foreground">Follow-up: {c.resolution_reason}</p>
             {c.status === "open" && <div className="mt-3 grid w-full gap-2 md:grid-cols-2">
               <label className="space-y-1 text-xs"><span>Resolution</span>
-                <select className="w-full rounded-md border bg-background p-2" value={resolveCaseId === c.id ? outcome : "replace"} onChange={e => { setResolveCaseId(c.id); setOutcome(e.target.value); }}>
+                <select className="w-full rounded-md border bg-background p-2" value={resolveCaseId === c.id ? outcome : "replace"} onChange={e => { setResolveCaseId(c.id); setOutcome(e.target.value); setReplacementMenuItemId(""); }}>
                   <option value="replace">Replacement item</option><option value="comp">Comp original item</option><option value="refund">Refund payment</option><option value="void_unprepared">Void unprepared item</option><option value="no_adjustment">No financial adjustment</option>
                 </select>
               </label>
               <label className="space-y-1 text-xs"><span>Resolution reason</span>
                 <Input value={resolveCaseId === c.id ? outcomeReason : ""} onFocus={() => setResolveCaseId(c.id)} onChange={e => { setResolveCaseId(c.id); setOutcomeReason(e.target.value); }} placeholder="Supervisor decision and reason" />
               </label>
+              {resolveCaseId === c.id && outcome === "replace" && <label className="space-y-1 text-xs md:col-span-2"><span>Actual replacement product</span><select className="w-full rounded-md border bg-background p-2" value={replacementMenuItemId} onChange={e => setReplacementMenuItemId(e.target.value)}><option value="">Select replacement product…</option>{(menuItems.data ?? []).filter((item: any) => item.available !== false).map((item: any) => <option key={item.id} value={item.id}>{item.name} · {item.currency} {item.price}</option>)}</select><span className="block text-muted-foreground">The selected product and affected quantity will be used; the original product is not copied automatically.</span></label>}
               {resolveCaseId === c.id && outcome === "refund" && <>
                 <label className="space-y-1 text-xs"><span>Original payment ID</span><Input value={paymentId} onChange={e => setPaymentId(e.target.value)} placeholder="Payment UUID" /></label>
                 <label className="space-y-1 text-xs"><span>Refund amount</span><Input inputMode="decimal" value={refundAmount} onChange={e => setRefundAmount(e.target.value)} placeholder="Amount in order currency" /></label>
               </>}
               <div className="md:col-span-2 flex justify-end">
-                <Button disabled={resolveMutation.isPending || resolveCaseId !== c.id || outcomeReason.trim().length < 3 || (outcome === "refund" && (!paymentId || Number(refundAmount) <= 0))} onClick={() => resolveMutation.mutate()}>Execute outcome & close case</Button>
+                <Button disabled={resolveMutation.isPending || resolveCaseId !== c.id || outcomeReason.trim().length < 3 || (outcome === "replace" && !replacementMenuItemId) || (outcome === "refund" && (!paymentId || Number(refundAmount) <= 0))} onClick={() => resolveMutation.mutate()}>Execute outcome & close case</Button>
               </div>
             </div>}
           </div>
