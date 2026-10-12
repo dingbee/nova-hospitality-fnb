@@ -182,6 +182,23 @@ export async function resolveServiceRecovery(sb: Sb, userId: string, input: Serv
     stockDisposition = "reverse_unprepared";
   }
 
+  if (input.resolution === "replace" && replacementOrderItemId) {
+    const { data: replacement, error: replacementError } = await sb.from("restaurant_order_items")
+      .select("id, status, is_comp, line_total").eq("tenant_id", input.tenantId)
+      .eq("order_id", recovery.order_id).eq("id", replacementOrderItemId).maybeSingle();
+    if (replacementError) throw new Error(replacementError.message);
+    if (!replacement) throw new Error("Replacement line could not be verified; recovery case remains open.");
+    if (!replacement.is_comp || Number(replacement.line_total ?? 0) !== 0) {
+      throw new Error("Replacement must be confirmed complimentary at zero charge before closing the recovery case.");
+    }
+    if (String(replacement.status) === "ordered") {
+      throw new Error("Replacement is recorded and complimentary, but has not been fired to its station. Fire it from POS first; the recovery case remains open.");
+    }
+    if (["voided", "void", "cancelled"].includes(String(replacement.status))) {
+      throw new Error("Replacement was voided before dispatch; recovery case remains open.");
+    }
+  }
+
   const { data: closed, error: closeError } = await sb.from("restaurant_service_recovery_cases").update({
     resolution: input.resolution, resolution_reason: reason, status: "resolved",
     replacement_order_item_id: replacementOrderItemId, refund_payment_id: refundPaymentId,
