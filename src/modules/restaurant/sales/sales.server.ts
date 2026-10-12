@@ -562,7 +562,7 @@ export async function recalcOrder(sb: Sb, tenantId: string, orderId: string) {
     sb
       .from("restaurant_order_items")
       .select(
-        "line_total, line_cost, status, discount, tax_amount, service_charge_amount, quantity, unit_price",
+        "line_total, line_cost, status, is_comp, discount, tax_amount, service_charge_amount, quantity, unit_price",
       )
       .eq("tenant_id", tenantId)
       .eq("order_id", orderId),
@@ -573,14 +573,18 @@ export async function recalcOrder(sb: Sb, tenantId: string, orderId: string) {
       .eq("order_id", orderId),
   ]);
   const live = ((items ?? []) as any[]).filter((i) => i.status !== "voided");
-  const subtotal = live.reduce(
+  // Complimentary lines remain real production/stock costs, but are not
+  // payable guest revenue. Keep them in cost_total while excluding them from
+  // every commercial amount shown on the bill.
+  const chargeable = live.filter((i) => !Boolean(i.is_comp));
+  const subtotal = chargeable.reduce(
     (s, i) => s + Number(i.quantity ?? 0) * Number(i.unit_price ?? 0),
     0,
   );
-  const discountTotal = live.reduce((s, i) => s + Number(i.discount ?? 0), 0);
-  const taxTotal = live.reduce((s, i) => s + Number(i.tax_amount ?? 0), 0);
-  const serviceTotal = live.reduce((s, i) => s + Number(i.service_charge_amount ?? 0), 0);
-  const total = live.reduce((s, i) => s + Number(i.line_total ?? 0), 0);
+  const discountTotal = chargeable.reduce((s, i) => s + Number(i.discount ?? 0), 0);
+  const taxTotal = chargeable.reduce((s, i) => s + Number(i.tax_amount ?? 0), 0);
+  const serviceTotal = chargeable.reduce((s, i) => s + Number(i.service_charge_amount ?? 0), 0);
+  const total = chargeable.reduce((s, i) => s + Number(i.line_total ?? 0), 0);
   const cost = live.reduce((s, i) => s + Number(i.line_cost ?? 0), 0);
   const paid = ((payments ?? []) as any[])
     .filter((p) => p.state !== "refunded")
