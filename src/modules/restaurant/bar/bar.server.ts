@@ -161,7 +161,7 @@ export async function getBarSnapshot(
     const { data } = await sb
       .from("restaurant_kitchen_tickets")
       .select(
-        "id, ticket_number, station_id, status, queued_at, started_at, ready_at, served_at, is_delayed, target_minutes, notes",
+        "id, ticket_number, order_id, station_id, status, queued_at, started_at, ready_at, served_at, is_delayed, target_minutes, notes",
       )
       .eq("tenant_id", input.tenantId)
       .in("station_id", stationIds)
@@ -170,41 +170,67 @@ export async function getBarSnapshot(
       .limit(60);
     tickets = (data ?? []) as any[];
   }
-  // Resolve the order lines behind each ticket so bar staff can identify
-  // every drink and quantity without opening the originating order.
+  // Read ticket-item records first. Some deployments apply kitchen-only RLS
+  // to this table, so an authorized bartender can see the ticket header but
+  // receive an empty item list. In that case, reconstruct the same ticket's
+  // lines from its order and bar station using the sales-scoped order-item
+  // read path. Never broaden the fallback beyond these visible ticket IDs'
+  // orders and authorized bar stations.
   const ticketIds = tickets.map((t) => t.id);
-  let ticketItems: any[] = [];
+  let ticketItemRows: any[] = [];
   if (ticketIds.length > 0) {
-    const { data: ticketItemRows, error: ticketItemError } = await sb
+    const { data, error } = await sb
       .from("restaurant_kitchen_ticket_items")
-      .select("id, ticket_id, order_item_id, quantity, status")
+      .select("id, ticket_id, order_item_id, description, quantity, status")
       .eq("tenant_id", input.tenantId)
       .in("ticket_id", ticketIds);
-    if (ticketItemError) throw new Error(ticketItemError.message);
-    const ticketItemRowsList = (ticketItemRows ?? []) as any[];
-    const orderItemIds = [...new Set(ticketItemRowsList.map((row) => row.order_item_id).filter(Boolean))];
-    let orderItemRows: any[] = [];
-    if (orderItemIds.length > 0) {
-      const { data, error } = await sb
-        .from("restaurant_order_items")
-        .select("id, description")
-        .eq("tenant_id", input.tenantId)
-        .in("id", orderItemIds);
-      if (error) throw new Error(error.message);
-      orderItemRows = (data ?? []) as any[];
-    }
-    const names = new Map(orderItemRows.map((row) => [row.id, row.description]));
-    ticketItems = ticketItemRowsList.map((row) => ({
-      ticketId: row.ticket_id,
-      orderItemId: row.order_item_id,
-      name: names.get(row.order_item_id) ?? "Order item",
-      quantity: Number(row.quantity ?? 1),
-      status: String(row.status ?? "queued"),
-    }));
+    if (error) throw new Error(error.message);
+    ticketItemRows = (data ?? []) as any[];
   }
-  const ticketItemsByTicket = new Map<string, typeof ticketItems>();
-  for (const item of ticketItems) {
-    ticketItemsByTicket.set(item.ticketId, [...(ticketItemsByTicket.get(item.ticketId) ?? []), item]);
+
+  const orderIds = [...new Set(tickets.map((t) => t.order_id).filter(Boolean))];
+  let orderLines: any[] = [];
+  if (orderIds.length > 0 && stationIds.length > 0) {
+    const { data, error } = await sb
+      .from("restaurant_order_items")
+      .select("id, order_id, station_id, description, quantity, status")
+      .eq("tenant_id", input.tenantId)
+      .in("order_id", orderIds)
+      .in("station_id", stationIds);
+    if (error) throw new Error(error.message);
+    orderLines = ((data ?? []) as any[]).filter((row) =>
+      ["fired", "ready", "served"].includes(String(row.status ?? "").toLowerCase()),
+    );
+  }
+
+  const orderLineById = new Map(orderLines.map((row) => [row.id, row]));
+  const ticketItemsByTicket = new Map<string, Array<{
+    orderItemId: string;
+    name: string;
+    quantity: number;
+    status: string;
+  }>>();
+  for (const ticket of tickets) {
+    const recorded = ticketItemRows.filter((row) => row.ticket_id === ticket.id);
+    const lines = recorded.length > 0
+      ? recorded.map((row) => {
+          const orderLine = row.order_item_id ? orderLineById.get(row.order_item_id) : undefined;
+          return {
+            orderItemId: String(row.order_item_id ?? row.id),
+            name: String(row.description ?? orderLine?.description ?? "Order item"),
+            quantity: Number(row.quantity ?? orderLine?.quantity ?? 1),
+            status: String(row.status ?? "queued"),
+          };
+        })
+      : orderLines
+          .filter((row) => row.order_id === ticket.order_id && row.station_id === ticket.station_id)
+          .map((row) => ({
+            orderItemId: String(row.id),
+            name: String(row.description ?? "Order item"),
+            quantity: Number(row.quantity ?? 1),
+            status: String(row.status ?? "queued"),
+          }));
+    ticketItemsByTicket.set(ticket.id, lines);
   }
 
   const now = Date.now();
@@ -339,12 +365,7 @@ export async function getBarSnapshot(
       targetMinutes: t.target_minutes ?? null,
       waitingSeconds: t.waitingSeconds,
       notes: t.notes ?? null,
-      items: (ticketItemsByTicket.get(t.id) ?? []).map((item) => ({
-        orderItemId: item.orderItemId,
-        name: item.name,
-        quantity: item.quantity,
-        status: item.status,
-      })),
+      items: ticketItemsByTicket.get(t.id) ?? [],
     })),
     openTicketCount: tickets.length,
     delayedTicketCount: ticketsWithLiveDelay.filter((t) => t.isDelayed).length,
