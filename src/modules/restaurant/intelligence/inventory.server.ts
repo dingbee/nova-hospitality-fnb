@@ -62,6 +62,17 @@ export async function getInventoryIntelligence(
     sb.from("restaurant_suppliers").select("id, name").eq("tenant_id", tenantId),
   ]);
 
+  for (const [label, result] of [
+    ["inventory items", itemsRes],
+    ["stock movements", movesRes],
+    ["supplier products", supplierProductsRes],
+    ["suppliers", suppliersRes],
+  ] as const) {
+    if (result.error) {
+      throw new Error(`Inventory intelligence could not load ${label}: ${result.error.message}`);
+    }
+  }
+
   const items = (itemsRes.data ?? []) as any[];
   const moves = (movesRes.data ?? []) as any[];
   const currency = (items[0]?.currency as string) ?? "TZS";
@@ -92,7 +103,12 @@ export async function getInventoryIntelligence(
   runway.sort((a, b) => (a.daysOfCover ?? 9999) - (b.daysOfCover ?? 9999));
 
   const atRisk = runway
-    .filter((r) => (r.daysOfCover != null && r.daysOfCover <= 5) || r.belowReorder)
+    .filter(
+      (r) =>
+        r.currentQuantity <= 0 ||
+        (r.daysOfCover != null && r.daysOfCover <= 5) ||
+        r.belowReorder,
+    )
     .slice(0, 12);
 
   const wasteRows = moves.filter((m) => m.movement_type === "wastage");

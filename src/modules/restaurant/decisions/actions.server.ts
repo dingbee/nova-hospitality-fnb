@@ -95,6 +95,9 @@ const RESUMABLE_STATUSES = new Set(["approved", "queued", "executing", "failed"]
 const VERIFIABLE_STATUSES = new Set(["executed", "completed", "verified", "verification_failed"]);
 
 const now = () => new Date().toISOString();
+// Recent executing actions may still have a live worker. Only recover stale
+// executions, and atomically claim recovery before retrying their side effect.
+const EXECUTION_RECOVERY_AFTER_MS = 5 * 60 * 1000;
 
 export interface ExecuteRestaurantActionResult {
   actionId: string;
@@ -193,6 +196,33 @@ async function guardedTransition(
     .update(patch)
     .eq("id", actionId)
     .eq("status", fromStatus)
+    .select(
+      "id, decision_id, module, action_type, status, result, queued_at, executing_at, completed_at, verified_at, verification_result",
+    )
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ?? null;
+}
+
+/**
+ * Atomically claims recovery of a stale execution. Matching the old
+ * executing_at value means two retry workers cannot both claim the same
+ * crashed execution. This reuses the existing row and needs no schema change.
+ */
+async function claimStaleExecution(
+  sb: Sb,
+  action: Record<string, any>,
+): Promise<Record<string, any> | null> {
+  let query = sb
+    .from("intelligence_actions")
+    .update({ executing_at: now() })
+    .eq("id", action.id)
+    .eq("status", "executing");
+  query =
+    action.executing_at == null
+      ? query.is("executing_at", null)
+      : query.eq("executing_at", action.executing_at);
+  const { data, error } = await query
     .select(
       "id, decision_id, module, action_type, status, result, queued_at, executing_at, completed_at, verified_at, verification_result",
     )
@@ -303,6 +333,8 @@ export async function executeRestaurantAction(
 ): Promise<ExecuteRestaurantActionResult> {
   const { action: initialAction, decision } = await loadActionAndDecision(sb, input.actionId);
   let action = initialAction;
+  const beganExecuting = initialAction.status === "executing";
+  let ownsExecution = false;
 
   if (action.module !== "restaurant") {
     throw new Error(`No executor registered for module "${action.module}".`);
@@ -334,10 +366,28 @@ export async function executeRestaurantAction(
     );
   }
 
+  if (beganExecuting) {
+    const executingAt = Date.parse(String(action.executing_at ?? ""));
+    const ageMs = Date.now() - executingAt;
+    if (Number.isFinite(executingAt) && ageMs < EXECUTION_RECOVERY_AFTER_MS) {
+      throw new Error(
+        "Action execution is already in progress; refusing a concurrent duplicate execution.",
+      );
+    }
+    const claimed = await claimStaleExecution(sb, action);
+    if (!claimed) {
+      throw new Error(
+        "Another worker already claimed recovery of this action; refusing duplicate execution.",
+      );
+    }
+    action = claimed;
+    ownsExecution = true;
+  }
+
   // Advance approved/failed -> queued -> executing, guarded against a
-  // concurrent competitor at every step. Bounded so a persistently
-  // inconsistent row (which should never happen against a real database)
-  // cannot spin forever.
+  // concurrent competitor at every step. Only the caller that wins the
+  // queued -> executing transition may perform the side effect. Stale
+  // executing rows must first be atomically claimed above before recovery.
   for (let attempt = 0; attempt < 5; attempt += 1) {
     if (action.status === "approved" || action.status === "failed") {
       const won = await guardedTransition(sb, action.id, action.status, {
@@ -369,6 +419,7 @@ export async function executeRestaurantAction(
       });
       if (won) {
         action = won;
+        ownsExecution = true;
         await emitActionEvent(sb, userId, {
           type: "intelligence.action.executing",
           tenantId,
@@ -383,6 +434,11 @@ export async function executeRestaurantAction(
     }
 
     if (action.status === "executing") {
+      if (!ownsExecution) {
+        throw new Error(
+          "Action execution is already in progress; refusing a concurrent duplicate execution.",
+        );
+      }
       if (action.action_type === "restaurant.menu.reprice_review") {
         return runMenuRepriceExecution(sb, userId, action, decision, tenantId, module);
       }
@@ -439,6 +495,7 @@ async function runProcurementDraftExecution(
   if (
     typeof inventoryItemId !== "string" ||
     typeof recommendedQuantity !== "number" ||
+    !Number.isFinite(recommendedQuantity) ||
     recommendedQuantity <= 0
   ) {
     return failAction(
@@ -471,8 +528,30 @@ async function runProcurementDraftExecution(
     return failAction(sb, userId, action, tenantId, module, correlationErr.message);
   }
 
+  const unitCost =
+    typeof estimatedUnitCost === "number" &&
+    Number.isFinite(estimatedUnitCost) &&
+    estimatedUnitCost > 0
+      ? estimatedUnitCost
+      : typeof estimatedCost === "number" && Number.isFinite(estimatedCost) && estimatedCost >= 0
+        ? estimatedCost / recommendedQuantity
+        : 0;
+  const estimatedTotal = recommendedQuantity * unitCost;
+  if (!Number.isFinite(unitCost) || unitCost <= 0 || !Number.isFinite(estimatedTotal) || estimatedTotal <= 0) {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The replenishment recommendation has no valid positive estimated cost; refusing to create a zero-cost or invalid purchase request.",
+    );
+  }
+
   let requestId: string;
   let requestStatus: string;
+  let createdRequest = false;
+  let documentNumber: string | null = null;
 
   if (existingByCorrelation) {
     requestId = existingByCorrelation.id;
@@ -484,15 +563,7 @@ async function runProcurementDraftExecution(
       return failAction(sb, userId, action, tenantId, module, (err as Error).message);
     }
 
-    const unitCost =
-      typeof estimatedUnitCost === "number" && estimatedUnitCost > 0
-        ? estimatedUnitCost
-        : typeof estimatedCost === "number"
-          ? estimatedCost / recommendedQuantity
-          : 0;
-    const estimatedTotal = recommendedQuantity * unitCost;
-
-    const documentNumber = await nextDocumentNumber(
+    documentNumber = await nextDocumentNumber(
       sb,
       tenantId,
       "purchase_request",
@@ -526,74 +597,54 @@ async function runProcurementDraftExecution(
       })
       .select("id")
       .single();
+
     if (createErr) {
-      // Another concurrent execution of this exact action won the race and
-      // already inserted the (tenant_id, correlation_id)-unique row — the
-      // same "already happened, not an error" pattern movements.server.ts's
-      // insertMovement uses for its own dedupe key. Recover the winner's
-      // request instead of failing or duplicating.
-      if (String((createErr as any).code) === "23505") {
-        const { data: recovered, error: recoverErr } = await sb
-          .from("restaurant_purchase_requests")
-          .select("id, status")
-          .eq("tenant_id", tenantId)
-          .eq("correlation_id", action.id)
-          .maybeSingle();
-        if (recoverErr || !recovered) {
-          return failAction(
-            sb,
-            userId,
-            action,
-            tenantId,
-            module,
-            recoverErr?.message ??
-              "Concurrent insert detected but the winning request could not be recovered.",
-          );
-        }
-        requestId = recovered.id as string;
-        requestStatus = recovered.status as string;
-        return finishExecution(
+      // Recover the unique-key winner, but continue through the same line-item
+      // integrity checks as every other retry. Never mark execution successful
+      // merely because the parent request row exists.
+      if (String((createErr as any).code) !== "23505") {
+        return failAction(sb, userId, action, tenantId, module, createErr.message);
+      }
+      const { data: recovered, error: recoverErr } = await sb
+        .from("restaurant_purchase_requests")
+        .select("id, status")
+        .eq("tenant_id", tenantId)
+        .eq("correlation_id", action.id)
+        .maybeSingle();
+      if (recoverErr || !recovered) {
+        return failAction(
           sb,
           userId,
           action,
-          decision,
           tenantId,
           module,
-          requestId,
-          requestStatus,
+          recoverErr?.message ??
+            "Concurrent insert detected but the winning request could not be recovered.",
         );
       }
-      return failAction(sb, userId, action, tenantId, module, createErr.message);
+      requestId = recovered.id as string;
+      requestStatus = recovered.status as string;
+    } else {
+      if (!created) {
+        return failAction(
+          sb,
+          userId,
+          action,
+          tenantId,
+          module,
+          "Failed to create the procurement request.",
+        );
+      }
+      requestId = created.id as string;
+      requestStatus = "draft";
+      createdRequest = true;
     }
-    if (!created) {
-      return failAction(
-        sb,
-        userId,
-        action,
-        tenantId,
-        module,
-        "Failed to create the procurement request.",
-      );
-    }
-    requestId = created.id as string;
-    requestStatus = "draft";
+  }
 
-    const { error: lineErr } = await sb.from("restaurant_purchase_request_items").insert({
-      tenant_id: tenantId,
-      purchase_request_id: requestId,
-      inventory_item_id: inventoryItemId,
-      preferred_supplier_id: supplierId,
-      description: finding.subject ?? "Replenishment",
-      quantity: recommendedQuantity,
-      estimated_unit_cost: unitCost,
-      estimated_total: estimatedTotal,
-      justification: finding.headline ?? null,
-      recommendation_ref: decision.decision_key,
-    });
-    if (lineErr) {
-      return failAction(sb, userId, action, tenantId, module, lineErr.message);
-    }
-
+  if (createdRequest && documentNumber) {
+    // Audit the parent as soon as it exists, even if the following line-item
+    // insert fails. A retry can repair the line but must not erase the fact
+    // that the draft was created.
     await recordProcurementAudit(sb, userId, {
       tenantId,
       documentType: "purchase_request",
@@ -603,6 +654,83 @@ async function runProcurementDraftExecution(
       newState: "draft",
       metadata: { origin: "intelligence", decision_id: decision.id, action_id: action.id },
     });
+  }
+
+  // The action may be retrying after the request insert succeeded but the
+  // line insert failed. Read existing lines before deciding whether to repair.
+  // Fail closed if the request has moved beyond the governed draft state.
+  if (requestStatus !== "draft") {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      `The correlated purchase request is "${requestStatus}", not draft; refusing to alter it or report this action executed.`,
+    );
+  }
+
+  const { data: existingLines, error: lineReadErr } = await sb
+    .from("restaurant_purchase_request_items")
+    .select(
+      "id, tenant_id, purchase_request_id, inventory_item_id, preferred_supplier_id, quantity, estimated_unit_cost",
+    )
+    .eq("tenant_id", tenantId)
+    .eq("purchase_request_id", requestId);
+  if (lineReadErr) {
+    return failAction(sb, userId, action, tenantId, module, lineReadErr.message);
+  }
+
+  const lines = (existingLines ?? []) as Array<Record<string, any>>;
+  if (lines.length > 1) {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The correlated purchase request contains multiple lines; refusing to mark the action executed.",
+    );
+  }
+
+  const linePayload = {
+    tenant_id: tenantId,
+    purchase_request_id: requestId,
+    inventory_item_id: inventoryItemId,
+    preferred_supplier_id: supplierId,
+    description: finding.subject ?? "Replenishment",
+    quantity: recommendedQuantity,
+    estimated_unit_cost: unitCost,
+    estimated_total: estimatedTotal,
+    justification: finding.headline ?? null,
+    recommendation_ref: decision.decision_key,
+  };
+
+  if (lines.length === 1) {
+    const line = lines[0];
+    if (
+      line.tenant_id !== tenantId ||
+      line.purchase_request_id !== requestId ||
+      line.inventory_item_id !== inventoryItemId ||
+      line.preferred_supplier_id !== supplierId ||
+      Number(line.quantity) !== recommendedQuantity
+    ) {
+      return failAction(
+        sb,
+        userId,
+        action,
+        tenantId,
+        module,
+        "The existing procurement line does not match the approved inventory item, supplier and quantity; refusing to report success.",
+      );
+    }
+  } else {
+    const { error: lineErr } = await sb
+      .from("restaurant_purchase_request_items")
+      .insert(linePayload);
+    if (lineErr) {
+      return failAction(sb, userId, action, tenantId, module, lineErr.message);
+    }
   }
 
   return finishExecution(sb, userId, action, decision, tenantId, module, requestId, requestStatus);
@@ -619,14 +747,23 @@ async function finishExecution(
   requestId: string,
   requestStatus: string,
 ): Promise<ExecuteRestaurantActionResult> {
-  await sb
+  const { data: finalized, error: finalizeError } = await sb
     .from("intelligence_actions")
     .update({
       status: "executed",
       completed_at: now(),
       result: { procurement_request_id: requestId, procurement_request_status: requestStatus },
     })
-    .eq("id", action.id);
+    .eq("id", action.id)
+    .eq("status", "executing")
+    .select("id")
+    .maybeSingle();
+  if (finalizeError) {
+    throw new Error(`Could not mark procurement action executed: ${finalizeError.message}`);
+  }
+  if (!finalized) {
+    throw new Error("Could not mark procurement action executed: action is no longer executing.");
+  }
 
   await emitActionEvent(sb, userId, {
     type: "intelligence.action.executed",
@@ -1499,6 +1636,8 @@ async function verifyProcurementDraft(
     typeof facts.recommendedQuantity === "number" ? facts.recommendedQuantity : undefined;
   const expectedItemId =
     typeof facts.inventoryItemId === "string" ? facts.inventoryItemId : undefined;
+  const expectedSupplierId =
+    typeof facts.supplierId === "string" ? facts.supplierId : undefined;
 
   const expectedRequestId = action.result?.procurement_request_id as string | undefined;
   if (!expectedRequestId) {
@@ -1545,21 +1684,43 @@ async function verifyProcurementDraft(
 
   const { data: items, error: itemsErr } = await sb
     .from("restaurant_purchase_request_items")
-    .select("id, inventory_item_id, quantity")
+    .select("id, inventory_item_id, preferred_supplier_id, quantity")
     .eq("purchase_request_id", request.id);
   if (itemsErr) throw new Error(itemsErr.message);
-  const rows = (items ?? []) as Array<{ inventory_item_id: string | null; quantity: number }>;
-  const matchingItem = expectedItemId
-    ? rows.find((r) => r.inventory_item_id === expectedItemId)
-    : rows[0];
+  const rows = (items ?? []) as Array<{
+    inventory_item_id: string | null;
+    preferred_supplier_id?: string | null;
+    quantity: number;
+  }>;
 
-  if (!matchingItem) {
+  if (rows.length !== 1) {
+    return {
+      verified: false,
+      outcome: rows.length === 0 ? "item_missing" : "unexpected_line_count",
+      entityType: "purchase_request",
+      entityId: request.id,
+      reason: `Expected exactly one procurement line for this inventory action; found ${rows.length}.`,
+    };
+  }
+
+  const matchingItem = rows[0];
+  if (expectedItemId && matchingItem.inventory_item_id !== expectedItemId) {
     return {
       verified: false,
       outcome: "item_missing",
       entityType: "purchase_request",
       entityId: request.id,
       reason: `Expected inventory item ${expectedItemId ?? "(unknown)"} was not found on the purchase request.`,
+    };
+  }
+
+  if (expectedSupplierId && matchingItem.preferred_supplier_id !== expectedSupplierId) {
+    return {
+      verified: false,
+      outcome: "supplier_mismatch",
+      entityType: "purchase_request",
+      entityId: request.id,
+      reason: `Expected supplier ${expectedSupplierId}, found ${matchingItem.preferred_supplier_id ?? "(none)"}.`,
     };
   }
 

@@ -96,6 +96,7 @@ function makeFakeSupabase(opts: {
   existingItems?: Array<Record<string, any>>;
   failRequestInsert?: boolean;
   failLineInsert?: boolean;
+  failActionFinishUpdate?: boolean;
   failEventInsert?: boolean;
   // I6
   menuItem?: Record<string, any> | null;
@@ -241,6 +242,9 @@ function makeFakeSupabase(opts: {
 
       if (op === "update") {
         if (table === "intelligence_actions") {
+          if (opts.failActionFinishUpdate && payload?.status === "executed") {
+            return { data: null, error: { message: "finalize failed" } };
+          }
           if (!action || !matchesFilters(action, filters)) return { data: null, error: null };
           action = { ...action, ...payload };
           return { data: mode === "many" ? [action] : action, error: null };
@@ -510,32 +514,96 @@ describe("executeRestaurantAction — Act", () => {
       procurementRequestStatus: "draft",
     });
     expect(fake.getRequestInsertCount()).toBe(0); // never a second draft
-    expect(fake.getLineInsertCount()).toBe(0);
+    expect(fake.getLineInsertCount()).toBe(1); // repair the missing line on retry
+    expect(fake.getItems()).toHaveLength(1);
+    expect(fake.getItems()[0]).toMatchObject({
+      tenant_id: TENANT_A,
+      purchase_request_id: "recovered-request-id",
+      inventory_item_id: INVENTORY_ITEM_ID,
+      preferred_supplier_id: SUPPLIER_ID,
+      quantity: 30,
+    });
     expect(fake.getAction()?.status).toBe("executed");
   });
 
-  it("protects against two concurrent executions of the same action — exactly one request, both callers converge", async () => {
+  it("fails closed when a recovered request already has a mismatched line", async () => {
     const fake = makeFakeSupabase({
-      action: actionRow(),
+      action: actionRow({ status: "failed", failure_reason: "previous line insert failed" }),
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequestByCorrelation: {
+        id: "recovered-request-id",
+        tenant_id: TENANT_A,
+        correlation_id: actionRow().id,
+        status: "draft",
+      },
+      existingItems: [{
+        id: "wrong-line",
+        tenant_id: TENANT_A,
+        purchase_request_id: "recovered-request-id",
+        inventory_item_id: OTHER_ITEM_ID,
+        preferred_supplier_id: SUPPLIER_ID,
+        quantity: 30,
+      }],
+    });
+
+    const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+      actionId: actionRow().id,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failureReason).toMatch(/existing procurement line does not match/i);
+    expect(fake.getRequestInsertCount()).toBe(0);
+    expect(fake.getLineInsertCount()).toBe(0);
+    expect(fake.getItems()).toHaveLength(1);
+    expect(fake.getAction()?.status).toBe("failed");
+  });
+
+  it(
+    "protects against concurrent execution — one caller owns the side effect and the other cannot duplicate it",
+    async () => {
+      const fake = makeFakeSupabase({
+        action: actionRow(),
+        decision: decisionRow(),
+        restaurantMembers: OWNER_MEMBER,
+      });
+
+      const results = await Promise.allSettled([
+        executeRestaurantAction(fake.supabase, MANAGER, { actionId: actionRow().id }),
+        executeRestaurantAction(fake.supabase, MANAGER, { actionId: actionRow().id }),
+      ]);
+
+      const successes = results.filter((r) => r.status === "fulfilled");
+      const failures = results.filter((r) => r.status === "rejected");
+      expect(successes).toHaveLength(1);
+      expect(failures).toHaveLength(1);
+      expect(
+        (successes[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof executeRestaurantAction>>>)
+          .value.status,
+      ).toBe("executed");
+      expect((failures[0] as PromiseRejectedResult).reason.message).toMatch(
+        /already in progress|claimed recovery/i,
+      );
+      expect(fake.getRequests()).toHaveLength(1);
+      expect(fake.getItems()).toHaveLength(1);
+      expect(fake.getAction()?.status).toBe("executed");
+    },
+  );
+
+  it("does not steal a recent executing action from a live worker", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow({ status: "executing", executing_at: new Date().toISOString() }),
       decision: decisionRow(),
       restaurantMembers: OWNER_MEMBER,
     });
 
-    const [a, b] = await Promise.all([
+    await expect(
       executeRestaurantAction(fake.supabase, MANAGER, { actionId: actionRow().id }),
-      executeRestaurantAction(fake.supabase, MANAGER, { actionId: actionRow().id }),
-    ]);
+    ).rejects.toThrow(/already in progress/i);
 
-    // Two insert attempts can be made (the loser's collides with the
-    // winner's tenant_id+correlation_id unique constraint), but exactly one
-    // request row — and one line item — actually exists afterward, and the
-    // loser recovers the winner's row rather than erroring or duplicating.
-    expect(fake.getRequests()).toHaveLength(1);
-    expect(fake.getLineInsertCount()).toBe(1);
-    expect(a.status).toBe("executed");
-    expect(b.status).toBe("executed");
-    expect(a.procurementRequestId).toBe(b.procurementRequestId);
-    expect(fake.getAction()?.status).toBe("executed");
+    expect(fake.getRequestInsertCount()).toBe(0);
+    expect(fake.getLineInsertCount()).toBe(0);
+    expect(fake.getAction()?.status).toBe("executing");
   });
 
   it("refuses a caller who is not a restaurant_members of the decision's tenant", async () => {
@@ -613,6 +681,62 @@ describe("executeRestaurantAction — Act", () => {
     expect(fake.getRequestInsertCount()).toBe(0);
   });
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "rejects non-finite replenishment quantities (%s) without creating a request",
+    async (recommendedQuantity) => {
+      const fake = makeFakeSupabase({
+        action: actionRow(),
+        decision: decisionRow({
+          context: {
+            finding: {
+              subject: "x",
+              headline: "x",
+              facts: findingFacts({ recommendedQuantity }),
+            },
+          },
+        }),
+        restaurantMembers: OWNER_MEMBER,
+      });
+
+      const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+        actionId: actionRow().id,
+      });
+
+      expect(result.status).toBe("failed");
+      expect(result.failureReason).toMatch(/structured purchasing data/i);
+      expect(fake.getRequestInsertCount()).toBe(0);
+      expect(fake.getLineInsertCount()).toBe(0);
+    },
+  );
+
+  it.each([0, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "refuses to create a procurement request when the estimated cost is invalid (%s)",
+    async (cost) => {
+      const fake = makeFakeSupabase({
+        action: actionRow(),
+        decision: decisionRow({
+          context: {
+            finding: {
+              subject: "x",
+              headline: "x",
+              facts: findingFacts({ estimatedCost: cost, estimatedUnitCost: cost }),
+            },
+          },
+        }),
+        restaurantMembers: OWNER_MEMBER,
+      });
+
+      const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+        actionId: actionRow().id,
+      });
+
+      expect(result.status).toBe("failed");
+      expect(result.failureReason).toMatch(/no valid positive estimated cost/i);
+      expect(fake.getRequestInsertCount()).toBe(0);
+      expect(fake.getLineInsertCount()).toBe(0);
+    },
+  );
+
   it("captures a procurement request insert failure as a failed action, not a fabricated success", async () => {
     const fake = makeFakeSupabase({
       action: actionRow(),
@@ -646,6 +770,28 @@ describe("executeRestaurantAction — Act", () => {
     expect(result.status).toBe("failed");
     expect(result.failureReason).toBe("line insert failed");
     expect(fake.getAction()?.status).toBe("failed");
+    expect(
+      fake.calls.some(
+        (call) => call.table === "restaurant_procurement_audit" && call.op === "insert",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not report success when finalizing the action status fails", async () => {
+    const fake = makeFakeSupabase({
+      action: actionRow(),
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      failActionFinishUpdate: true,
+    });
+
+    await expect(
+      executeRestaurantAction(fake.supabase, MANAGER, { actionId: actionRow().id }),
+    ).rejects.toThrow(/could not mark procurement action executed: finalize failed/i);
+
+    expect(fake.getRequests()).toHaveLength(1);
+    expect(fake.getItems()).toHaveLength(1);
+    expect(fake.getAction()?.status).toBe("executing");
   });
 
   it("a failed action can be retried and reaches executed", async () => {
@@ -745,8 +891,10 @@ function draftRequest(overrides: Partial<Record<string, unknown>> = {}) {
 function requestItem(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "item-verify-1",
+    tenant_id: TENANT_A,
     purchase_request_id: "req-verify-1",
     inventory_item_id: INVENTORY_ITEM_ID,
+    preferred_supplier_id: SUPPLIER_ID,
     quantity: 30,
     ...overrides,
   };
@@ -779,6 +927,46 @@ describe("verifyRestaurantAction — Verify", () => {
     expect(fake.getAction()?.verified_at).toBeTruthy();
     expect(fake.getAction()?.verification_result).toEqual(result);
     expect(fake.getEvents().map((e) => e.event_type)).toEqual(["intelligence.action.verified"]);
+  });
+
+  it("detects duplicate procurement lines even when one line is correct", async () => {
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [draftRequest()],
+      existingItems: [requestItem(), requestItem({ id: "item-verify-2" })],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: EXECUTED_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      verified: false,
+      outcome: "unexpected_line_count",
+    });
+    expect(fake.getAction()?.status).toBe("verification_failed");
+  });
+
+  it("detects a supplier mismatch on the procurement line", async () => {
+    const fake = makeFakeSupabase({
+      action: EXECUTED_ACTION,
+      decision: decisionRow(),
+      restaurantMembers: OWNER_MEMBER,
+      existingRequests: [draftRequest()],
+      existingItems: [requestItem({ preferred_supplier_id: OTHER_ITEM_ID })],
+    });
+
+    const result = await verifyRestaurantAction(fake.supabase, MANAGER, {
+      actionId: EXECUTED_ACTION.id,
+    });
+
+    expect(result).toMatchObject({
+      verified: false,
+      outcome: "supplier_mismatch",
+    });
+    expect(fake.getAction()?.status).toBe("verification_failed");
   });
 
   it("detects a wrong quantity (expected 30, found 20)", async () => {

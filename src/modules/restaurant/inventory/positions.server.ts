@@ -16,15 +16,21 @@ const OPEN_PO_STATUSES = ["submitted", "approved", "partially_received"];
 
 /** Active reservations grouped by item and by item+location. */
 async function reservationIndex(sb: Sb, tenantId: string) {
-  const { data } = await sb
+  const { data, error } = await sb
     .from("restaurant_stock_reservations")
     .select("inventory_item_id, location_id, quantity")
     .eq("tenant_id", tenantId)
     .eq("status", "active");
+  if (error) {
+    throw new Error(`Stock positions could not load active reservations: ${error.message}`);
+  }
   const byItem = new Map<string, number>();
   const byItemLocation = new Map<string, number>();
   for (const r of (data ?? []) as any[]) {
-    const q = Number(r.quantity ?? 0);
+    const q = Number(r.quantity);
+    if (!r.inventory_item_id || !Number.isFinite(q) || q < 0) {
+      throw new Error("Stock positions found an invalid active reservation quantity or item.");
+    }
     byItem.set(r.inventory_item_id, (byItem.get(r.inventory_item_id) ?? 0) + q);
     const key = `${r.inventory_item_id}:${r.location_id ?? "none"}`;
     byItemLocation.set(key, (byItemLocation.get(key) ?? 0) + q);
@@ -34,21 +40,35 @@ async function reservationIndex(sb: Sb, tenantId: string) {
 
 /** Quantity expected from open purchase orders (ordered minus received). */
 export async function incomingIndex(sb: Sb, tenantId: string): Promise<Map<string, number>> {
-  const { data: orders } = await sb
+  const { data: orders, error: ordersError } = await sb
     .from("restaurant_purchase_orders")
     .select("id, status")
     .eq("tenant_id", tenantId)
     .in("status", OPEN_PO_STATUSES);
+  if (ordersError) {
+    throw new Error(`Stock positions could not load open purchase orders: ${ordersError.message}`);
+  }
   const ids = ((orders ?? []) as any[]).map((o) => o.id);
   const map = new Map<string, number>();
   if (ids.length === 0) return map;
-  const { data: lines } = await sb
+  const { data: lines, error: linesError } = await sb
     .from("restaurant_purchase_order_items")
     .select("inventory_item_id, quantity, received_quantity")
+    .eq("tenant_id", tenantId)
     .in("purchase_order_id", ids);
+  if (linesError) {
+    throw new Error(
+      `Stock positions could not load inbound purchase-order lines: ${linesError.message}`,
+    );
+  }
   for (const l of (lines ?? []) as any[]) {
     if (!l.inventory_item_id) continue;
-    const outstanding = Number(l.quantity ?? 0) - Number(l.received_quantity ?? 0);
+    const ordered = Number(l.quantity);
+    const received = Number(l.received_quantity ?? 0);
+    if (!Number.isFinite(ordered) || ordered < 0 || !Number.isFinite(received) || received < 0) {
+      throw new Error("Stock positions found an invalid purchase-order quantity.");
+    }
+    const outstanding = ordered - received;
     if (outstanding <= 0) continue;
     map.set(l.inventory_item_id, (map.get(l.inventory_item_id) ?? 0) + outstanding);
   }
@@ -75,7 +95,13 @@ export async function listStockPositions(
   if (input.itemId) itemQuery = itemQuery.eq("id", input.itemId);
   if (input.search) itemQuery = itemQuery.ilike("name", `%${input.search}%`);
 
-  const [{ data: items, error }, { data: ledger }, reservations, incoming, locations] = await Promise.all([
+  const [
+    { data: items, error },
+    { data: ledger, error: ledgerError },
+    reservations,
+    incoming,
+    locations,
+  ] = await Promise.all([
     itemQuery,
     sb
       .from("restaurant_stock_positions_v")
@@ -85,7 +111,10 @@ export async function listStockPositions(
     incomingIndex(sb, input.tenantId),
     locationNameMap(sb, input.tenantId),
   ]);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`Stock positions could not load inventory items: ${error.message}`);
+  if (ledgerError) {
+    throw new Error(`Stock positions could not load the stock ledger: ${ledgerError.message}`);
+  }
 
   const byItem = new Map<string, any[]>();
   for (const row of (ledger ?? []) as any[]) {
@@ -200,6 +229,7 @@ export async function getItemDetail(sb: Sb, userId: string, tenantId: string, it
       sb
         .from("restaurant_purchase_order_items")
         .select("id, purchase_order_id, quantity, received_quantity, unit_price, description")
+        .eq("tenant_id", tenantId)
         .eq("inventory_item_id", itemId)
         .limit(50),
     ]);
