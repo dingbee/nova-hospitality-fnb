@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- fake Supabase query boundary. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../core/access.server", () => ({ assertTenantRead: vi.fn() }));
@@ -15,6 +16,7 @@ function fakeSupabase(failedTable: string) {
     restaurant_suppliers: { data: [], error: null },
   };
   responses[failedTable] = { data: null, error: { message: "simulated read failure" } };
+
   return {
     from(table: string) {
       const query: any = {
