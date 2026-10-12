@@ -158,7 +158,12 @@ export function inventoryFindings(
   // as real. Dropping belowReorder rows with no velocity here was the exact
   // gap that let a genuinely below-reorder item raise no finding at all.
   for (const row of inv.atRisk
-    .filter((r) => r.currentQuantity <= 0 || (r.daysOfCover != null && r.daysOfCover <= SHORTAGE_DAYS) || r.belowReorder)
+    .filter(
+      (r) =>
+        r.currentQuantity <= 0 ||
+        (r.daysOfCover != null && r.daysOfCover <= SHORTAGE_DAYS) ||
+        r.belowReorder,
+    )
     .slice(0, 5)) {
     const days = row.daysOfCover;
     const severity =
