@@ -59,7 +59,7 @@ export async function getPurchasingIntelligence(
     movesQuery,
     sb
       .from("restaurant_supplier_products")
-      .select("supplier_id, inventory_item_id, unit_price, lead_time_days, active")
+      .select("supplier_id, inventory_item_id, unit_price, currency, lead_time_days, active")
       .eq("tenant_id", tenantId),
     sb
       .from("restaurant_suppliers")
@@ -92,12 +92,16 @@ export async function getPurchasingIntelligence(
   const supplierById = new Map(suppliers.map((s) => [s.id, s]));
   // An active supplier-product row is not enough: never recommend a supplier
   // that the restaurant has deactivated.
+  const itemCurrencyById = new Map(
+    items.map((item) => [item.id, String(item.currency ?? "TZS").toUpperCase()]),
+  );
   const products = ((productsRes.data ?? []) as any[]).filter(
     (p) =>
       p.active !== false &&
       supplierById.get(p.supplier_id)?.status === "active" &&
       Number.isFinite(Number(p.unit_price)) &&
-      Number(p.unit_price) > 0,
+      Number(p.unit_price) > 0 &&
+      String(p.currency ?? "TZS").toUpperCase() === itemCurrencyById.get(p.inventory_item_id),
   );
 
   const bestProduct = new Map<string, any>();
@@ -171,9 +175,14 @@ export async function getPurchasingIntelligence(
     if (velocity <= 0 && target == null) continue;
     const product = bestProduct.get(it.id);
     const supplier = product ? supplierById.get(product.supplier_id) : null;
+    const productLeadTime = Number(product?.lead_time_days);
+    const supplierLeadTime = Number(supplier?.lead_time_days);
     const leadTime =
-      Number(product?.lead_time_days ?? supplier?.lead_time_days ?? DEFAULT_LEAD_TIME) ||
-      DEFAULT_LEAD_TIME;
+      Number.isFinite(productLeadTime) && productLeadTime > 0
+        ? productLeadTime
+        : Number.isFinite(supplierLeadTime) && supplierLeadTime > 0
+          ? supplierLeadTime
+          : DEFAULT_LEAD_TIME;
     const unitPrice = Number(product?.unit_price ?? it.average_cost ?? 0);
     const qty =
       velocity > 0
