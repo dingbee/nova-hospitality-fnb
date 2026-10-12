@@ -1274,7 +1274,7 @@ describe("restaurant.inventory.replenish_review — I5", () => {
       existingItems: [
         {
           id: "item-replenish-1",
-          supplier_id: SUPPLIER_ID,
+          preferred_supplier_id: SUPPLIER_ID,
           purchase_request_id: "req-replenish-1",
           inventory_item_id: INVENTORY_ITEM_ID,
           quantity: 30,
@@ -1314,7 +1314,7 @@ describe("restaurant.inventory.replenish_review — I5", () => {
       existingItems: [
         {
           id: "item-replenish-2",
-          supplier_id: SUPPLIER_ID,
+          preferred_supplier_id: SUPPLIER_ID,
           purchase_request_id: "req-replenish-2",
           inventory_item_id: INVENTORY_ITEM_ID,
           quantity: 5,
@@ -1359,7 +1359,7 @@ describe("restaurant.inventory.replenish_review — I5", () => {
       existingItems: [
         {
           id: "item-replenish-3",
-          supplier_id: SUPPLIER_ID,
+          preferred_supplier_id: SUPPLIER_ID,
           purchase_request_id: "req-replenish-3",
           inventory_item_id: INVENTORY_ITEM_ID,
           quantity: 30,
