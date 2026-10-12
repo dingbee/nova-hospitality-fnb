@@ -43,7 +43,10 @@ export async function getWorkspace(
     if (gtmTenant) tenants = [...tenants, gtmTenant];
   }
 
-  const active = tenants.find((t) => t.id === input.tenantId)\n    ?? tenants.find((t) => t.id === GTM_WORKSPACE_TENANT_ID)\n    ?? tenants[0]\n    ?? null;
+  const active = tenants.find((t) => t.id === input.tenantId)
+    ?? tenants.find((t) => t.id === GTM_WORKSPACE_TENANT_ID)
+    ?? tenants[0]
+    ?? null;
 
   if (!active) {
     return {
@@ -85,9 +88,9 @@ export async function getWorkspace(
   const allProperties = (properties ?? []) as any[];
   const allLocations = (locations ?? []) as any[];
 
-  // Keep the GTM demo bound to its canonical property/outlet. This prevents
-  // UAT fixture properties under the same tenant ID from replacing or
-  // contaminating the working demo workspace; no database rows are changed.
+  // Preserve the legacy public-demo flow’s fixed property/outlet only for its
+  // old Kilimanjaro tenant. The Grand Wave uses its live property/outlet list
+  // unchanged; no database rows are changed.
   const demoProperties = active.id === DEMO_TENANT_ID
     ? allProperties.filter((p) => p.id === DEMO_PROPERTY_ID)
     : allProperties;
