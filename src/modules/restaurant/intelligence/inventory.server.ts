@@ -62,6 +62,17 @@ export async function getInventoryIntelligence(
     sb.from("restaurant_suppliers").select("id, name").eq("tenant_id", tenantId),
   ]);
 
+  for (const [label, result] of [
+    ["inventory items", itemsRes],
+    ["stock movements", movesRes],
+    ["supplier products", supplierProductsRes],
+    ["suppliers", suppliersRes],
+  ] as const) {
+    if (result.error) {
+      throw new Error(`Inventory intelligence could not load ${label}: ${result.error.message}`);
+    }
+  }
+
   const items = (itemsRes.data ?? []) as any[];
   const moves = (movesRes.data ?? []) as any[];
   const currency = (items[0]?.currency as string) ?? "TZS";
