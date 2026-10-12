@@ -21,11 +21,19 @@ export const Route = createFileRoute("/_authenticated/admin/restaurant/inventory
 function InventoryPage() {
   const ws = useRestaurantWorkspace();
   const tenantId = ws.data?.tenant?.id;
+  const propertyId = ws.data?.activePropertyId;
   const fn = useServerFn(listRestaurantInventoryFn);
   const q = useQuery({
-    queryKey: ["restaurant.inventory", tenantId],
-    queryFn: () => fn({ data: { tenantId: tenantId!, lowOnly: false, limit: 200 } }),
-    enabled: Boolean(tenantId),
+    queryKey: ["restaurant.inventory", tenantId, propertyId],
+    queryFn: () => fn({
+      data: {
+        tenantId: tenantId!,
+        propertyId: propertyId!,
+        lowOnly: false,
+        limit: 200,
+      },
+    }),
+    enabled: Boolean(tenantId && propertyId),
   });
   const rows = q.data ?? [];
 
