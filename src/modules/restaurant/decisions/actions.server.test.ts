@@ -709,6 +709,34 @@ describe("executeRestaurantAction — Act", () => {
     },
   );
 
+  it.each([0, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "refuses to create a procurement request when the estimated cost is invalid (%s)",
+    async (cost) => {
+      const fake = makeFakeSupabase({
+        action: actionRow(),
+        decision: decisionRow({
+          context: {
+            finding: {
+              subject: "x",
+              headline: "x",
+              facts: findingFacts({ estimatedCost: cost, estimatedUnitCost: cost }),
+            },
+          },
+        }),
+        restaurantMembers: OWNER_MEMBER,
+      });
+
+      const result = await executeRestaurantAction(fake.supabase, MANAGER, {
+        actionId: actionRow().id,
+      });
+
+      expect(result.status).toBe("failed");
+      expect(result.failureReason).toMatch(/no valid positive estimated cost/i);
+      expect(fake.getRequestInsertCount()).toBe(0);
+      expect(fake.getLineInsertCount()).toBe(0);
+    },
+  );
+
   it("captures a procurement request insert failure as a failed action, not a fabricated success", async () => {
     const fake = makeFakeSupabase({
       action: actionRow(),
