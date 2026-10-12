@@ -72,7 +72,7 @@ jobs:
         if: steps.lint.outcome == 'failure'
         run: echo "::warning::Changed-source lint has existing formatting debt; scoped functional test and build gates remain blocking."
 
-      - name: Scoped GTM functional tests
+      - name: Scoped GTM and inventory-integrity functional tests
         run: |
           bunx vitest run \
             src/modules/restaurant/core/members.server.test.ts \
@@ -81,7 +81,11 @@ jobs:
             src/modules/restaurant/payments/mobilemoney/mobilemoney.server.test.ts \
             src/modules/restaurant/payments/mobilemoney/mobilemoney.property-scope.test.ts \
             src/modules/restaurant/payments/mobilemoney/providers/payinAdapter.server.test.ts \
-            src/modules/restaurant/receipts/delivery.server.test.ts
+            src/modules/restaurant/receipts/delivery.server.test.ts \
+            src/modules/restaurant/decisions/actions.server.test.ts \
+            src/modules/restaurant/intelligence/inventory.server.test.ts \
+            src/modules/restaurant/intelligence/purchasing.server.test.ts \
+            src/modules/restaurant/inventory/positions.server.test.ts
 
       - name: Full test suite (repository baseline)
         id: full_tests
