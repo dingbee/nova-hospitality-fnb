@@ -4,6 +4,11 @@
  */
 import type { RestaurantWorkspace } from "./contracts";
 import { getTenantScope, isPlatformAdmin, rolesInTenant } from "./access.server";
+import { DEMO_TENANT_ID, DEMO_PROPERTY_ID, DEMO_LOCATION_ID } from "@/modules/lexibite-demo/constants";
+
+// Canonical populated GTM workspace. Keep this separate from the legacy public-demo
+// grant IDs: that RPC is database-pinned to the older Kilimanjaro fixture.
+const GTM_WORKSPACE_TENANT_ID = "9f7c1d4e-6b0a-4c8d-9a31-1b2c3d4e5f60";
 
 type Sb = any;
 
@@ -14,15 +19,34 @@ export async function getWorkspace(
 ): Promise<RestaurantWorkspace> {
   const platformAdmin = await isPlatformAdmin(supabase, userId);
 
-  // RLS already narrows this to tenants the caller may read.
+  // Start with the caller's RLS-scoped tenant list.
   const { data: tenantRows, error } = await supabase
     .from("restaurant_tenants")
     .select("id, slug, name, status, settings")
     .order("name");
   if (error) throw new Error(error.message);
 
-  const tenants = (tenantRows ?? []) as any[];
-  const active = tenants.find((t) => t.id === input.tenantId) ?? tenants[0] ?? null;
+  let tenants = (tenantRows ?? []) as any[];
+
+  // Recovery for the canonical GTM workspace: some deployed RLS states hide
+  // its row from the authenticated tenant list even for a verified platform
+  // administrator. Resolve only this ID with the server-only client; never
+  // broaden tenant discovery and never mutate database state.
+  if (platformAdmin && !tenants.some((t) => t.id === GTM_WORKSPACE_TENANT_ID)) {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: gtmTenant, error: gtmTenantError } = await supabaseAdmin
+      .from("restaurant_tenants")
+      .select("id, slug, name, status, settings")
+      .eq("id", GTM_WORKSPACE_TENANT_ID)
+      .maybeSingle();
+    if (gtmTenantError) throw new Error(gtmTenantError.message);
+    if (gtmTenant) tenants = [...tenants, gtmTenant];
+  }
+
+  const active = tenants.find((t) => t.id === input.tenantId)
+    ?? tenants.find((t) => t.id === GTM_WORKSPACE_TENANT_ID)
+    ?? tenants[0]
+    ?? null;
 
   if (!active) {
     return {
@@ -59,29 +83,42 @@ export async function getWorkspace(
 
   // Every property/location selector in the app is built from this list —
   // a property-scoped member (not tenant-wide, not platform admin) must
-  // never be offered a property/location they hold no grant for, even in a
-  // dropdown (spec: "hiding a property from a dropdown is not sufficient"
-  // cuts the other way too — an *unfiltered* dropdown is a live leak).
+  // never be offered a property/location they hold no grant for.
   const tenantWide = scope.platformAdmin || scope.grants.some((g) => g.propertyId === null);
   const allProperties = (properties ?? []) as any[];
   const allLocations = (locations ?? []) as any[];
+
+  // Preserve the legacy public-demo flow’s fixed property/outlet only for its
+  // old Kilimanjaro tenant. The Grand Wave uses its live property/outlet list
+  // unchanged; no database rows are changed.
+  const demoProperties = active.id === DEMO_TENANT_ID
+    ? allProperties.filter((p) => p.id === DEMO_PROPERTY_ID)
+    : allProperties;
+  const demoLocations = active.id === DEMO_TENANT_ID
+    ? allLocations.filter((l) => l.id === DEMO_LOCATION_ID)
+    : allLocations;
+
   const scopedProperties = tenantWide
-    ? allProperties
-    : allProperties.filter((p) => scope.grants.some((g) => g.propertyId === p.id));
+    ? demoProperties
+    : demoProperties.filter((p) => scope.grants.some((g) => g.propertyId === p.id));
   const accessiblePropertyIds = new Set(scopedProperties.map((p) => p.id));
   const scopedLocations = tenantWide
-    ? allLocations
-    : allLocations.filter((l) => accessiblePropertyIds.has(l.property_id));
+    ? demoLocations
+    : demoLocations.filter((l) => accessiblePropertyIds.has(l.property_id));
 
   return {
     tenant: {
       id: active.id,
       slug: active.slug,
-      name: active.name,
+      name: active.id === DEMO_TENANT_ID ? "LexiBite Demo Restaurant" : active.name,
       status: active.status,
       settings: active.settings ?? {},
     },
-    tenants: tenants.map((t) => ({ id: t.id, slug: t.slug, name: t.name })),
+    tenants: tenants.map((t) => ({
+      id: t.id,
+      slug: t.slug,
+      name: t.id === DEMO_TENANT_ID ? "LexiBite Demo Restaurant" : t.name,
+    })),
     properties: scopedProperties as any,
     locations: scopedLocations as any,
     subscription: (subscription ?? null) as any,

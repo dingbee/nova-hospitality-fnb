@@ -106,12 +106,12 @@ export function StaffPanel() {
   const setPin = useAdminMutation({
     mutationFn: (vars: { memberId: string; pin: string }) =>
       setPinFn({ data: { tenantId: tenantId!, memberId: vars.memberId, pin: vars.pin } }),
-    successMessage: "POS PIN saved.",
+    successMessage: "Staff access PIN saved.",
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["restaurant.members", tenantId] }),
   });
   const clearPin = useAdminMutation({
     mutationFn: (memberId: string) => clearPinFn({ data: { tenantId: tenantId!, memberId } }),
-    successMessage: "POS PIN cleared.",
+    successMessage: "Access PIN cleared.",
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["restaurant.members", tenantId] }),
   });
 
@@ -142,7 +142,7 @@ export function StaffPanel() {
         title="Staff & roles"
         description="Who has access, and what they can do. Add staff before you need shift coverage."
       />
-      <SectionCard title="Team" description="Manage staff roles, station access, and POS PINs. A POS PIN is separate from an account password.">
+      <SectionCard title="Team" description="Manage staff roles, property scope, station access, and personal access PINs. Managers need a PIN to unlock their management workspace; owners do not.">
         {members.isLoading ? (
           <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" /> Loading…
@@ -168,7 +168,7 @@ export function StaffPanel() {
                     Stations
                   </th>
                   <th scope="col" className="py-2 pr-4 text-right">
-                    POS PIN
+                    Access PIN
                   </th>
                   <th scope="col" className="py-2 pr-4 text-right">
                     <span className="sr-only">Actions</span>
@@ -272,7 +272,7 @@ export function StaffPanel() {
                       </td>
                       <td className="py-3 pr-4 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {!["owner", "general_manager", "restaurant_manager"].includes(m.role) && <>
+                          {!["owner", "api_service"].includes(m.role) && <>
                           <span className="text-xs text-muted-foreground">{m.pos_pin_enabled ? "Set" : "Not set"}</span>
                           <Button
                             size="sm"
@@ -280,7 +280,7 @@ export function StaffPanel() {
                             className="min-h-9"
                             disabled={setPin.isPending || clearPin.isPending}
                             onClick={() => {
-                              const pin = window.prompt(m.pos_pin_enabled ? "Enter a new 4–6 digit POS PIN" : "Enter a 4–6 digit POS PIN");
+                              const pin = window.prompt(m.pos_pin_enabled ? "Enter a new 4–6 digit access PIN" : "Enter a 4–6 digit access PIN");
                               if (pin === null) return;
                               if (!/^\d{4,6}$/.test(pin)) { window.alert("PIN must contain 4 to 6 digits."); return; }
                               setPin.mutate({ memberId: m.id, pin });

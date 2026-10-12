@@ -40,7 +40,7 @@ export async function startPosSession(
   sb: Sb,
   userId: string,
   input: { tenantId: string; propertyId: string; pin: string; terminalId?: string },
-): Promise<PosStaffSession> {
+): Promise<any> {
   const { data, error } = await sb.rpc("restaurant_start_pos_session_by_pin", {
     p_tenant_id: input.tenantId,
     p_property_id: input.propertyId,

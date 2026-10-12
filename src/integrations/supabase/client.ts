@@ -45,6 +45,11 @@ function createSupabaseClient() {
     throw new Error(message);
   }
 
+  // Staff-session proof is deliberately HttpOnly. Never try to read it from
+  // document.cookie or attach it from browser JavaScript: that path can never
+  // work for an HttpOnly cookie and would invite weakening the cookie policy.
+  // Protected server functions forward the proof from the incoming cookie to
+  // Postgres as x-lexibite-staff-session in auth-middleware.ts.
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: {
       storage: typeof window !== 'undefined' ? localStorage : undefined,
@@ -64,4 +69,3 @@ export const supabase = new Proxy({} as ReturnType<typeof createSupabaseClient>,
     return Reflect.get(_supabase, prop, receiver);
   },
 });
-
