@@ -41,7 +41,7 @@ export async function getPurchasingIntelligence(
 
   let itemsQuery = sb
     .from("restaurant_inventory_items")
-    .select("id, name, current_quantity, average_cost, currency")
+    .select("id, name, current_quantity, reorder_point, par_level, average_cost, currency, status")
     .eq("tenant_id", tenantId);
   if (input.propertyId) itemsQuery = itemsQuery.eq("property_id", input.propertyId);
   if (input.locationId) itemsQuery = itemsQuery.eq("location_id", input.locationId);
@@ -67,10 +67,14 @@ export async function getPurchasingIntelligence(
       .eq("tenant_id", tenantId),
     sb
       .from("restaurant_purchase_orders")
-      .select("id, supplier_id, status, order_date, expected_at, received_at, total")
-      .eq("tenant_id", tenantId),
+      .select("id, supplier_id, status, order_date, expected_at, received_at, total, property_id, location_id")
+      .eq("tenant_id", tenantId)
+      .in("status", ["submitted", "approved", "partially_received"]),
   ]);
 
+  for (const [label, result] of [["inventory items", itemsRes], ["stock movements", movesRes], ["supplier products", productsRes], ["suppliers", suppliersRes], ["purchase orders", poRes]] as const) {
+    if (result.error) throw new Error(`Purchasing intelligence could not load ${label}: ${result.error.message}`);
+  }
   const items = (itemsRes.data ?? []) as any[];
   const moves = (movesRes.data ?? []) as any[];
   const currency = (items[0]?.currency as string) ?? "TZS";
@@ -97,29 +101,54 @@ export async function getPurchasingIntelligence(
     );
   }
 
+  const orders = (poRes.data ?? []) as any[];
+  const openOrderIds = orders.map((o) => o.id).filter(Boolean);
+  const incomingByItem = new Map<string, number>();
+  if (openOrderIds.length > 0) {
+    const { data: openLines, error: openLinesError } = await sb
+      .from("restaurant_purchase_order_items")
+      .select("purchase_order_id, inventory_item_id, quantity, received_quantity")
+      .eq("tenant_id", tenantId)
+      .in("purchase_order_id", openOrderIds);
+    if (openLinesError) throw new Error(`Purchasing intelligence could not load inbound purchase-order lines: ${openLinesError.message}`);
+    for (const line of (openLines ?? []) as any[]) {
+      if (!line.inventory_item_id) continue;
+      const order = orders.find((o) => o.id === line.purchase_order_id);
+      if (!order) continue;
+      if (input.propertyId && order.property_id && order.property_id !== input.propertyId) continue;
+      if (input.locationId && order.location_id && order.location_id !== input.locationId) continue;
+      const outstanding = Math.max(0, Number(line.quantity ?? 0) - Number(line.received_quantity ?? 0));
+      if (outstanding > 0) incomingByItem.set(line.inventory_item_id, (incomingByItem.get(line.inventory_item_id) ?? 0) + outstanding);
+    }
+  }
+
   const suggestions: PurchaseSuggestion[] = [];
   let expectedMonthlySpend = 0;
   for (const it of items) {
     const velocity = round((consumed.get(it.id) ?? 0) / windowDays, 3);
-    if (velocity <= 0) continue;
+    const currentQuantity = Number(it.current_quantity ?? 0);
+    const incoming = incomingByItem.get(it.id) ?? 0;
+    const target = it.par_level == null ? (it.reorder_point == null ? null : Number(it.reorder_point)) : Number(it.par_level);
+    const belowReorder = it.reorder_point != null && currentQuantity + incoming <= Number(it.reorder_point);
+    // No consumption history is not evidence that a zero-stock item is healthy.
+    // Use an explicitly configured par/reorder target when available; never invent demand when both are absent.
+    if (velocity <= 0 && !belowReorder && !(currentQuantity + incoming <= 0)) continue;
+    if (velocity <= 0 && target == null) continue;
     const product = bestProduct.get(it.id);
     const supplier = product ? supplierById.get(product.supplier_id) : null;
     const leadTime =
       Number(product?.lead_time_days ?? supplier?.lead_time_days ?? DEFAULT_LEAD_TIME) ||
       DEFAULT_LEAD_TIME;
     const unitPrice = Number(product?.unit_price ?? it.average_cost ?? 0);
-    const qty = recommendedPurchaseQuantity(
-      Number(it.current_quantity ?? 0),
-      velocity,
-      leadTime,
-      COVER_DAYS,
-    );
+    const qty = velocity > 0
+      ? recommendedPurchaseQuantity(currentQuantity + incoming, velocity, leadTime, COVER_DAYS)
+      : Math.max(0, Math.ceil(Number(target ?? 0) - currentQuantity - incoming));
     expectedMonthlySpend += velocity * 30 * unitPrice;
     if (qty <= 0) continue;
     suggestions.push({
       inventoryItemId: it.id,
       name: it.name,
-      currentQuantity: round(Number(it.current_quantity ?? 0), 2),
+      currentQuantity: round(currentQuantity, 2),
       dailyVelocity: velocity,
       leadTimeDays: leadTime,
       coverDays: COVER_DAYS,
@@ -131,7 +160,6 @@ export async function getPurchasingIntelligence(
   }
   suggestions.sort((a, b) => b.estimatedCost - a.estimatedCost);
 
-  const orders = (poRes.data ?? []) as any[];
   const ranking: SupplierReliability[] = suppliers.map((s) => {
     const own = orders.filter((o) => o.supplier_id === s.id && o.received_at);
     const onTime = own.filter(
