@@ -667,13 +667,13 @@ export async function flagBeverageVariance(sb: Sb, userId: string, input: FlagVa
 
 export async function compOrderItem(sb: Sb, userId: string, input: CompDrinkInput) {
   await assertCapability(sb, userId, input.tenantId, "sales.discount");
-  const { data: existing } = await sb
+  const { data: existing, error: readError } = await sb
     .from("restaurant_order_items")
     .select("id, order_id, description, line_total, currency, status, is_comp")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.orderItemId)
     .single();
-  if (!existing) throw new Error("Order line not found in this tenant.");
+  if (readError || !existing) throw new Error(readError?.message ?? "Order line not found in this tenant.");
   if (existing.status === "voided" || existing.status === "void") {
     throw new Error("A voided line cannot be comped — void, comp and refund are different events.");
   }
@@ -681,20 +681,54 @@ export async function compOrderItem(sb: Sb, userId: string, input: CompDrinkInpu
     return { id: existing.id, isComp: Boolean(existing.is_comp), unchanged: true };
   }
 
+  if (input.comp) {
+    // Sales-line financial fields are protected by restaurant_giveaway_guard.
+    // Use the canonical, role-checked giveaway RPC so the grant, line reduction,
+    // audit row and order totals are committed together.
+    const { error } = await sb.rpc("restaurant_request_giveaway", {
+      _tenant_id: input.tenantId,
+      _order_id: existing.order_id,
+      _order_item_id: existing.id,
+      _kind: "comp",
+      _rule_id: null,
+      _basis: "fixed",
+      _value: 0,
+      _reason: input.reason.trim(),
+      _request_key: `bar-comp:${existing.id}:${Date.now()}`,
+    });
+    if (error) throw new Error(error.message);
+  } else {
+    const { data: grants, error: grantsError } = await sb
+      .from("restaurant_discount_applications")
+      .select("id")
+      .eq("tenant_id", input.tenantId)
+      .eq("order_id", existing.order_id)
+      .eq("order_item_id", existing.id)
+      .eq("kind", "comp")
+      .eq("status", "approved")
+      .not("applied_at", "is", null)
+      .is("reverses_id", null)
+      .order("applied_at", { ascending: false })
+      .limit(1);
+    if (grantsError) throw new Error(grantsError.message);
+    const grant = grants?.[0];
+    if (!grant) throw new Error("No applied comp grant was found to reverse.");
+    const { error } = await sb.rpc("restaurant_reverse_giveaway", {
+      _tenant_id: input.tenantId,
+      _application_id: grant.id,
+      _reason: input.reason.trim() || "Comp reversed",
+      _request_key: `bar-comp-reverse:${grant.id}:${Date.now()}`,
+    });
+    if (error) throw new Error(error.message);
+  }
+
   const { data, error } = await sb
     .from("restaurant_order_items")
-    .update({
-      is_comp: input.comp,
-      comp_reason: input.comp ? input.reason : null,
-      comp_by: input.comp ? userId : null,
-      comp_at: input.comp ? new Date().toISOString() : null,
-      updated_at: new Date().toISOString(),
-    })
+    .select("id, order_id, description, line_total, currency, is_comp")
     .eq("id", input.orderItemId)
     .eq("tenant_id", input.tenantId)
-    .select("id, order_id, description, line_total, currency, is_comp")
     .single();
-  if (error) throw new Error(error.message);
+  if (error || !data) throw new Error(error?.message ?? "Comp result could not be verified.");
 
   await emitRestaurantEvent(sb, userId, {
     type: "bar.drink.comped",
@@ -705,13 +739,13 @@ export async function compOrderItem(sb: Sb, userId: string, input: CompDrinkInpu
     payload: {
       order_id: data.order_id,
       description: data.description,
-      value: Number(data.line_total ?? 0),
+      value: Number(existing.line_total ?? 0),
       currency: data.currency ?? "TZS",
-      comp: input.comp,
+      comp: Boolean(data.is_comp),
       reason: input.reason,
     },
   });
-  // The drink was made: stock consumption stands. A comp is a revenue event,
-  // never a stock reversal.
+  // The drink was made: stock consumption stands. A comp changes revenue,
+  // never the inventory-consumption ledger.
   return { id: data.id, isComp: Boolean(data.is_comp), unchanged: false };
 }
