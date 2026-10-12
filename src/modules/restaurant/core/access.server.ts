@@ -36,9 +36,15 @@ export interface ResourceScope {
 }
 
 export async function isPlatformAdmin(supabase: Sb, userId: string): Promise<boolean> {
+  // The deployed schema exposes the scoped five-argument signature. Passing
+  // explicit NULL scopes preserves the intended global platform-admin check
+  // without requiring a database migration or the removed two-argument overload.
   const { data, error } = await supabase.rpc("has_any_role", {
     _user_id: userId,
     _roles: ["owner", "admin", "manager"],
+    _tenant_id: null,
+    _property_id: null,
+    _outlet_id: null,
   });
   if (error) return false;
   return Boolean(data);
