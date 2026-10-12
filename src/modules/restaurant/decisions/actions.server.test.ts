@@ -22,6 +22,7 @@ const DECISION_ID = "55555555-5555-5555-5555-555555555555";
 const INVENTORY_ITEM_ID = "66666666-6666-6666-6666-666666666666";
 const SUPPLIER_ID = "77777777-7777-7777-7777-777777777777";
 const OTHER_ITEM_ID = "99999999-9999-9999-9999-999999999999";
+// Verification fixtures explicitly carry supplier_id because the verifier checks supplier identity.
 
 function findingFacts(overrides: Partial<Record<string, unknown>> = {}) {
   return {
