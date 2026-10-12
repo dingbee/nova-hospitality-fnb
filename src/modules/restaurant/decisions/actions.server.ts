@@ -1553,6 +1553,8 @@ async function verifyProcurementDraft(
     typeof facts.recommendedQuantity === "number" ? facts.recommendedQuantity : undefined;
   const expectedItemId =
     typeof facts.inventoryItemId === "string" ? facts.inventoryItemId : undefined;
+  const expectedSupplierId =
+    typeof facts.supplierId === "string" ? facts.supplierId : undefined;
 
   const expectedRequestId = action.result?.procurement_request_id as string | undefined;
   if (!expectedRequestId) {
@@ -1599,21 +1601,46 @@ async function verifyProcurementDraft(
 
   const { data: items, error: itemsErr } = await sb
     .from("restaurant_purchase_request_items")
-    .select("id, inventory_item_id, quantity")
+    .select("id, inventory_item_id, preferred_supplier_id, quantity")
     .eq("purchase_request_id", request.id);
   if (itemsErr) throw new Error(itemsErr.message);
-  const rows = (items ?? []) as Array<{ inventory_item_id: string | null; quantity: number }>;
-  const matchingItem = expectedItemId
-    ? rows.find((r) => r.inventory_item_id === expectedItemId)
-    : rows[0];
+  const rows = (items ?? []) as Array<{
+    inventory_item_id: string | null;
+    preferred_supplier_id?: string | null;
+    quantity: number;
+  }>;
 
-  if (!matchingItem) {
+  if (rows.length !== 1) {
+    return {
+      verified: false,
+      outcome: rows.length === 0 ? "item_missing" : "unexpected_line_count",
+      entityType: "purchase_request",
+      entityId: request.id,
+      reason: `Expected exactly one procurement line for this inventory action; found ${rows.length}.`,
+    };
+  }
+
+  const matchingItem = rows[0];
+  if (expectedItemId && matchingItem.inventory_item_id !== expectedItemId) {
     return {
       verified: false,
       outcome: "item_missing",
       entityType: "purchase_request",
       entityId: request.id,
       reason: `Expected inventory item ${expectedItemId ?? "(unknown)"} was not found on the purchase request.`,
+    };
+  }
+
+  if (
+    expectedSupplierId &&
+    matchingItem.preferred_supplier_id !== expectedSupplierId
+  ) {
+    return {
+      verified: false,
+      outcome: "supplier_mismatch",
+      entityType: "purchase_request",
+      entityId: request.id,
+      reason: `Expected supplier ${expectedSupplierId}, found ${matchingItem.preferred_supplier_id ?? "(none)"}.`,
     };
   }
 
