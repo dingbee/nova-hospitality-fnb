@@ -79,7 +79,7 @@ describe("Purchasing Intelligence — inventory-to-procurement regression", () =
   });
 
   it(
-    "never selects an inactive supplier even when its active product is cheaper",
+    "never selects an inactive supplier or a non-positive price when an active valid option exists",
     async () => {
       const result = await getPurchasingIntelligence(
         fakeSupabase({
@@ -95,6 +95,13 @@ describe("Purchasing Intelligence — inventory-to-procurement regression", () =
               supplier_id: "inactive-supplier",
               inventory_item_id: ITEM,
               unit_price: 1,
+              lead_time_days: 1,
+              active: true,
+            },
+            {
+              supplier_id: "bad-price-supplier",
+              inventory_item_id: ITEM,
+              unit_price: 0,
               lead_time_days: 1,
               active: true,
             },
@@ -114,6 +121,13 @@ describe("Purchasing Intelligence — inventory-to-procurement regression", () =
               reliability_score: 99,
               status: "inactive",
             },
+            {
+              id: "bad-price-supplier",
+              name: "Invalid Price Supplier",
+              lead_time_days: 1,
+              reliability_score: 99,
+              status: "active",
+            },
           ],
         }) as any,
         USER,
@@ -123,6 +137,7 @@ describe("Purchasing Intelligence — inventory-to-procurement regression", () =
       expect(result.suggestions).toHaveLength(1);
       expect(result.suggestions[0].supplierId).toBe(SUPPLIER);
       expect(result.suggestions[0].supplierName).toBe("Fresh Supplier");
+      expect(result.suggestions[0].estimatedCost).toBeGreaterThan(0);
     },
   );
 
