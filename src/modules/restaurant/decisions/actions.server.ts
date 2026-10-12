@@ -439,6 +439,7 @@ async function runProcurementDraftExecution(
   if (
     typeof inventoryItemId !== "string" ||
     typeof recommendedQuantity !== "number" ||
+    !Number.isFinite(recommendedQuantity) ||
     recommendedQuantity <= 0
   ) {
     return failAction(
