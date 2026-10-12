@@ -200,7 +200,7 @@ export function inventoryFindings(
         return {
           daysOfCover: days,
           belowReorder: row.belowReorder,
-          urgent: days != null ? days <= 2 : row.belowReorder,
+          urgent: row.currentQuantity <= 0 || (days != null ? days <= 2 : row.belowReorder),
           velocity: row.dailyVelocity,
           // Structured identifiers a downstream executor needs to raise a
           // real procurement request line — the same additive shape
