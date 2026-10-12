@@ -698,21 +698,20 @@ export async function compOrderItem(sb: Sb, userId: string, input: CompDrinkInpu
     });
     if (error) throw new Error(error.message);
   } else {
-    const { data: grants, error: grantsError } = await sb
+    const { data: applications, error: grantsError } = await sb
       .from("restaurant_discount_applications")
-      .select("id")
+      .select("id, reverses_id, applied_at")
       .eq("tenant_id", input.tenantId)
       .eq("order_id", existing.order_id)
       .eq("order_item_id", existing.id)
       .eq("kind", "comp")
       .eq("status", "approved")
       .not("applied_at", "is", null)
-      .is("reverses_id", null)
-      .order("applied_at", { ascending: false })
-      .limit(1);
+      .order("applied_at", { ascending: false });
     if (grantsError) throw new Error(grantsError.message);
-    const grant = grants?.[0];
-    if (!grant) throw new Error("No applied comp grant was found to reverse.");
+    const reversedIds = new Set((applications ?? []).map((application: any) => application.reverses_id).filter(Boolean));
+    const grant = (applications ?? []).find((application: any) => !application.reverses_id && !reversedIds.has(application.id));
+    if (!grant) throw new Error("No unreversed comp grant was found to reverse.");
     const { error } = await sb.rpc("restaurant_reverse_giveaway", {
       _tenant_id: input.tenantId,
       _application_id: grant.id,
