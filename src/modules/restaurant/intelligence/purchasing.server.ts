@@ -79,9 +79,13 @@ export async function getPurchasingIntelligence(
   const moves = (movesRes.data ?? []) as any[];
   const currency = (items[0]?.currency as string) ?? "TZS";
   const suppliers = (suppliersRes.data ?? []) as any[];
-  const products = ((productsRes.data ?? []) as any[]).filter((p) => p.active !== false);
-
   const supplierById = new Map(suppliers.map((s) => [s.id, s]));
+  // An active supplier-product row is not enough: never recommend a supplier
+  // that the restaurant has deactivated.
+  const products = ((productsRes.data ?? []) as any[]).filter(
+    (p) => p.active !== false && supplierById.get(p.supplier_id)?.status === "active",
+  );
+
   const bestProduct = new Map<string, any>();
   for (const p of products) {
     if (!p.inventory_item_id) continue;
