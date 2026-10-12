@@ -25,6 +25,20 @@ jobs:
     name: Install / Typecheck / Lint / Test / Build
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lexibite_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d lexibite_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout
@@ -71,6 +85,12 @@ jobs:
       - name: Report lint baseline
         if: steps.lint.outcome == 'failure'
         run: echo "::warning::Changed-source lint has existing formatting debt; scoped functional test and build gates remain blocking."
+
+      - name: Verify service-recovery quantity migration in isolated PostgreSQL
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-service-recovery-affected-quantity-migration.sql
 
       - name: Scoped GTM and changed-path functional tests
         run: |
