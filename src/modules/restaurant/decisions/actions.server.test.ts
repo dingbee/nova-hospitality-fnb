@@ -559,28 +559,36 @@ describe("executeRestaurantAction — Act", () => {
     expect(fake.getAction()?.status).toBe("failed");
   });
 
-  it("protects against concurrent execution — one caller owns the side effect and the other cannot duplicate it", async () => {
-    const fake = makeFakeSupabase({
-      action: actionRow(),
-      decision: decisionRow(),
-      restaurantMembers: OWNER_MEMBER,
-    });
+  it(
+    "protects against concurrent execution — one caller owns the side effect and the other cannot duplicate it",
+    async () => {
+      const fake = makeFakeSupabase({
+        action: actionRow(),
+        decision: decisionRow(),
+        restaurantMembers: OWNER_MEMBER,
+      });
 
-    const results = await Promise.allSettled([
-      executeRestaurantAction(fake.supabase, MANAGER, { actionId: actionRow().id }),
-      executeRestaurantAction(fake.supabase, MANAGER, { actionId: actionRow().id }),
-    ]);
+      const results = await Promise.allSettled([
+        executeRestaurantAction(fake.supabase, MANAGER, { actionId: actionRow().id }),
+        executeRestaurantAction(fake.supabase, MANAGER, { actionId: actionRow().id }),
+      ]);
 
-    const successes = results.filter((r) => r.status === "fulfilled");
-    const failures = results.filter((r) => r.status === "rejected");
-    expect(successes).toHaveLength(1);
-    expect(failures).toHaveLength(1);
-    expect((successes[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof executeRestaurantAction>>>).value.status).toBe("executed");
-    expect((failures[0] as PromiseRejectedResult).reason.message).toMatch(/already in progress|claimed recovery/i);
-    expect(fake.getRequests()).toHaveLength(1);
-    expect(fake.getItems()).toHaveLength(1);
-    expect(fake.getAction()?.status).toBe("executed");
-  });
+      const successes = results.filter((r) => r.status === "fulfilled");
+      const failures = results.filter((r) => r.status === "rejected");
+      expect(successes).toHaveLength(1);
+      expect(failures).toHaveLength(1);
+      expect(
+        (successes[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof executeRestaurantAction>>>)
+          .value.status,
+      ).toBe("executed");
+      expect((failures[0] as PromiseRejectedResult).reason.message).toMatch(
+        /already in progress|claimed recovery/i,
+      );
+      expect(fake.getRequests()).toHaveLength(1);
+      expect(fake.getItems()).toHaveLength(1);
+      expect(fake.getAction()?.status).toBe("executed");
+    },
+  );
 
   it("does not steal a recent executing action from a live worker", async () => {
     const fake = makeFakeSupabase({
@@ -679,7 +687,13 @@ describe("executeRestaurantAction — Act", () => {
       const fake = makeFakeSupabase({
         action: actionRow(),
         decision: decisionRow({
-          context: { finding: { subject: "x", headline: "x", facts: findingFacts({ recommendedQuantity }) } },
+          context: {
+            finding: {
+              subject: "x",
+              headline: "x",
+              facts: findingFacts({ recommendedQuantity }),
+            },
+          },
         }),
         restaurantMembers: OWNER_MEMBER,
       });
@@ -728,7 +742,11 @@ describe("executeRestaurantAction — Act", () => {
     expect(result.status).toBe("failed");
     expect(result.failureReason).toBe("line insert failed");
     expect(fake.getAction()?.status).toBe("failed");
-    expect(fake.calls.some((call) => call.table === "restaurant_procurement_audit" && call.op === "insert")).toBe(true);
+    expect(
+      fake.calls.some(
+        (call) => call.table === "restaurant_procurement_audit" && call.op === "insert",
+      ),
+    ).toBe(true);
   });
 
   it("does not report success when finalizing the action status fails", async () => {
