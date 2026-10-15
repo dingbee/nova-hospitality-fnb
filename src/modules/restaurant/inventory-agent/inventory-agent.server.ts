@@ -30,10 +30,7 @@ import type { RestaurantFinding } from "../decisions/decision.types";
 type Sb = any;
 
 const INVENTORY_ACTION_TYPE = "restaurant.inventory.replenish_review";
-const INVENTORY_FINDING_KINDS = new Set([
-  "inventory_shortage",
-  "purchasing_replenishment",
-]);
+const INVENTORY_FINDING_KINDS = new Set(["inventory_shortage", "purchasing_replenishment"]);
 
 const DECISION_PAGE_SIZE = 500;
 const ACTION_ID_BATCH_SIZE = 100;
@@ -91,11 +88,18 @@ async function fetchActionsForDecisionIds(
   return rows;
 }
 
-async function fetchActionsByIds(sb: Sb, actionIds: string[], columns: string): Promise<any[]> {
+async function fetchActionsByIds(
+  sb: Sb,
+  actionIds: string[],
+  columns: string,
+): Promise<any[]> {
   const rows: any[] = [];
   for (let offset = 0; offset < actionIds.length; offset += ACTION_ID_BATCH_SIZE) {
     const batch = actionIds.slice(offset, offset + ACTION_ID_BATCH_SIZE);
-    const { data, error } = await sb.from("intelligence_actions").select(columns).in("id", batch);
+    const { data, error } = await sb
+      .from("intelligence_actions")
+      .select(columns)
+      .in("id", batch);
     if (error) throw new Error(error.message);
     rows.push(...((data ?? []) as any[]));
   }
@@ -269,12 +273,14 @@ export async function executeApprovedInventoryAgentActions(
     { actionType: INVENTORY_ACTION_TYPE },
   );
 
-  const eligible = (actions as Array<{
-    id: string;
-    decision_id: string;
-    action_type: string;
-    status: string;
-  }>)
+  const eligible = (
+    actions as Array<{
+      id: string;
+      decision_id: string;
+      action_type: string;
+      status: string;
+    }>
+  )
     .filter((row) => row.status === "approved" || row.status === "failed")
     .slice(0, limit);
 
@@ -359,15 +365,22 @@ export async function verifyExecutedInventoryAgentActions(
     { actionType: INVENTORY_ACTION_TYPE, status: "executed", unverifiedOnly: true },
   );
 
-  const eligible = (actions as Array<{
-    id: string;
-    decision_id: string;
-    action_type: string;
-    status: string;
-    created_at?: string;
-    verified_at?: string | null;
-  }>)
-    .filter((row) => row.action_type === INVENTORY_ACTION_TYPE && row.status === "executed" && !row.verified_at)
+  const eligible = (
+    actions as Array<{
+      id: string;
+      decision_id: string;
+      action_type: string;
+      status: string;
+      created_at?: string;
+      verified_at?: string | null;
+    }>
+  )
+    .filter(
+      (row) =>
+        row.action_type === INVENTORY_ACTION_TYPE &&
+        row.status === "executed" &&
+        !row.verified_at,
+    )
     .slice(0, limit);
 
   const outcomes: InventoryAgentVerificationSweepResult["outcomes"] = [];
