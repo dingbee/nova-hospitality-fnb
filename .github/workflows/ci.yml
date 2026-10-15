@@ -111,6 +111,12 @@ jobs:
             src/modules/restaurant/bar/bar.test.ts \
             src/modules/restaurant/bar/ticket-items.test.ts \
             src/modules/restaurant/sales/service-recovery.contracts.test.ts \
+            src/modules/restaurant/inventory-agent/inventory-agent.server.test.ts \
+            src/modules/restaurant/inventory/integrity.test.ts \
+            src/modules/restaurant/inventory/inventory.server.test.ts \
+            src/modules/restaurant/inventory/movements.server.test.ts \
+            src/modules/restaurant/inventory/movements.transferStock.test.ts \
+            src/modules/restaurant/inventory/stocktake.server.test.ts \
             src/modules/restaurant/ui/useRestaurantWorkspace.test.ts
 
       - name: Full test suite (repository baseline)

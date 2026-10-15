@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   runRestaurantDecisionPass: vi.fn(),
@@ -38,8 +38,18 @@ const ACTION = "44444444-4444-4444-8444-444444444444";
 
 function query(result: unknown) {
   const q: any = {};
-  for (const method of ["select", "eq", "in", "order", "limit"]) q[method] = vi.fn(() => q);
-  q.then = (resolve: (value: unknown) => unknown) => Promise.resolve(resolve(result));
+  let pageRange: [number, number] | null = null;
+  let limitValue: number | null = null;
+  for (const method of ["select", "eq", "in", "order"]) q[method] = vi.fn(() => q);
+  q.limit = vi.fn((limit: number) => { limitValue = limit; return q; });
+  q.range = vi.fn((start: number, end: number) => { pageRange = [start, end]; return q; });
+  q.is = vi.fn(() => q);
+  q.then = (resolve: (value: unknown) => unknown) => {
+    const value = typeof result === "function"
+      ? (result as (args: { range: [number, number] | null; limit: number | null }) => unknown)({ range: pageRange, limit: limitValue })
+      : result;
+    return Promise.resolve(resolve(value));
+  };
   return q;
 }
 
@@ -280,6 +290,71 @@ describe("LexiBite Inventory Agent V1", () => {
     expect(result.outcomes[0].verification).toMatchObject({
       verified: true,
       entityType: "purchase_request",
+    });
+  });
+
+  it("paginates beyond the newest 500 decisions so older inventory findings are not silently omitted", async () => {
+    mocks.runRestaurantDecisionPass.mockResolvedValueOnce({
+      findings: 1,
+      decisionsEvaluated: 501,
+      decisionsRecorded: 0,
+      decisionsUpdated: 0,
+      decisionsExpired: 0,
+      plansCreated: 0,
+      headline: "Inventory review",
+    });
+    const recentNonInventory = Array.from({ length: 500 }, (_, index) => ({
+      id: `recent-${index}`,
+      decision_key: `restaurant.tenant.finding.menu.${index}`,
+      status: "proposed",
+      confidence: 0.8,
+      recommended_option_key: "reprice",
+      options: [{ option: { key: "reprice", actionType: "restaurant.menu.reprice_review" } }],
+      context: { finding: { kind: "menu_margin", subject: `Menu item ${index}` } },
+      action_id: null,
+      property_id: null,
+      location_id: null,
+      created_at: "2026-10-15T00:00:00Z",
+      updated_at: "2026-10-15T00:00:00Z",
+    }));
+    const olderInventory = {
+      id: DECISION,
+      decision_key: "restaurant.tenant.finding.inventory.older",
+      status: "proposed",
+      confidence: 0.91,
+      recommended_option_key: "reorder_now",
+      options: [{ option: { key: "reorder_now", actionType: "restaurant.inventory.replenish_review" } }],
+      context: { finding: { kind: "inventory_shortage", subject: "Older stock item", severity: "high", headline: "Below reorder point", facts: { inventoryItemId: "item-old" } } },
+      action_id: null,
+      property_id: null,
+      location_id: null,
+      created_at: "2026-09-01T00:00:00Z",
+      updated_at: "2026-09-01T00:00:00Z",
+    };
+    const allRows = [...recentNonInventory, olderInventory];
+    const sb = sbFor({
+      intelligence_decisions: {
+        data: null,
+        error: null,
+      },
+      intelligence_actions: { data: [], error: null },
+    });
+    (sb.from as any).mockImplementation((table: string) => {
+      if (table === "intelligence_decisions") {
+        return query(({ range, limit }: { range: [number, number] | null; limit: number | null }) => {
+          if (range) return { data: allRows.slice(range[0], range[1] + 1), error: null };
+          return { data: allRows.slice(0, limit ?? allRows.length), error: null };
+        });
+      }
+      return query({ data: [], error: null });
+    });
+
+    const result = await runInventoryAgent(sb, USER, { tenantId: TENANT });
+    expect(result.recommendations).toHaveLength(1);
+    expect(result.recommendations[0]).toMatchObject({
+      decisionId: DECISION,
+      findingKind: "inventory_shortage",
+      subject: "Older stock item",
     });
   });
 
