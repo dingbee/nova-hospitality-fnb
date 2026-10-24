@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect } from "react";
 import appCss from "../styles.css?inline";
 import shellCss from "../components/shell/NovaShell.css?inline";
+import moduleCardNavigationCss from "../components/os/ModuleCardNavigation.css?inline";
 import { Toaster } from "@/components/ui/sonner";
 import { PRODUCT } from "@/config/product";
 import { installGlobalErrorCapture } from "@/lib/observability/client-error-capture";
@@ -91,6 +92,7 @@ export const Route = createRootRoute({
     styles: [
       { children: appCss },
       { children: shellCss },
+      { children: moduleCardNavigationCss },
     ],
     links: [{ rel: "icon", href: "/lexibite-favicon-v2.ico", sizes: "any" }],
   }),
