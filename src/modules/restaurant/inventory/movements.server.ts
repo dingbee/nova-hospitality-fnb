@@ -510,16 +510,46 @@ export async function consumeForOrderItem(
   const rows = ((components ?? []) as any[]).filter((c) => c.inventory_item_id);
   if (rows.length === 0) return 0;
 
-  const { data: inv } = await sb
+  const ids = [...new Set(rows.map((c) => c.inventory_item_id))];
+  const { data: inv, error: invError } = await sb
     .from("restaurant_inventory_items")
     .select(
       "id, name, average_cost, currency, location_id, property_id, unit_id, content_per_stock_unit, content_unit_id",
     )
-    .in(
-      "id",
-      rows.map((c) => c.inventory_item_id),
-    );
+    .eq("tenant_id", args.tenantId)
+    .in("id", ids);
+  if (invError) throw new Error(invError.message);
   const costs = new Map<string, any>(((inv ?? []) as any[]).map((r) => [r.id, r]));
+  if (costs.size !== ids.length) {
+    throw new Error("Sales consumption blocked: one or more inventory items are missing or outside this tenant.");
+  }
+
+  const { data: orderLocation, error: locationError } = args.locationId
+    ? await sb
+        .from("restaurant_locations")
+        .select("id, property_id, scope, is_storage, status")
+        .eq("tenant_id", args.tenantId)
+        .eq("id", args.locationId)
+        .maybeSingle()
+    : { data: null, error: null };
+  if (locationError) throw new Error(locationError.message);
+  if (!args.locationId || !orderLocation) {
+    throw new Error("Sales consumption blocked: a valid tenant-owned POS serving location is required.");
+  }
+  const orderPropertyId = args.propertyId ?? orderLocation.property_id ?? null;
+  if (
+    !orderPropertyId ||
+    orderLocation.scope === "tenant" ||
+    orderLocation.property_id !== orderPropertyId ||
+    orderLocation.status !== "active"
+  ) {
+    throw new Error("Sales consumption blocked: the POS location must be active and scoped to the order property.");
+  }
+  for (const [itemId, info] of costs) {
+    if (!info.property_id || info.property_id !== orderPropertyId) {
+      throw new Error(`Sales consumption blocked: "${info.name ?? itemId}" is not assigned to this property. Transfer stock into property-scoped inventory before sale.`);
+    }
+  }
 
   // average_cost is priced per the item's own stock unit — a recipe
   // component written in a different unit must be converted to stock units
@@ -554,8 +584,8 @@ export async function consumeForOrderItem(
 
     const moved = await insertMovement(sb, userId, {
       tenantId: args.tenantId,
-      propertyId: args.propertyId ?? meta?.property_id ?? null,
-      locationId: args.locationId ?? meta?.location_id ?? null,
+      propertyId: orderPropertyId,
+      locationId: args.locationId,
       inventoryItemId: c.inventory_item_id,
       unitId: meta?.unit_id ?? c.unit_id ?? null,
       movementType: "consumption",
