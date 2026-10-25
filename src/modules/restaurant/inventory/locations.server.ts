@@ -1,9 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase rows are untyped at this boundary. */
 /**
- * Storage locations. There is exactly one location concept in Restaurant OS:
- * a tree under a property. A service outlet (Pool Bar) and a storage room
- * (Cold Room) differ only by `is_storage` and `location_type`, which keeps the
- * ledger's location FK honest instead of splitting stock across two vocabularies.
+ * Inventory locations share one ledger identity, but service outlets and
+ * stock-holding stores are distinct operational domains. Never infer one from
+ * a location's name or type label; use is_storage and explicit scope.
  */
 import { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
@@ -19,21 +18,44 @@ export async function listLocations(sb: Sb, userId: string, input: z.infer<typeo
     .select("id, tenant_id, property_id, scope, parent_id, slug, code, name, location_type, is_storage, status, notes")
     .eq("tenant_id", input.tenantId)
     .order("name");
-  // Property views must include the tenant-level central store as well as locations assigned to the selected property.
+  // Property views include the tenant-level central store plus locations for the selected property.
   if (input.propertyId) q = q.or(`property_id.eq.${input.propertyId},scope.eq.tenant`);
   if (input.storageOnly) q = q.eq("is_storage", true);
   if (!input.includeInactive) q = q.eq("status", "active");
   const { data, error } = await q;
   if (error) throw new Error(error.message);
-  return (data ?? []) as any[];
+
+  const rows = (data ?? []) as any[];
+  const propertyIds = [...new Set(rows.map((l) => l.property_id).filter(Boolean))] as string[];
+  const propertyNames = new Map<string, string>();
+  if (propertyIds.length) {
+    const { data: properties, error: propertyError } = await sb
+      .from("restaurant_properties")
+      .select("id, name")
+      .eq("tenant_id", input.tenantId)
+      .in("id", propertyIds);
+    if (propertyError) throw new Error(propertyError.message);
+    for (const p of (properties ?? []) as any[]) propertyNames.set(p.id, p.name);
+  }
+
+  return rows.map((l) => {
+    const propertyName = l.property_id ? propertyNames.get(l.property_id) ?? "Property" : null;
+    const domainLabel = l.is_storage ? "Storage location" : "Service outlet";
+    const scopeLabel = l.scope === "tenant" ? "Tenant central store" : propertyName ?? "Property";
+    return {
+      ...l,
+      property_name: propertyName,
+      domain_label: domainLabel,
+      display_name: `${l.name} · ${scopeLabel} · ${domainLabel}`,
+    };
+  });
 }
 
 export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocationInput) {
   await assertCapability(sb, userId, input.tenantId, "location.manage");
   if (input.parentId && input.parentId === input.id) throw new Error("A location cannot be its own parent.");
 
-  // Location scope is an identity boundary. Editing a location cannot silently
-  // move it between tenant and property scope or transfer it to another property.
+  // Scope is an identity boundary: editing cannot silently change tenant/property ownership.
   if (input.id) {
     const { data: existing, error: existingError } = await sb
       .from("restaurant_locations")
@@ -50,8 +72,6 @@ export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocati
   }
 
   // A tenant-level central store is optional, storage-only, and has no parent.
-  // It is related to property stores through audited stock transfers, not by
-  // pretending that it belongs to one lodge.
   let property: any = null;
   if (input.scope === "tenant") {
     if (input.propertyId || !input.isStorage || input.parentId) {
@@ -75,7 +95,6 @@ export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocati
     }
   }
 
-  // Property-scoped parents must remain within the same property and domain.
   if (input.parentId) {
     const { data: parent, error: parentError } = await sb
       .from("restaurant_locations")
@@ -128,13 +147,30 @@ export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocati
   return data;
 }
 
-/** Location name lookup used by every inventory read model. */
+/** Location name lookup used by every inventory read model; includes ownership and domain. */
 export async function locationNameMap(sb: Sb, tenantId: string): Promise<Map<string, string>> {
-  const { data } = await sb
+  const { data, error } = await sb
     .from("restaurant_locations")
-    .select("id, name")
+    .select("id, property_id, scope, name, is_storage")
     .eq("tenant_id", tenantId);
-  return new Map(((data ?? []) as any[]).map((l) => [l.id as string, l.name as string]));
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as any[];
+  const propertyIds = [...new Set(rows.map((l) => l.property_id).filter(Boolean))] as string[];
+  const propertyNames = new Map<string, string>();
+  if (propertyIds.length) {
+    const { data: properties, error: propertyError } = await sb
+      .from("restaurant_properties")
+      .select("id, name")
+      .eq("tenant_id", tenantId)
+      .in("id", propertyIds);
+    if (propertyError) throw new Error(propertyError.message);
+    for (const p of (properties ?? []) as any[]) propertyNames.set(p.id, p.name);
+  }
+  return new Map(rows.map((l) => {
+    const owner = l.scope === "tenant" ? "Tenant central store" : propertyNames.get(l.property_id) ?? "Property";
+    const domain = l.is_storage ? "Storage" : "Service outlet";
+    return [l.id as string, `${l.name} · ${owner} · ${domain}`];
+  }));
 }
 
 /** Fail fast when a caller names a location outside its own tenant. */
