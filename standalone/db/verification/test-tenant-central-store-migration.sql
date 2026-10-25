@@ -125,7 +125,7 @@ END $$;
 -- Authorization regression: central-store endpoints require a tenant-wide
 -- membership. Property-only users may transfer to/from their own property,
 -- but may not enumerate central-store transfers by exploiting NULL scope.
-INSERT INTO public.restaurant_members (tenant_id, user_id, property_id, role) VALUES
+INSERT INTO public.restaurant_members (tenant_id, user_id, property_id, role, active) VALUES
  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','10000000-0000-4000-8000-000000000001','restaurant_manager'),
  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','cccccccc-cccc-4ccc-8ccc-cccccccccccc',NULL,'owner'),
  ('dddddddd-dddd-4ddd-8ddd-dddddddddddd','eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',NULL,'owner'),
