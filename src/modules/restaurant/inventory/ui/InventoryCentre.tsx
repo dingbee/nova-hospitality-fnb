@@ -561,7 +561,7 @@ function PositionsTab({ tenantId }: { tenantId: string }) {
             <option value="">All locations</option>
             {((locations.data ?? []) as any[]).map((l) => (
               <option key={l.id} value={l.id}>
-                {l.name}
+                {l.display_name ?? l.name}
               </option>
             ))}
           </select>
