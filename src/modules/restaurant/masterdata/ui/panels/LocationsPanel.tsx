@@ -25,10 +25,11 @@ export function LocationsPanel({
 }) {
   const isStorage = mode === "store";
   const [search, setSearch] = React.useState("");
+  const [selectedPropertyId, setSelectedPropertyId] = React.useState(data.properties[0]?.id ?? "");
   const [open, setOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Location | null>(null);
   const empty = {
-    propertyId: data.properties[0]?.id ?? "",
+    propertyId: selectedPropertyId,
     parentId: "" as string | null,
     name: "",
     slug: "",
@@ -49,15 +50,19 @@ export function LocationsPanel({
     },
   });
 
-  const locations = data.locations.filter((l) => l.is_storage === isStorage && l.name.toLowerCase().includes(search.toLowerCase()));
+  const locations = data.locations.filter(
+    (l) => l.property_id === selectedPropertyId
+      && l.is_storage === isStorage
+      && l.name.toLowerCase().includes(search.toLowerCase()),
+  );
   const propertyOptions = data.properties.map((p) => ({ value: p.id, label: p.name }));
   const parentOptions = data.locations
-    .filter((l) => l.is_storage === isStorage && l.id !== editing?.id)
+    .filter((l) => l.property_id === form.propertyId && l.is_storage === isStorage && l.id !== editing?.id)
     .map((l) => ({ value: l.id, label: l.name }));
 
   function openCreate() {
     setEditing(null);
-    setForm(empty);
+    setForm({ ...empty, propertyId: selectedPropertyId, parentId: null });
     setOpen(true);
   }
   function openEdit(id: string) {
@@ -104,6 +109,22 @@ export function LocationsPanel({
       }
     >
       <div className="space-y-4">
+        <Field label="Property" required>
+          <SearchSelect
+            options={propertyOptions}
+            value={selectedPropertyId}
+            onChange={(value) => {
+              const nextPropertyId = value ?? "";
+              setSelectedPropertyId(nextPropertyId);
+              setEditing(null);
+              setForm({ ...empty, propertyId: nextPropertyId, parentId: null });
+              setOpen(false);
+              setSearch("");
+            }}
+            placeholder="Select property"
+            allowClear={false}
+          />
+        </Field>
         <PanelToolbar search={search} onSearch={setSearch} onCreate={openCreate} createLabel={isStorage ? "New store" : "New outlet"} />
         <PanelList
           items={locations.map((l) => ({
@@ -132,7 +153,7 @@ export function LocationsPanel({
               },
             });
           }}
-          emptyTitle={isStorage ? "No stores yet" : "No outlets yet"}
+          emptyTitle={isStorage ? "No stores for this property yet" : "No outlets for this property yet"}
         />
       </div>
 
@@ -145,7 +166,13 @@ export function LocationsPanel({
         disabled={!form.name || !form.slug || !form.propertyId}
       >
         <Field label="Property" required>
-          <SearchSelect options={propertyOptions} value={form.propertyId} onChange={(v) => setForm((f) => ({ ...f, propertyId: v ?? "" }))} placeholder="Select property" allowClear={false} />
+          <SearchSelect
+            options={propertyOptions}
+            value={form.propertyId}
+            onChange={(value) => setForm((f) => ({ ...f, propertyId: value ?? "", parentId: null }))}
+            placeholder="Select property"
+            allowClear={false}
+          />
         </Field>
         <Field label="Name" required>
           <Input
