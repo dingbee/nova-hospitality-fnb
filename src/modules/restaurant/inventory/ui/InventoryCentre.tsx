@@ -757,7 +757,7 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
             <option value="">From location…</option>
             {((locations.data ?? []) as any[]).map((l) => (
               <option key={l.id} value={l.id}>
-                {l.name}
+                {l.display_name ?? l.name}
               </option>
             ))}
           </select>
@@ -1051,7 +1051,7 @@ function WasteTab({ tenantId }: { tenantId: string }) {
             <option value="">Default location</option>
             {((locations.data ?? []) as any[]).map((l) => (
               <option key={l.id} value={l.id}>
-                {l.name}
+                {l.display_name ?? l.name}
               </option>
             ))}
           </select>
@@ -1298,7 +1298,7 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
             <option value="">Full inventory</option>
             {((locations.data ?? []) as any[]).map((l) => (
               <option key={l.id} value={l.id}>
-                {l.name}
+                {l.display_name ?? l.name}
               </option>
             ))}
           </select>
