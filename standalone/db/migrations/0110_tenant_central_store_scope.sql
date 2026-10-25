@@ -97,3 +97,77 @@ CREATE POLICY "locations write scoped (delete)" ON public.restaurant_locations F
         AND m.role = ANY(ARRAY['owner'::restaurant_role, 'general_manager'::restaurant_role])
     ))
   );
+
+
+-- Central-store endpoints resolve to NULL through restaurant_location_property().
+-- The generic scoped helpers intentionally treat NULL as tenant-wide for legacy
+-- resources, so transfer authorization must distinguish a true tenant-wide
+-- membership from a property-only grant before authorizing either endpoint.
+CREATE OR REPLACE FUNCTION public.restaurant_can_read_transfer(
+  _tenant_id uuid, _source_property_id uuid, _destination_property_id uuid
+)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT auth.uid() IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM public.restaurant_members m
+      WHERE m.tenant_id = _tenant_id AND m.user_id = auth.uid()
+    )
+    AND (
+      (_source_property_id IS NOT NULL
+        AND public.restaurant_can_read_scoped(_tenant_id, _source_property_id))
+      OR
+      (_source_property_id IS NULL
+        AND EXISTS (
+          SELECT 1 FROM public.restaurant_members m
+          WHERE m.tenant_id = _tenant_id AND m.user_id = auth.uid()
+            AND m.property_id IS NULL
+        ))
+      OR
+      (_destination_property_id IS NOT NULL
+        AND public.restaurant_can_read_scoped(_tenant_id, _destination_property_id))
+      OR
+      (_destination_property_id IS NULL
+        AND EXISTS (
+          SELECT 1 FROM public.restaurant_members m
+          WHERE m.tenant_id = _tenant_id AND m.user_id = auth.uid()
+            AND m.property_id IS NULL
+        ))
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.restaurant_can_write_transfer(
+  _tenant_id uuid, _roles public.restaurant_role[],
+  _source_property_id uuid, _destination_property_id uuid
+)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT auth.uid() IS NOT NULL
+    AND (
+      (_source_property_id IS NOT NULL
+        AND public.restaurant_can_write_scoped(_tenant_id, _roles, _source_property_id))
+      OR
+      (_source_property_id IS NULL
+        AND EXISTS (
+          SELECT 1 FROM public.restaurant_members m
+          WHERE m.tenant_id = _tenant_id AND m.user_id = auth.uid()
+            AND m.property_id IS NULL AND m.role = ANY(_roles)
+        ))
+    )
+    AND (
+      (_destination_property_id IS NOT NULL
+        AND public.restaurant_can_write_scoped(_tenant_id, _roles, _destination_property_id))
+      OR
+      (_destination_property_id IS NULL
+        AND EXISTS (
+          SELECT 1 FROM public.restaurant_members m
+          WHERE m.tenant_id = _tenant_id AND m.user_id = auth.uid()
+            AND m.property_id IS NULL AND m.role = ANY(_roles)
+        ))
+    );
+$$;
+
+REVOKE ALL ON FUNCTION public.restaurant_can_read_transfer(uuid, uuid, uuid) FROM anon, public;
+GRANT EXECUTE ON FUNCTION public.restaurant_can_read_transfer(uuid, uuid, uuid) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.restaurant_can_write_transfer(uuid, public.restaurant_role[], uuid, uuid) FROM anon, public;
+GRANT EXECUTE ON FUNCTION public.restaurant_can_write_transfer(uuid, public.restaurant_role[], uuid, uuid) TO authenticated, service_role;
