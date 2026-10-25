@@ -360,15 +360,10 @@ export async function transferStock(sb: Sb, userId: string, input: TransferStock
   if (!source.is_storage || !destination.is_storage) {
     throw new Error("Transfer blocked: stock transfers require storage locations at both ends. Use the issue-to-outlet workflow for service outlets.");
   }
-  if (source.scope === "tenant" || source.property_id == null) {
-    if (item.property_id != null) {
-      // Tenant central stock is shared supply, but must be issued into a
-      // property-scoped stock item before normal property stock is depleted.
-    }
-  } else if (item.property_id !== source.property_id) {
+  if (source.scope !== "tenant" && source.property_id != null && item.property_id !== source.property_id) {
     throw new Error("Transfer blocked: inventory item does not belong to the source property's stock.");
   }
-  if (destination.scope !== "tenant" && destination.property_id !== source.property_id) {
+  if (source.scope !== "tenant" && destination.scope !== "tenant" && destination.property_id !== source.property_id) {
     throw new Error("Transfer blocked: cross-property stock movement must use an approved stock-transfer document.");
   }
   await assertCapability(sb, userId, input.tenantId, "stock.manage", {
