@@ -22,6 +22,20 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT EXISTS (SELECT 1 FROM public.restaurant_members m WHERE m.tenant_id=_tenant AND m.user_id=auth.uid() AND m.role=ANY(_roles) AND (m.property_id IS NULL OR m.property_id=_property))
 $$;
 
+CREATE OR REPLACE FUNCTION public.restaurant_can_read_transfer(_tenant_id uuid, _source_property_id uuid, _destination_property_id uuid)
+RETURNS boolean LANGUAGE sql STABLE AS $
+  SELECT public.restaurant_can_read_scoped(_tenant_id, _source_property_id)
+      OR public.restaurant_can_read_scoped(_tenant_id, _destination_property_id)
+$;
+CREATE OR REPLACE FUNCTION public.restaurant_can_write_transfer(
+  _tenant_id uuid, _roles public.restaurant_role[],
+  _source_property_id uuid, _destination_property_id uuid
+)
+RETURNS boolean LANGUAGE sql STABLE AS $
+  SELECT public.restaurant_can_write_scoped(_tenant_id, _roles, _source_property_id)
+     AND public.restaurant_can_write_scoped(_tenant_id, _roles, _destination_property_id)
+$;
+
 CREATE TABLE public.restaurant_properties (
   id uuid PRIMARY KEY,
   tenant_id uuid NOT NULL,
