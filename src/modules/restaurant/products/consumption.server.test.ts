@@ -184,6 +184,8 @@ describe("consumeForRecipeSale — dedupe-key uniqueness when the same childless
     const fake = makeFakeSupabase();
     const args = {
       tenantId: TENANT,
+      propertyId: PROPERTY,
+      locationId: LOCATION,
       orderId: "order-1",
       orderItemId: "item-1",
       recipeId: BURGER_RECIPE,
