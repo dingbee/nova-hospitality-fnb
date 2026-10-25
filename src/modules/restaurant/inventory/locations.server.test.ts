@@ -117,4 +117,39 @@ describe("upsertLocation property and parent scope", () => {
     );
     expect(fake.writes).toEqual([]);
   });
+
+  it("creates a tenant-level central store without a property or parent", async () => {
+    const fake = fakeSupabase();
+    const result = await upsertLocation(fake.sb, USER, {
+      ...input,
+      propertyId: null,
+      scope: "tenant",
+      parentId: null,
+      isStorage: true,
+      locationType: "store",
+      name: "Group Central Store",
+      slug: "group-central-store",
+    } as any);
+    expect(result.id).toBe("new-location");
+    expect(fake.writes).toHaveLength(1);
+    expect(fake.writes[0].payload).toMatchObject({
+      tenant_id: TENANT,
+      property_id: null,
+      scope: "tenant",
+      parent_id: null,
+      is_storage: true,
+    });
+  });
+
+  it("rejects tenant-level central stores with property or parent assignments", async () => {
+    const fake = fakeSupabase();
+    await expect(upsertLocation(fake.sb, USER, {
+      ...input,
+      scope: "tenant",
+      propertyId: PROPERTY,
+      parentId: null,
+      isStorage: true,
+    } as any)).rejects.toThrow("A tenant central store must be storage-only, tenant-scoped, and have no parent.");
+    expect(fake.writes).toEqual([]);
+  });
 });
