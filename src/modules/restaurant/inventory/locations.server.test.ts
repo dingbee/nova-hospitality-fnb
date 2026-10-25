@@ -68,7 +68,16 @@ function fakeSupabase(options: {
       },
       single: async () => {
         writes.push({ table, operation, payload });
-        return {\n          data: {\n            id: "new-location",\n            name: "Test",\n            location_type: "outlet",\n            is_storage: false,\n            status: "active",\n          },\n          error: null,\n        };
+        return {
+          data: {
+            id: "new-location",
+            name: "Test",
+            location_type: "outlet",
+            is_storage: false,
+            status: "active",
+          },
+          error: null,
+        };
       },
     };
     return api;
