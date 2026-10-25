@@ -152,4 +152,17 @@ describe("upsertLocation property and parent scope", () => {
     } as any)).rejects.toThrow("A tenant central store must be storage-only, tenant-scoped, and have no parent.");
     expect(fake.writes).toEqual([]);
   });
+
+  it("prevents editing an existing property location into tenant scope", async () => {
+    const fake = fakeSupabase();
+    await expect(upsertLocation(fake.sb, USER, {
+      ...input,
+      id: PARENT,
+      scope: "tenant",
+      propertyId: null,
+      parentId: null,
+      isStorage: true,
+    } as any)).rejects.toThrow("Location scope and property assignment cannot be changed after creation.");
+    expect(fake.writes).toEqual([]);
+  });
 });
