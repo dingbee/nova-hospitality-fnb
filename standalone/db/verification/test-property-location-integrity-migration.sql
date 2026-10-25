@@ -1,4 +1,4 @@
-\\set ON_ERROR_STOP on
+\set ON_ERROR_STOP on
 BEGIN;
 
 CREATE TABLE public.restaurant_properties (
@@ -27,7 +27,7 @@ INSERT INTO public.restaurant_locations (id, tenant_id, property_id, slug, locat
  ('20000000-0000-4000-8000-000000000001','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','10000000-0000-4000-8000-000000000001','outlet-a','outlet',false),
  ('20000000-0000-4000-8000-000000000002','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','10000000-0000-4000-8000-000000000001','store-a','store',true);
 
-\\i standalone/db/migrations/0109_property_location_integrity.sql
+\i standalone/db/migrations/0109_property_location_integrity.sql
 
 DO $$
 BEGIN
