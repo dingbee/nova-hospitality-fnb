@@ -341,9 +341,43 @@ export async function transferStock(sb: Sb, userId: string, input: TransferStock
     input.locationId ?? item.location_id,
     input.destinationLocationId,
   );
+  const sourceLocationId = input.locationId ?? item.location_id;
+  const { data: endpoints, error: endpointsError } = await sb
+    .from("restaurant_locations")
+    .select("id, property_id, scope, is_storage, status")
+    .eq("tenant_id", input.tenantId)
+    .in("id", [sourceLocationId, input.destinationLocationId]);
+  if (endpointsError) throw new Error(endpointsError.message);
+  const endpointById = new Map(((endpoints ?? []) as any[]).map((l) => [l.id, l]));
+  const source = endpointById.get(sourceLocationId);
+  const destination = endpointById.get(input.destinationLocationId);
+  if (!source || !destination || endpointById.size !== new Set([sourceLocationId, input.destinationLocationId]).size) {
+    throw new Error("Transfer blocked: source and destination must both belong to this tenant.");
+  }
+  if (source.status !== "active" || destination.status !== "active") {
+    throw new Error("Transfer blocked: inactive locations cannot move stock.");
+  }
+  if (!source.is_storage || !destination.is_storage) {
+    throw new Error("Transfer blocked: stock transfers require storage locations at both ends. Use the issue-to-outlet workflow for service outlets.");
+  }
+  if (source.scope === "tenant" || source.property_id == null) {
+    if (item.property_id != null) {
+      // Tenant central stock is shared supply, but must be issued into a
+      // property-scoped stock item before normal property stock is depleted.
+    }
+  } else if (item.property_id !== source.property_id) {
+    throw new Error("Transfer blocked: inventory item does not belong to the source property's stock.");
+  }
+  if (destination.scope !== "tenant" && destination.property_id !== source.property_id) {
+    throw new Error("Transfer blocked: cross-property stock movement must use an approved stock-transfer document.");
+  }
   await assertCapability(sb, userId, input.tenantId, "stock.manage", {
     propertyId: input.propertyId ?? item.property_id,
-    locationId: input.locationId ?? item.location_id,
+    locationId: sourceLocationId,
+  });
+  await assertCapability(sb, userId, input.tenantId, "stock.manage", {
+    propertyId: destination.property_id ?? null,
+    locationId: input.destinationLocationId,
   });
 
   const unitCost = Number(item.average_cost ?? 0);
