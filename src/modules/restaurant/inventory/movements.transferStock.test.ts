@@ -35,8 +35,8 @@ function makeFakeSupabase(opts: { itemQuantity: number; failInboundOnce?: boolea
     current_quantity: opts.itemQuantity,
   };
   const locations = [
-    { id: SOURCE, name: "Dry store" },
-    { id: DEST, name: "Kitchen" },
+    { id: SOURCE, name: "Dry store", scope: "tenant", property_id: null, is_storage: true, status: "active" },
+    { id: DEST, name: "Kitchen", scope: "tenant", property_id: null, is_storage: true, status: "active" },
   ];
   const movements: any[] = [];
   let seq = 0;
