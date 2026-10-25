@@ -31,6 +31,23 @@ export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocati
   await assertCapability(sb, userId, input.tenantId, "location.manage");
   if (input.parentId && input.parentId === input.id) throw new Error("A location cannot be its own parent.");
 
+  // Location scope is an identity boundary. Editing a location cannot silently
+  // move it between tenant and property scope or transfer it to another property.
+  if (input.id) {
+    const { data: existing, error: existingError } = await sb
+      .from("restaurant_locations")
+      .select("id, property_id, scope")
+      .eq("id", input.id)
+      .eq("tenant_id", input.tenantId)
+      .maybeSingle();
+    if (existingError) throw new Error(existingError.message);
+    if (!existing) throw new Error("Location not found in this tenant.");
+    const existingScope = existing.scope ?? "property";
+    if (existingScope !== input.scope || (existingScope === "property" && existing.property_id !== input.propertyId)) {
+      throw new Error("Location scope and property assignment cannot be changed after creation.");
+    }
+  }
+
   // A tenant-level central store is optional, storage-only, and has no parent.
   // It is related to property stores through audited stock transfers, not by
   // pretending that it belongs to one lodge.
