@@ -42,6 +42,7 @@ CREATE POLICY "locations read scoped" ON public.restaurant_locations FOR SELECT 
       WHERE m.tenant_id = restaurant_locations.tenant_id
         AND m.user_id = auth.uid()
         AND m.property_id IS NULL
+        AND public.restaurant_member_active(auth.uid(), restaurant_locations.tenant_id)
     ))
   );
 
@@ -55,6 +56,7 @@ CREATE POLICY "locations write scoped (insert)" ON public.restaurant_locations F
       WHERE m.tenant_id = restaurant_locations.tenant_id
         AND m.user_id = auth.uid()
         AND m.property_id IS NULL
+        AND public.restaurant_member_active(auth.uid(), restaurant_locations.tenant_id)
         AND m.role = ANY(ARRAY['owner'::restaurant_role, 'general_manager'::restaurant_role])
     ))
   );
@@ -69,6 +71,7 @@ CREATE POLICY "locations write scoped (update)" ON public.restaurant_locations F
       WHERE m.tenant_id = restaurant_locations.tenant_id
         AND m.user_id = auth.uid()
         AND m.property_id IS NULL
+        AND public.restaurant_member_active(auth.uid(), restaurant_locations.tenant_id)
         AND m.role = ANY(ARRAY['owner'::restaurant_role, 'general_manager'::restaurant_role])
     ))
   )
@@ -80,6 +83,7 @@ CREATE POLICY "locations write scoped (update)" ON public.restaurant_locations F
       WHERE m.tenant_id = restaurant_locations.tenant_id
         AND m.user_id = auth.uid()
         AND m.property_id IS NULL
+        AND public.restaurant_member_active(auth.uid(), restaurant_locations.tenant_id)
         AND m.role = ANY(ARRAY['owner'::restaurant_role, 'general_manager'::restaurant_role])
     ))
   );
@@ -94,6 +98,7 @@ CREATE POLICY "locations write scoped (delete)" ON public.restaurant_locations F
       WHERE m.tenant_id = restaurant_locations.tenant_id
         AND m.user_id = auth.uid()
         AND m.property_id IS NULL
+        AND public.restaurant_member_active(auth.uid(), restaurant_locations.tenant_id)
         AND m.role = ANY(ARRAY['owner'::restaurant_role, 'general_manager'::restaurant_role])
     ))
   );
@@ -109,6 +114,7 @@ CREATE OR REPLACE FUNCTION public.restaurant_can_read_transfer(
 RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT auth.uid() IS NOT NULL
+    AND public.restaurant_member_active(auth.uid(), _tenant_id)
     AND EXISTS (
       SELECT 1 FROM public.restaurant_members m
       WHERE m.tenant_id = _tenant_id AND m.user_id = auth.uid()
@@ -122,6 +128,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
           SELECT 1 FROM public.restaurant_members m
           WHERE m.tenant_id = _tenant_id AND m.user_id = auth.uid()
             AND m.property_id IS NULL
+        AND public.restaurant_member_active(auth.uid(), restaurant_locations.tenant_id)
         ))
       OR
       (_destination_property_id IS NOT NULL
@@ -132,6 +139,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
           SELECT 1 FROM public.restaurant_members m
           WHERE m.tenant_id = _tenant_id AND m.user_id = auth.uid()
             AND m.property_id IS NULL
+        AND public.restaurant_member_active(auth.uid(), restaurant_locations.tenant_id)
         ))
     );
 $$;
@@ -143,6 +151,7 @@ CREATE OR REPLACE FUNCTION public.restaurant_can_write_transfer(
 RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT auth.uid() IS NOT NULL
+    AND public.restaurant_member_active(auth.uid(), _tenant_id)
     AND (
       (_source_property_id IS NOT NULL
         AND public.restaurant_can_write_scoped(_tenant_id, _roles, _source_property_id))
