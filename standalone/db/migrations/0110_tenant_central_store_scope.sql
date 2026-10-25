@@ -128,7 +128,6 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
           SELECT 1 FROM public.restaurant_members m
           WHERE m.tenant_id = _tenant_id AND m.user_id = auth.uid()
             AND m.property_id IS NULL
-        AND public.restaurant_member_active(auth.uid(), restaurant_locations.tenant_id)
         ))
       OR
       (_destination_property_id IS NOT NULL
@@ -139,7 +138,6 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
           SELECT 1 FROM public.restaurant_members m
           WHERE m.tenant_id = _tenant_id AND m.user_id = auth.uid()
             AND m.property_id IS NULL
-        AND public.restaurant_member_active(auth.uid(), restaurant_locations.tenant_id)
         ))
     );
 $$;
