@@ -16,7 +16,7 @@ export async function listLocations(sb: Sb, userId: string, input: z.infer<typeo
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_locations")
-    .select("id, tenant_id, property_id, parent_id, slug, code, name, location_type, is_storage, status, notes")
+    .select("id, tenant_id, property_id, scope, parent_id, slug, code, name, location_type, is_storage, status, notes")
     .eq("tenant_id", input.tenantId)
     .order("name");
   if (input.propertyId) q = q.eq("property_id", input.propertyId);
