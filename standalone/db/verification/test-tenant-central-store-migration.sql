@@ -26,7 +26,7 @@ CREATE OR REPLACE FUNCTION public.restaurant_can_read_transfer(_tenant_id uuid, 
 RETURNS boolean LANGUAGE sql STABLE AS $
   SELECT public.restaurant_can_read_scoped(_tenant_id, _source_property_id)
       OR public.restaurant_can_read_scoped(_tenant_id, _destination_property_id)
-$;
+$$;
 CREATE OR REPLACE FUNCTION public.restaurant_can_write_transfer(
   _tenant_id uuid, _roles public.restaurant_role[],
   _source_property_id uuid, _destination_property_id uuid
@@ -34,7 +34,7 @@ CREATE OR REPLACE FUNCTION public.restaurant_can_write_transfer(
 RETURNS boolean LANGUAGE sql STABLE AS $
   SELECT public.restaurant_can_write_scoped(_tenant_id, _roles, _source_property_id)
      AND public.restaurant_can_write_scoped(_tenant_id, _roles, _destination_property_id)
-$;
+$$;
 
 CREATE TABLE public.restaurant_properties (
   id uuid PRIMARY KEY,
@@ -122,7 +122,7 @@ INSERT INTO public.restaurant_members (tenant_id, user_id, property_id, role) VA
  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','cccccccc-cccc-4ccc-8ccc-cccccccccccc',NULL,'owner'),
  ('dddddddd-dddd-4ddd-8ddd-dddddddddddd','eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',NULL,'owner');
 
-DO $
+DO $$
 DECLARE
   v_tenant uuid := 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   v_property uuid := '10000000-0000-4000-8000-000000000001';
