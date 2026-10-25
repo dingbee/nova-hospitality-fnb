@@ -1,6 +1,19 @@
 \set ON_ERROR_STOP on
 BEGIN;
 
+CREATE SCHEMA IF NOT EXISTS auth;
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $ SELECT NULL::uuid $;
+DO $ BEGIN
+  CREATE TYPE public.restaurant_role AS ENUM ('owner','general_manager','restaurant_manager','staff');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $;
+CREATE TABLE public.restaurant_members (
+  tenant_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  property_id uuid,
+  role public.restaurant_role NOT NULL
+);
+
 CREATE TABLE public.restaurant_properties (
   id uuid PRIMARY KEY,
   tenant_id uuid NOT NULL,
