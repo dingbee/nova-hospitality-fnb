@@ -15,12 +15,12 @@ CREATE TABLE public.restaurant_members (
   active boolean NOT NULL DEFAULT true
 );
 CREATE OR REPLACE FUNCTION public.restaurant_member_active(_user_id uuid, _tenant_id uuid)
-RETURNS boolean LANGUAGE sql STABLE AS $
+RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.restaurant_members m
     WHERE m.user_id = _user_id AND m.tenant_id = _tenant_id AND m.active = true
   )
-$;
+$$;
 CREATE OR REPLACE FUNCTION public.restaurant_can_read_scoped(_tenant uuid, _property uuid)
 RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT EXISTS (SELECT 1 FROM public.restaurant_members m WHERE m.tenant_id=_tenant AND m.user_id=auth.uid() AND (m.property_id IS NULL OR m.property_id=_property))
