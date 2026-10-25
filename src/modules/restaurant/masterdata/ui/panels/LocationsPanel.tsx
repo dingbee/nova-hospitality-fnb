@@ -29,7 +29,8 @@ export function LocationsPanel({
   const [open, setOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Location | null>(null);
   const empty = {
-    propertyId: selectedPropertyId,
+    scope: "property" as "property" | "tenant",
+    propertyId: selectedPropertyId as string | null,
     parentId: "" as string | null,
     name: "",
     slug: "",
@@ -51,18 +52,22 @@ export function LocationsPanel({
   });
 
   const locations = data.locations.filter(
-    (l) => l.property_id === selectedPropertyId
+    (l) => (l.scope === "tenant" || l.property_id === selectedPropertyId)
       && l.is_storage === isStorage
       && l.name.toLowerCase().includes(search.toLowerCase()),
   );
   const propertyOptions = data.properties.map((p) => ({ value: p.id, label: p.name }));
+  const scopeOptions = [
+    { value: "property", label: "Property store" },
+    { value: "tenant", label: "Tenant central store" },
+  ];
   const parentOptions = data.locations
-    .filter((l) => l.property_id === form.propertyId && l.is_storage === isStorage && l.id !== editing?.id)
+    .filter((l) => form.scope === "property" && l.scope === "property" && l.property_id === form.propertyId && l.is_storage === isStorage && l.id !== editing?.id)
     .map((l) => ({ value: l.id, label: l.name }));
 
   function openCreate() {
     setEditing(null);
-    setForm({ ...empty, propertyId: selectedPropertyId, parentId: null });
+    setForm({ ...empty, scope: "property", propertyId: selectedPropertyId, parentId: null });
     setOpen(true);
   }
   function openEdit(id: string) {
@@ -70,6 +75,7 @@ export function LocationsPanel({
     if (!l) return;
     setEditing(l);
     setForm({
+      scope: l.scope ?? "property",
       propertyId: l.property_id,
       parentId: l.parent_id ?? null,
       name: l.name,
@@ -86,8 +92,9 @@ export function LocationsPanel({
       data: {
         tenantId,
         id: editing?.id,
-        propertyId: form.propertyId,
-        parentId: form.parentId || null,
+        propertyId: form.scope === "tenant" ? null : form.propertyId,
+        scope: form.scope,
+        parentId: form.scope === "tenant" ? null : form.parentId || null,
         name: form.name,
         slug: form.slug,
         code: form.code || undefined,
@@ -130,7 +137,7 @@ export function LocationsPanel({
           items={locations.map((l) => ({
             id: l.id,
             title: l.name,
-            subtitle: `${l.location_type}${l.code ? ` · ${l.code}` : ""}`,
+            subtitle: `${l.scope === "tenant" ? "Tenant central store" : data.properties.find((p) => p.id === l.property_id)?.name ?? "Property"} · ${l.location_type}${l.code ? ` · ${l.code}` : ""}`,
             active: l.status === "active",
           }))}
           onEdit={openEdit}
@@ -142,6 +149,7 @@ export function LocationsPanel({
                 tenantId,
                 id: l.id,
                 propertyId: l.property_id,
+                scope: l.scope ?? "property",
                 parentId: l.parent_id ?? null,
                 name: l.name,
                 slug: l.slug,
@@ -163,18 +171,36 @@ export function LocationsPanel({
         title={editing ? "Edit location" : isStorage ? "New store" : "New outlet"}
         onSubmit={() => save(editing ? editing.status === "active" : true)}
         pending={mutation.isPending}
-        disabled={!form.name || !form.slug || !form.propertyId}
+        disabled={!form.name || !form.slug || (form.scope === "property" && !form.propertyId) || (form.scope === "tenant" && !isStorage)}
       >
-        <Field label="Property" required>
-          {editing ? (
+        {isStorage && (
+          <Field label="Store scope" required>
+            <SearchSelect
+              options={scopeOptions}
+              value={form.scope}
+              onChange={(value) => setForm((f) => ({
+                ...f,
+                scope: (value === "tenant" ? "tenant" : "property"),
+                propertyId: value === "tenant" ? null : (f.propertyId ?? selectedPropertyId),
+                parentId: null,
+              }))}
+              placeholder="Choose store scope"
+              allowClear={false}
+            />
+          </Field>
+        )}
+        <Field label={form.scope === "tenant" ? "Ownership" : "Property"} required={form.scope !== "tenant"}>
+          {form.scope === "tenant" ? (
+            <p className="rounded-md border px-3 py-2 text-sm">Tenant-level central store — shared across properties by stock transfer</p>
+          ) : editing ? (
             <p className="rounded-md border px-3 py-2 text-sm">
               {data.properties.find((property) => property.id === form.propertyId)?.name ?? "Selected property"}
             </p>
           ) : (
             <SearchSelect
               options={propertyOptions}
-              value={form.propertyId}
-              onChange={(value) => setForm((f) => ({ ...f, propertyId: value ?? "", parentId: null }))}
+              value={form.propertyId ?? ""}
+              onChange={(value) => setForm((f) => ({ ...f, propertyId: value ?? null, parentId: null }))}
               placeholder="Select property"
               allowClear={false}
             />
@@ -202,9 +228,11 @@ export function LocationsPanel({
         <Field label="Type">
           <Input className="h-11" value={form.locationType} onChange={(e) => setForm((f) => ({ ...f, locationType: e.target.value }))} />
         </Field>
-        <Field label="Parent location">
-          <SearchSelect options={parentOptions} value={form.parentId} onChange={(v) => setForm((f) => ({ ...f, parentId: v }))} placeholder="None" />
-        </Field>
+        {form.scope === "property" && (
+          <Field label="Parent location">
+            <SearchSelect options={parentOptions} value={form.parentId} onChange={(v) => setForm((f) => ({ ...f, parentId: v }))} placeholder="None" />
+          </Field>
+        )}
         <Field label="Notes">
           <Textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
         </Field>
