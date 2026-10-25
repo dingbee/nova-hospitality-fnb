@@ -127,10 +127,19 @@ export async function canAccessLocation(
   if (locationId === undefined || locationId === null) return true;
   const { data } = await supabase
     .from("restaurant_locations")
-    .select("property_id")
+    .select("property_id, scope")
     .eq("id", locationId)
+    .eq("tenant_id", scope.tenantId)
     .maybeSingle();
-  return canAccessProperty(scope, data?.property_id ?? null);
+
+  // A tenant-level central store has no property_id, but it is NOT a
+  // tenant-wide authorization bypass. Only an explicit tenant-wide grant
+  // (property_id IS NULL on the membership) may access it.
+  if (!data) return false;
+  if (data.scope === "tenant" || data.property_id == null) {
+    return scope.grants.some((grant) => grant.propertyId === null);
+  }
+  return canAccessProperty(scope, data.property_id);
 }
 
 /**
