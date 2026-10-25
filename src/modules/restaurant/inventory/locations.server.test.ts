@@ -68,7 +68,7 @@ function fakeSupabase(options: {
       },
       single: async () => {
         writes.push({ table, operation, payload });
-        return { data: { id: "new-location", name: "Test", location_type: "outlet", is_storage: false, status: "active" }, error: null };
+        return {\n          data: {\n            id: "new-location",\n            name: "Test",\n            location_type: "outlet",\n            is_storage: false,\n            status: "active",\n          },\n          error: null,\n        };
       },
     };
     return api;
@@ -80,6 +80,7 @@ function fakeSupabase(options: {
 const input = {
   tenantId: TENANT,
   propertyId: PROPERTY,
+  scope: "property" as const,
   parentId: PARENT,
   slug: "terrace",
   name: "Terrace",
