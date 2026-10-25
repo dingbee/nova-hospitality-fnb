@@ -166,13 +166,19 @@ export function LocationsPanel({
         disabled={!form.name || !form.slug || !form.propertyId}
       >
         <Field label="Property" required>
-          <SearchSelect
-            options={propertyOptions}
-            value={form.propertyId}
-            onChange={(value) => setForm((f) => ({ ...f, propertyId: value ?? "", parentId: null }))}
-            placeholder="Select property"
-            allowClear={false}
-          />
+          {editing ? (
+            <p className="rounded-md border px-3 py-2 text-sm">
+              {data.properties.find((property) => property.id === form.propertyId)?.name ?? "Selected property"}
+            </p>
+          ) : (
+            <SearchSelect
+              options={propertyOptions}
+              value={form.propertyId}
+              onChange={(value) => setForm((f) => ({ ...f, propertyId: value ?? "", parentId: null }))}
+              placeholder="Select property"
+              allowClear={false}
+            />
+          )}
         </Field>
         <Field label="Name" required>
           <Input
