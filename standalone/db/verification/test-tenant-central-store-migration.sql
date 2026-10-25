@@ -2,11 +2,11 @@
 BEGIN;
 
 CREATE SCHEMA IF NOT EXISTS auth;
-CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $ SELECT NULL::uuid $;
-DO $ BEGIN
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT NULL::uuid $$;
+DO $$ BEGIN
   CREATE TYPE public.restaurant_role AS ENUM ('owner','general_manager','restaurant_manager','staff');
 EXCEPTION WHEN duplicate_object THEN NULL;
-END $;
+END $$;
 CREATE TABLE public.restaurant_members (
   tenant_id uuid NOT NULL,
   user_id uuid NOT NULL,
@@ -14,9 +14,9 @@ CREATE TABLE public.restaurant_members (
   role public.restaurant_role NOT NULL
 );
 CREATE OR REPLACE FUNCTION public.restaurant_can_read_scoped(uuid, uuid)
-RETURNS boolean LANGUAGE sql STABLE AS $ SELECT false $;
+RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT false $$;
 CREATE OR REPLACE FUNCTION public.restaurant_can_write_scoped(uuid, public.restaurant_role[], uuid)
-RETURNS boolean LANGUAGE sql STABLE AS $ SELECT false $;
+RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT false $$;
 
 CREATE TABLE public.restaurant_properties (
   id uuid PRIMARY KEY,
@@ -51,14 +51,12 @@ INSERT INTO public.restaurant_locations (id, tenant_id, property_id, parent_id, 
 
 DO $$
 BEGIN
-  -- Optional tenant-level central store: no property and no parent.
   INSERT INTO public.restaurant_locations
     (id, tenant_id, property_id, parent_id, slug, name, location_type, is_storage, scope)
   VALUES
     ('20000000-0000-4000-8000-000000000003','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',NULL,NULL,
      'group-central-store','Group Central Store','store',true,'tenant');
 
-  -- Existing property store remains property-scoped.
   IF NOT EXISTS (
     SELECT 1 FROM public.restaurant_locations
     WHERE id='20000000-0000-4000-8000-000000000001'
@@ -66,7 +64,6 @@ BEGIN
       AND scope='property'
   ) THEN RAISE EXCEPTION 'Existing property store scope was not preserved'; END IF;
 
-  -- Tenant-scoped location cannot be an outlet.
   BEGIN
     INSERT INTO public.restaurant_locations
       (id, tenant_id, property_id, slug, name, location_type, is_storage, scope)
@@ -77,7 +74,6 @@ BEGIN
   EXCEPTION WHEN check_violation THEN NULL;
   END;
 
-  -- Tenant-scoped location cannot have a parent.
   BEGIN
     INSERT INTO public.restaurant_locations
       (id, tenant_id, property_id, parent_id, slug, name, location_type, is_storage, scope)
@@ -88,7 +84,6 @@ BEGIN
   EXCEPTION WHEN check_violation THEN NULL;
   END;
 
-  -- At most one tenant-level central store per tenant.
   BEGIN
     INSERT INTO public.restaurant_locations
       (id, tenant_id, property_id, parent_id, slug, name, location_type, is_storage, scope)
