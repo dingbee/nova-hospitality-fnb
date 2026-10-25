@@ -6,7 +6,7 @@ CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SEL
 DO $$ BEGIN
   CREATE TYPE public.restaurant_role AS ENUM ('owner','general_manager','restaurant_manager','staff');
 EXCEPTION WHEN duplicate_object THEN NULL;
-END $$$;
+END $$;
 CREATE TABLE public.restaurant_members (
   tenant_id uuid NOT NULL,
   user_id uuid NOT NULL,
@@ -97,7 +97,7 @@ BEGIN
     RAISE EXCEPTION 'Expected duplicate central store to fail';
   EXCEPTION WHEN unique_violation THEN NULL;
   END;
-END $$$;
+END $$;
 
 
 -- Authorization regression: central-store endpoints require a tenant-wide
