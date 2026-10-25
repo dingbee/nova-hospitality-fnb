@@ -23,7 +23,7 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
 $$;
 
 CREATE OR REPLACE FUNCTION public.restaurant_can_read_transfer(_tenant_id uuid, _source_property_id uuid, _destination_property_id uuid)
-RETURNS boolean LANGUAGE sql STABLE AS $
+RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT public.restaurant_can_read_scoped(_tenant_id, _source_property_id)
       OR public.restaurant_can_read_scoped(_tenant_id, _destination_property_id)
 $$;
@@ -31,7 +31,7 @@ CREATE OR REPLACE FUNCTION public.restaurant_can_write_transfer(
   _tenant_id uuid, _roles public.restaurant_role[],
   _source_property_id uuid, _destination_property_id uuid
 )
-RETURNS boolean LANGUAGE sql STABLE AS $
+RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT public.restaurant_can_write_scoped(_tenant_id, _roles, _source_property_id)
      AND public.restaurant_can_write_scoped(_tenant_id, _roles, _destination_property_id)
 $$;
