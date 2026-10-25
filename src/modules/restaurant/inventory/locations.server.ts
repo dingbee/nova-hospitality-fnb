@@ -31,27 +31,33 @@ export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocati
   await assertCapability(sb, userId, input.tenantId, "location.manage");
   if (input.parentId && input.parentId === input.id) throw new Error("A location cannot be its own parent.");
 
-  // Every write must prove that the selected property belongs to this
-  // tenant. Inactive edits are not an exception to tenant/property integrity.
-  // A pending property may be configured commercially, but cannot receive a
-  // new or newly activated operational location.
-  const { data: property, error: propertyError } = await sb
-    .from("restaurant_properties")
-    .select("id, status")
-    .eq("id", input.propertyId)
-    .eq("tenant_id", input.tenantId)
-    .maybeSingle();
-  if (propertyError) throw new Error(propertyError.message);
-  if (!property) throw new Error("Property not found in this tenant.");
-  if ((!input.id || input.active) && property.status !== "active") {
-    throw new Error(
-      "PROPERTY_NOT_ACTIVE — this property is pending commercial activation. Activate the property before creating or activating an outlet.",
-    );
+  // A tenant-level central store is optional, storage-only, and has no parent.
+  // It is related to property stores through audited stock transfers, not by
+  // pretending that it belongs to one lodge.
+  let property: any = null;
+  if (input.scope === "tenant") {
+    if (input.propertyId || !input.isStorage || input.parentId) {
+      throw new Error("A tenant central store must be storage-only, tenant-scoped, and have no parent.");
+    }
+  } else {
+    if (!input.propertyId) throw new Error("A property is required for a property-scoped location.");
+    const { data, error: propertyError } = await sb
+      .from("restaurant_properties")
+      .select("id, status")
+      .eq("id", input.propertyId)
+      .eq("tenant_id", input.tenantId)
+      .maybeSingle();
+    if (propertyError) throw new Error(propertyError.message);
+    if (!data) throw new Error("Property not found in this tenant.");
+    property = data;
+    if ((!input.id || input.active) && property.status !== "active") {
+      throw new Error(
+        "PROPERTY_NOT_ACTIVE — this property is pending commercial activation. Activate the property before creating or activating an outlet.",
+      );
+    }
   }
 
-  // A parent location is meaningful only within the same property and the
-  // same operational domain (outlet vs store). Reject cross-property and
-  // outlet/store parent references before they can be persisted.
+  // Property-scoped parents must remain within the same property and domain.
   if (input.parentId) {
     const { data: parent, error: parentError } = await sb
       .from("restaurant_locations")
@@ -61,7 +67,7 @@ export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocati
       .maybeSingle();
     if (parentError) throw new Error(parentError.message);
     if (!parent) throw new Error("Parent location not found in this tenant.");
-    if (parent.property_id !== input.propertyId) {
+    if (input.scope !== "property" || parent.property_id !== input.propertyId) {
       throw new Error("Parent location must belong to the same property.");
     }
     if (parent.is_storage !== input.isStorage) {
@@ -71,7 +77,8 @@ export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocati
 
   const row = {
     tenant_id: input.tenantId,
-    property_id: input.propertyId,
+    property_id: input.scope === "tenant" ? null : input.propertyId,
+    scope: input.scope,
     parent_id: input.parentId ?? null,
     slug: input.slug,
     code: input.code ?? null,
@@ -92,7 +99,7 @@ export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocati
     await emitRestaurantEvent(sb, userId, {
       type: "restaurant.inventory.location.created",
       tenantId: input.tenantId,
-      propertyId: input.propertyId,
+      propertyId: input.propertyId ?? undefined,
       locationId: data.id,
       entityType: "restaurant_location",
       entityId: data.id,
