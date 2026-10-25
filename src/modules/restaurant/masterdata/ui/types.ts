@@ -30,7 +30,8 @@ export interface PropertyRow {
 export interface LocationRow {
   id: string;
   tenant_id: string;
-  property_id: string;
+  property_id: string | null;
+  scope: "property" | "tenant";
   parent_id: string | null;
   slug: string;
   code: string | null;
