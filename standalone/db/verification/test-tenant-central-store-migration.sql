@@ -11,8 +11,16 @@ CREATE TABLE public.restaurant_members (
   tenant_id uuid NOT NULL,
   user_id uuid NOT NULL,
   property_id uuid,
-  role public.restaurant_role NOT NULL
+  role public.restaurant_role NOT NULL,
+  active boolean NOT NULL DEFAULT true
 );
+CREATE OR REPLACE FUNCTION public.restaurant_member_active(_user_id uuid, _tenant_id uuid)
+RETURNS boolean LANGUAGE sql STABLE AS $
+  SELECT EXISTS (
+    SELECT 1 FROM public.restaurant_members m
+    WHERE m.user_id = _user_id AND m.tenant_id = _tenant_id AND m.active = true
+  )
+$;
 CREATE OR REPLACE FUNCTION public.restaurant_can_read_scoped(_tenant uuid, _property uuid)
 RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT EXISTS (SELECT 1 FROM public.restaurant_members m WHERE m.tenant_id=_tenant AND m.user_id=auth.uid() AND (m.property_id IS NULL OR m.property_id=_property))
@@ -120,7 +128,8 @@ END $$;
 INSERT INTO public.restaurant_members (tenant_id, user_id, property_id, role) VALUES
  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','10000000-0000-4000-8000-000000000001','restaurant_manager'),
  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','cccccccc-cccc-4ccc-8ccc-cccccccccccc',NULL,'owner'),
- ('dddddddd-dddd-4ddd-8ddd-dddddddddddd','eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',NULL,'owner');
+ ('dddddddd-dddd-4ddd-8ddd-dddddddddddd','eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',NULL,'owner'),
+ ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','ffffffff-ffff-4fff-8fff-ffffffffffff',NULL,'owner',false);
 
 DO $$
 DECLARE
@@ -150,6 +159,14 @@ BEGIN
   PERFORM set_config('request.test_user_id','eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',true);
   IF public.restaurant_can_read_transfer(v_tenant, NULL, NULL) IS NOT FALSE THEN
     RAISE EXCEPTION 'Other tenant member must not read central-only transfer';
+  END IF;
+
+  PERFORM set_config('request.test_user_id','ffffffff-ffff-4fff-8fff-ffffffffffff',true);
+  IF public.restaurant_can_read_transfer(v_tenant, NULL, NULL) IS NOT FALSE THEN
+    RAISE EXCEPTION 'Inactive tenant-wide member must not read central-only transfer';
+  END IF;
+  IF public.restaurant_can_write_transfer(v_tenant, v_roles, NULL, NULL) IS NOT FALSE THEN
+    RAISE EXCEPTION 'Inactive tenant-wide member must not write central-only transfer';
   END IF;
 END $$;
 
