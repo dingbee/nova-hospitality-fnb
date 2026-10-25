@@ -13,6 +13,10 @@ CREATE TABLE public.restaurant_members (
   property_id uuid,
   role public.restaurant_role NOT NULL
 );
+CREATE OR REPLACE FUNCTION public.restaurant_can_read_scoped(uuid, uuid)
+RETURNS boolean LANGUAGE sql STABLE AS $ SELECT false $;
+CREATE OR REPLACE FUNCTION public.restaurant_can_write_scoped(uuid, public.restaurant_role[], uuid)
+RETURNS boolean LANGUAGE sql STABLE AS $ SELECT false $;
 
 CREATE TABLE public.restaurant_properties (
   id uuid PRIMARY KEY,
