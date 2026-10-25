@@ -273,7 +273,7 @@ export function SetupWorkbench() {
           {step === "properties" && <PropertiesPanel tenantId={tenantId} data={data} />}
           {step === "outlets" && <LocationsPanel tenantId={tenantId} data={data} mode="outlet" />}
           {step === "stores" && <LocationsPanel tenantId={tenantId} data={data} mode="store" />}
-          {step === "main-store" && <LocationsPanel tenantId={tenantId} data={data} mode="store" />}
+          {step === "main-store" && <LocationsPanel tenantId={tenantId} data={data} mode="main-store" />}
           {step === "units" && <UnitsPanel tenantId={tenantId} data={data} />}
           {step === "categories" && <CategoriesPanel tenantId={tenantId} data={data} />}
           {step === "items" && <ItemsPanel tenantId={tenantId} data={data} />}
