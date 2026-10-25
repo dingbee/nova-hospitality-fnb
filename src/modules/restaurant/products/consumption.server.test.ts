@@ -72,8 +72,8 @@ function makeFakeSupabase() {
     name: "Tomato Base",
     average_cost: 50,
     currency: "TZS",
-    location_id: null,
-    property_id: null,
+    location_id: LOCATION,
+    property_id: PROPERTY,
     unit_id: null,
     content_per_stock_unit: null,
     content_unit_id: null,
@@ -127,6 +127,9 @@ function makeFakeSupabase() {
         }
         return { data: [tomatoItem], error: null };
       }
+      if (table === "restaurant_locations" && op === "select") {
+        return { data: filters.id === LOCATION ? { id: LOCATION, property_id: PROPERTY, scope: "property", is_storage: true, status: "active" } : null, error: null };
+      }
       if (table === "restaurant_inventory_units" && op === "select") {
         return { data: [], error: null };
       }
@@ -157,6 +160,8 @@ describe("consumeForRecipeSale — dedupe-key uniqueness when the same childless
     const fake = makeFakeSupabase();
     const cost = await consumeForRecipeSale(fake.supabase as any, USER, {
       tenantId: TENANT,
+      propertyId: PROPERTY,
+      locationId: LOCATION,
       orderId: "order-1",
       orderItemId: "item-1",
       recipeId: BURGER_RECIPE,
