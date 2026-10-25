@@ -21,7 +21,8 @@ CREATE TABLE public.restaurant_locations (
 
 INSERT INTO public.restaurant_properties (id, tenant_id, slug) VALUES
  ('10000000-0000-4000-8000-000000000001','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','p-one'),
- ('10000000-0000-4000-8000-000000000002','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','p-two');
+ ('10000000-0000-4000-8000-000000000002','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','p-two'),
+ ('10000000-0000-4000-8000-000000000003','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','p-three');
 
 INSERT INTO public.restaurant_locations (id, tenant_id, property_id, slug, location_type, is_storage) VALUES
  ('20000000-0000-4000-8000-000000000001','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','10000000-0000-4000-8000-000000000001','outlet-a','outlet',false),
@@ -50,7 +51,7 @@ BEGIN
   BEGIN
     INSERT INTO public.restaurant_locations (id, tenant_id, property_id, parent_id, slug)
     VALUES ('20000000-0000-4000-8000-000000000005','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-            '10000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000001','bad-parent');
+            '10000000-0000-4000-8000-000000000003','20000000-0000-4000-8000-000000000001','bad-parent');
     RAISE EXCEPTION 'Expected cross-property parent to fail';
   EXCEPTION WHEN foreign_key_violation THEN NULL;
   END;
