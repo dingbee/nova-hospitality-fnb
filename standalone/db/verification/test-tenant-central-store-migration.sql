@@ -2,11 +2,11 @@
 BEGIN;
 
 CREATE SCHEMA IF NOT EXISTS auth;
-CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $ SELECT nullif(current_setting('request.test_user_id', true), '')::uuid $;
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT nullif(current_setting('request.test_user_id', true), '')::uuid $$;
 DO $$ BEGIN
   CREATE TYPE public.restaurant_role AS ENUM ('owner','general_manager','restaurant_manager','staff');
 EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
+END $$$;
 CREATE TABLE public.restaurant_members (
   tenant_id uuid NOT NULL,
   user_id uuid NOT NULL,
@@ -14,13 +14,13 @@ CREATE TABLE public.restaurant_members (
   role public.restaurant_role NOT NULL
 );
 CREATE OR REPLACE FUNCTION public.restaurant_can_read_scoped(_tenant uuid, _property uuid)
-RETURNS boolean LANGUAGE sql STABLE AS $
+RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT EXISTS (SELECT 1 FROM public.restaurant_members m WHERE m.tenant_id=_tenant AND m.user_id=auth.uid() AND (m.property_id IS NULL OR m.property_id=_property))
-$;
+$$;
 CREATE OR REPLACE FUNCTION public.restaurant_can_write_scoped(_tenant uuid, _roles public.restaurant_role[], _property uuid)
-RETURNS boolean LANGUAGE sql STABLE AS $
+RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT EXISTS (SELECT 1 FROM public.restaurant_members m WHERE m.tenant_id=_tenant AND m.user_id=auth.uid() AND m.role=ANY(_roles) AND (m.property_id IS NULL OR m.property_id=_property))
-$;
+$$;
 
 CREATE TABLE public.restaurant_properties (
   id uuid PRIMARY KEY,
@@ -97,7 +97,7 @@ BEGIN
     RAISE EXCEPTION 'Expected duplicate central store to fail';
   EXCEPTION WHEN unique_violation THEN NULL;
   END;
-END $$;
+END $$$;
 
 
 -- Authorization regression: central-store endpoints require a tenant-wide
@@ -137,6 +137,6 @@ BEGIN
   IF public.restaurant_can_read_transfer(v_tenant, NULL, NULL) IS NOT FALSE THEN
     RAISE EXCEPTION 'Other tenant member must not read central-only transfer';
   END IF;
-END $;
+END $$;
 
 ROLLBACK;
