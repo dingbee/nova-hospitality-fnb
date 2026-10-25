@@ -40,7 +40,8 @@ export const listLocationsSchema = z.object({
 export const upsertLocationSchema = z.object({
   tenantId: uuid,
   id: uuid.optional(),
-  propertyId: uuid,
+  propertyId: uuid.nullable(),
+  scope: z.enum(["property", "tenant"]).default("property"),
   parentId: uuid.nullish(),
   name: z.string().min(2).max(120),
   slug: z
