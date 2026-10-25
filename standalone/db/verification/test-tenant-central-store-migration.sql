@@ -2,7 +2,7 @@
 BEGIN;
 
 CREATE SCHEMA IF NOT EXISTS auth;
-CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT NULL::uuid $$;
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $ SELECT nullif(current_setting('request.test_user_id', true), '')::uuid $;
 DO $$ BEGIN
   CREATE TYPE public.restaurant_role AS ENUM ('owner','general_manager','restaurant_manager','staff');
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -13,10 +13,14 @@ CREATE TABLE public.restaurant_members (
   property_id uuid,
   role public.restaurant_role NOT NULL
 );
-CREATE OR REPLACE FUNCTION public.restaurant_can_read_scoped(uuid, uuid)
-RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT false $$;
-CREATE OR REPLACE FUNCTION public.restaurant_can_write_scoped(uuid, public.restaurant_role[], uuid)
-RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT false $$;
+CREATE OR REPLACE FUNCTION public.restaurant_can_read_scoped(_tenant uuid, _property uuid)
+RETURNS boolean LANGUAGE sql STABLE AS $
+  SELECT EXISTS (SELECT 1 FROM public.restaurant_members m WHERE m.tenant_id=_tenant AND m.user_id=auth.uid() AND (m.property_id IS NULL OR m.property_id=_property))
+$;
+CREATE OR REPLACE FUNCTION public.restaurant_can_write_scoped(_tenant uuid, _roles public.restaurant_role[], _property uuid)
+RETURNS boolean LANGUAGE sql STABLE AS $
+  SELECT EXISTS (SELECT 1 FROM public.restaurant_members m WHERE m.tenant_id=_tenant AND m.user_id=auth.uid() AND m.role=ANY(_roles) AND (m.property_id IS NULL OR m.property_id=_property))
+$;
 
 CREATE TABLE public.restaurant_properties (
   id uuid PRIMARY KEY,
@@ -94,5 +98,45 @@ BEGIN
   EXCEPTION WHEN unique_violation THEN NULL;
   END;
 END $$;
+
+
+-- Authorization regression: central-store endpoints require a tenant-wide
+-- membership. Property-only users may transfer to/from their own property,
+-- but may not enumerate central-store transfers by exploiting NULL scope.
+INSERT INTO public.restaurant_members (tenant_id, user_id, property_id, role) VALUES
+ ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','10000000-0000-4000-8000-000000000001','restaurant_manager'),
+ ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','cccccccc-cccc-4ccc-8ccc-cccccccccccc',NULL,'owner'),
+ ('dddddddd-dddd-4ddd-8ddd-dddddddddddd','eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',NULL,'owner');
+
+DO $
+DECLARE
+  v_tenant uuid := 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  v_property uuid := '10000000-0000-4000-8000-000000000001';
+  v_roles public.restaurant_role[] := ARRAY['owner','general_manager','restaurant_manager']::public.restaurant_role[];
+BEGIN
+  PERFORM set_config('request.test_user_id','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',true);
+  IF public.restaurant_can_read_transfer(v_tenant, v_property, NULL) IS NOT TRUE THEN
+    RAISE EXCEPTION 'Property member should read a transfer touching their property';
+  END IF;
+  IF public.restaurant_can_read_transfer(v_tenant, NULL, NULL) IS NOT FALSE THEN
+    RAISE EXCEPTION 'Property-only member must not read central-only transfer';
+  END IF;
+  IF public.restaurant_can_write_transfer(v_tenant, v_roles, v_property, NULL) IS NOT FALSE THEN
+    RAISE EXCEPTION 'Property-only member must not write transfer to central store';
+  END IF;
+
+  PERFORM set_config('request.test_user_id','cccccccc-cccc-4ccc-8ccc-cccccccccccc',true);
+  IF public.restaurant_can_read_transfer(v_tenant, NULL, NULL) IS NOT TRUE THEN
+    RAISE EXCEPTION 'Tenant-wide owner should read central-only transfer';
+  END IF;
+  IF public.restaurant_can_write_transfer(v_tenant, v_roles, v_property, NULL) IS NOT TRUE THEN
+    RAISE EXCEPTION 'Tenant-wide owner should write property-to-central transfer';
+  END IF;
+
+  PERFORM set_config('request.test_user_id','eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',true);
+  IF public.restaurant_can_read_transfer(v_tenant, NULL, NULL) IS NOT FALSE THEN
+    RAISE EXCEPTION 'Other tenant member must not read central-only transfer';
+  END IF;
+END $;
 
 ROLLBACK;
