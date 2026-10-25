@@ -19,7 +19,8 @@ export async function listLocations(sb: Sb, userId: string, input: z.infer<typeo
     .select("id, tenant_id, property_id, scope, parent_id, slug, code, name, location_type, is_storage, status, notes")
     .eq("tenant_id", input.tenantId)
     .order("name");
-  if (input.propertyId) q = q.eq("property_id", input.propertyId);
+  // Property views must include the tenant-level central store as well as locations assigned to the selected property.
+  if (input.propertyId) q = q.or(`property_id.eq.${input.propertyId},scope.eq.tenant`);
   if (input.storageOnly) q = q.eq("is_storage", true);
   if (!input.includeInactive) q = q.eq("status", "active");
   const { data, error } = await q;
