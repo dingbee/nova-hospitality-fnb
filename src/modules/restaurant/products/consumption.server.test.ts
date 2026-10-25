@@ -29,7 +29,7 @@ const LINE_DIP = "66666666-6666-6666-6666-666666666666";
 const SAUCE_LINE_TOMATO = "77777777-7777-7777-7777-777777777777";
 const TOMATO_ITEM = "88888888-8888-8888-8888-888888888888";
 
-function makeFakeSupabase() {
+function makeFakeSupabase(options: { itemProperty?: string | null; locationScope?: string; locationProperty?: string | null; locationStatus?: string } = {}) {
   const recipes: Record<string, any> = {
     [BURGER_RECIPE]: { id: BURGER_RECIPE, yield_quantity: 1, produces_inventory_item_id: null },
     [SAUCE_RECIPE]: { id: SAUCE_RECIPE, yield_quantity: 1, produces_inventory_item_id: null },
@@ -73,7 +73,7 @@ function makeFakeSupabase() {
     average_cost: 50,
     currency: "TZS",
     location_id: LOCATION,
-    property_id: PROPERTY,
+    property_id: options.itemProperty === undefined ? PROPERTY : options.itemProperty,
     unit_id: null,
     content_per_stock_unit: null,
     content_unit_id: null,
@@ -128,7 +128,7 @@ function makeFakeSupabase() {
         return { data: [tomatoItem], error: null };
       }
       if (table === "restaurant_locations" && op === "select") {
-        return { data: filters.id === LOCATION ? { id: LOCATION, property_id: PROPERTY, scope: "property", is_storage: true, status: "active" } : null, error: null };
+        return { data: filters.id === LOCATION ? { id: LOCATION, property_id: options.locationProperty === undefined ? PROPERTY : options.locationProperty, scope: options.locationScope ?? "property", is_storage: true, status: options.locationStatus ?? "active" } : null, error: null };
       }
       if (table === "restaurant_inventory_units" && op === "select") {
         return { data: [], error: null };
@@ -194,5 +194,35 @@ describe("consumeForRecipeSale — dedupe-key uniqueness when the same childless
     await consumeForRecipeSale(fake.supabase as any, USER, args);
     await consumeForRecipeSale(fake.supabase as any, USER, args);
     expect(fake.movements).toHaveLength(2); // still exactly two, not four
+  });
+});
+
+describe("consumeForRecipeSale — property and location boundary regressions", () => {
+  const args = {
+    tenantId: TENANT,
+    propertyId: PROPERTY,
+    locationId: LOCATION,
+    orderId: "order-scope",
+    orderItemId: "item-scope",
+    recipeId: BURGER_RECIPE,
+    quantity: 1,
+  };
+
+  it("rejects a tenant central store as the POS serving location before posting movements", async () => {
+    const fake = makeFakeSupabase({ locationScope: "tenant", locationProperty: null });
+    await expect(consumeForRecipeSale(fake.supabase as any, USER, args)).rejects.toThrow(/POS location must be active and scoped/);
+    expect(fake.movements).toHaveLength(0);
+  });
+
+  it("rejects an inactive POS location before posting movements", async () => {
+    const fake = makeFakeSupabase({ locationStatus: "inactive" });
+    await expect(consumeForRecipeSale(fake.supabase as any, USER, args)).rejects.toThrow(/POS location must be active and scoped/);
+    expect(fake.movements).toHaveLength(0);
+  });
+
+  it("rejects inventory assigned to another property before posting movements", async () => {
+    const fake = makeFakeSupabase({ itemProperty: "99999999-9999-9999-9999-999999999999" });
+    await expect(consumeForRecipeSale(fake.supabase as any, USER, args)).rejects.toThrow(/not assigned to this property/);
+    expect(fake.movements).toHaveLength(0);
   });
 });
