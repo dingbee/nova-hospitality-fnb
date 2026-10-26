@@ -149,6 +149,46 @@ export async function consumeForRecipeSale(
     )
     .in("id", ids);
   const meta = new Map<string, any>(((items ?? []) as any[]).map((r) => [r.id, r]));
+  if (meta.size !== ids.length) {
+    throw new Error("Recipe consumption blocked: one or more inventory items are missing or outside this tenant.");
+  }
+
+  // POS consumption must stay inside the order's property and serving location.
+  // Central-store stock is not directly consumable by a property sale; transfer
+  // it into a property store/outlet first.
+  const { data: orderLocation, error: locationError } = args.locationId
+    ? await sb
+        .from("restaurant_locations")
+        .select("id, property_id, scope, is_storage, status")
+        .eq("tenant_id", args.tenantId)
+        .eq("id", args.locationId)
+        .maybeSingle()
+    : { data: null, error: null };
+  if (locationError) throw new Error(locationError.message);
+  if (args.locationId && !orderLocation) {
+    throw new Error("Recipe consumption blocked: the order location does not belong to this tenant.");
+  }
+  const orderPropertyId = args.propertyId ?? orderLocation?.property_id ?? null;
+  if (!orderPropertyId) {
+    throw new Error("Recipe consumption blocked: a property-scoped order location is required.");
+  }
+  if (orderLocation && (orderLocation.scope === "tenant" || orderLocation.property_id !== orderPropertyId)) {
+    throw new Error("Recipe consumption blocked: the order location does not belong to the order property.");
+  }
+  for (const [itemId, info] of meta) {
+    if (!info.property_id || info.property_id !== orderPropertyId) {
+      throw new Error(`Recipe consumption blocked: "${info.name ?? itemId}" is not assigned to this property. Transfer stock to a property-scoped inventory item before sale.`);
+    }
+    if (args.locationId && info.location_id && info.location_id !== args.locationId) {
+      // Explicit POS location always wins; never silently post against the
+      // inventory item's default location. The movement below uses the order
+      // location after this guard.
+    }
+  }
+  const consumptionLocationId = args.locationId ?? null;
+  if (!consumptionLocationId) {
+    throw new Error("Recipe consumption blocked: the POS order must provide its serving location.");
+  }
 
   // average_cost is priced per the item's own stock unit — a recipe line
   // written in a different unit (a KG item consumed in G, say) must be
@@ -179,8 +219,8 @@ export async function consumeForRecipeSale(
     }
     await insertMovement(sb, userId, {
       tenantId: args.tenantId,
-      propertyId: args.propertyId ?? info?.property_id ?? null,
-      locationId: args.locationId ?? info?.location_id ?? null,
+      propertyId: orderPropertyId,
+      locationId: consumptionLocationId,
       inventoryItemId: line.inventoryItemId,
       unitId: info?.unit_id ?? line.unitId,
       movementType: "consumption",

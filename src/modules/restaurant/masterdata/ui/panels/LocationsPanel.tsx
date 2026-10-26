@@ -1,4 +1,4 @@
-/** Shared panel for both "Outlets" (non-storage) and "Stores" (storage) tabs. */
+/** Shared panel for outlets, property stores, and the optional tenant-wide main store. */
 import * as React from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQueryClient } from "@tanstack/react-query";
@@ -21,19 +21,22 @@ export function LocationsPanel({
 }: {
   tenantId: string;
   data: MasterData;
-  mode: "outlet" | "store";
+  mode: "outlet" | "store" | "main-store";
 }) {
-  const isStorage = mode === "store";
+  const isMainStore = mode === "main-store";
+  const isStorage = mode !== "outlet";
   const [search, setSearch] = React.useState("");
+  const [selectedPropertyId, setSelectedPropertyId] = React.useState(data.properties[0]?.id ?? "");
   const [open, setOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Location | null>(null);
   const empty = {
-    propertyId: data.properties[0]?.id ?? "",
-    parentId: "" as string | null,
+    scope: (isMainStore ? "tenant" : "property") as "property" | "tenant",
+    propertyId: (isMainStore ? null : selectedPropertyId) as string | null,
+    parentId: null as string | null,
     name: "",
     slug: "",
     code: "",
-    locationType: isStorage ? "store" : "outlet",
+    locationType: "store",
     notes: "",
   };
   const [form, setForm] = React.useState(empty);
@@ -49,15 +52,30 @@ export function LocationsPanel({
     },
   });
 
-  const locations = data.locations.filter((l) => l.is_storage === isStorage && l.name.toLowerCase().includes(search.toLowerCase()));
+  const locations = data.locations.filter(
+    (l) => (isMainStore
+      ? l.scope === "tenant"
+      : (l.scope === "tenant" || l.property_id === selectedPropertyId))
+      && l.is_storage === isStorage
+      && l.name.toLowerCase().includes(search.toLowerCase()),
+  );
   const propertyOptions = data.properties.map((p) => ({ value: p.id, label: p.name }));
+  const scopeOptions = [
+    { value: "property", label: "Property store" },
+    { value: "tenant", label: "Tenant central store" },
+  ];
   const parentOptions = data.locations
-    .filter((l) => l.is_storage === isStorage && l.id !== editing?.id)
+    .filter((l) => form.scope === "property" && l.scope === "property" && l.property_id === form.propertyId && l.is_storage === isStorage && l.id !== editing?.id)
     .map((l) => ({ value: l.id, label: l.name }));
 
   function openCreate() {
     setEditing(null);
-    setForm(empty);
+    setForm({
+      ...empty,
+      scope: isMainStore ? "tenant" : "property",
+      propertyId: isMainStore ? null : selectedPropertyId,
+      parentId: null,
+    });
     setOpen(true);
   }
   function openEdit(id: string) {
@@ -65,6 +83,7 @@ export function LocationsPanel({
     if (!l) return;
     setEditing(l);
     setForm({
+      scope: l.scope ?? "property",
       propertyId: l.property_id,
       parentId: l.parent_id ?? null,
       name: l.name,
@@ -81,8 +100,9 @@ export function LocationsPanel({
       data: {
         tenantId,
         id: editing?.id,
-        propertyId: form.propertyId,
-        parentId: form.parentId || null,
+        propertyId: form.scope === "tenant" ? null : form.propertyId,
+        scope: form.scope,
+        parentId: form.scope === "tenant" ? null : form.parentId || null,
         name: form.name,
         slug: form.slug,
         code: form.code || undefined,
@@ -96,20 +116,40 @@ export function LocationsPanel({
 
   return (
     <SectionCard
-      title={isStorage ? "Stores" : "Outlets & locations"}
+      title={isMainStore ? "Main store" : isStorage ? "Stores" : "Outlets & locations"}
       description={
-        isStorage
-          ? "Storage locations that hold inventory: main store, bar store, walk-in fridge."
-          : "Guest-facing service areas: dining rooms, bars, terraces."
+        isMainStore
+          ? "Optional tenant-wide central store. It has no property assignment and can serve authorized properties through stock transfers."
+          : isStorage
+            ? "Property-level storage locations that hold inventory: main store, bar store, walk-in fridge."
+            : "Guest-facing service areas: dining rooms, bars, terraces."
       }
     >
       <div className="space-y-4">
-        <PanelToolbar search={search} onSearch={setSearch} onCreate={openCreate} createLabel={isStorage ? "New store" : "New outlet"} />
+        {!isMainStore && (
+          <Field label="Property" required>
+            <SearchSelect
+              options={propertyOptions}
+              value={selectedPropertyId}
+              onChange={(value) => {
+                const nextPropertyId = value ?? "";
+                setSelectedPropertyId(nextPropertyId);
+                setEditing(null);
+                setForm({ ...empty, propertyId: nextPropertyId, parentId: null });
+                setOpen(false);
+                setSearch("");
+              }}
+              placeholder="Select property"
+              allowClear={false}
+            />
+          </Field>
+        )}
+        <PanelToolbar search={search} onSearch={setSearch} onCreate={openCreate} createLabel={isMainStore ? "Configure main store" : isStorage ? "New store" : "New outlet"} />
         <PanelList
           items={locations.map((l) => ({
             id: l.id,
             title: l.name,
-            subtitle: `${l.location_type}${l.code ? ` · ${l.code}` : ""}`,
+            subtitle: `${l.scope === "tenant" ? "Tenant central store · tenant-wide" : data.properties.find((p) => p.id === l.property_id)?.name ?? "Property"} · ${l.location_type}${l.code ? ` · ${l.code}` : ""}`,
             active: l.status === "active",
           }))}
           onEdit={openEdit}
@@ -121,6 +161,7 @@ export function LocationsPanel({
                 tenantId,
                 id: l.id,
                 propertyId: l.property_id,
+                scope: l.scope ?? "property",
                 parentId: l.parent_id ?? null,
                 name: l.name,
                 slug: l.slug,
@@ -132,20 +173,50 @@ export function LocationsPanel({
               },
             });
           }}
-          emptyTitle={isStorage ? "No stores yet" : "No outlets yet"}
+          emptyTitle={isMainStore ? "No tenant-wide main store configured" : isStorage ? "No stores for this property yet" : "No outlets for this property yet"}
         />
       </div>
 
       <EntitySheet
         open={open}
         onOpenChange={setOpen}
-        title={editing ? "Edit location" : isStorage ? "New store" : "New outlet"}
+        title={editing ? "Edit location" : isMainStore ? "Configure main store" : isStorage ? "New store" : "New outlet"}
         onSubmit={() => save(editing ? editing.status === "active" : true)}
         pending={mutation.isPending}
-        disabled={!form.name || !form.slug || !form.propertyId}
+        disabled={!form.name || !form.slug || (form.scope === "property" && !form.propertyId) || (form.scope === "tenant" && !isStorage)}
       >
-        <Field label="Property" required>
-          <SearchSelect options={propertyOptions} value={form.propertyId} onChange={(v) => setForm((f) => ({ ...f, propertyId: v ?? "" }))} placeholder="Select property" allowClear={false} />
+        {isStorage && !isMainStore && (
+          <Field label="Store scope" required>
+            <SearchSelect
+              options={scopeOptions}
+              value={form.scope}
+              onChange={(value) => setForm((f) => ({
+                ...f,
+                scope: value === "tenant" ? "tenant" : "property",
+                propertyId: value === "tenant" ? null : (f.propertyId ?? selectedPropertyId),
+                parentId: null,
+              }))}
+              placeholder="Choose store scope"
+              allowClear={false}
+            />
+          </Field>
+        )}
+        <Field label={form.scope === "tenant" ? "Ownership" : "Property"} required={form.scope !== "tenant"}>
+          {form.scope === "tenant" ? (
+            <p className="rounded-md border px-3 py-2 text-sm">Tenant-level central store — no property assignment; shared through authorized stock transfers.</p>
+          ) : editing ? (
+            <p className="rounded-md border px-3 py-2 text-sm">
+              {data.properties.find((property) => property.id === form.propertyId)?.name ?? "Selected property"}
+            </p>
+          ) : (
+            <SearchSelect
+              options={propertyOptions}
+              value={form.propertyId ?? ""}
+              onChange={(value) => setForm((f) => ({ ...f, propertyId: value ?? null, parentId: null }))}
+              placeholder="Select property"
+              allowClear={false}
+            />
+          )}
         </Field>
         <Field label="Name" required>
           <Input
@@ -169,9 +240,11 @@ export function LocationsPanel({
         <Field label="Type">
           <Input className="h-11" value={form.locationType} onChange={(e) => setForm((f) => ({ ...f, locationType: e.target.value }))} />
         </Field>
-        <Field label="Parent location">
-          <SearchSelect options={parentOptions} value={form.parentId} onChange={(v) => setForm((f) => ({ ...f, parentId: v }))} placeholder="None" />
-        </Field>
+        {form.scope === "property" && (
+          <Field label="Parent location">
+            <SearchSelect options={parentOptions} value={form.parentId} onChange={(v) => setForm((f) => ({ ...f, parentId: v }))} placeholder="None" />
+          </Field>
+        )}
         <Field label="Notes">
           <Textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
         </Field>

@@ -561,7 +561,7 @@ function PositionsTab({ tenantId }: { tenantId: string }) {
             <option value="">All locations</option>
             {((locations.data ?? []) as any[]).map((l) => (
               <option key={l.id} value={l.id}>
-                {l.name}
+                {l.display_name ?? l.name}
               </option>
             ))}
           </select>
@@ -748,21 +748,21 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
         title="New transfer"
         description="Stock leaves the source at dispatch and enters the destination at receipt — never both at once, so goods in transit are visible."
       >
-        <div className="grid gap-2 sm:grid-cols-5">
+        <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-5">
           <select
-            className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
+            className="box-border min-h-11 w-full min-w-0 max-w-full rounded-md border bg-transparent px-2 text-sm"
             value={source}
             onChange={(e) => setSource(e.target.value)}
           >
             <option value="">From location…</option>
             {((locations.data ?? []) as any[]).map((l) => (
               <option key={l.id} value={l.id}>
-                {l.name}
+                {l.display_name ?? l.name}
               </option>
             ))}
           </select>
           <select
-            className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
+            className="box-border min-h-11 w-full min-w-0 max-w-full rounded-md border bg-transparent px-2 text-sm"
             value={destination}
             onChange={(e) => setDestination(e.target.value)}
           >
@@ -776,7 +776,7 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
               ))}
           </select>
           <select
-            className="min-h-11 rounded-md border bg-transparent px-2 text-sm"
+            className="box-border min-h-11 w-full min-w-0 max-w-full rounded-md border bg-transparent px-2 text-sm"
             value={itemId}
             onChange={(e) => setItemId(e.target.value)}
           >
@@ -788,6 +788,7 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
             ))}
           </select>
           <Input
+            className="w-full min-w-0"
             type="number"
             step="0.001"
             value={quantity}
@@ -795,6 +796,7 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
             placeholder="Quantity"
           />
           <Input
+            className="w-full min-w-0"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Notes (optional)"
@@ -1051,7 +1053,7 @@ function WasteTab({ tenantId }: { tenantId: string }) {
             <option value="">Default location</option>
             {((locations.data ?? []) as any[]).map((l) => (
               <option key={l.id} value={l.id}>
-                {l.name}
+                {l.display_name ?? l.name}
               </option>
             ))}
           </select>
@@ -1298,7 +1300,7 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
             <option value="">Full inventory</option>
             {((locations.data ?? []) as any[]).map((l) => (
               <option key={l.id} value={l.id}>
-                {l.name}
+                {l.display_name ?? l.name}
               </option>
             ))}
           </select>

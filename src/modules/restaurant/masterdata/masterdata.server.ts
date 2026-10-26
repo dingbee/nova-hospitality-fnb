@@ -382,7 +382,7 @@ export async function listAllMasterData(
     sb
       .from("restaurant_locations")
       .select(
-        "id, tenant_id, property_id, parent_id, slug, code, name, location_type, is_storage, status, notes",
+        "id, tenant_id, property_id, scope, parent_id, slug, code, name, location_type, is_storage, status, notes",
       )
       .eq("tenant_id", tenantId)
       .order("name"),

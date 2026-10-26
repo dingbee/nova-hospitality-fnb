@@ -38,6 +38,7 @@ type StepId =
   | "properties"
   | "outlets"
   | "stores"
+  | "main-store"
   | "units"
   | "categories"
   | "items"
@@ -90,6 +91,14 @@ const STEPS: Step[] = [
     done: (d) => d.locations.some((l) => l.is_storage),
     count: (d) => d.locations.filter((l) => l.is_storage).length,
     essential: true,
+  },
+  {
+    id: "main-store",
+    label: "Main store",
+    requirement: "Optional tenant-wide central store shared by properties through authorized stock transfers. Configure it here if your operation needs one.",
+    done: (d) => d.locations.some((l) => l.is_storage && l.scope === "tenant"),
+    count: (d) => d.locations.filter((l) => l.is_storage && l.scope === "tenant").length,
+    essential: false,
   },
   {
     id: "units",
@@ -264,6 +273,7 @@ export function SetupWorkbench() {
           {step === "properties" && <PropertiesPanel tenantId={tenantId} data={data} />}
           {step === "outlets" && <LocationsPanel tenantId={tenantId} data={data} mode="outlet" />}
           {step === "stores" && <LocationsPanel tenantId={tenantId} data={data} mode="store" />}
+          {step === "main-store" && <LocationsPanel tenantId={tenantId} data={data} mode="main-store" />}
           {step === "units" && <UnitsPanel tenantId={tenantId} data={data} />}
           {step === "categories" && <CategoriesPanel tenantId={tenantId} data={data} />}
           {step === "items" && <ItemsPanel tenantId={tenantId} data={data} />}

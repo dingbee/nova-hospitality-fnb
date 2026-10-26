@@ -98,6 +98,18 @@ jobs:
         run: |
           psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-service-recovery-authorized-comp-migration.sql
 
+      - name: Verify property/location integrity migration in isolated PostgreSQL
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-property-location-integrity-migration.sql
+
+      - name: Verify tenant central-store migration in isolated PostgreSQL
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-tenant-central-store-migration.sql
+
       - name: Scoped GTM and changed-path functional tests
         run: |
           bunx vitest run \
@@ -111,7 +123,8 @@ jobs:
             src/modules/restaurant/bar/bar.test.ts \
             src/modules/restaurant/bar/ticket-items.test.ts \
             src/modules/restaurant/sales/service-recovery.contracts.test.ts \
-            src/modules/restaurant/ui/useRestaurantWorkspace.test.ts
+            src/modules/restaurant/ui/useRestaurantWorkspace.test.ts \
+            src/modules/restaurant/inventory/locations.server.test.ts
 
       - name: Full test suite (repository baseline)
         id: full_tests
