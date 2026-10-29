@@ -149,7 +149,7 @@ function makeFakeSupabase(
 
   function source(table: string): any[] {
     if (table === "commercial_usage_counters") return usageCounters;
-    if (table in commercial) return commercial[table]!;
+    if (table in commercial) return (commercial as Record<string, any[]>)[table]!;
     switch (table) {
       case "restaurant_tenants":
         return [

@@ -14,13 +14,21 @@ type Property = MasterData["properties"][number];
 
 import { DEFAULT_CURRENCY, DEFAULT_TIMEZONE } from "@/modules/restaurant/core/product";
 
-const EMPTY = { name: "", slug: "", timezone: DEFAULT_TIMEZONE, currency: DEFAULT_CURRENCY, status: "pending_activation" as const };
+type PropertyForm = Pick<Property, "name" | "slug" | "timezone" | "currency" | "status">;
+
+const EMPTY: PropertyForm = {
+  name: "",
+  slug: "",
+  timezone: DEFAULT_TIMEZONE,
+  currency: DEFAULT_CURRENCY,
+  status: "pending_activation",
+};
 
 export function PropertiesPanel({ tenantId, data }: { tenantId: string; data: MasterData }) {
   const [search, setSearch] = React.useState("");
   const [open, setOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Property | null>(null);
-  const [form, setForm] = React.useState(EMPTY);
+  const [form, setForm] = React.useState<PropertyForm>(EMPTY);
 
   const qc = useQueryClient();
   const fn = useServerFn(upsertRestaurantPropertyFn);

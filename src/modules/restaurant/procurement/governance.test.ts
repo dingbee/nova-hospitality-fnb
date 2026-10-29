@@ -14,6 +14,7 @@ import {
   PO_MANUAL_STATUSES,
 } from "../purchasing/state-machine";
 import { createPurchaseOrderSchema, transitionPurchaseOrderSchema } from "../core/contracts";
+import { askLexiBitePurchaseOrderTransitionSchema } from "./ask-lexibite.server";
 import { createReceiptSchema } from "./contracts";
 
 describe("purchase order state machine", () => {
@@ -115,9 +116,9 @@ describe("Ask LexiBite PO lifecycle action contracts", () => {
       tenantId: "11111111-1111-1111-1111-111111111111",
       purchaseOrderId: "22222222-2222-2222-2222-222222222222",
     };
-    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "submitted" }).success).toBe(true);
-    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "approved" }).success).toBe(true);
-    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "received" }).success).toBe(false);
+    expect(askLexiBitePurchaseOrderTransitionSchema.safeParse({ ...base, status: "submitted" }).success).toBe(true);
+    expect(askLexiBitePurchaseOrderTransitionSchema.safeParse({ ...base, status: "approved" }).success).toBe(true);
+    expect(askLexiBitePurchaseOrderTransitionSchema.safeParse({ ...base, status: "received" }).success).toBe(false);
   });
 
   it("requires explicit confirmation for receiving", async () => {

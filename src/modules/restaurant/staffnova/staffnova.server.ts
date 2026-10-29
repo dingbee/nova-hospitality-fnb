@@ -661,6 +661,8 @@ export async function askStaffNova(
             const { previewIntelligentPurchaseOrders } = await import("../procurement/ask-lexibite.server");
             intelligentPurchaseOrder = await previewIntelligentPurchaseOrders(sb, userId, {
               tenantId: input.tenantId,
+              idempotencyKey: crypto.randomUUID(),
+              lineOverrides: [],
               inventoryItemIds: contract.entities
                 .filter((entity) =>
                   (entity.status === "exact" || entity.status === "high")
@@ -781,7 +783,11 @@ export async function askStaffNova(
       try {
         const { previewIntelligentPurchaseOrders } = await import("../procurement/ask-lexibite.server");
         intelligentPurchaseOrder = await previewIntelligentPurchaseOrders(sb, userId, {
-          tenantId: input.tenantId, inventoryItemIds: [], supplierId: null,
+          tenantId: input.tenantId,
+          idempotencyKey: crypto.randomUUID(),
+          lineOverrides: [],
+          inventoryItemIds: [],
+          supplierId: null,
         });
       } catch (err) {
         logStageFailure("intelligent_po_preview", err, { tenantId: input.tenantId, userId, propertyId });

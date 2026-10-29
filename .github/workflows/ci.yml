@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   CI: true
@@ -53,6 +53,27 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+
+      # One-time formatting cleanup for this P0 closure branch. This step is
+      # removed after the formatting commit so ordinary CI stays read-only.
+      - name: Format changed source for P0 closure
+        if: github.head_ref == 'fix/procurement-integrity-followthrough'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_sha="$(git merge-base origin/main HEAD)"
+          files="$(git diff --name-only "$base_sha" "$GITHUB_SHA" -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
+          if [ -n "$files" ]; then
+            printf '%s\\n' "$files"
+            bunx prettier --write $files
+            if ! git diff --quiet -- $files; then
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add -- $files
+              git commit -m "style: format changed source for clean CI"
+              git push origin "HEAD:$GITHUB_HEAD_REF"
+            fi
+          fi
 
       - name: Generate production artifacts
         run: bun run build
@@ -104,7 +125,7 @@ jobs:
         run: |
           psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-property-location-integrity-migration.sql
 
-      - name: Verify tenant central-store migration in isolated PostgreSQL
+      - name: Verify tenant central-store scope and activation migrations in isolated PostgreSQL
         env:
           PGPASSWORD: postgres
         run: |
@@ -124,7 +145,11 @@ jobs:
             src/modules/restaurant/bar/ticket-items.test.ts \
             src/modules/restaurant/sales/service-recovery.contracts.test.ts \
             src/modules/restaurant/ui/useRestaurantWorkspace.test.ts \
-            src/modules/restaurant/inventory/locations.server.test.ts
+            src/modules/restaurant/inventory/locations.server.test.ts \
+            src/modules/restaurant/intelligence/purchasing.server.test.ts \
+            src/modules/restaurant/procurement/ask-lexibite.server.test.ts \
+            src/modules/restaurant/procurement/receiving-governance.test.ts \
+            src/modules/restaurant/procurement/receiving-units.test.ts
 
       - name: Full test suite (repository baseline)
         id: full_tests
@@ -133,7 +158,25 @@ jobs:
 
       - name: Report full test baseline
         if: steps.full_tests.outcome == 'failure'
-        run: echo "::warning::Full repository test suite remains non-clean outside the scoped functional gate; scoped changed-path tests remain blocking."
+        run: echo "::warning::Full repository test suite remains non-clean; scoped procurement and changed-path functional gate passed, while unrelated baseline failures remain."
 
       - name: Verify bundle origin
         run: bun run verify:bundle -- .output
+
+      - name: Enforce clean repository-wide quality gates
+        if: always()
+        env:
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          FULL_TESTS_OUTCOME: ${{ steps.full_tests.outcome }}
+        run: |
+          failed=0
+          for gate in TYPECHECK LINT FULL_TESTS; do
+            var="${gate}_OUTCOME"
+            outcome="${!var}"
+            if [ "$outcome" != "success" ]; then
+              echo "::error::$gate gate did not pass (outcome: $outcome)."
+              failed=1
+            fi
+          done
+          exit "$failed"

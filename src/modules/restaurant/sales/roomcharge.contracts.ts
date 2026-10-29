@@ -21,6 +21,7 @@ export const roomChargeCommitSchema = z.object({
   tenantId: uuid,
   orderId: uuid,
   bookingId: uuid,
+  splitBillId: uuid.optional(),
   amount: z.number().positive(),
   /** Same key ⇒ same folio posting *and* same outlet payment row. */
   clientRequestId: z.string().min(6).max(80),

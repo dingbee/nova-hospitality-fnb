@@ -48,6 +48,7 @@ CREATE TABLE public.restaurant_properties (
   id uuid PRIMARY KEY,
   tenant_id uuid NOT NULL,
   slug text NOT NULL,
+  status text NOT NULL DEFAULT 'active',
   UNIQUE (tenant_id, slug)
 );
 
@@ -71,6 +72,10 @@ INSERT INTO public.restaurant_properties (id, tenant_id, slug) VALUES
 INSERT INTO public.restaurant_locations (id, tenant_id, property_id, parent_id, slug, name, is_storage) VALUES
  ('20000000-0000-4000-8000-000000000001','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','10000000-0000-4000-8000-000000000001',NULL,'property-store-a','Property Store A',true),
  ('20000000-0000-4000-8000-000000000002','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','10000000-0000-4000-8000-000000000002',NULL,'property-store-b','Property Store B',true);
+
+DO $roles_anon$ BEGIN EXECUTE 'CREATE ROLE anon'; EXCEPTION WHEN duplicate_object THEN NULL; END $roles_anon$;
+DO $roles_auth$ BEGIN EXECUTE 'CREATE ROLE authenticated'; EXCEPTION WHEN duplicate_object THEN NULL; END $roles_auth$;
+DO $roles_service$ BEGIN EXECUTE 'CREATE ROLE service_role'; EXCEPTION WHEN duplicate_object THEN NULL; END $roles_service$;
 
 \i standalone/db/migrations/0109_property_location_integrity.sql
 \i standalone/db/migrations/0110_tenant_central_store_scope.sql
@@ -168,6 +173,56 @@ BEGIN
   IF public.restaurant_can_write_transfer(v_tenant, v_roles, NULL, NULL) IS NOT FALSE THEN
     RAISE EXCEPTION 'Inactive tenant-wide member must not write central-only transfer';
   END IF;
+END $$;
+
+
+-- 0111 regression: a tenant-scoped central store must not depend on a
+-- property's commercial activation state. Install the prior guard first so
+-- this test proves the migration changes the active trigger function.
+CREATE OR REPLACE FUNCTION public.restaurant_location_property_activation_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_property_status text;
+BEGIN
+  IF NEW.status = 'active' THEN
+    SELECT p.status INTO v_property_status
+    FROM public.restaurant_properties p
+    WHERE p.id = NEW.property_id AND p.tenant_id = NEW.tenant_id;
+    IF v_property_status IS DISTINCT FROM 'active' THEN
+      RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='PROPERTY_NOT_ACTIVE';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS restaurant_location_property_activation_guard ON public.restaurant_locations;
+CREATE TRIGGER restaurant_location_property_activation_guard
+BEFORE INSERT OR UPDATE OF property_id, status ON public.restaurant_locations
+FOR EACH ROW EXECUTE FUNCTION public.restaurant_location_property_activation_guard();
+
+\i standalone/db/migrations/0111_allow_tenant_central_store_pending_property.sql
+
+INSERT INTO public.restaurant_properties (id, tenant_id, slug, status) VALUES
+ ('10000000-0000-4000-8000-000000000003','dddddddd-dddd-4ddd-8ddd-dddddddddddd','pending-property','pending');
+
+DO $$
+BEGIN
+  INSERT INTO public.restaurant_locations
+    (id, tenant_id, property_id, parent_id, slug, name, location_type, is_storage, scope, status)
+  VALUES
+    ('20000000-0000-4000-8000-000000000007','dddddddd-dddd-4ddd-8ddd-dddddddddddd',NULL,NULL,
+     'pending-property-central','Pending Property Central Store','store',true,'tenant','active');
+
+  BEGIN
+    INSERT INTO public.restaurant_locations
+      (id, tenant_id, property_id, parent_id, slug, name, location_type, is_storage, scope, status)
+    VALUES
+      ('20000000-0000-4000-8000-000000000008','dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+       '10000000-0000-4000-8000-000000000003',NULL,'pending-property-store',
+       'Pending Property Store','store',true,'property','active');
+    RAISE EXCEPTION 'Expected active property-scoped store under pending property to fail';
+  EXCEPTION WHEN check_violation THEN
+    IF SQLERRM NOT LIKE '%PROPERTY_NOT_ACTIVE%' THEN RAISE; END IF;
+  END;
 END $$;
 
 ROLLBACK;

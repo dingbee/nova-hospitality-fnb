@@ -84,7 +84,23 @@ function fakeSb(rows: Record<string, any[]>) {
           filtered = filtered.filter((r) => r[col] === val);
           return builder;
         },
+        in(col: string, vals: unknown[]) {
+          const allowed = new Set(vals);
+          filtered = filtered.filter((r) => allowed.has(r[col]));
+          return builder;
+        },
+        is(col: string, val: unknown) {
+          filtered = filtered.filter((r) => val == null ? r[col] == null : r[col] === val);
+          return builder;
+        },
+        lte(col: string, val: string | number) {
+          filtered = filtered.filter((r) => r[col] != null && r[col] <= val);
+          return builder;
+        },
         limit() {
+          return builder;
+        },
+        order() {
           return builder;
         },
         maybeSingle: async () => ({ data: filtered[0] ?? null }),
@@ -412,6 +428,22 @@ function fakeSessionsSb(initialRows: any[] = []) {
   let seq = rows.length;
 
   function from(table: string) {
+    if (table === "restaurant_orders") {
+      let builder: any;
+      let filtered: any[] = [];
+      builder = {
+        select: () => builder,
+        eq: () => builder,
+        in: () => builder,
+        is: () => builder,
+        order: () => builder,
+        limit: () => builder,
+        maybeSingle: async () => ({ data: filtered[0] ?? null, error: null }),
+        then: (resolve: (value: { data: any[]; error: null }) => unknown) =>
+          resolve({ data: filtered, error: null }),
+      };
+      return builder;
+    }
     if (table !== "restaurant_guest_sessions") throw new Error(`unexpected table ${table}`);
     const eqFilters: Array<[string, unknown]> = [];
     const ltFilters: Array<[string, unknown]> = [];
@@ -541,11 +573,13 @@ describe("resolveOrStartGuestSession", () => {
     ); // rolling expiry moved forward
   });
 
-  it("refuses a new order when another session is already active on the table and no valid token is presented — table occupied", async () => {
-    const { sb } = fakeSessionsSb([activeSessionRow()]);
-    await expect(resolveOrStartGuestSession(sb, TABLE_1, undefined)).rejects.toThrow(
-      /already has a dining session/,
-    );
+  it("closes a stale active session when no open orders remain and starts a fresh session", async () => {
+    const { sb, rows } = fakeSessionsSb([activeSessionRow()]);
+    const result = await resolveOrStartGuestSession(sb, TABLE_1, undefined);
+    expect(result.created).toBe(true);
+    expect(rows[0]?.status).toBe("closed");
+    expect(rows.filter((row) => row.status === "active")).toHaveLength(1);
+    expect(rows[0]?.id).not.toBe(result.sessionId);
   });
 
   it("treats an expired token as absent — lazily expires the stale row and starts a fresh session (QR reuse: old session != new session)", async () => {

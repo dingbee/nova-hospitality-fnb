@@ -410,6 +410,7 @@ type StaffNovaTurn =
       sourceMessage?: string;
       understanding?: NovaIntentContract;
       preparation?: NovaPreparation;
+      intelligentPurchaseOrder?: IntelligentPurchaseOrderPlan;
       managerBrief?: boolean;
     };
 
@@ -642,7 +643,7 @@ function PreparationActions({
         {preparation.workflow === "purchase_request" && (
           <PurchaseRequestLifecycleActions tenantId={tenantId} requestId={committed.createdRecordId} />
         )}
-        {preparation.workflow === "requisition" && (
+        {(preparation.workflow as string | null) === "requisition" && (
           <RequisitionLifecycleActions tenantId={tenantId} requisitionId={committed.createdRecordId} />
         )}
         {EXECUTABLE_WORKFLOWS.includes(preparation.workflow) && (
@@ -731,7 +732,12 @@ function RequisitionLifecycleActions({ tenantId, requisitionId }: { tenantId: st
       data: {
         tenantId,
         requisitionId,
-        lines: (requisition.data?.lines ?? []).map((line) => ({
+        lines: (requisition.data?.lines ?? []).map((line: {
+          id: string;
+          approved_quantity?: number | null;
+          requested_quantity?: number | null;
+          issued_quantity?: number | null;
+        }) => ({
           lineId: line.id,
           approvedQuantity: Number(line.approved_quantity ?? line.requested_quantity ?? 0),
         })),
@@ -744,7 +750,12 @@ function RequisitionLifecycleActions({ tenantId, requisitionId }: { tenantId: st
       data: {
         tenantId,
         requisitionId,
-        lines: (requisition.data?.lines ?? []).map((line) => ({
+        lines: (requisition.data?.lines ?? []).map((line: {
+          id: string;
+          approved_quantity?: number | null;
+          requested_quantity?: number | null;
+          issued_quantity?: number | null;
+        }) => ({
           lineId: line.id,
           issueQuantity: Math.max(0, Number(line.approved_quantity ?? line.requested_quantity ?? 0) - Number(line.issued_quantity ?? 0)),
         })),
@@ -1362,6 +1373,7 @@ export function StaffNovaPanel({
   tenantId: string;
 }) {
   const askFn = useServerFn(askStaffNovaFn);
+  const navigate = useNavigate();
   const [turns, setTurns] = useState<StaffNovaTurn[]>([]);
   const [input, setInput] = useState("");
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -1509,7 +1521,7 @@ export function StaffNovaPanel({
                 {t.preparation && t.understanding && (
                   <ActionWorkspace
                     stage={t.preparation.readiness === "ready" || t.preparation.readiness === "ready_with_warnings" ? "preview" : "review"}
-                    title={WORKFLOW_LABEL[t.preparation.workflow] ?? "Operational action"}
+                    title={t.preparation.workflow ? WORKFLOW_LABEL[t.preparation.workflow] ?? "Operational action" : "Operational action"}
                     summary="LexiBite has translated the instruction into a governed operational preparation."
                   >
                     <PreparationActions

@@ -37,7 +37,7 @@ vi.mock("../events/emit.server", () => ({
 }));
 
 const {
-  bootstrapTenant,
+  activateInvitedOwner,
   createFirstOutlet,
   setOperatingModel,
   getOnboardingStatus,
@@ -58,100 +58,62 @@ beforeEach(() => {
   emitRestaurantEventMock.mockResolvedValue({ delivered: true, duplicate: false });
 });
 
-describe("bootstrapTenant", () => {
-  it("derives a slug from the business name and returns the RPC's tenant/member ids", async () => {
+describe("activateInvitedOwner — invitation-bound owner activation", () => {
+  it("returns the tenant and member ids produced by the authenticated activation RPC", async () => {
     const rpc = vi.fn().mockResolvedValue({
       data: [{ tenant_id: TENANT, member_id: "member-1" }],
       error: null,
     });
-    const sb = { rpc };
-    const result = await bootstrapTenant(sb, OWNER, {
-      name: "Kilimanjaro Grill",
-      businessType: "restaurant",
-      currency: "TZS",
-      timezone: "Africa/Dar_es_Salaam",
-    });
-    expect(result).toEqual({ tenantId: TENANT, memberId: "member-1", slug: "kilimanjaro-grill" });
-    expect(rpc).toHaveBeenCalledWith(
-      "restaurant_bootstrap_tenant",
-      expect.objectContaining({
-        _name: "Kilimanjaro Grill",
-        _slug: "kilimanjaro-grill",
-        _business_type: "restaurant",
-      }),
+    const result = await activateInvitedOwner(
+      { rpc },
+      OWNER,
+      "33333333-3333-3333-3333-333333333333",
     );
-  });
-
-  it("retries with a suffixed slug when the name collides, never surfacing the collision to the caller", async () => {
-    const rpc = vi
-      .fn()
-      .mockResolvedValueOnce({
-        data: null,
-        error: { message: "that business name is already taken" },
-      })
-      .mockResolvedValueOnce({ data: [{ tenant_id: TENANT, member_id: "member-2" }], error: null });
-    const sb = { rpc };
-    const result = await bootstrapTenant(sb, OWNER, {
-      name: "The Grill",
-      businessType: "restaurant",
-      currency: "TZS",
-      timezone: "Africa/Dar_es_Salaam",
+    expect(result).toEqual({ tenantId: TENANT, memberId: "member-1" });
+    expect(rpc).toHaveBeenCalledWith("restaurant_activate_invited_owner", {
+      _invitation_id: "33333333-3333-3333-3333-333333333333",
     });
-    expect(result.tenantId).toBe(TENANT);
-    expect(rpc).toHaveBeenCalledTimes(2);
-    const secondCallSlug = rpc.mock.calls[1]![1]._slug as string;
-    expect(secondCallSlug).not.toBe("the-grill");
-    expect(secondCallSlug.startsWith("the-grill-")).toBe(true);
   });
 
-  it("surfaces a genuine RPC error (not a slug collision) verbatim rather than retrying forever", async () => {
-    const rpc = vi
-      .fn()
-      .mockResolvedValue({ data: null, error: { message: "business name is required" } });
-    const sb = { rpc };
+  it("propagates an authorization or subscription failure from the database guard", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: "This customer subscription is not currently active." },
+    });
     await expect(
-      bootstrapTenant(sb, OWNER, {
-        name: "AB",
-        businessType: "restaurant",
-        currency: "TZS",
-        timezone: "Africa/Dar_es_Salaam",
-      }),
-    ).rejects.toThrow(/business name is required/);
+      activateInvitedOwner(
+        { rpc },
+        OWNER,
+        "33333333-3333-3333-3333-333333333333",
+      ),
+    ).rejects.toThrow(/subscription is not currently active/);
     expect(rpc).toHaveBeenCalledTimes(1);
   });
 
-  it("passes the country through to the RPC so P13's fiscalisation gate (which matches on the full country name) can see it (§3/§13 closure)", async () => {
-    const rpc = vi
-      .fn()
-      .mockResolvedValue({ data: [{ tenant_id: TENANT, member_id: "m" }], error: null });
-    const sb = { rpc };
-    await bootstrapTenant(sb, OWNER, {
-      name: "Kilimanjaro Grill",
-      businessType: "restaurant",
-      country: "Tanzania",
-      currency: "TZS",
-      timezone: "Africa/Dar_es_Salaam",
+  it("sends only the invitation id; tenant, role and owner identity remain database-derived", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: [{ tenant_id: TENANT, member_id: "member-1" }],
+      error: null,
     });
-    expect(rpc).toHaveBeenCalledWith(
-      "restaurant_bootstrap_tenant",
-      expect.objectContaining({ _country: "Tanzania" }),
+    await activateInvitedOwner(
+      { rpc },
+      OWNER,
+      "33333333-3333-3333-3333-333333333333",
     );
+    expect(rpc.mock.calls[0]?.[1]).toEqual({
+      _invitation_id: "33333333-3333-3333-3333-333333333333",
+    });
   });
 
-  it("never derives the owner from anything but the server-side session — no ownerId/userId field is ever sent to the RPC", async () => {
-    const rpc = vi
-      .fn()
-      .mockResolvedValue({ data: [{ tenant_id: TENANT, member_id: "m" }], error: null });
-    const sb = { rpc };
-    await bootstrapTenant(sb, OWNER, {
-      name: "Test Diner",
-      businessType: "restaurant",
-      currency: "TZS",
-      timezone: "Africa/Dar_es_Salaam",
-    });
-    const sentParams = rpc.mock.calls[0]![1] as Record<string, unknown>;
-    expect(Object.keys(sentParams)).not.toContain("_user_id");
-    expect(Object.keys(sentParams)).not.toContain("_owner_id");
+  it("fails closed if the RPC returns no activation identity", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    await expect(
+      activateInvitedOwner(
+        { rpc },
+        OWNER,
+        "33333333-3333-3333-3333-333333333333",
+      ),
+    ).rejects.toThrow(/did not return a tenant and member/);
   });
 });
 

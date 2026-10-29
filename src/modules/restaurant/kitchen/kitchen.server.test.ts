@@ -138,7 +138,13 @@ function makeFakeSupabase(opts: {
         };
       }
       if (table === "restaurant_members") {
-        const rows = (opts.restaurantMembers ?? []).filter(
+        // Unless a test explicitly supplies membership rows, model the caller
+        // as a tenant-wide owner. This keeps the fake aligned with the
+        // authorization boundary introduced for scoped ticket reads.
+        const members = opts.restaurantMembers ?? [
+          { tenant_id: TENANT, user_id: USER, role: "owner" },
+        ];
+        const rows = members.filter(
           (m) => m.tenant_id === filters.tenant_id && m.user_id === filters.user_id,
         );
         return { data: rows, error: null };
@@ -364,6 +370,10 @@ function fakeListTicketsDb(rows: Record<string, any[]>) {
         filtered = filtered.filter((r) => set.has(r[col]));
         return builder;
       },
+      is(col: string, val: unknown) {
+        filtered = filtered.filter((r) => val == null ? r[col] == null : r[col] === val);
+        return builder;
+      },
       order() {
         return builder;
       },
@@ -384,7 +394,11 @@ function fakeListTicketsDb(rows: Record<string, any[]>) {
 
 function ticketsBaseRows(overrides: Partial<Record<string, any[]>> = {}) {
   return {
-    restaurant_members: [{ tenant_id: TENANT, user_id: USER, role: "manager" }],
+    restaurant_members: [{ tenant_id: TENANT, user_id: USER, role: "owner", property_id: null }],
+    restaurant_stations: [
+      { id: KITCHEN_STATION, tenant_id: TENANT, property_id: null, location_id: null, station_type: "kitchen", active: true },
+      { id: BAR_STATION, tenant_id: TENANT, property_id: null, location_id: null, station_type: "bar", active: true },
+    ],
     restaurant_kitchen_ticket_items: [],
     restaurant_orders: [],
     restaurant_tables: [],

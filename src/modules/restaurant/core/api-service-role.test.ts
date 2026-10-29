@@ -44,6 +44,7 @@ describe("api_service role — never human-assignable", () => {
       tenantId: "11111111-1111-1111-1111-111111111111",
       userId: "22222222-2222-2222-2222-222222222222",
       role: "api_service",
+      propertyId: null,
     });
     expect(attempt.success).toBe(false);
   });
@@ -54,6 +55,7 @@ describe("api_service role — never human-assignable", () => {
         tenantId: "11111111-1111-1111-1111-111111111111",
         userId: "22222222-2222-2222-2222-222222222222",
         role,
+        propertyId: null,
       });
       expect(attempt.success).toBe(true);
     }

@@ -42,6 +42,14 @@ export interface InventoryAgentRunInput {
   locationId?: string;
 }
 
+export type InventoryAgentJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | InventoryAgentJsonValue[]
+  | { [key: string]: InventoryAgentJsonValue };
+
 export interface InventoryAgentRecommendation {
   decisionId: string;
   decisionKey: string;
@@ -51,12 +59,12 @@ export interface InventoryAgentRecommendation {
   severity: string;
   confidence: number;
   headline: string;
-  facts: Record<string, unknown>;
+  facts: Record<string, InventoryAgentJsonValue>;
   recommendedOptionKey: string | null;
   recommendedActionType: string | null;
   actionId: string | null;
   actionStatus: string | null;
-  verification: Record<string, unknown> | null;
+  verification: Record<string, InventoryAgentJsonValue> | null;
 }
 
 export interface InventoryAgentRunResult {
@@ -148,12 +156,14 @@ export async function runInventoryAgent(
       severity: String(finding.severity ?? "unknown"),
       confidence: Number(row.confidence ?? 0),
       headline: String(finding.headline ?? row.decision_key),
-      facts: (finding.facts ?? {}) as Record<string, unknown>,
+      facts: JSON.parse(JSON.stringify(finding.facts ?? {})) as Record<string, InventoryAgentJsonValue>,
       recommendedOptionKey: row.recommended_option_key ?? null,
       recommendedActionType: selected?.option?.actionType ?? null,
       actionId: row.action_id ?? null,
       actionStatus: action?.status ?? null,
-      verification: action?.verification_result ?? null,
+      verification: action?.verification_result == null
+        ? null
+        : JSON.parse(JSON.stringify(action.verification_result)) as Record<string, InventoryAgentJsonValue>,
     };
   });
 

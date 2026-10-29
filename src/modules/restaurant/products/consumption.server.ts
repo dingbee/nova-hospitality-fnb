@@ -168,12 +168,18 @@ export async function consumeForRecipeSale(
   if (args.locationId && !orderLocation) {
     throw new Error("Recipe consumption blocked: the order location does not belong to this tenant.");
   }
+  if (
+    orderLocation &&
+    (orderLocation.scope === "tenant" ||
+      orderLocation.status !== "active" ||
+      !orderLocation.property_id ||
+      (args.propertyId != null && orderLocation.property_id !== args.propertyId))
+  ) {
+    throw new Error("Recipe consumption blocked: POS location must be active and scoped to the order property.");
+  }
   const orderPropertyId = args.propertyId ?? orderLocation?.property_id ?? null;
   if (!orderPropertyId) {
     throw new Error("Recipe consumption blocked: a property-scoped order location is required.");
-  }
-  if (orderLocation && (orderLocation.scope === "tenant" || orderLocation.property_id !== orderPropertyId)) {
-    throw new Error("Recipe consumption blocked: the order location does not belong to the order property.");
   }
   for (const [itemId, info] of meta) {
     if (!info.property_id || info.property_id !== orderPropertyId) {
