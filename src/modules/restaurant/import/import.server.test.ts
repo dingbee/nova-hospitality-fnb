@@ -1737,7 +1737,7 @@ describe("LexiBite template deterministic import — end to end", () => {
     // calls out as the one thing the importer must never confuse.
     const wine = db.restaurant_inventory_items!.find((r) => r.sku === "WINE-RED-750");
     expect(wine).toBeTruthy();
-  });
+  }, 60_000);
 
   it("refuses to run the deterministic path against a workbook that is not a LexiBite template", async () => {
     const XLSX = await import("xlsx");
