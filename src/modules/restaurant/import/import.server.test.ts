@@ -1798,8 +1798,7 @@ describe("scale: a realistically large single-sheet import", () => {
     for (let i = 0; i < rowCount; i++) {
       lines.push(`Bulk Item ${i},BULK-${i},1000,1`);
     }
-    const csv = lines.join("
-");
+    const csv = lines.join("\n");
     const source = await stageCsv(TENANT, ws.id, csv, "inventory_item");
 
     const staged = await listStagedRecords(sb, USER, {
