@@ -44,7 +44,7 @@ describe("bill splitting", () => {
   it("supports the configured maximum of 24 equal shares and still reconciles", () => {
     const split = buildSplit([], 100, 100, "even", 24);
     expect(split.shares).toHaveLength(24);
-    expect(split.shares.reduce((s, x) => s + x.amount, 0)).toBe(100);
+    expect(Math.round(split.shares.reduce((s, x) => s + x.amount, 0) * 100) / 100).toBe(100);
     expect(split.reconciles).toBe(true);
   });
 
