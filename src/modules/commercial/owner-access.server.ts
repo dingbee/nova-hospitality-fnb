@@ -57,7 +57,9 @@ export async function listOwnerAccess(
     .in("id", tenantIds);
   if (tenantError) throw new Error(tenantError.message);
 
-  const names = new Map((tenants ?? []).map((t: any) => [t.id, t]));
+  const names = new Map<string, { name: string; slug: string | null }>(
+    (tenants ?? []).map((t: any) => [String(t.id), { name: String(t.name ?? ""), slug: t.slug ?? null }]),
+  );
 
   return (data ?? []).map((row: any) => ({
     ...row,
