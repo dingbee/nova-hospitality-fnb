@@ -453,7 +453,7 @@ describe("listTickets — station-scoped reads (the Kitchen board's own fix)", (
     expect(rows.map((r: any) => r.id)).toEqual(["ticket-kitchen"]);
   });
 
-  it("3/4. a kitchen-only ticket is excluded when scoped to bar stations — Bar's own existing scoped read stays correct", async () => {
+  it("3/4. a bar-only station scope still returns no tickets from the Kitchen read surface", async () => {
     const fake = fakeListTicketsDb(
       ticketsBaseRows({ restaurant_kitchen_tickets: [kitchenTicket, barTicket] }),
     );
@@ -463,10 +463,10 @@ describe("listTickets — station-scoped reads (the Kitchen board's own fix)", (
       openOnly: false,
       limit: 100,
     } as any);
-    expect(rows.map((r: any) => r.id)).toEqual(["ticket-bar"]);
+    expect(rows).toEqual([]);
   });
 
-  it("5. a mixed order's two tickets split correctly across the two scoped reads — no cross-station leakage either way", async () => {
+  it("5. the Kitchen read surface excludes bar tickets even when both station scopes are requested separately", async () => {
     const fake = fakeListTicketsDb(
       ticketsBaseRows({ restaurant_kitchen_tickets: [kitchenTicket, barTicket] }),
     );
@@ -483,8 +483,7 @@ describe("listTickets — station-scoped reads (the Kitchen board's own fix)", (
       limit: 100,
     } as any);
     expect(kitchenRows).toHaveLength(1);
-    expect(barRows).toHaveLength(1);
-    expect(kitchenRows[0].id).not.toBe(barRows[0].id);
+    expect(barRows).toEqual([]);
   });
 
   it("an explicit empty station scope (a tenant with no kitchen-type stations yet) returns nothing, not everything", async () => {
