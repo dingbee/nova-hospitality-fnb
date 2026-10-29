@@ -83,7 +83,7 @@ function sbWithExisting(existing: unknown, productUnitId = UNIT, purchaseUnitId:
         return chain({ data: existing, error: null });
       }
       if (table === "restaurant_purchase_order_items") {
-        return chain({ data: existing ? [{ id: "line-1" }] : [], error: null });
+        return chain({ data: existing ? [{ id: "line-1", inventory_item_id: ITEM, supplier_product_id: PRODUCT, unit_id: UNIT, quantity: 10, unit_price: 12000 }] : [], error: null });
       }
       return chain({ data: [], error: null });
     }),
@@ -258,6 +258,33 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
     });
 
     expect(mocks.createPurchaseOrder.mock.calls.at(-1)?.[2].lines[0].quantity).toBe(10);
+  });
+
+  it("rejects an idempotent retry when the persisted PO quantity differs from the requested override", async () => {
+    mocks.getPurchasingIntelligence.mockResolvedValue({
+      generatedAt: "2026-10-05T00:00:00.000Z",
+      windowDays: 30,
+      currency: "TZS",
+      suggestions: [{
+        inventoryItemId: ITEM, name: "Beef", supplierId: SUPPLIER, supplierName: "Fresh Supplier",
+        recommendedQuantity: 10, estimatedCost: 120000, currentQuantity: 2,
+        dailyVelocity: 1, leadTimeDays: 2, coverDays: 5,
+      }],
+      suppliers: [], spendChangePercent: null, expectedMonthlySpend: 0, previousMonthlySpend: 0,
+    });
+    mocks.createPurchaseOrder.mockClear();
+    const existing = {
+      id: "po-existing", document_number: "PO-EXISTING",
+      reference: "LEXI-INT-" + IDEMPOTENCY + "-c9c4c5e7",
+      status: "draft", supplier_id: SUPPLIER, property_id: null, location_id: null,
+      total: 120000, currency: "TZS",
+    };
+    const sb = sbWithExisting(existing);
+    await expect(createIntelligentPurchaseOrders(sb, USER, {
+      tenantId: TENANT, inventoryItemIds: [], supplierId: null, idempotencyKey: IDEMPOTENCY,
+      lineOverrides: [{ inventoryItemId: ITEM, quantity: 8 }],
+    })).rejects.toThrow(/persisted lines differ/i);
+    expect(mocks.createPurchaseOrder).not.toHaveBeenCalled();
   });
 
   it("recovers an existing intelligent PO on retry without creating a second PO", async () => {
