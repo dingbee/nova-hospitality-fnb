@@ -118,7 +118,7 @@ function ServiceRecoveryPage() {
           </select>
         </label>
         <label className="space-y-1 text-sm"><span>Affected quantity</span>
-          <Input inputType="number" value={affectedQuantity} onChange={e => setAffectedQuantity(e.target.value)} min={0.001} max={Number(selectedLine?.quantity ?? 1)} step={0.001} disabled={!selectedLine} />
+          <Input type="number" value={affectedQuantity} onChange={e => setAffectedQuantity(e.target.value)} min={0.001} max={Number(selectedLine?.quantity ?? 1)} step={0.001} disabled={!selectedLine} />
           <span className="block text-xs text-muted-foreground">Select only the number of units affected. Full-line void and comp remain restricted to the full original quantity.</span>
         </label>
         <label className="space-y-1 text-sm"><span>Complaint category</span>
