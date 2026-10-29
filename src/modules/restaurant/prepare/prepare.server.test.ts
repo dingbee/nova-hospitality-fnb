@@ -190,6 +190,7 @@ function contract(overrides: Partial<NovaIntentContract> = {}): NovaIntentContra
     action: "prepare_stock_movement",
     entities: [],
     locations: { source: null, destination: null },
+    purchaseOrderReferenceRaw: null,
     supplier: null,
     temporal: null,
     constraints: [],
