@@ -45,7 +45,7 @@ function chain(result: unknown) {
   return q;
 }
 
-function sbWithExisting(existing: unknown, productUnitId = UNIT) {
+function sbWithExisting(existing: unknown, productUnitId = UNIT, purchaseUnitId: string | null = null, packSize = 1) {
   return {
     from: vi.fn((table: string) => {
       if (table === "restaurant_inventory_items") {
@@ -54,6 +54,8 @@ function sbWithExisting(existing: unknown, productUnitId = UNIT) {
             id: ITEM,
             name: "Beef",
             unit_id: UNIT,
+            purchase_unit_id: purchaseUnitId,
+            pack_size: packSize,
             property_id: null,
             location_id: null,
             currency: "TZS",
@@ -89,6 +91,44 @@ function sbWithExisting(existing: unknown, productUnitId = UNIT) {
 }
 
 describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
+  it("normalizes supplier pack pricing and rounds stock demand up to whole purchase packs", async () => {
+    mocks.assertCapability.mockResolvedValue(undefined);
+    mocks.getTenantScope.mockResolvedValue({});
+    mocks.resolveMultiPropertyScope.mockResolvedValue(null);
+    mocks.getPurchasingIntelligence.mockResolvedValue({
+      generatedAt: "2026-10-05T00:00:00.000Z",
+      windowDays: 30,
+      currency: "TZS",
+      suggestions: [{
+        inventoryItemId: ITEM,
+        name: "Beef",
+        supplierId: SUPPLIER,
+        supplierName: "Fresh Supplier",
+        recommendedQuantity: 11,
+        estimatedCost: 26400,
+        currentQuantity: 2,
+        dailyVelocity: 1,
+        leadTimeDays: 2,
+        coverDays: 5,
+      }],
+      suppliers: [],
+      spendChangePercent: null,
+      expectedMonthlySpend: 0,
+      previousMonthlySpend: 0,
+    });
+    const plan = await previewIntelligentPurchaseOrders(
+      sbWithExisting(null, "88888888-8888-4888-8888-888888888888", "88888888-8888-4888-8888-888888888888", 6),
+      USER,
+      { tenantId: TENANT, inventoryItemIds: [], supplierId: null, idempotencyKey: IDEMPOTENCY, lineOverrides: [] },
+    );
+    expect(plan.groups[0]?.lines[0]).toEqual(expect.objectContaining({
+      quantity: 2,
+      unitPrice: 12000,
+      estimatedCost: 24000,
+    }));
+    expect(plan.totalEstimatedSpend).toBe(24000);
+  });
+
   it("refuses a replenishment PO when supplier unit differs from the stock unit", async () => {
     mocks.assertCapability.mockResolvedValue(undefined);
     mocks.getTenantScope.mockResolvedValue({});
