@@ -124,7 +124,11 @@ jobs:
             src/modules/restaurant/bar/ticket-items.test.ts \
             src/modules/restaurant/sales/service-recovery.contracts.test.ts \
             src/modules/restaurant/ui/useRestaurantWorkspace.test.ts \
-            src/modules/restaurant/inventory/locations.server.test.ts
+            src/modules/restaurant/inventory/locations.server.test.ts \
+            src/modules/restaurant/intelligence/purchasing.server.test.ts \
+            src/modules/restaurant/procurement/ask-lexibite.server.test.ts \
+            src/modules/restaurant/procurement/receiving-governance.test.ts \
+            src/modules/restaurant/procurement/receiving-units.test.ts
 
       - name: Full test suite (repository baseline)
         id: full_tests
