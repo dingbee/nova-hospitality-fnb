@@ -410,6 +410,7 @@ type StaffNovaTurn =
       sourceMessage?: string;
       understanding?: NovaIntentContract;
       preparation?: NovaPreparation;
+      intelligentPurchaseOrder?: IntelligentPurchaseOrderPlan;
       managerBrief?: boolean;
     };
 
@@ -1362,6 +1363,7 @@ export function StaffNovaPanel({
   tenantId: string;
 }) {
   const askFn = useServerFn(askStaffNovaFn);
+  const navigate = useNavigate();
   const [turns, setTurns] = useState<StaffNovaTurn[]>([]);
   const [input, setInput] = useState("");
   const [memoryOpen, setMemoryOpen] = useState(false);
