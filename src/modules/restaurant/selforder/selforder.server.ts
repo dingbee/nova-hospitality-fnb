@@ -200,6 +200,7 @@ export async function ensureGuestTableSession(sb: Sb, tableId: string) {
     .select("id, guest_session_id, opened_at")
     .eq("tenant_id", table.tenantId)
     .eq("table_id", table.tableId)
+    .is("guest_session_id", null)
     .in("status", [...ACTIVE_TABLE_ORDER_STATUSES])
     .order("opened_at");
 
