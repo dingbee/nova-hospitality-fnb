@@ -119,8 +119,12 @@ export async function createAskLexiBitePurchaseOrder(
     if (!(stockUnitsPerPurchaseUnit > 0)) {
       throw new Error("The supplier purchase unit for " + item.name + " cannot be converted to the stock unit.");
     }
+    let purchaseQuantity = quantity;
     if (requestedUnitId && requestedUnitId !== purchaseUnitId) {
-      throw new Error("The requested unit for " + item.name + " does not match the supplier's configured purchase unit.");
+      if (requestedUnitId !== item.unit_id) {
+        throw new Error("The requested unit for " + item.name + " cannot be converted to the supplier's configured purchase unit.");
+      }
+      purchaseQuantity = Math.ceil(quantity / stockUnitsPerPurchaseUnit);
     }
 
     lines.push({
@@ -128,7 +132,7 @@ export async function createAskLexiBitePurchaseOrder(
       supplierProductId: product.id,
       unitId: purchaseUnitId,
       description: item.name,
-      quantity,
+      quantity: purchaseQuantity,
       unitPrice: Number(product.unit_price ?? 0),
     });
   }
