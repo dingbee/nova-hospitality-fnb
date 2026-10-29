@@ -202,21 +202,21 @@ FOR EACH ROW EXECUTE FUNCTION public.restaurant_location_property_activation_gua
 \i standalone/db/migrations/0111_allow_tenant_central_store_pending_property.sql
 
 INSERT INTO public.restaurant_properties (id, tenant_id, slug, status) VALUES
- ('10000000-0000-4000-8000-000000000003','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','pending-property','pending');
+ ('10000000-0000-4000-8000-000000000003','dddddddd-dddd-4ddd-8ddd-dddddddddddd','pending-property','pending');
 
 DO $$
 BEGIN
   INSERT INTO public.restaurant_locations
     (id, tenant_id, property_id, parent_id, slug, name, location_type, is_storage, scope, status)
   VALUES
-    ('20000000-0000-4000-8000-000000000007','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',NULL,NULL,
+    ('20000000-0000-4000-8000-000000000007','dddddddd-dddd-4ddd-8ddd-dddddddddddd',NULL,NULL,
      'pending-property-central','Pending Property Central Store','store',true,'tenant','active');
 
   BEGIN
     INSERT INTO public.restaurant_locations
       (id, tenant_id, property_id, parent_id, slug, name, location_type, is_storage, scope, status)
     VALUES
-      ('20000000-0000-4000-8000-000000000008','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      ('20000000-0000-4000-8000-000000000008','dddddddd-dddd-4ddd-8ddd-dddddddddddd',
        '10000000-0000-4000-8000-000000000003',NULL,'pending-property-store',
        'Pending Property Store','store',true,'property','active');
     RAISE EXCEPTION 'Expected active property-scoped store under pending property to fail';
