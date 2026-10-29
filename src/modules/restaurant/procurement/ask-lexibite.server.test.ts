@@ -196,6 +196,7 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
   });
 
   it("persists the Purchasing Intelligence quantity and a line override as the actual PO line quantity", async () => {
+    mocks.createPurchaseOrder.mockClear();
     mocks.assertCapability.mockResolvedValue(undefined);
     mocks.getTenantScope.mockResolvedValue({});
     mocks.resolveMultiPropertyScope.mockResolvedValue(null);
