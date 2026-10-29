@@ -16,6 +16,8 @@ import { consumeForOrderItem } from "./movements.server";
 
 const TENANT = "11111111-1111-1111-1111-111111111111";
 const USER = "22222222-2222-2222-2222-222222222222";
+const PROPERTY = "property-1";
+const LOCATION = "location-1";
 
 const KG = { id: "unit-kg", code: "KG", name: "Kilogram", dimension: "mass", factor: 1000 };
 const G = { id: "unit-g", code: "G", name: "Gram", dimension: "mass", factor: 1 };
@@ -23,6 +25,19 @@ const PC = { id: "unit-pc", code: "PC", name: "Piece", dimension: "count", facto
 
 function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[] }) {
   const movements: any[] = [];
+  const location = {
+    id: LOCATION,
+    tenant_id: TENANT,
+    property_id: PROPERTY,
+    scope: "property",
+    is_storage: false,
+    status: "active",
+  };
+  const items = opts.items.map((item) => ({
+    property_id: PROPERTY,
+    location_id: LOCATION,
+    ...item,
+  }));
   let seq = 0;
 
   function builder(table: string) {
@@ -56,10 +71,16 @@ function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[] 
       if (table === "restaurant_inventory_items") {
         if ((api as any)._insertRow) return { data: null, error: null }; // not used
         if (inFilters.id) {
-          return { data: opts.items.filter((i) => inFilters.id!.includes(i.id)), error: null };
+          return { data: items.filter((i) => inFilters.id!.includes(i.id)), error: null };
         }
-        const row = opts.items.find((i) => i.id === filters.id) ?? null;
+        const row = items.find((i) => i.id === filters.id) ?? null;
         return { data: row, error: null };
+      }
+      if (table === "restaurant_locations") {
+        return {
+          data: filters.id === LOCATION && filters.tenant_id === TENANT ? location : null,
+          error: null,
+        };
       }
       if (table === "restaurant_inventory_units") {
         return { data: opts.units.filter((u) => inFilters.id?.includes(u.id)), error: null };
@@ -115,6 +136,8 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
 
     const cost = await consumeForOrderItem(fake.supabase, USER, {
       tenantId: TENANT,
+      propertyId: PROPERTY,
+      locationId: LOCATION,
       orderId: "order-1",
       orderItemId: "item-1",
       menuItemId: "menu-burger",
