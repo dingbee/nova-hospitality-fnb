@@ -1570,9 +1570,9 @@ Rice,,ITM-1
       tenantId: TENANT,
       workspaceId: ws.id,
       kind: "csv",
-      text: "Notes
+      text: `Notes
 This workbook was prepared for the March migration. Contact ops for questions.
-",
+`,
     } as any);
     const result = await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
     expect(result.sheets[0]!.detectedDomains).toEqual([]);
