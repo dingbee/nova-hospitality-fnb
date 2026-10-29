@@ -51,7 +51,9 @@ function sbFor(tableResults: Record<string, unknown>) {
 
 describe("LexiBite Inventory Agent V1", () => {
   beforeEach(() => {
+    for (const mock of Object.values(mocks)) mock.mockReset();
     mocks.assertEntitled.mockResolvedValue(undefined);
+    mocks.assertCapability.mockResolvedValue(undefined);
   });
   it("runs the canonical decision pass and returns only inventory replenishment findings", async () => {
     mocks.runRestaurantDecisionPass.mockResolvedValueOnce({
