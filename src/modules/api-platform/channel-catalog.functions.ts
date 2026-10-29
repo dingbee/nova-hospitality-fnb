@@ -19,6 +19,7 @@ const upsertSchema = z.object({
   enabled: z.boolean(),
   sortOrder: z.number().int().min(0).max(10000),
 });
+export type UpsertChannelDefinitionInput = z.infer<typeof upsertSchema>;
 
 export const listChannelDefinitionsFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
