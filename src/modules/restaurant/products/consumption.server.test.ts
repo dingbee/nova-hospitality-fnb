@@ -20,6 +20,8 @@
 import { describe, expect, it } from "vitest";
 import { consumeForRecipeSale } from "./consumption.server";
 
+const PROPERTY = "property-1";
+const LOCATION = "location-1";
 const TENANT = "11111111-1111-1111-1111-111111111111";
 const USER = "22222222-2222-2222-2222-222222222222";
 const BURGER_RECIPE = "33333333-3333-3333-3333-333333333333";
