@@ -26,7 +26,9 @@ export async function createAskLexiBitePurchaseOrder(
     throw new Error("This instruction is not a purchase-order request.");
   }
   if (!contract.supplier?.resolvedId) {
-    throw new Error("A specific supplier is required before Ask LexiBite can create a purchase order.");
+    throw new Error(
+      "A specific supplier is required before Ask LexiBite can create a purchase order.",
+    );
   }
   if (contract.supplier.status !== "exact" && contract.supplier.status !== "high") {
     throw new Error("The supplier could not be resolved confidently enough to create the order.");
@@ -37,33 +39,59 @@ export async function createAskLexiBitePurchaseOrder(
 
   const entities = contract.entities.filter(
     (entity) =>
-      (entity.status === "exact" || entity.status === "high") &&
-      Boolean(entity.resolvedId),
+      (entity.status === "exact" || entity.status === "high") && Boolean(entity.resolvedId),
   );
   if (entities.length === 0) throw new Error("At least one identified inventory item is required.");
 
   const itemIds = entities.map((entity) => entity.resolvedId!);
-  const [{ data: items }, { data: products }] = await Promise.all([
-    sb
-      .from("restaurant_inventory_items")
-      .select("id, name, unit_id, property_id, location_id, currency")
-      .eq("tenant_id", tenantId)
-      .in("id", itemIds),
-    sb
-      .from("restaurant_supplier_products")
-      .select("id, supplier_id, inventory_item_id, unit_id, unit_price, active")
-      .eq("tenant_id", tenantId)
-      .eq("supplier_id", contract.supplier.resolvedId)
-      .in("inventory_item_id", itemIds),
-  ]);
+  const [{ data: items, error: itemError }, { data: products, error: productError }] =
+    await Promise.all([
+      sb
+        .from("restaurant_inventory_items")
+        .select(
+          "id, name, unit_id, purchase_unit_id, pack_size, property_id, location_id, currency",
+        )
+        .eq("tenant_id", tenantId)
+        .in("id", itemIds),
+      sb
+        .from("restaurant_supplier_products")
+        .select("id, supplier_id, inventory_item_id, unit_id, pack_size, unit_price, active")
+        .eq("tenant_id", tenantId)
+        .eq("supplier_id", contract.supplier.resolvedId)
+        .in("inventory_item_id", itemIds),
+    ]);
+  if (itemError)
+    throw new Error("Unable to validate purchase-order inventory: " + itemError.message);
+  if (productError) throw new Error("Unable to validate supplier pricing: " + productError.message);
 
   const itemById = new Map(((items ?? []) as any[]).map((item) => [item.id, item]));
   const productByItem = new Map<string, any>();
   for (const product of (products ?? []) as any[]) {
-    if (product.active === false) continue;
+    if (product.active === false || !product.inventory_item_id || !product.unit_id) continue;
+    const item = itemById.get(product.inventory_item_id);
+    if (!item?.unit_id) continue;
+    let stockUnitsPerPurchaseUnit = 1;
+    if (product.unit_id === item.unit_id) {
+      stockUnitsPerPurchaseUnit = 1;
+    } else if (
+      item.purchase_unit_id &&
+      product.unit_id === item.purchase_unit_id &&
+      Number(item.pack_size) > 0
+    ) {
+      stockUnitsPerPurchaseUnit = Number(item.pack_size);
+    } else {
+      continue;
+    }
+    const price = Number(product.unit_price);
+    if (!Number.isFinite(price) || price < 0) continue;
+    const normalized = {
+      ...product,
+      stockUnitsPerPurchaseUnit,
+      normalizedStockUnitPrice: price / stockUnitsPerPurchaseUnit,
+    };
     const previous = productByItem.get(product.inventory_item_id);
-    if (!previous || Number(product.unit_price ?? 0) < Number(previous.unit_price ?? 0)) {
-      productByItem.set(product.inventory_item_id, product);
+    if (!previous || normalized.normalizedStockUnitPrice < previous.normalizedStockUnitPrice) {
+      productByItem.set(product.inventory_item_id, normalized);
     }
   }
 
@@ -78,30 +106,50 @@ export async function createAskLexiBitePurchaseOrder(
 
   for (const entity of entities) {
     const item = itemById.get(entity.resolvedId!);
-    if (!item) throw new Error("Inventory item was not found: " + (entity.resolvedName ?? entity.raw) + ".");
+    if (!item)
+      throw new Error("Inventory item was not found: " + (entity.resolvedName ?? entity.raw) + ".");
     const quantity = entity.quantity?.quantity ?? null;
-    if (quantity == null || quantity <= 0) {
-      throw new Error("Quantity is required for " + item.name + " before creating the purchase order.");
+    if (quantity == null || !Number.isFinite(quantity) || quantity <= 0) {
+      throw new Error(
+        "Quantity is required for " + item.name + " before creating the purchase order.",
+      );
     }
 
     const product = productByItem.get(item.id);
     if (!product) {
-      throw new Error("No active supplier price is configured for " + item.name + " from the selected supplier.");
+      throw new Error(
+        "No active supplier price is configured for " + item.name + " from the selected supplier.",
+      );
     }
 
     const requestedUnitId = entity.quantity?.resolvedUnitId ?? null;
-    const purchaseUnitId = product.unit_id ?? item.unit_id ?? null;
-    if (requestedUnitId && purchaseUnitId && requestedUnitId !== purchaseUnitId) {
-      throw new Error("The requested unit for " + item.name + " does not match the supplier's configured purchase unit.");
+    const purchaseUnitId = product.unit_id ?? null;
+    if (!purchaseUnitId)
+      throw new Error("No supplier purchase unit is configured for " + item.name + ".");
+    const stockUnitsPerPurchaseUnit = Number(product.stockUnitsPerPurchaseUnit ?? 0);
+    if (!(stockUnitsPerPurchaseUnit > 0)) {
+      throw new Error(
+        "The supplier purchase unit for " + item.name + " cannot be converted to the stock unit.",
+      );
     }
-    if (!purchaseUnitId) throw new Error("No purchase unit is configured for " + item.name + ".");
+    let purchaseQuantity = quantity;
+    if (requestedUnitId && requestedUnitId !== purchaseUnitId) {
+      if (requestedUnitId !== item.unit_id) {
+        throw new Error(
+          "The requested unit for " +
+            item.name +
+            " cannot be converted to the supplier's configured purchase unit.",
+        );
+      }
+      purchaseQuantity = Math.ceil(quantity / stockUnitsPerPurchaseUnit);
+    }
 
     lines.push({
       inventoryItemId: item.id,
       supplierProductId: product.id,
       unitId: purchaseUnitId,
       description: item.name,
-      quantity,
+      quantity: purchaseQuantity,
       unitPrice: Number(product.unit_price ?? 0),
     });
   }
@@ -137,7 +185,9 @@ export const intelligentPurchaseOrderPlanInputSchema = z.object({
     .max(25)
     .default([]),
 });
-export type IntelligentPurchaseOrderPlanInput = z.infer<typeof intelligentPurchaseOrderPlanInputSchema>;
+export type IntelligentPurchaseOrderPlanInput = z.infer<
+  typeof intelligentPurchaseOrderPlanInputSchema
+>;
 
 export interface IntelligentPurchaseOrderLine {
   inventoryItemId: string;
@@ -186,26 +236,48 @@ export async function previewIntelligentPurchaseOrders(
   const scope = await getTenantScope(sb, userId, tenantId);
   const propertyId = await resolveMultiPropertyScope(sb, tenantId, scope, null);
   const intelligence = await getPurchasingIntelligence(sb, userId, {
-    tenantId, windowDays: 30, propertyId,
+    tenantId,
+    windowDays: 30,
+    propertyId,
   });
 
   const requestedIds = new Set(input.inventoryItemIds);
   let suggestions = intelligence.suggestions;
-  if (requestedIds.size > 0) suggestions = suggestions.filter((x) => requestedIds.has(x.inventoryItemId));
+  if (requestedIds.size > 0)
+    suggestions = suggestions.filter((x) => requestedIds.has(x.inventoryItemId));
   if (input.supplierId) suggestions = suggestions.filter((x) => x.supplierId === input.supplierId);
 
   const itemIds = suggestions.map((x) => x.inventoryItemId);
-  if (itemIds.length === 0) return {
-    generatedAt: intelligence.generatedAt, windowDays: intelligence.windowDays, currency: intelligence.currency,
-    groups: [], skipped: [], suggestionCount: 0, totalEstimatedSpend: 0,
-  };
+  if (itemIds.length === 0)
+    return {
+      generatedAt: intelligence.generatedAt,
+      windowDays: intelligence.windowDays,
+      currency: intelligence.currency,
+      groups: [],
+      skipped: [],
+      suggestionCount: 0,
+      totalEstimatedSpend: 0,
+    };
 
-  const [{ data: items, error: itemError }, { data: products, error: productError }, { data: suppliers, error: supplierError }] = await Promise.all([
-    sb.from("restaurant_inventory_items").select("id, name, unit_id, property_id, location_id, currency").eq("tenant_id", tenantId).in("id", itemIds),
-    sb.from("restaurant_supplier_products").select("id, supplier_id, inventory_item_id, unit_id, unit_price, active").eq("tenant_id", tenantId).in("inventory_item_id", itemIds),
+  const [
+    { data: items, error: itemError },
+    { data: products, error: productError },
+    { data: suppliers, error: supplierError },
+  ] = await Promise.all([
+    sb
+      .from("restaurant_inventory_items")
+      .select("id, name, unit_id, purchase_unit_id, pack_size, property_id, location_id, currency")
+      .eq("tenant_id", tenantId)
+      .in("id", itemIds),
+    sb
+      .from("restaurant_supplier_products")
+      .select("id, supplier_id, inventory_item_id, unit_id, pack_size, unit_price, active")
+      .eq("tenant_id", tenantId)
+      .in("inventory_item_id", itemIds),
     sb.from("restaurant_suppliers").select("id, name").eq("tenant_id", tenantId),
   ]);
-  if (itemError) throw new Error("Unable to validate replenishment inventory: " + itemError.message);
+  if (itemError)
+    throw new Error("Unable to validate replenishment inventory: " + itemError.message);
   if (productError) throw new Error("Unable to validate supplier pricing: " + productError.message);
   if (supplierError) throw new Error("Unable to validate suppliers: " + supplierError.message);
 
@@ -214,49 +286,135 @@ export async function previewIntelligentPurchaseOrders(
   const productByKey = new Map<string, any>();
   for (const product of (products ?? []) as any[]) {
     if (product.active === false || !product.supplier_id || !product.inventory_item_id) continue;
+    const item = itemById.get(product.inventory_item_id);
+    if (!item?.unit_id || !product.unit_id) continue;
+    let stockUnitsPerPurchaseUnit = 1;
+    if (product.unit_id === item.unit_id) {
+      stockUnitsPerPurchaseUnit = 1;
+    } else if (
+      item.purchase_unit_id &&
+      product.unit_id === item.purchase_unit_id &&
+      Number(item.pack_size) > 0
+    ) {
+      stockUnitsPerPurchaseUnit = Number(item.pack_size);
+    } else {
+      continue;
+    }
+    const price = Number(product.unit_price);
+    if (!Number.isFinite(price) || price < 0) continue;
     const key = product.supplier_id + ":" + product.inventory_item_id;
+    const normalized = {
+      ...product,
+      stockUnitsPerPurchaseUnit,
+      normalizedStockUnitPrice: price / stockUnitsPerPurchaseUnit,
+    };
     const previous = productByKey.get(key);
-    if (!previous || Number(product.unit_price ?? 0) < Number(previous.unit_price ?? 0)) productByKey.set(key, product);
+    if (!previous || normalized.normalizedStockUnitPrice < previous.normalizedStockUnitPrice)
+      productByKey.set(key, normalized);
   }
 
   const skipped: string[] = [];
   const groups = new Map<string, IntelligentPurchaseOrderGroup>();
   for (const suggestion of suggestions) {
-    if (!suggestion.supplierId) { skipped.push(suggestion.name + ": Purchasing Intelligence has no supplier selected."); continue; }
+    if (!suggestion.supplierId) {
+      skipped.push(suggestion.name + ": Purchasing Intelligence has no supplier selected.");
+      continue;
+    }
     const item = itemById.get(suggestion.inventoryItemId);
-    if (!item) { skipped.push(suggestion.name + ": inventory item could not be revalidated."); continue; }
+    if (!item) {
+      skipped.push(suggestion.name + ": inventory item could not be revalidated.");
+      continue;
+    }
     const product = productByKey.get(suggestion.supplierId + ":" + suggestion.inventoryItemId);
-    if (!product) { skipped.push(suggestion.name + ": no active supplier price is currently configured."); continue; }
-    const unitId = product.unit_id ?? item.unit_id ?? null;
-    if (!unitId) { skipped.push(suggestion.name + ": no purchase unit is configured."); continue; }
+    if (!product) {
+      const hasUnconvertiblePrice = ((products ?? []) as any[]).some(
+        (candidate) =>
+          candidate.active !== false &&
+          candidate.supplier_id === suggestion.supplierId &&
+          candidate.inventory_item_id === suggestion.inventoryItemId,
+      );
+      skipped.push(
+        hasUnconvertiblePrice
+          ? suggestion.name +
+              ": supplier purchase unit differs from the stock unit and no valid pack-size conversion is configured."
+          : suggestion.name + ": no active supplier price is currently configured.",
+      );
+      continue;
+    }
+    const unitId = product.unit_id ?? null;
+    if (!unitId) {
+      skipped.push(suggestion.name + ": no supplier purchase unit is configured.");
+      continue;
+    }
+    const stockUnitsPerPurchaseUnit = Number(product.stockUnitsPerPurchaseUnit ?? 0);
+    if (!(stockUnitsPerPurchaseUnit > 0)) {
+      skipped.push(
+        suggestion.name + ": supplier purchase unit cannot be converted to the stock unit.",
+      );
+      continue;
+    }
+    const purchaseQuantity = Math.ceil(
+      Number(suggestion.recommendedQuantity) / stockUnitsPerPurchaseUnit,
+    );
     const supplier = supplierById.get(suggestion.supplierId);
-    if (!supplier) { skipped.push(suggestion.name + ": selected supplier could not be revalidated."); continue; }
+    if (!supplier) {
+      skipped.push(suggestion.name + ": selected supplier could not be revalidated.");
+      continue;
+    }
 
-    const groupKey = suggestion.supplierId + ":" + (item.property_id ?? "tenant") + ":" + (item.location_id ?? "unassigned");
+    const groupKey =
+      suggestion.supplierId +
+      ":" +
+      (item.property_id ?? "tenant") +
+      ":" +
+      (item.location_id ?? "unassigned");
     const currency = item.currency ?? intelligence.currency;
     const existing = groups.get(groupKey);
     const line: IntelligentPurchaseOrderLine = {
-      inventoryItemId: item.id, supplierProductId: product.id, unitId, description: item.name,
-      quantity: Number(suggestion.recommendedQuantity), unitPrice: Number(product.unit_price ?? 0),
-      estimatedCost: Number((Number(suggestion.recommendedQuantity) * Number(product.unit_price ?? 0)).toFixed(2)),
-      currentQuantity: Number(suggestion.currentQuantity), dailyVelocity: Number(suggestion.dailyVelocity),
-      leadTimeDays: Number(suggestion.leadTimeDays), coverDays: Number(suggestion.coverDays),
+      inventoryItemId: item.id,
+      supplierProductId: product.id,
+      unitId,
+      description: item.name,
+      quantity: purchaseQuantity,
+      unitPrice: Number(product.unit_price ?? 0),
+      estimatedCost: Number((purchaseQuantity * Number(product.unit_price ?? 0)).toFixed(2)),
+      currentQuantity: Number(suggestion.currentQuantity),
+      dailyVelocity: Number(suggestion.dailyVelocity),
+      leadTimeDays: Number(suggestion.leadTimeDays),
+      coverDays: Number(suggestion.coverDays),
     };
-    if (!existing) groups.set(groupKey, {
-      key: groupKey, supplierId: supplier.id, supplierName: supplier.name,
-      propertyId: item.property_id ?? null, locationId: item.location_id ?? null, currency,
-      lines: [line], subtotal: line.estimatedCost,
-    });
-    else { existing.lines.push(line); existing.subtotal = Number((existing.subtotal + line.estimatedCost).toFixed(2)); }
+    if (!existing)
+      groups.set(groupKey, {
+        key: groupKey,
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        propertyId: item.property_id ?? null,
+        locationId: item.location_id ?? null,
+        currency,
+        lines: [line],
+        subtotal: line.estimatedCost,
+      });
+    else {
+      existing.lines.push(line);
+      existing.subtotal = Number((existing.subtotal + line.estimatedCost).toFixed(2));
+    }
   }
 
   const groupList = [...groups.values()].map((group) => ({
-    ...group, lines: group.lines.sort((a, b) => b.estimatedCost - a.estimatedCost), subtotal: Number(group.subtotal.toFixed(2)),
+    ...group,
+    lines: group.lines.sort((a, b) => b.estimatedCost - a.estimatedCost),
+    subtotal: Number(group.subtotal.toFixed(2)),
   }));
   return {
-    generatedAt: intelligence.generatedAt, windowDays: intelligence.windowDays, currency: intelligence.currency,
-    groups: groupList, skipped, suggestionCount: suggestions.length,
-    totalEstimatedSpend: Number(groupList.reduce((sum, group) => sum + group.subtotal, 0).toFixed(2)),
+    generatedAt: intelligence.generatedAt,
+    windowDays: intelligence.windowDays,
+    currency: intelligence.currency,
+    groups: groupList,
+    skipped,
+    suggestionCount: suggestions.length,
+    totalEstimatedSpend: Number(
+      groupList.reduce((sum, group) => sum + group.subtotal, 0).toFixed(2),
+    ),
   };
 }
 
@@ -269,7 +427,11 @@ function intelligentPurchaseOrderReference(idempotencyKey: string, groupKey: str
   return "LEXI-INT-" + idempotencyKey + "-" + (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-export async function createIntelligentPurchaseOrders(sb: Sb, userId: string, input: IntelligentPurchaseOrderPlanInput) {
+export async function createIntelligentPurchaseOrders(
+  sb: Sb,
+  userId: string,
+  input: IntelligentPurchaseOrderPlanInput,
+) {
   const plan = await previewIntelligentPurchaseOrders(sb, userId, input);
   if (plan.groups.length === 0) {
     throw new Error(
@@ -282,38 +444,6 @@ export async function createIntelligentPurchaseOrders(sb: Sb, userId: string, in
   const created = [];
   for (const group of plan.groups) {
     const reference = intelligentPurchaseOrderReference(input.idempotencyKey, group.key);
-    const { data: existing } = await sb
-      .from("restaurant_purchase_orders")
-      .select("id, document_number, reference, status, supplier_id, property_id, location_id, total, currency")
-      .eq("tenant_id", input.tenantId)
-      .eq("reference", reference)
-      .maybeSingle();
-
-    if (existing) {
-      const { data: existingLines } = await sb
-        .from("restaurant_purchase_order_items")
-        .select("id")
-        .eq("tenant_id", input.tenantId)
-        .eq("purchase_order_id", existing.id);
-
-      if ((existingLines ?? []).length !== group.lines.length || existing.supplier_id !== group.supplierId) {
-        throw new Error(
-          "An incomplete intelligent PO already exists for this request. Review the Procurement Centre before retrying.",
-        );
-      }
-
-      created.push({
-        id: existing.id as string,
-        documentNumber: existing.document_number as string,
-        status: existing.status as string,
-        supplierName: group.supplierName,
-        total: Number(existing.total),
-        currency: existing.currency,
-        lineCount: group.lines.length,
-      });
-      continue;
-    }
-
     const finalLines = group.lines.map((line) => {
       const override = input.lineOverrides.find(
         (item) => item.inventoryItemId === line.inventoryItemId,
@@ -325,6 +455,59 @@ export async function createIntelligentPurchaseOrders(sb: Sb, userId: string, in
       return { ...line, quantity: finalQuantity };
     });
 
+    const { data: existing, error: existingError } = await sb
+      .from("restaurant_purchase_orders")
+      .select(
+        "id, document_number, reference, status, supplier_id, property_id, location_id, total, currency",
+      )
+      .eq("tenant_id", input.tenantId)
+      .eq("reference", reference)
+      .maybeSingle();
+    if (existingError)
+      throw new Error("Unable to verify intelligent PO retry: " + existingError.message);
+
+    if (existing) {
+      const { data: existingLines, error: existingLinesError } = await sb
+        .from("restaurant_purchase_order_items")
+        .select("id, inventory_item_id, supplier_product_id, unit_id, quantity, unit_price")
+        .eq("tenant_id", input.tenantId)
+        .eq("purchase_order_id", existing.id);
+      if (existingLinesError)
+        throw new Error(
+          "Unable to verify existing intelligent PO lines: " + existingLinesError.message,
+        );
+
+      const persisted = (existingLines ?? []) as any[];
+      const lineMatches =
+        persisted.length === finalLines.length &&
+        finalLines.every((line) =>
+          persisted.some(
+            (saved) =>
+              saved.inventory_item_id === line.inventoryItemId &&
+              saved.supplier_product_id === line.supplierProductId &&
+              saved.unit_id === line.unitId &&
+              Number(saved.quantity) === Number(line.quantity) &&
+              Number(saved.unit_price) === Number(line.unitPrice),
+          ),
+        );
+      if (!lineMatches || existing.supplier_id !== group.supplierId) {
+        throw new Error(
+          "An intelligent PO already exists for this request but its persisted lines differ from the current plan. Review the Procurement Centre; the existing order was not changed.",
+        );
+      }
+
+      created.push({
+        id: existing.id as string,
+        documentNumber: existing.document_number as string,
+        status: existing.status as string,
+        supplierName: group.supplierName,
+        total: Number(existing.total),
+        currency: existing.currency,
+        lineCount: finalLines.length,
+      });
+      continue;
+    }
+
     const po = await createPurchaseOrder(sb, userId, {
       tenantId: input.tenantId,
       propertyId: group.propertyId ?? undefined,
@@ -332,8 +515,10 @@ export async function createIntelligentPurchaseOrders(sb: Sb, userId: string, in
       supplierId: group.supplierId,
       reference,
       currency: group.currency,
-      directReason: "Prepared by Ask LexiBite from Purchasing Intelligence replenishment recommendations.",
-      notes: "Draft generated from live Purchasing Intelligence. Quantities come from its replenishment recommendation; supplier prices were revalidated against the live supplier catalogue.",
+      directReason:
+        "Prepared by Ask LexiBite from Purchasing Intelligence replenishment recommendations.",
+      notes:
+        "Draft generated from live Purchasing Intelligence. Quantities come from its replenishment recommendation; supplier prices were revalidated against the live supplier catalogue.",
       lines: finalLines.map((line) => ({
         inventoryItemId: line.inventoryItemId,
         supplierProductId: line.supplierProductId,
@@ -367,7 +552,9 @@ export const askLexiBitePurchaseOrderTransitionSchema = z.object({
   purchaseOrderId: uuid,
   status: z.enum(["submitted", "approved"]),
 });
-export type AskLexiBitePurchaseOrderTransitionInput = z.infer<typeof askLexiBitePurchaseOrderTransitionSchema>;
+export type AskLexiBitePurchaseOrderTransitionInput = z.infer<
+  typeof askLexiBitePurchaseOrderTransitionSchema
+>;
 
 export async function transitionAskLexiBitePurchaseOrder(
   sb: Sb,
@@ -394,7 +581,9 @@ export const receiveAskLexiBitePurchaseOrderSchema = z.object({
   purchaseOrderId: uuid,
   confirm: z.boolean(),
 });
-export type ReceiveAskLexiBitePurchaseOrderInput = z.infer<typeof receiveAskLexiBitePurchaseOrderSchema>;
+export type ReceiveAskLexiBitePurchaseOrderInput = z.infer<
+  typeof receiveAskLexiBitePurchaseOrderSchema
+>;
 
 export async function receiveAskLexiBitePurchaseOrder(
   sb: Sb,
@@ -406,7 +595,9 @@ export async function receiveAskLexiBitePurchaseOrder(
 
   const { data: order, error: orderError } = await sb
     .from("restaurant_purchase_orders")
-    .select("id, status, supplier_id, property_id, location_id, currency, reference, document_number")
+    .select(
+      "id, status, supplier_id, property_id, location_id, currency, reference, document_number",
+    )
     .eq("tenant_id", tenantId)
     .eq("id", purchaseOrderId)
     .single();
@@ -418,7 +609,9 @@ export async function receiveAskLexiBitePurchaseOrder(
   const [{ data: lines }, { data: items }] = await Promise.all([
     sb
       .from("restaurant_purchase_order_items")
-      .select("id, inventory_item_id, unit_id, description, quantity, received_quantity, unit_price")
+      .select(
+        "id, inventory_item_id, unit_id, description, quantity, received_quantity, unit_price",
+      )
       .eq("tenant_id", tenantId)
       .eq("purchase_order_id", purchaseOrderId),
     sb
@@ -456,7 +649,9 @@ export async function receiveAskLexiBitePurchaseOrder(
   const missing = outstanding.find((entry) => !entry.item?.id || !entry.storageLocationId);
   if (missing) {
     throw new Error(
-      '"' + missing.line.description + '": no inventory item or receiving location is configured, so Ask LexiBite cannot safely post the receipt.',
+      '"' +
+        missing.line.description +
+        '": no inventory item or receiving location is configured, so Ask LexiBite cannot safely post the receipt.',
     );
   }
 
@@ -471,19 +666,20 @@ export async function receiveAskLexiBitePurchaseOrder(
       preview: true,
       lines: previewLines,
       orderStatus: order.status,
-      message: "Review the outstanding quantities. Confirm only when the physical delivery matches.",
+      message:
+        "Review the outstanding quantities. Confirm only when the physical delivery matches.",
     };
   }
 
   const propertyIds = [
     ...new Set(
-      outstanding
-        .map((entry) => entry.item?.property_id ?? order.property_id)
-        .filter(Boolean),
+      outstanding.map((entry) => entry.item?.property_id ?? order.property_id).filter(Boolean),
     ),
   ];
   if (propertyIds.length > 1) {
-    throw new Error("The purchase order spans multiple properties; receive it through the Procurement Centre.");
+    throw new Error(
+      "The purchase order spans multiple properties; receive it through the Procurement Centre.",
+    );
   }
 
   const result = await createGoodsReceipt(sb, userId, {
@@ -512,8 +708,13 @@ export async function receiveAskLexiBitePurchaseOrder(
   return {
     preview: false,
     lines: previewLines,
-    orderStatus: result.orderStatus,
+    orderStatus: "orderStatus" in result ? result.orderStatus : null,
     receiptDocumentNumber: result.documentNumber,
-    message: "Goods receipt " + result.documentNumber + " posted. Purchase order status: " + result.orderStatus + ".",
+    message:
+      "Goods receipt " +
+      result.documentNumber +
+      " posted. Purchase order status: " +
+      ("orderStatus" in result ? result.orderStatus : "updated") +
+      ".",
   };
 }

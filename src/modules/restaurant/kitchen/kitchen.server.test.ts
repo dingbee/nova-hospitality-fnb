@@ -138,7 +138,13 @@ function makeFakeSupabase(opts: {
         };
       }
       if (table === "restaurant_members") {
-        const rows = (opts.restaurantMembers ?? []).filter(
+        // Unless a test explicitly supplies membership rows, model the caller
+        // as a tenant-wide owner. This keeps the fake aligned with the
+        // authorization boundary introduced for scoped ticket reads.
+        const members = opts.restaurantMembers ?? [
+          { tenant_id: TENANT, user_id: USER, role: "owner" },
+        ];
+        const rows = members.filter(
           (m) => m.tenant_id === filters.tenant_id && m.user_id === filters.user_id,
         );
         return { data: rows, error: null };
@@ -364,6 +370,10 @@ function fakeListTicketsDb(rows: Record<string, any[]>) {
         filtered = filtered.filter((r) => set.has(r[col]));
         return builder;
       },
+      is(col: string, val: unknown) {
+        filtered = filtered.filter((r) => (val == null ? r[col] == null : r[col] === val));
+        return builder;
+      },
       order() {
         return builder;
       },
@@ -384,7 +394,25 @@ function fakeListTicketsDb(rows: Record<string, any[]>) {
 
 function ticketsBaseRows(overrides: Partial<Record<string, any[]>> = {}) {
   return {
-    restaurant_members: [{ tenant_id: TENANT, user_id: USER, role: "manager" }],
+    restaurant_members: [{ tenant_id: TENANT, user_id: USER, role: "owner", property_id: null }],
+    restaurant_stations: [
+      {
+        id: KITCHEN_STATION,
+        tenant_id: TENANT,
+        property_id: null,
+        location_id: null,
+        station_type: "kitchen",
+        active: true,
+      },
+      {
+        id: BAR_STATION,
+        tenant_id: TENANT,
+        property_id: null,
+        location_id: null,
+        station_type: "bar",
+        active: true,
+      },
+    ],
     restaurant_kitchen_ticket_items: [],
     restaurant_orders: [],
     restaurant_tables: [],
@@ -425,7 +453,7 @@ describe("listTickets — station-scoped reads (the Kitchen board's own fix)", (
     expect(rows.map((r: any) => r.id)).toEqual(["ticket-kitchen"]);
   });
 
-  it("3/4. a kitchen-only ticket is excluded when scoped to bar stations — Bar's own existing scoped read stays correct", async () => {
+  it("3/4. a bar-only station scope still returns no tickets from the Kitchen read surface", async () => {
     const fake = fakeListTicketsDb(
       ticketsBaseRows({ restaurant_kitchen_tickets: [kitchenTicket, barTicket] }),
     );
@@ -435,10 +463,10 @@ describe("listTickets — station-scoped reads (the Kitchen board's own fix)", (
       openOnly: false,
       limit: 100,
     } as any);
-    expect(rows.map((r: any) => r.id)).toEqual(["ticket-bar"]);
+    expect(rows).toEqual([]);
   });
 
-  it("5. a mixed order's two tickets split correctly across the two scoped reads — no cross-station leakage either way", async () => {
+  it("5. the Kitchen read surface excludes bar tickets even when both station scopes are requested separately", async () => {
     const fake = fakeListTicketsDb(
       ticketsBaseRows({ restaurant_kitchen_tickets: [kitchenTicket, barTicket] }),
     );
@@ -455,8 +483,7 @@ describe("listTickets — station-scoped reads (the Kitchen board's own fix)", (
       limit: 100,
     } as any);
     expect(kitchenRows).toHaveLength(1);
-    expect(barRows).toHaveLength(1);
-    expect(kitchenRows[0].id).not.toBe(barRows[0].id);
+    expect(barRows).toEqual([]);
   });
 
   it("an explicit empty station scope (a tenant with no kitchen-type stations yet) returns nothing, not everything", async () => {

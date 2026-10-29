@@ -131,6 +131,10 @@ function makeFakeSupabase(initial: Record<string, any[]>) {
         filters.push((r) => r[col] === val);
         return api;
       },
+      is(col: string, val: unknown) {
+        filters.push((r) => (val == null ? r[col] == null : r[col] === val));
+        return api;
+      },
       in(col: string, vals: unknown[]) {
         const set = new Set(vals);
         filters.push((r) => set.has(r[col]));
@@ -138,6 +142,10 @@ function makeFakeSupabase(initial: Record<string, any[]>) {
       },
       lt(col: string, val: string) {
         filters.push((r) => r[col] != null && r[col] < val);
+        return api;
+      },
+      lte(col: string, val: string) {
+        filters.push((r) => r[col] != null && r[col] <= val);
         return api;
       },
       not(col: string, _kind: string, val: unknown) {
@@ -206,7 +214,12 @@ function baseRows(overrides: Partial<Record<string, any[]>> = {}) {
       },
     ],
     restaurant_tenants: [
-      { id: TENANT, name: "Demo", status: "active", settings: { onboarding: { operatingMode: "table_service" } } },
+      {
+        id: TENANT,
+        name: "Demo",
+        status: "active",
+        settings: { onboarding: { operatingMode: "table_service" } },
+      },
       { id: OTHER_TENANT, name: "Other tenant", status: "active", settings: null },
     ],
     restaurant_currencies: [],

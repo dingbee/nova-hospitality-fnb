@@ -9,13 +9,26 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 import { CHANNEL_PROVIDERS } from "../channel-catalog";
 import { listChannelDefinitionsFn } from "../channel-catalog.functions";
 import type { StoredChannelDefinition } from "../channel-catalog.server";
-import type { ChannelConnection, ChannelConnectionConfig, ChannelProviderDefinition } from "../channel-contracts";
+import type {
+  ChannelConnection,
+  ChannelConnectionConfig,
+  ChannelProviderDefinition,
+  CreateChannelConnectionInput,
+  TestChannelConnectionInput,
+  UpdateChannelConnectionInput,
+} from "../channel-contracts";
 import {
   createChannelConnectionFn,
   listChannelConnectionsFn,
@@ -44,12 +57,22 @@ export function ChannelIntegrationsCentre() {
     staleTime: 15_000,
   });
 
-  if (ws.isLoading || query.isLoading || channelsQuery.isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading integrations…</div>;
-  if (!tenant) return <EmptyState title="No restaurant tenant" description="You are not a member of a Restaurant & Bar OS tenant." />;
+  if (ws.isLoading || query.isLoading || channelsQuery.isLoading)
+    return <div className="p-6 text-sm text-muted-foreground">Loading integrations…</div>;
+  if (!tenant)
+    return (
+      <EmptyState
+        title="No restaurant tenant"
+        description="You are not a member of a Restaurant & Bar OS tenant."
+      />
+    );
 
   const connections = query.data ?? [];
   const channels = channelsQuery.data ?? [];
-  const canManage = Boolean(ws.data?.platformAdmin || ws.data?.roles?.some((role: string) => role === "owner" || role === "general_manager"));
+  const canManage = Boolean(
+    ws.data?.platformAdmin ||
+    ws.data?.roles?.some((role: string) => role === "owner" || role === "general_manager"),
+  );
 
   return (
     <div className="space-y-6">
@@ -64,7 +87,9 @@ export function ChannelIntegrationsCentre() {
         connections={connections}
         channels={channels}
         canManage={canManage}
-        onRefresh={() => queryClient.invalidateQueries({ queryKey: ["channel-integrations", tenant.id] })}
+        onRefresh={() =>
+          queryClient.invalidateQueries({ queryKey: ["channel-integrations", tenant.id] })
+        }
       />
 
       <NewConnection
@@ -72,7 +97,9 @@ export function ChannelIntegrationsCentre() {
         properties={ws.data?.properties ?? []}
         channels={channels}
         canManage={canManage}
-        onCreated={() => queryClient.invalidateQueries({ queryKey: ["channel-integrations", tenant.id] })}
+        onCreated={() =>
+          queryClient.invalidateQueries({ queryKey: ["channel-integrations", tenant.id] })
+        }
       />
     </div>
   );
@@ -96,13 +123,18 @@ function ConnectionList({
   if (!connections.length) {
     return (
       <SectionCard title="Connected channels" description="No external channel is connected yet.">
-        <p className="text-sm text-muted-foreground">Choose an available channel below to connect it to this restaurant.</p>
+        <p className="text-sm text-muted-foreground">
+          Choose an available channel below to connect it to this restaurant.
+        </p>
       </SectionCard>
     );
   }
 
   return (
-    <SectionCard title="Connected channels" description={`${connections.length} connection${connections.length === 1 ? "" : "s"} configured`}>
+    <SectionCard
+      title="Connected channels"
+      description={`${connections.length} connection${connections.length === 1 ? "" : "s"} configured`}
+    >
       <div className="space-y-3">
         {connections.map((connection) => (
           <ConnectionRow
@@ -175,29 +207,42 @@ function ConnectionRow({
   const [config, setConfig] = useState<ChannelConnectionConfig>(connection.config);
 
   const testMutation = useAdminMutation({
-    mutationFn: (data: Parameters<typeof testChannelConnectionFn>[0]["data"]) => test({ data }),
+    mutationFn: (data: TestChannelConnectionInput) => test({ data }),
     successMessage: "Connection test completed",
     onSuccess: onRefresh,
   });
   const updateMutation = useAdminMutation({
-    mutationFn: (data: Parameters<typeof updateChannelConnectionFn>[0]["data"]) => update({ data }),
+    mutationFn: (data: UpdateChannelConnectionInput) => update({ data }),
     successMessage: "Channel connection updated",
-    onSuccess: () => { setEditing(false); setCredential(""); onRefresh(); },
+    onSuccess: () => {
+      setEditing(false);
+      setCredential("");
+      onRefresh();
+    },
   });
 
-  if (!provider) {
+  if (!provider || !channel) {
     return (
       <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4">
         <div className="flex items-center gap-2">
           <h3 className="font-semibold">{connection.label}</h3>
-          <Badge variant="destructive">Unknown provider</Badge>
+          <Badge variant="destructive">{!provider ? "Unknown provider" : "Unknown channel"}</Badge>
         </div>
-        <p className="mt-2 text-sm text-muted-foreground">Provider {connection.providerKey} is not currently registered. The connection is preserved but cannot be operated until its adapter is restored.</p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {!provider
+            ? `Provider ${connection.providerKey} is not currently registered.`
+            : `Channel ${connection.channelKey} is not currently registered.`}{" "}
+          The connection is preserved but cannot be operated until its catalogue entry and adapter
+          are restored.
+        </p>
       </div>
     );
   }
 
-  const propertyName = propertyId === "tenant" ? "All properties" : properties.find((property) => property.id === propertyId)?.name ?? "Property";
+  const propertyName =
+    propertyId === "tenant"
+      ? "All properties"
+      : (properties.find((property) => property.id === propertyId)?.name ?? "Property");
 
   return (
     <div className="rounded-xl border bg-card p-4">
@@ -206,26 +251,61 @@ function ConnectionRow({
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="font-semibold">{connection.label}</h3>
             {channel ? <Badge variant="outline">{channel.name}</Badge> : null}
-            <Badge variant={connection.status === "active" ? "default" : connection.status === "error" ? "destructive" : "secondary"}>{connection.status}</Badge>
+            <Badge
+              variant={
+                connection.status === "active"
+                  ? "default"
+                  : connection.status === "error"
+                    ? "destructive"
+                    : "secondary"
+              }
+            >
+              {connection.status}
+            </Badge>
           </div>
           <div className="text-sm text-muted-foreground">{propertyName}</div>
-          {connection.lastError ? <p className="text-sm text-destructive">{connection.lastError}</p> : null}
-          {connection.lastSyncedAt ? <p className="text-xs text-muted-foreground">Last verified: {new Date(connection.lastSyncedAt).toLocaleString()}</p> : null}
+          {connection.lastError ? (
+            <p className="text-sm text-destructive">{connection.lastError}</p>
+          ) : null}
+          {connection.lastSyncedAt ? (
+            <p className="text-xs text-muted-foreground">
+              Last verified: {new Date(connection.lastSyncedAt).toLocaleString()}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-2">
           {canManage ? (
-            <Button size="sm" variant="outline" disabled={testMutation.isPending || connection.status === "disabled"} onClick={() => testMutation.mutate({ tenantId, integrationId: connection.id })}>
-              {testMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={testMutation.isPending || connection.status === "disabled"}
+              onClick={() => testMutation.mutate({ tenantId, integrationId: connection.id })}
+            >
+              {testMutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
               Test connection
             </Button>
           ) : null}
-          {canManage ? <Button size="sm" variant="outline" onClick={() => setEditing((value) => !value)}>{editing ? "Cancel" : "Edit"}</Button> : null}
+          {canManage ? (
+            <Button size="sm" variant="outline" onClick={() => setEditing((value) => !value)}>
+              {editing ? "Cancel" : "Edit"}
+            </Button>
+          ) : null}
           {canManage ? (
             <Button
               size="sm"
               variant="outline"
-              onClick={() => updateMutation.mutate({ tenantId, integrationId: connection.id, status: connection.status === "disabled" ? "active" : "disabled" })}
+              onClick={() =>
+                updateMutation.mutate({
+                  tenantId,
+                  integrationId: connection.id,
+                  status: connection.status === "disabled" ? "active" : "disabled",
+                })
+              }
               disabled={updateMutation.isPending}
             >
               {connection.status === "disabled" ? "Enable" : "Disable"}
@@ -236,23 +316,45 @@ function ConnectionRow({
 
       {editing ? (
         <div className="mt-4 grid gap-4 border-t pt-4 md:grid-cols-2">
-          <div><Label>Connection name</Label><Input value={label} onChange={(event) => setLabel(event.target.value)} /></div>
-          <div><Label>Property scope</Label><PropertySelect value={propertyId} properties={properties} onChange={setPropertyId} /></div>
-          <ConfigFields provider={provider} config={config} onChange={(key, value) => setConfig((current) => ({ ...current, [key]: value }))} />
+          <div>
+            <Label>Connection name</Label>
+            <Input value={label} onChange={(event) => setLabel(event.target.value)} />
+          </div>
+          <div>
+            <Label>Property scope</Label>
+            <PropertySelect value={propertyId} properties={properties} onChange={setPropertyId} />
+          </div>
+          <ConfigFields
+            provider={provider}
+            config={config}
+            onChange={(key, value) => setConfig((current) => ({ ...current, [key]: value }))}
+          />
           <div className="md:col-span-2">
             <Label>Replace {provider.setup.credential.label}</Label>
-            <Input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="Leave blank to keep the stored credential" autoComplete="new-password" />
+            <Input
+              type="password"
+              value={credential}
+              onChange={(event) => setCredential(event.target.value)}
+              placeholder="Leave blank to keep the stored credential"
+              autoComplete="new-password"
+            />
           </div>
           <div className="md:col-span-2 flex justify-end">
-            <Button disabled={updateMutation.isPending} onClick={() => updateMutation.mutate({
-              tenantId,
-              integrationId: connection.id,
-              propertyId: propertyId === "tenant" ? null : propertyId,
-              label,
-              config,
-              credential: credential || undefined,
-            })}>
-              <CheckCircle2 className="mr-2 h-4 w-4" />Save changes
+            <Button
+              disabled={updateMutation.isPending}
+              onClick={() =>
+                updateMutation.mutate({
+                  tenantId,
+                  integrationId: connection.id,
+                  propertyId: propertyId === "tenant" ? null : propertyId,
+                  label,
+                  config,
+                  credential: credential || undefined,
+                })
+              }
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Save changes
             </Button>
           </div>
         </div>
@@ -261,13 +363,27 @@ function ConnectionRow({
   );
 }
 
-function PropertySelect({ value, properties, onChange }: { value: string; properties: Property[]; onChange: (value: string) => void }) {
+function PropertySelect({
+  value,
+  properties,
+  onChange,
+}: {
+  value: string;
+  properties: Property[];
+  onChange: (value: string) => void;
+}) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger><SelectValue /></SelectTrigger>
+      <SelectTrigger>
+        <SelectValue />
+      </SelectTrigger>
       <SelectContent>
         <SelectItem value="tenant">All properties</SelectItem>
-        {properties.map((property) => <SelectItem key={property.id} value={property.id}>{property.name}</SelectItem>)}
+        {properties.map((property) => (
+          <SelectItem key={property.id} value={property.id}>
+            {property.name}
+          </SelectItem>
+        ))}
       </SelectContent>
     </Select>
   );
@@ -289,7 +405,9 @@ function NewConnection({
   const create = useServerFn(createChannelConnectionFn);
   const [channelKey, setChannelKey] = useState(channels[0]?.key ?? "");
   const channel = channels.find((item) => item.key === channelKey) ?? null;
-  const provider = channel ? CHANNEL_PROVIDERS.find((item) => item.key === channel.providerKey) ?? null : null;
+  const provider = channel
+    ? (CHANNEL_PROVIDERS.find((item) => item.key === channel.providerKey) ?? null)
+    : null;
   const [label, setLabel] = useState("");
   const [propertyId, setPropertyId] = useState("tenant");
   const [config, setConfig] = useState<ChannelConnectionConfig>({});
@@ -301,7 +419,7 @@ function NewConnection({
   }, [channelKey]);
 
   const mutation = useAdminMutation({
-    mutationFn: (data: Parameters<typeof createChannelConnectionFn>[0]["data"]) => create({ data }),
+    mutationFn: (data: CreateChannelConnectionInput) => create({ data }),
     successMessage: "Channel connection created",
     onSuccess: () => {
       setLabel("");
@@ -314,56 +432,107 @@ function NewConnection({
 
   if (!canManage) {
     return (
-      <SectionCard title="Add a channel" description="Only tenant owners and general managers can change channel connections.">
-        <p className="text-sm text-muted-foreground">You can view the tenant's connections, but credentials and operational controls are restricted to authorized tenant administrators.</p>
+      <SectionCard
+        title="Add a channel"
+        description="Only tenant owners and general managers can change channel connections."
+      >
+        <p className="text-sm text-muted-foreground">
+          You can view the tenant's connections, but credentials and operational controls are
+          restricted to authorized tenant administrators.
+        </p>
       </SectionCard>
     );
   }
 
-  const requiredFieldsComplete = provider?.setup.fields.filter((field) => field.required).every((field) => String(config[field.key] ?? "").trim().length > 0) ?? false;
+  const requiredFieldsComplete =
+    provider?.setup.fields
+      .filter((field) => field.required)
+      .every((field) => String(config[field.key] ?? "").trim().length > 0) ?? false;
 
   return (
     <SectionCard
       title="Connect a channel"
       description="Connect an external ordering or delivery channel to this restaurant."
     >
-      {!provider ? (
-        <p className="text-sm text-muted-foreground">No external channels are currently enabled by platform administration.</p>
+      {!provider || !channel ? (
+        <p className="text-sm text-muted-foreground">
+          No external channels are currently enabled by platform administration.
+        </p>
       ) : (
         <>
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <Label>Channel</Label>
               <Select value={channelKey} onValueChange={setChannelKey}>
-                <SelectTrigger><SelectValue placeholder="Select channel" /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select channel" />
+                </SelectTrigger>
                 <SelectContent>
-                  {channels.map((item) => <SelectItem key={item.key} value={item.key}>{item.name}</SelectItem>)}
+                  {channels.map((item) => (
+                    <SelectItem key={item.key} value={item.key}>
+                      {item.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
-            <div><Label>Connection name</Label><Input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="e.g. Main external ordering channel" /></div>
-            <div><Label>Property scope</Label><PropertySelect value={propertyId} properties={properties} onChange={setPropertyId} /></div>
-            <ConfigFields provider={provider} config={config} onChange={(key, value) => setConfig((current) => ({ ...current, [key]: value }))} />
+            <div>
+              <Label>Connection name</Label>
+              <Input
+                value={label}
+                onChange={(event) => setLabel(event.target.value)}
+                placeholder="e.g. Main external ordering channel"
+              />
+            </div>
+            <div>
+              <Label>Property scope</Label>
+              <PropertySelect value={propertyId} properties={properties} onChange={setPropertyId} />
+            </div>
+            <ConfigFields
+              provider={provider}
+              config={config}
+              onChange={(key, value) => setConfig((current) => ({ ...current, [key]: value }))}
+            />
             <div>
               <Label>{provider.setup.credential.label}</Label>
-              <Input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="Paste once; never shown again" autoComplete="new-password" />
+              <Input
+                type="password"
+                value={credential}
+                onChange={(event) => setCredential(event.target.value)}
+                placeholder="Paste once; never shown again"
+                autoComplete="new-password"
+              />
             </div>
           </div>
 
           <div className="mt-4 flex items-center justify-between gap-4">
-            <p className="text-xs text-muted-foreground">Connection credentials are stored securely and are not shown again after saving.</p>
+            <p className="text-xs text-muted-foreground">
+              Connection credentials are stored securely and are not shown again after saving.
+            </p>
             <Button
-              disabled={mutation.isPending || !label.trim() || !requiredFieldsComplete || (provider.setup.credential.required && credential.length < 8)}
-              onClick={() => mutation.mutate({
-                tenantId,
-                propertyId: propertyId === "tenant" ? null : propertyId,
-                channelKey: channel.key,
-                label,
-                config,
-                credential,
-              })}
+              disabled={
+                mutation.isPending ||
+                !label.trim() ||
+                !requiredFieldsComplete ||
+                (provider.setup.credential.required && credential.length < 8)
+              }
+              onClick={() =>
+                mutation.mutate({
+                  tenantId,
+                  propertyId: propertyId === "tenant" ? null : propertyId,
+                  channelKey: channel.key,
+                  label,
+                  config,
+                  credential,
+                })
+              }
             >
-              {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}Connect channel
+              {mutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Plus className="mr-2 h-4 w-4" />
+              )}
+              Connect channel
             </Button>
           </div>
         </>

@@ -30,6 +30,16 @@ function resetDb() {
     { id: "u-kg", code: "kg", name: "Kilogram", dimension: "mass", factor: 1000, tenant_id: null },
     { id: "u-g", code: "g", name: "Gram", dimension: "mass", factor: 1, tenant_id: null },
     { id: "u-ml", code: "ml", name: "Millilitre", dimension: "volume", factor: 1, tenant_id: null },
+    { id: "u-btl", code: "btl", name: "Bottle", dimension: "count", factor: 1, tenant_id: null },
+    {
+      id: "u-ctn",
+      code: "ctn",
+      name: "Carton",
+      dimension: "count",
+      factor: 12,
+      base_unit_id: "u-btl",
+      tenant_id: null,
+    },
   ];
   db.restaurant_suppliers = [];
   db.restaurant_inventory_items = [];
@@ -620,8 +630,10 @@ describe("staging a clean inventory import", () => {
       brand: null,
     });
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test" } as any);
-    const csv =
-      "Name,SKU,Barcode,OpeningQty,Unit,Cost\nRice,ITM-9,,250,kg,3000\nBeef,,,10,kg,15000\n";
+    const csv = `Name,SKU,Barcode,OpeningQty,Unit,Cost
+Rice,ITM-9,,250,kg,3000
+Beef,,,10,kg,15000
+`;
     await stageCsv(TENANT, ws.id, csv, "inventory_item");
 
     const staged = await listStagedRecords(sb, USER, {
@@ -642,7 +654,9 @@ describe("staging a clean inventory import", () => {
 describe("duplicate inventory / re-import", () => {
   it("re-staging the same source is idempotent — no duplicate staged rows", async () => {
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test" } as any);
-    const csv = "Name,SKU\nRice,ITM-1\n";
+    const csv = `Name,SKU
+Rice,ITM-1
+`;
     const source = await stageCsv(TENANT, ws.id, csv, "inventory_item");
     const first = (
       await listStagedRecords(sb, USER, { tenantId: TENANT, workspaceId: ws.id, limit: 100 } as any)
@@ -667,13 +681,27 @@ describe("duplicate inventory / re-import", () => {
 
   it("importing a source that matches an already-committed item updates it rather than duplicating", async () => {
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test" } as any);
-    await stageCsv(TENANT, ws.id, "Name,SKU,Pack Size\nRice,ITM-1,1\n", "inventory_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,SKU,Pack Size
+Rice,ITM-1,1
+`,
+      "inventory_item",
+    );
     await approveAllPending(TENANT, ws.id); // a brand new item is proposed, not auto-approved — a human approves it once
     await commitImportWorkspace(sb, USER, { tenantId: TENANT, workspaceId: ws.id } as any);
     expect(db.restaurant_inventory_items).toHaveLength(1);
 
     const ws2 = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test 2" } as any);
-    await stageCsv(TENANT, ws2.id, "Name,SKU,Pack Size\nRice,ITM-1,1\n", "inventory_item");
+    await stageCsv(
+      TENANT,
+      ws2.id,
+      `Name,SKU,Pack Size
+Rice,ITM-1,1
+`,
+      "inventory_item",
+    );
     const staged = await listStagedRecords(sb, USER, {
       tenantId: TENANT,
       workspaceId: ws2.id,
@@ -693,11 +721,20 @@ describe("commit: dependency order and cross-domain resolution", () => {
       locationId: "loc-1",
     } as any);
 
-    await stageCsv(TENANT, ws.id, "Name,Code\nFresh Foods,FF\n", "supplier");
     await stageCsv(
       TENANT,
       ws.id,
-      "Name,SKU,OpeningQty,Unit,Cost,Pack Size\nChicken Breast,ITM-CHK,50,kg,12000,1\n",
+      `Name,Code
+Fresh Foods,FF
+`,
+      "supplier",
+    );
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,SKU,OpeningQty,Unit,Cost,Pack Size
+Chicken Breast,ITM-CHK,50,kg,12000,1
+`,
       "inventory_item",
     );
     // A human approves the two brand-new entities before the supplier product row (which
@@ -708,10 +745,19 @@ describe("commit: dependency order and cross-domain resolution", () => {
     await stageCsv(
       TENANT,
       ws.id,
-      "Supplier,ItemSku,SupplierSku,UnitPrice\nFresh Foods,ITM-CHK,FF-CHK,11000\n",
+      `Supplier,ItemSku,SupplierSku,UnitPrice
+Fresh Foods,ITM-CHK,FF-CHK,11000
+`,
       "supplier_product",
     );
-    await stageCsv(TENANT, ws.id, "Name,Price\nGrilled Chicken,18000\n", "menu_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,Price
+Grilled Chicken,18000
+`,
+      "menu_item",
+    );
     await approveAllPending(TENANT, ws.id);
 
     const result = await commitImportWorkspace(sb, USER, {
@@ -731,7 +777,9 @@ describe("commit: dependency order and cross-domain resolution", () => {
     await stageCsv(
       TENANT,
       ws.id,
-      "Dish,IngredientSku,Quantity,Unit\nGrilled Chicken,ITM-CHK,0.2,kg\n",
+      `Dish,IngredientSku,Quantity,Unit
+Grilled Chicken,ITM-CHK,0.2,kg
+`,
       "recipe_component",
     );
     const staged = await listStagedRecords(sb, USER, {
@@ -762,10 +810,19 @@ describe("commit: dependency order and cross-domain resolution", () => {
     await stageCsv(
       TENANT,
       ws.id,
-      "Name,SKU,Cost,Pack Size\nImported Cheese,ITM-CHZ,4500,1\n",
+      `Name,SKU,Cost,Pack Size
+Imported Cheese,ITM-CHZ,4500,1
+`,
       "inventory_item",
     );
-    await stageCsv(TENANT, ws.id, "Name,Price\nCheese Plate,9500\n", "menu_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,Price
+Cheese Plate,9500
+`,
+      "menu_item",
+    );
     await approveAllPending(TENANT, ws.id);
     const result = await commitImportWorkspace(sb, USER, {
       tenantId: TENANT,
@@ -784,7 +841,9 @@ describe("commit: dependency order and cross-domain resolution", () => {
     await stageCsv(
       TENANT,
       ws.id,
-      "Name,SKU,Cost,Pack Size\nHouse Salt,ITM-SLT,500,1\n",
+      `Name,SKU,Cost,Pack Size
+House Salt,ITM-SLT,500,1
+`,
       "inventory_item",
     );
     await approveAllPending(TENANT, ws.id);
@@ -808,7 +867,9 @@ describe("commit: dependency order and cross-domain resolution", () => {
     await stageCsv(
       TENANT,
       ws.id,
-      "Dish,IngredientSku,Quantity\nUnknown Dish,ITM-1,1\n",
+      `Dish,IngredientSku,Quantity
+Unknown Dish,ITM-1,1
+`,
       "recipe_component",
     );
     const staged = await listStagedRecords(sb, USER, {
@@ -831,7 +892,14 @@ describe("commit: product/station, variants, modifier groups and modifiers", () 
     // Pass 1: the dish itself must exist before a product/station link can
     // reference it — same two-pass shape the recipe_component test above
     // already establishes for this importer.
-    await stageCsv(TENANT, ws.id, "Name,Price\nGrilled Chicken,18000\n", "menu_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,Price
+Grilled Chicken,18000
+`,
+      "menu_item",
+    );
     await approveAllPending(TENANT, ws.id);
     const pass1 = await commitImportWorkspace(sb, USER, {
       tenantId: TENANT,
@@ -845,8 +913,22 @@ describe("commit: product/station, variants, modifier groups and modifiers", () 
     // variant, a modifier or a product<->modifier-group link can resolve
     // against them (the same "stage it as an exception, never fabricate the
     // relationship" rule the recipe_component test above already proves).
-    await stageCsv(TENANT, ws.id, "Dish,Station\nGrilled Chicken,KITCHEN\n", "product_station");
-    await stageCsv(TENANT, ws.id, "Code,Name\nSPICE,Spice level\n", "modifier_group");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Dish,Station
+Grilled Chicken,KITCHEN
+`,
+      "product_station",
+    );
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Code,Name
+SPICE,Spice level
+`,
+      "modifier_group",
+    );
     await approveAllPending(TENANT, ws.id);
     const pass2 = await commitImportWorkspace(sb, USER, {
       tenantId: TENANT,
@@ -862,11 +944,27 @@ describe("commit: product/station, variants, modifier groups and modifiers", () 
     await stageCsv(
       TENANT,
       ws.id,
-      "Dish,Name,Price\nGrilled Chicken,Half portion,9000\n",
+      `Dish,Name,Price
+Grilled Chicken,Half portion,9000
+`,
       "variant",
     );
-    await stageCsv(TENANT, ws.id, "Group,Name\nSPICE,Extra hot\n", "modifier");
-    await stageCsv(TENANT, ws.id, "Dish,Group\nGrilled Chicken,SPICE\n", "product_modifier_group");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Group,Name
+SPICE,Extra hot
+`,
+      "modifier",
+    );
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Dish,Group
+Grilled Chicken,SPICE
+`,
+      "product_modifier_group",
+    );
     await approveAllPending(TENANT, ws.id);
 
     const pass3 = await commitImportWorkspace(sb, USER, {
@@ -898,7 +996,9 @@ describe("commit: product/station, variants, modifier groups and modifiers", () 
     await stageCsv(
       TENANT,
       ws.id,
-      "Dish,Name,Price\nGrilled Chicken,Half portion,9000\n",
+      `Dish,Name,Price
+Grilled Chicken,Half portion,9000
+`,
       "variant",
     );
     const staged = await listStagedRecords(sb, USER, {
@@ -922,7 +1022,14 @@ describe("commit: product/station, variants, modifier groups and modifiers", () 
       name: "Grilled Chicken",
       price: 18000,
     });
-    await stageCsv(TENANT, ws.id, "Dish,Station\nGrilled Chicken,BAR\n", "product_station");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Dish,Station
+Grilled Chicken,BAR
+`,
+      "product_station",
+    );
     const staged = await listStagedRecords(sb, USER, {
       tenantId: TENANT,
       workspaceId: ws.id,
@@ -954,7 +1061,9 @@ describe("opening stock: ledger integrity", () => {
     await stageCsv(
       TENANT,
       ws.id,
-      "ItemSku,Quantity,Location\nITM-1,250,Dry Store\n",
+      `ItemSku,Quantity,Location
+ITM-1,250,Dry Store
+`,
       "opening_stock",
     );
     const result = await commitImportWorkspace(sb, USER, {
@@ -987,7 +1096,9 @@ describe("opening stock: ledger integrity", () => {
     await stageCsv(
       TENANT,
       ws.id,
-      "ItemSku,Quantity,Location\nITM-1,250,Dry Store\n",
+      `ItemSku,Quantity,Location
+ITM-1,250,Dry Store
+`,
       "opening_stock",
     );
     await commitImportWorkspace(sb, USER, { tenantId: TENANT, workspaceId: ws.id } as any);
@@ -1004,7 +1115,14 @@ describe("opening stock: ledger integrity", () => {
 
   it("fails clearly, without partial silent success, when the referenced item was never resolved", async () => {
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Stock" } as any);
-    await stageCsv(TENANT, ws.id, "ItemSku,Quantity\nNOPE,10\n", "opening_stock");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `ItemSku,Quantity
+NOPE,10
+`,
+      "opening_stock",
+    );
     const staged = await listStagedRecords(sb, USER, {
       tenantId: TENANT,
       workspaceId: ws.id,
@@ -1043,7 +1161,14 @@ describe("human review", () => {
       },
     );
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test" } as any);
-    await stageCsv(TENANT, ws.id, "Name,SKU,Pack Size\nTomato,,1\n", "inventory_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,SKU,Pack Size
+Tomato,,1
+`,
+      "inventory_item",
+    );
     const staged = await listStagedRecords(sb, USER, {
       tenantId: TENANT,
       workspaceId: ws.id,
@@ -1088,7 +1213,14 @@ describe("human review", () => {
       tenantId: TENANT,
       name: "Candidates",
     } as any);
-    await stageCsv(TENANT, ws.id, "Name,SKU,Cost,Pack Size\nTomato,,500,1\n", "inventory_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,SKU,Cost,Pack Size
+Tomato,,500,1
+`,
+      "inventory_item",
+    );
     const staged = await listStagedRecords(sb, USER, {
       tenantId: TENANT,
       workspaceId: ws.id,
@@ -1117,7 +1249,14 @@ describe("human review", () => {
 
   it("a rejected record is never committed", async () => {
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test" } as any);
-    await stageCsv(TENANT, ws.id, "Name,SKU\nWidget,\n", "inventory_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,SKU
+Widget,
+`,
+      "inventory_item",
+    );
     const staged = await listStagedRecords(sb, USER, {
       tenantId: TENANT,
       workspaceId: ws.id,
@@ -1138,7 +1277,14 @@ describe("human review", () => {
 
   it("a committed record can no longer be re-decided", async () => {
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test" } as any);
-    await stageCsv(TENANT, ws.id, "Name,SKU,Pack Size\nWidget,ITM-W,1\n", "inventory_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,SKU,Pack Size
+Widget,ITM-W,1
+`,
+      "inventory_item",
+    );
     await approveAllPending(TENANT, ws.id);
     await commitImportWorkspace(sb, USER, { tenantId: TENANT, workspaceId: ws.id } as any);
     const staged = await listStagedRecords(sb, USER, {
@@ -1189,7 +1335,15 @@ describe("cross-tenant isolation", () => {
 describe("workspace summary", () => {
   it("reports counts by domain, severity and decision without leaking raw_data by default", async () => {
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test" } as any);
-    await stageCsv(TENANT, ws.id, "Name,SKU\nA,\nB,\n", "inventory_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,SKU
+A,
+B,
+`,
+      "inventory_item",
+    );
     const { summary } = await getImportWorkspace(sb, USER, {
       tenantId: TENANT,
       workspaceId: ws.id,
@@ -1212,7 +1366,11 @@ describe("workspace summary", () => {
     await stageCsv(
       TENANT,
       ws.id,
-      "Name,SKU,Unit\nBrand New Item,,\nRice 25kg,ITM-1,\nAnother New,,sacks\n",
+      `Name,SKU,Unit
+Brand New Item,,
+Rice 25kg,ITM-1,
+Another New,,sacks
+`,
       "inventory_item",
     );
     const staged = await listStagedRecords(sb, USER, {
@@ -1249,7 +1407,9 @@ describe("workspace summary", () => {
       tenantId: TENANT,
       workspaceId: ws.id,
       kind: "csv",
-      text: "Name,SKU,Preferred Brand,Shelf Location\nRice,ITM-1,Acme,A3\n",
+      text: `Name,SKU,Preferred Brand,Shelf Location
+Rice,ITM-1,Acme,A3
+`,
     } as any);
     await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
     await confirmImportMapping(sb, USER, {
@@ -1280,7 +1440,14 @@ describe("workspace summary", () => {
 
   it("reports no unmapped columns when everything was recognised", async () => {
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Clean" } as any);
-    await stageCsv(TENANT, ws.id, "Name,SKU\nRice,ITM-1\n", "inventory_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,SKU
+Rice,ITM-1
+`,
+      "inventory_item",
+    );
     const { unmappedColumns } = await getImportWorkspace(sb, USER, {
       tenantId: TENANT,
       workspaceId: ws.id,
@@ -1296,7 +1463,9 @@ describe("AI-assist wiring — bounded, validated, never bypassing human review"
       tenantId: TENANT,
       workspaceId: ws.id,
       kind: "csv",
-      text: "Preferred Brand,Shelf Location\nAcme,A3\n",
+      text: `Preferred Brand,Shelf Location
+Acme,A3
+`,
     } as any);
     const result = await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
     // The gateway is attempted (headers are unfamiliar to the heuristic) but
@@ -1322,7 +1491,9 @@ describe("AI-assist wiring — bounded, validated, never bypassing human review"
       tenantId: TENANT,
       workspaceId: ws.id,
       kind: "csv",
-      text: "Vendor Company,Attn\nAcme Distributors,Jane\n",
+      text: `Vendor Company,Attn
+Acme Distributors,Jane
+`,
     } as any);
     const result = await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
     expect(result.sheets[0]!.detectedDomains).toEqual([
@@ -1344,7 +1515,9 @@ describe("AI-assist wiring — bounded, validated, never bypassing human review"
       tenantId: TENANT,
       workspaceId: ws.id,
       kind: "csv",
-      text: "Column A,Column B\nx,y\n",
+      text: `Column A,Column B
+x,y
+`,
     } as any);
     const result = await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
     expect(result.sheets[0]!.detectedDomains).toEqual([]);
@@ -1359,7 +1532,9 @@ describe("AI-assist wiring — bounded, validated, never bypassing human review"
       tenantId: TENANT,
       workspaceId: ws.id,
       kind: "csv",
-      text: "Item Name,SKU,Barcode,Reorder Point\nRice,ITM-1,123,10\n",
+      text: `Item Name,SKU,Barcode,Reorder Point
+Rice,ITM-1,123,10
+`,
     } as any);
     await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
     expect(callAiGateway).not.toHaveBeenCalled();
@@ -1379,7 +1554,9 @@ describe("AI-assist wiring — bounded, validated, never bypassing human review"
       tenantId: TENANT,
       workspaceId: ws.id,
       kind: "csv",
-      text: "Item Name,Min Stock Trigger\nRice,10\n",
+      text: `Item Name,Min Stock Trigger
+Rice,10
+`,
     } as any);
     await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
     const result = await suggestImportMapping(sb, USER, {
@@ -1399,7 +1576,10 @@ describe("adversarial — Phase 16 scenarios exercised through the real orchestr
     await stageCsv(
       TENANT,
       ws.id,
-      "Name,SKU,Cost,Pack Size\nChicken Breast,DUP-1,12000,1\nChicken Thigh,DUP-1,9500,1\n",
+      `Name,SKU,Cost,Pack Size
+Chicken Breast,DUP-1,12000,1
+Chicken Thigh,DUP-1,9500,1
+`,
       "inventory_item",
     );
     await approveAllPending(TENANT, ws.id);
@@ -1422,7 +1602,10 @@ describe("adversarial — Phase 16 scenarios exercised through the real orchestr
     await stageCsv(
       TENANT,
       ws.id,
-      "Name,Barcode,Pack Size\nCoca-Cola 500ml,6009123456789,1\nGeneric Cola 500ml,6009123456789,1\n",
+      `Name,Barcode,Pack Size
+Coca-Cola 500ml,6009123456789,1
+Generic Cola 500ml,6009123456789,1
+`,
       "inventory_item",
     );
     await approveAllPending(TENANT, ws.id);
@@ -1442,7 +1625,14 @@ describe("adversarial — Phase 16 scenarios exercised through the real orchestr
       tenantId: TENANT,
       name: "No identifiers",
     } as any);
-    await stageCsv(TENANT, ws.id, "Name,Cost\nFresh Basil,3000\n", "inventory_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,Cost
+Fresh Basil,3000
+`,
+      "inventory_item",
+    );
     const staged = await listStagedRecords(sb, USER, {
       tenantId: TENANT,
       workspaceId: ws.id,
@@ -1461,7 +1651,9 @@ describe("adversarial — Phase 16 scenarios exercised through the real orchestr
       tenantId: TENANT,
       workspaceId: ws.id,
       kind: "csv",
-      text: "Name,,SKU\nRice,,ITM-1\n",
+      text: `Name,,SKU
+Rice,,ITM-1
+`,
     } as any);
     await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
     const suggested = await suggestImportMapping(sb, USER, {
@@ -1480,7 +1672,9 @@ describe("adversarial — Phase 16 scenarios exercised through the real orchestr
       tenantId: TENANT,
       workspaceId: ws.id,
       kind: "csv",
-      text: "Notes\nThis workbook was prepared for the March migration. Contact ops for questions.\n",
+      text: `Notes
+This workbook was prepared for the March migration. Contact ops for questions.
+`,
     } as any);
     const result = await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
     expect(result.sheets[0]!.detectedDomains).toEqual([]);
@@ -1495,7 +1689,9 @@ describe("adversarial — Phase 16 scenarios exercised through the real orchestr
       tenantId: TENANT,
       workspaceId: ws.id,
       kind: "csv",
-      text: "Menu Item,Selling Price,Station Code\nGrilled Chicken,18000,KITCHEN\n",
+      text: `Menu Item,Selling Price,Station Code
+Grilled Chicken,18000,KITCHEN
+`,
     } as any);
     const result = await parseImportSource(sb, USER, { tenantId: TENANT, sourceId: source.id });
     const domains = result.sheets[0]!.detectedDomains.map((g: any) => g.domain);
@@ -1516,11 +1712,20 @@ describe("pre-freeze cleanup — controlled small import regression (spec sectio
       name: "Controlled regression test",
     } as any);
 
-    await stageCsv(TENANT, ws.id, "Name,Code\nArusha Fresh Foods Ltd,AFF\n", "supplier");
     await stageCsv(
       TENANT,
       ws.id,
-      "Name,SKU,Unit,Cost,Pack Size\nChicken Breast,ITM-CB-01,kg,14000,1\n",
+      `Name,Code
+Arusha Fresh Foods Ltd,AFF
+`,
+      "supplier",
+    );
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,SKU,Unit,Cost,Pack Size
+Chicken Breast,ITM-CB-01,kg,14000,1
+`,
       "inventory_item",
     );
     await approveAllPending(TENANT, ws.id);
@@ -1541,10 +1746,19 @@ describe("pre-freeze cleanup — controlled small import regression (spec sectio
     await stageCsv(
       TENANT,
       ws.id,
-      "Supplier,ItemSku,SupplierSku,UnitPrice\nArusha Fresh Foods Ltd,ITM-CB-01,AFF-CB-01,13500\n",
+      `Supplier,ItemSku,SupplierSku,UnitPrice
+Arusha Fresh Foods Ltd,ITM-CB-01,AFF-CB-01,13500
+`,
       "supplier_product",
     );
-    await stageCsv(TENANT, ws.id, "Name,Price\nClassic Chicken Burger,18000\n", "menu_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      `Name,Price
+Classic Chicken Burger,18000
+`,
+      "menu_item",
+    );
     await approveAllPending(TENANT, ws.id);
     const secondPass = await commitImportWorkspace(sb, USER, {
       tenantId: TENANT,
@@ -1558,7 +1772,9 @@ describe("pre-freeze cleanup — controlled small import regression (spec sectio
     await stageCsv(
       TENANT,
       ws.id,
-      "Dish,IngredientSku,Quantity,Unit\nClassic Chicken Burger,ITM-CB-01,0.18,kg\n",
+      `Dish,IngredientSku,Quantity,Unit
+Classic Chicken Burger,ITM-CB-01,0.18,kg
+`,
       "recipe_component",
     );
     const staged = await listStagedRecords(sb, USER, {
@@ -1633,7 +1849,7 @@ describe("LexiBite template deterministic import — end to end", () => {
     // calls out as the one thing the importer must never confuse.
     const wine = db.restaurant_inventory_items!.find((r) => r.sku === "WINE-RED-750");
     expect(wine).toBeTruthy();
-  });
+  }, 60_000);
 
   it("refuses to run the deterministic path against a workbook that is not a LexiBite template", async () => {
     const XLSX = await import("xlsx");
@@ -1773,7 +1989,9 @@ describe("import.manage authorization scope", () => {
       tenantId: TENANT,
       workspaceId: ws.id,
       kind: "csv",
-      text: "Name,SKU\nRice,ITM-SCOPE-1\n",
+      text: `Name,SKU
+Rice,ITM-SCOPE-1
+`,
     } as any);
     expect(mock).toHaveBeenLastCalledWith(sb, USER, TENANT, "import.manage", expectedScope);
 

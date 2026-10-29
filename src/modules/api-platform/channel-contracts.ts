@@ -12,13 +12,20 @@ export type ChannelDefinition = {
   category: ChannelType;
 };
 
-export const CHANNEL_TYPES = ["marketplace", "ordering_platform", "delivery", "aggregator"] as const;
+export const CHANNEL_TYPES = [
+  "marketplace",
+  "ordering_platform",
+  "delivery",
+  "aggregator",
+] as const;
 export type ChannelType = (typeof CHANNEL_TYPES)[number];
 
 export const CHANNEL_STATUSES = ["active", "disabled", "error"] as const;
 export type ChannelStatus = (typeof CHANNEL_STATUSES)[number];
 
-export const channelConnectionConfigSchema = z.record(z.string().min(1).max(80), z.unknown()).default({});
+export const channelConnectionConfigSchema = z
+  .record(z.string().min(1).max(80), z.unknown())
+  .default({});
 export const channelCredentialSchema = z.string().min(8).max(4000);
 
 export const createChannelConnectionSchema = z.object({
@@ -48,6 +55,7 @@ export const testChannelConnectionSchema = z.object({
 
 export type CreateChannelConnectionInput = z.infer<typeof createChannelConnectionSchema>;
 export type UpdateChannelConnectionInput = z.infer<typeof updateChannelConnectionSchema>;
+export type TestChannelConnectionInput = z.infer<typeof testChannelConnectionSchema>;
 
 export type ChannelCapability =
   | "catalog.read"

@@ -50,8 +50,24 @@ function makeFakeSupabase(opts: {
     current_quantity: opts.itemQuantity ?? 20,
   };
   const locations = [
-    { id: SOURCE, tenant_id: TENANT_A, name: "Main Store", location_type: "storage" },
-    { id: DEST, tenant_id: TENANT_A, name: "Kitchen", location_type: "kitchen" },
+    {
+      id: SOURCE,
+      tenant_id: TENANT_A,
+      property_id: "property-1",
+      scope: "property",
+      is_storage: true,
+      name: "Main Store",
+      location_type: "storage",
+    },
+    {
+      id: DEST,
+      tenant_id: TENANT_A,
+      property_id: "property-1",
+      scope: "property",
+      is_storage: false,
+      name: "Kitchen",
+      location_type: "kitchen",
+    },
   ];
   const members: Member[] =
     opts.members ?? ([{ tenantId: TENANT_A, userId: OWNER, role: "owner" }] as Member[]);
@@ -344,8 +360,8 @@ describe("previewNovaExecution — read-only, never writes", () => {
     expect(preview.lines).toEqual([
       expect.objectContaining({ inventoryItemId: ITEM, quantity: 3, availableQuantity: 0 }),
     ]);
-    expect(preview.sourceLocationName).toBe("Main Store");
-    expect(preview.destinationLocationName).toBe("Kitchen");
+    expect(preview.sourceLocationName).toBe("Main Store · Property · Storage");
+    expect(preview.destinationLocationName).toBe("Kitchen · Property · Service outlet");
     expect(fake.movements).toHaveLength(0);
     expect(fake.transfers[created.id].status).toBe("draft"); // untouched
   });

@@ -14,26 +14,37 @@ type Property = MasterData["properties"][number];
 
 import { DEFAULT_CURRENCY, DEFAULT_TIMEZONE } from "@/modules/restaurant/core/product";
 
-const EMPTY = { name: "", slug: "", timezone: DEFAULT_TIMEZONE, currency: DEFAULT_CURRENCY, status: "pending_activation" as const };
+type PropertyForm = Pick<Property, "name" | "slug" | "timezone" | "currency" | "status">;
+
+const EMPTY: PropertyForm = {
+  name: "",
+  slug: "",
+  timezone: DEFAULT_TIMEZONE,
+  currency: DEFAULT_CURRENCY,
+  status: "pending_activation",
+};
 
 export function PropertiesPanel({ tenantId, data }: { tenantId: string; data: MasterData }) {
   const [search, setSearch] = React.useState("");
   const [open, setOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Property | null>(null);
-  const [form, setForm] = React.useState(EMPTY);
+  const [form, setForm] = React.useState<PropertyForm>(EMPTY);
 
   const qc = useQueryClient();
   const fn = useServerFn(upsertRestaurantPropertyFn);
   const mutation = useAdminMutation({
     mutationFn: fn,
-    successMessage: "Property saved. Chargeable properties remain pending until the commercial charge is paid.",
+    successMessage:
+      "Property saved. Chargeable properties remain pending until the commercial charge is paid.",
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["restaurant.masterdata", tenantId] });
       setOpen(false);
     },
   });
 
-  const properties = data.properties.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
+  const properties = data.properties.filter((p) =>
+    p.name.toLowerCase().includes(search.toLowerCase()),
+  );
 
   function openCreate() {
     setEditing(null);
@@ -44,14 +55,28 @@ export function PropertiesPanel({ tenantId, data }: { tenantId: string; data: Ma
     const p = data.properties.find((x) => x.id === id);
     if (!p) return;
     setEditing(p);
-    setForm({ name: p.name, slug: p.slug, timezone: p.timezone, currency: p.currency, status: p.status });
+    setForm({
+      name: p.name,
+      slug: p.slug,
+      timezone: p.timezone,
+      currency: p.currency,
+      status: p.status,
+    });
     setOpen(true);
   }
 
   return (
-    <SectionCard title="Properties" description="Outlets, hotels or venues that belong to this tenant.">
+    <SectionCard
+      title="Properties"
+      description="Outlets, hotels or venues that belong to this tenant."
+    >
       <div className="space-y-4">
-        <PanelToolbar search={search} onSearch={setSearch} onCreate={openCreate} createLabel="New property" />
+        <PanelToolbar
+          search={search}
+          onSearch={setSearch}
+          onCreate={openCreate}
+          createLabel="New property"
+        />
         <PanelList
           items={properties.map((p) => ({
             id: p.id,
@@ -64,7 +89,15 @@ export function PropertiesPanel({ tenantId, data }: { tenantId: string; data: Ma
             const p = data.properties.find((x) => x.id === id);
             if (!p) return;
             mutation.mutate({
-              data: { tenantId, id: p.id, name: p.name, slug: p.slug, timezone: p.timezone, currency: p.currency, status: active ? "active" : "inactive" },
+              data: {
+                tenantId,
+                id: p.id,
+                name: p.name,
+                slug: p.slug,
+                timezone: p.timezone,
+                currency: p.currency,
+                status: active ? "active" : "inactive",
+              },
             });
           }}
           emptyTitle="No properties yet"
@@ -78,7 +111,15 @@ export function PropertiesPanel({ tenantId, data }: { tenantId: string; data: Ma
         title={editing ? "Edit property" : "New property"}
         onSubmit={() =>
           mutation.mutate({
-            data: { tenantId, id: editing?.id, name: form.name, slug: form.slug, timezone: form.timezone, currency: form.currency, status: form.status },
+            data: {
+              tenantId,
+              id: editing?.id,
+              name: form.name,
+              slug: form.slug,
+              timezone: form.timezone,
+              currency: form.currency,
+              status: form.status,
+            },
           })
         }
         pending={mutation.isPending}
@@ -96,18 +137,37 @@ export function PropertiesPanel({ tenantId, data }: { tenantId: string; data: Ma
           />
         </Field>
         <Field label="Slug" required hint="Lowercase, hyphenated.">
-          <Input className="h-11" value={form.slug} onChange={(e) => setForm((f) => ({ ...f, slug: slugify(e.target.value) }))} required />
+          <Input
+            className="h-11"
+            value={form.slug}
+            onChange={(e) => setForm((f) => ({ ...f, slug: slugify(e.target.value) }))}
+            required
+          />
         </Field>
         <FieldRow>
           <Field label="Timezone" required>
-            <Input className="h-11" value={form.timezone} onChange={(e) => setForm((f) => ({ ...f, timezone: e.target.value }))} required />
+            <Input
+              className="h-11"
+              value={form.timezone}
+              onChange={(e) => setForm((f) => ({ ...f, timezone: e.target.value }))}
+              required
+            />
           </Field>
           <Field label="Currency" required>
-            <Input className="h-11" maxLength={3} value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))} required />
+            <Input
+              className="h-11"
+              maxLength={3}
+              value={form.currency}
+              onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))}
+              required
+            />
           </Field>
         </FieldRow>
         <Field label="Active">
-          <Switch checked={form.status === "active"} onCheckedChange={(v) => setForm((f) => ({ ...f, status: v ? "active" : "inactive" }))} />
+          <Switch
+            checked={form.status === "active"}
+            onCheckedChange={(v) => setForm((f) => ({ ...f, status: v ? "active" : "inactive" }))}
+          />
         </Field>
       </EntitySheet>
     </SectionCard>

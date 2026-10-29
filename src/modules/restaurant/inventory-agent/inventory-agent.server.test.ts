@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+/* eslint-disable @typescript-eslint/no-explicit-any -- the in-memory Supabase test double mirrors the untyped client surface. */
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   runRestaurantDecisionPass: vi.fn(),
@@ -51,7 +52,9 @@ function sbFor(tableResults: Record<string, unknown>) {
 
 describe("LexiBite Inventory Agent V1", () => {
   beforeEach(() => {
+    for (const mock of Object.values(mocks)) mock.mockReset();
     mocks.assertEntitled.mockResolvedValue(undefined);
+    mocks.assertCapability.mockResolvedValue(undefined);
   });
   it("runs the canonical decision pass and returns only inventory replenishment findings", async () => {
     mocks.runRestaurantDecisionPass.mockResolvedValueOnce({
@@ -74,7 +77,9 @@ describe("LexiBite Inventory Agent V1", () => {
             confidence: 0.82,
             recommended_option_key: "reorder_now",
             options: [
-              { option: { key: "reorder_now", actionType: "restaurant.inventory.replenish_review" } },
+              {
+                option: { key: "reorder_now", actionType: "restaurant.inventory.replenish_review" },
+              },
             ],
             context: {
               finding: {
@@ -82,7 +87,11 @@ describe("LexiBite Inventory Agent V1", () => {
                 subject: "Beef",
                 severity: "high",
                 headline: "Beef runs out in 2 days",
-                facts: { inventoryItemId: "item-1", recommendedQuantity: 20, supplierId: "supplier-1" },
+                facts: {
+                  inventoryItemId: "item-1",
+                  recommendedQuantity: 20,
+                  supplierId: "supplier-1",
+                },
               },
             },
             action_id: ACTION,
@@ -142,24 +151,30 @@ describe("LexiBite Inventory Agent V1", () => {
 
     const sb = sbFor({
       intelligence_decisions: {
-        data: [{
-          id: DECISION,
-          decision_key: "restaurant.tenant.finding.inventory.x",
-          status: "proposed",
-          confidence: 0.45,
-          recommended_option_key: "reorder_now",
-          options: [{ option: { key: "reorder_now", actionType: "restaurant.inventory.replenish_review" } }],
-          context: {
-            finding: {
-              kind: "inventory_shortage",
-              subject: "Unknown item",
-              severity: "medium",
-              headline: "Below reorder point",
-              facts: { inventoryItemId: "item-1", recommendedQuantity: null, supplierId: null },
+        data: [
+          {
+            id: DECISION,
+            decision_key: "restaurant.tenant.finding.inventory.x",
+            status: "proposed",
+            confidence: 0.45,
+            recommended_option_key: "reorder_now",
+            options: [
+              {
+                option: { key: "reorder_now", actionType: "restaurant.inventory.replenish_review" },
+              },
+            ],
+            context: {
+              finding: {
+                kind: "inventory_shortage",
+                subject: "Unknown item",
+                severity: "medium",
+                headline: "Below reorder point",
+                facts: { inventoryItemId: "item-1", recommendedQuantity: null, supplierId: null },
+              },
             },
+            action_id: null,
           },
-          action_id: null,
-        }],
+        ],
         error: null,
       },
       intelligence_actions: { data: [], error: null },
@@ -186,15 +201,35 @@ describe("LexiBite Inventory Agent V1", () => {
     const sb = sbFor({
       intelligence_decisions: {
         data: [
-          { id: DECISION, decision_key: "restaurant.tenant.inventory.x", property_id: null, location_id: null },
+          {
+            id: DECISION,
+            decision_key: "restaurant.tenant.inventory.x",
+            property_id: null,
+            location_id: null,
+          },
         ],
         error: null,
       },
       intelligence_actions: {
         data: [
-          { id: ACTION, decision_id: DECISION, action_type: "restaurant.inventory.replenish_review", status: "approved" },
-          { id: "ignored", decision_id: DECISION, action_type: "restaurant.menu.reprice_review", status: "approved" },
-          { id: "ignored-failed", decision_id: DECISION, action_type: "restaurant.inventory.replenish_review", status: "executed" },
+          {
+            id: ACTION,
+            decision_id: DECISION,
+            action_type: "restaurant.inventory.replenish_review",
+            status: "approved",
+          },
+          {
+            id: "ignored",
+            decision_id: DECISION,
+            action_type: "restaurant.menu.reprice_review",
+            status: "approved",
+          },
+          {
+            id: "ignored-failed",
+            decision_id: DECISION,
+            action_type: "restaurant.inventory.replenish_review",
+            status: "executed",
+          },
         ],
         error: null,
       },
@@ -236,7 +271,14 @@ describe("LexiBite Inventory Agent V1", () => {
         error: null,
       },
       intelligence_actions: {
-        data: [{ id: ACTION, decision_id: DECISION, action_type: "restaurant.inventory.replenish_review", status: "approved" }],
+        data: [
+          {
+            id: ACTION,
+            decision_id: DECISION,
+            action_type: "restaurant.inventory.replenish_review",
+            status: "approved",
+          },
+        ],
         error: null,
       },
       restaurant_purchase_orders: {
@@ -248,7 +290,9 @@ describe("LexiBite Inventory Agent V1", () => {
     await executeApprovedInventoryAgentActions(sb, USER, { tenantId: TENANT });
 
     expect(mocks.executeRestaurantAction).toHaveBeenCalledTimes(1);
-    expect((sb.from as any).mock.calls.map((call: any[]) => call[0])).not.toContain("restaurant_purchase_orders");
+    expect((sb.from as any).mock.calls.map((call: any[]) => call[0])).not.toContain(
+      "restaurant_purchase_orders",
+    );
   });
 
   it("verifies only executed inventory-replenishment actions through the canonical verifier", async () => {
@@ -265,11 +309,25 @@ describe("LexiBite Inventory Agent V1", () => {
 
     const sb = sbFor({
       intelligence_decisions: {
-        data: [{ id: DECISION, decision_key: "restaurant.tenant.inventory.x", property_id: null, location_id: null }],
+        data: [
+          {
+            id: DECISION,
+            decision_key: "restaurant.tenant.inventory.x",
+            property_id: null,
+            location_id: null,
+          },
+        ],
         error: null,
       },
       intelligence_actions: {
-        data: [{ id: ACTION, decision_id: DECISION, action_type: "restaurant.inventory.replenish_review", status: "executed" }],
+        data: [
+          {
+            id: ACTION,
+            decision_id: DECISION,
+            action_type: "restaurant.inventory.replenish_review",
+            status: "executed",
+          },
+        ],
         error: null,
       },
     });
@@ -297,7 +355,14 @@ describe("LexiBite Inventory Agent V1", () => {
         error: null,
       },
       intelligence_actions: {
-        data: [{ id: ACTION, decision_id: DECISION, action_type: "restaurant.inventory.replenish_review", status: "approved" }],
+        data: [
+          {
+            id: ACTION,
+            decision_id: DECISION,
+            action_type: "restaurant.inventory.replenish_review",
+            status: "approved",
+          },
+        ],
         error: null,
       },
     });

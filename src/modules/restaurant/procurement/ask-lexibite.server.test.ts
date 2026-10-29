@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- the in-memory Supabase test double mirrors the untyped client surface. */
 import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -28,7 +29,11 @@ vi.mock("../purchasing/purchasing.server", () => ({
   transitionPurchaseOrder: vi.fn(),
 }));
 
-import { createIntelligentPurchaseOrders } from "./ask-lexibite.server";
+import {
+  createAskLexiBitePurchaseOrder,
+  createIntelligentPurchaseOrders,
+  previewIntelligentPurchaseOrders,
+} from "./ask-lexibite.server";
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
@@ -45,32 +50,43 @@ function chain(result: unknown) {
   return q;
 }
 
-function sbWithExisting(existing: unknown) {
+function sbWithExisting(
+  existing: unknown,
+  productUnitId = UNIT,
+  purchaseUnitId: string | null = null,
+  packSize = 1,
+) {
   return {
     from: vi.fn((table: string) => {
       if (table === "restaurant_inventory_items") {
         return chain({
-          data: [{
-            id: ITEM,
-            name: "Beef",
-            unit_id: UNIT,
-            property_id: null,
-            location_id: null,
-            currency: "TZS",
-          }],
+          data: [
+            {
+              id: ITEM,
+              name: "Beef",
+              unit_id: UNIT,
+              purchase_unit_id: purchaseUnitId,
+              pack_size: packSize,
+              property_id: null,
+              location_id: null,
+              currency: "TZS",
+            },
+          ],
           error: null,
         });
       }
       if (table === "restaurant_supplier_products") {
         return chain({
-          data: [{
-            id: PRODUCT,
-            supplier_id: SUPPLIER,
-            inventory_item_id: ITEM,
-            unit_id: UNIT,
-            unit_price: 12000,
-            active: true,
-          }],
+          data: [
+            {
+              id: PRODUCT,
+              supplier_id: SUPPLIER,
+              inventory_item_id: ITEM,
+              unit_id: productUnitId,
+              unit_price: 12000,
+              active: true,
+            },
+          ],
           error: null,
         });
       }
@@ -81,7 +97,21 @@ function sbWithExisting(existing: unknown) {
         return chain({ data: existing, error: null });
       }
       if (table === "restaurant_purchase_order_items") {
-        return chain({ data: existing ? [{ id: "line-1" }] : [], error: null });
+        return chain({
+          data: existing
+            ? [
+                {
+                  id: "line-1",
+                  inventory_item_id: ITEM,
+                  supplier_product_id: PRODUCT,
+                  unit_id: UNIT,
+                  quantity: 10,
+                  unit_price: 12000,
+                },
+              ]
+            : [],
+          error: null,
+        });
       }
       return chain({ data: [], error: null });
     }),
@@ -89,7 +119,147 @@ function sbWithExisting(existing: unknown) {
 }
 
 describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
+  it("normalizes supplier pack pricing and rounds stock demand up to whole purchase packs", async () => {
+    mocks.assertCapability.mockResolvedValue(undefined);
+    mocks.getTenantScope.mockResolvedValue({});
+    mocks.resolveMultiPropertyScope.mockResolvedValue(null);
+    mocks.getPurchasingIntelligence.mockResolvedValue({
+      generatedAt: "2026-10-05T00:00:00.000Z",
+      windowDays: 30,
+      currency: "TZS",
+      suggestions: [
+        {
+          inventoryItemId: ITEM,
+          name: "Beef",
+          supplierId: SUPPLIER,
+          supplierName: "Fresh Supplier",
+          recommendedQuantity: 11,
+          estimatedCost: 26400,
+          currentQuantity: 2,
+          dailyVelocity: 1,
+          leadTimeDays: 2,
+          coverDays: 5,
+        },
+      ],
+      suppliers: [],
+      spendChangePercent: null,
+      expectedMonthlySpend: 0,
+      previousMonthlySpend: 0,
+    });
+    const plan = await previewIntelligentPurchaseOrders(
+      sbWithExisting(
+        null,
+        "88888888-8888-4888-8888-888888888888",
+        "88888888-8888-4888-8888-888888888888",
+        6,
+      ),
+      USER,
+      {
+        tenantId: TENANT,
+        inventoryItemIds: [],
+        supplierId: null,
+        idempotencyKey: IDEMPOTENCY,
+        lineOverrides: [],
+      },
+    );
+    expect(plan.groups[0]?.lines[0]).toEqual(
+      expect.objectContaining({
+        quantity: 2,
+        unitPrice: 12000,
+        estimatedCost: 24000,
+      }),
+    );
+    expect(plan.totalEstimatedSpend).toBe(24000);
+  });
+
+  it("refuses a replenishment PO when supplier unit differs from the stock unit", async () => {
+    mocks.assertCapability.mockResolvedValue(undefined);
+    mocks.getTenantScope.mockResolvedValue({});
+    mocks.resolveMultiPropertyScope.mockResolvedValue(null);
+    mocks.getPurchasingIntelligence.mockResolvedValue({
+      generatedAt: "2026-10-05T00:00:00.000Z",
+      windowDays: 30,
+      currency: "TZS",
+      suggestions: [
+        {
+          inventoryItemId: ITEM,
+          name: "Beef",
+          supplierId: SUPPLIER,
+          supplierName: "Fresh Supplier",
+          recommendedQuantity: 10,
+          estimatedCost: 120000,
+          currentQuantity: 2,
+          dailyVelocity: 1,
+          leadTimeDays: 2,
+          coverDays: 5,
+        },
+      ],
+      suppliers: [],
+      spendChangePercent: null,
+      expectedMonthlySpend: 0,
+      previousMonthlySpend: 0,
+    });
+
+    const plan = await previewIntelligentPurchaseOrders(
+      sbWithExisting(null, "88888888-8888-4888-8888-888888888888"),
+      USER,
+      {
+        tenantId: TENANT,
+        inventoryItemIds: [],
+        supplierId: null,
+        idempotencyKey: IDEMPOTENCY,
+        lineOverrides: [],
+      },
+    );
+
+    expect(plan.groups).toHaveLength(0);
+    expect(plan.skipped).toContain(
+      "Beef: supplier purchase unit differs from the stock unit and no valid pack-size conversion is configured.",
+    );
+  });
+
+  it("converts an explicitly requested stock quantity into configured supplier packs", async () => {
+    mocks.assertCapability.mockResolvedValue(undefined);
+    mocks.getTenantScope.mockResolvedValue({});
+    mocks.resolveMultiPropertyScope.mockResolvedValue(null);
+    mocks.resolveTenantCurrency.mockResolvedValue("TZS");
+    mocks.createPurchaseOrder.mockResolvedValue({
+      id: "po-stock-unit",
+      document_number: "PO-STOCK-UNIT",
+      status: "draft",
+      total: 24000,
+      currency: "TZS",
+    });
+    const supplierPurchaseUnit = "88888888-8888-4888-8888-888888888888";
+    const sb = sbWithExisting(null, supplierPurchaseUnit, supplierPurchaseUnit, 6);
+    await createAskLexiBitePurchaseOrder(sb, USER, {
+      tenantId: TENANT,
+      contract: {
+        action: "prepare_purchase_order",
+        supplier: { resolvedId: SUPPLIER, status: "exact" },
+        entities: [
+          {
+            status: "exact",
+            resolvedId: ITEM,
+            resolvedName: "Beef",
+            raw: "Beef",
+            quantity: { quantity: 11, resolvedUnitId: UNIT },
+          },
+        ],
+      },
+    } as any);
+    expect(mocks.createPurchaseOrder.mock.calls.at(-1)?.[2].lines[0]).toEqual(
+      expect.objectContaining({
+        inventoryItemId: ITEM,
+        unitId: supplierPurchaseUnit,
+        quantity: 2,
+        unitPrice: 12000,
+      }),
+    );
+  });
+
   it("persists the Purchasing Intelligence quantity and a line override as the actual PO line quantity", async () => {
+    mocks.createPurchaseOrder.mockClear();
     mocks.assertCapability.mockResolvedValue(undefined);
     mocks.getTenantScope.mockResolvedValue({});
     mocks.resolveMultiPropertyScope.mockResolvedValue(null);
@@ -98,18 +268,20 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
       generatedAt: "2026-10-05T00:00:00.000Z",
       windowDays: 30,
       currency: "TZS",
-      suggestions: [{
-        inventoryItemId: ITEM,
-        name: "Beef",
-        supplierId: SUPPLIER,
-        supplierName: "Fresh Supplier",
-        recommendedQuantity: 10,
-        estimatedCost: 120000,
-        currentQuantity: 2,
-        dailyVelocity: 1,
-        leadTimeDays: 2,
-        coverDays: 5,
-      }],
+      suggestions: [
+        {
+          inventoryItemId: ITEM,
+          name: "Beef",
+          supplierId: SUPPLIER,
+          supplierName: "Fresh Supplier",
+          recommendedQuantity: 10,
+          estimatedCost: 120000,
+          currentQuantity: 2,
+          dailyVelocity: 1,
+          leadTimeDays: 2,
+          coverDays: 5,
+        },
+      ],
       suppliers: [],
       spendChangePercent: null,
       expectedMonthlySpend: 0,
@@ -143,18 +315,20 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
       generatedAt: "2026-10-05T00:00:00.000Z",
       windowDays: 30,
       currency: "TZS",
-      suggestions: [{
-        inventoryItemId: ITEM,
-        name: "Beef",
-        supplierId: SUPPLIER,
-        supplierName: "Fresh Supplier",
-        recommendedQuantity: 10,
-        estimatedCost: 120000,
-        currentQuantity: 2,
-        dailyVelocity: 1,
-        leadTimeDays: 2,
-        coverDays: 5,
-      }],
+      suggestions: [
+        {
+          inventoryItemId: ITEM,
+          name: "Beef",
+          supplierId: SUPPLIER,
+          supplierName: "Fresh Supplier",
+          recommendedQuantity: 10,
+          estimatedCost: 120000,
+          currentQuantity: 2,
+          dailyVelocity: 1,
+          leadTimeDays: 2,
+          coverDays: 5,
+        },
+      ],
       suppliers: [],
       spendChangePercent: null,
       expectedMonthlySpend: 0,
@@ -180,23 +354,74 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
     expect(mocks.createPurchaseOrder.mock.calls.at(-1)?.[2].lines[0].quantity).toBe(10);
   });
 
+  it("rejects an idempotent retry when the persisted PO quantity differs from the requested override", async () => {
+    mocks.getPurchasingIntelligence.mockResolvedValue({
+      generatedAt: "2026-10-05T00:00:00.000Z",
+      windowDays: 30,
+      currency: "TZS",
+      suggestions: [
+        {
+          inventoryItemId: ITEM,
+          name: "Beef",
+          supplierId: SUPPLIER,
+          supplierName: "Fresh Supplier",
+          recommendedQuantity: 10,
+          estimatedCost: 120000,
+          currentQuantity: 2,
+          dailyVelocity: 1,
+          leadTimeDays: 2,
+          coverDays: 5,
+        },
+      ],
+      suppliers: [],
+      spendChangePercent: null,
+      expectedMonthlySpend: 0,
+      previousMonthlySpend: 0,
+    });
+    mocks.createPurchaseOrder.mockClear();
+    const existing = {
+      id: "po-existing",
+      document_number: "PO-EXISTING",
+      reference: "LEXI-INT-" + IDEMPOTENCY + "-c9c4c5e7",
+      status: "draft",
+      supplier_id: SUPPLIER,
+      property_id: null,
+      location_id: null,
+      total: 120000,
+      currency: "TZS",
+    };
+    const sb = sbWithExisting(existing);
+    await expect(
+      createIntelligentPurchaseOrders(sb, USER, {
+        tenantId: TENANT,
+        inventoryItemIds: [],
+        supplierId: null,
+        idempotencyKey: IDEMPOTENCY,
+        lineOverrides: [{ inventoryItemId: ITEM, quantity: 8 }],
+      }),
+    ).rejects.toThrow(/persisted lines differ/i);
+    expect(mocks.createPurchaseOrder).not.toHaveBeenCalled();
+  });
+
   it("recovers an existing intelligent PO on retry without creating a second PO", async () => {
     mocks.getPurchasingIntelligence.mockResolvedValue({
       generatedAt: "2026-10-05T00:00:00.000Z",
       windowDays: 30,
       currency: "TZS",
-      suggestions: [{
-        inventoryItemId: ITEM,
-        name: "Beef",
-        supplierId: SUPPLIER,
-        supplierName: "Fresh Supplier",
-        recommendedQuantity: 10,
-        estimatedCost: 120000,
-        currentQuantity: 2,
-        dailyVelocity: 1,
-        leadTimeDays: 2,
-        coverDays: 5,
-      }],
+      suggestions: [
+        {
+          inventoryItemId: ITEM,
+          name: "Beef",
+          supplierId: SUPPLIER,
+          supplierName: "Fresh Supplier",
+          recommendedQuantity: 10,
+          estimatedCost: 120000,
+          currentQuantity: 2,
+          dailyVelocity: 1,
+          leadTimeDays: 2,
+          coverDays: 5,
+        },
+      ],
       suppliers: [],
       spendChangePercent: null,
       expectedMonthlySpend: 0,

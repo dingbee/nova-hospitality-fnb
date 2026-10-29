@@ -76,10 +76,7 @@ const BRIEF_TONE_META: Record<
   },
 };
 
-const BRIEF_SECTION_META: Record<
-  BriefTone,
-  { title: string; subtitle: string }
-> = {
+const BRIEF_SECTION_META: Record<BriefTone, { title: string; subtitle: string }> = {
   critical: {
     title: "Immediate attention",
     subtitle: "These require action now.",
@@ -97,7 +94,6 @@ const BRIEF_SECTION_META: Record<
     subtitle: "Informational — no immediate action required.",
   },
 };
-
 
 function renderInlineAssistantText(value: string) {
   const parts = value.split(/(\*\*[^*]+\*\*|__[^_]+__)/g);
@@ -173,12 +169,8 @@ function inferBriefTone(text: string): BriefTone {
   const value = text.toLowerCase();
 
   if (
-    /\b(critical|urgent|immediately|severe|stockout|out of stock|overdue)\b/.test(
-      value,
-    ) ||
-    /\b100%\s+of\s+\d+\s+(?:analysed\s+)?tickets?\s+(?:were\s+)?delayed\b/.test(
-      value,
-    )
+    /\b(critical|urgent|immediately|severe|stockout|out of stock|overdue)\b/.test(value) ||
+    /\b100%\s+of\s+\d+\s+(?:analysed\s+)?tickets?\s+(?:were\s+)?delayed\b/.test(value)
   ) {
     return "critical";
   }
@@ -258,10 +250,7 @@ function extractBriefItems(content: string): BriefItem[] {
 
   if (current) items.push(current.trim());
 
-  const sourceItems =
-    items.length > 1
-      ? items
-      : normalized.split(/(?<=[.!?])\s+(?=[A-Z])/);
+  const sourceItems = items.length > 1 ? items : normalized.split(/(?<=[.!?])\s+(?=[A-Z])/);
 
   return sourceItems
     .map((item) => cleanBriefText(item))
@@ -284,10 +273,7 @@ function highlightBriefDetail(text: string) {
     if (index % 2 === 0) return part;
 
     return (
-      <span
-        key={part + "-" + index}
-        className="font-semibold text-foreground tabular-nums"
-      >
+      <span key={part + "-" + index} className="font-semibold text-foreground tabular-nums">
         {part}
       </span>
     );
@@ -320,8 +306,8 @@ function ManagerBrief({ content }: { content: string }) {
       </div>
 
       <div className="rounded-lg border bg-muted/20 px-3 py-2.5 text-xs leading-5 text-muted-foreground">
-        Here is what needs the manager&apos;s attention right now, based on the
-        latest operational, financial, and inventory data.
+        Here is what needs the manager&apos;s attention right now, based on the latest operational,
+        financial, and inventory data.
       </div>
 
       {groups.map(({ tone, items: sectionItems }) => {
@@ -333,13 +319,9 @@ function ManagerBrief({ content }: { content: string }) {
               <div>
                 <h3 className="text-sm font-semibold text-foreground">
                   {section.title}{" "}
-                  <span className="text-muted-foreground">
-                    ({sectionItems.length})
-                  </span>
+                  <span className="text-muted-foreground">({sectionItems.length})</span>
                 </h3>
-                <p className="text-[11px] text-muted-foreground">
-                  {section.subtitle}
-                </p>
+                <p className="text-[11px] text-muted-foreground">{section.subtitle}</p>
               </div>
             </div>
 
@@ -351,16 +333,11 @@ function ManagerBrief({ content }: { content: string }) {
                 return (
                   <article
                     key={String(index) + "-" + item.title}
-                    className={
-                      "rounded-xl border px-3 py-3 shadow-sm " + meta.className
-                    }
+                    className={"rounded-xl border px-3 py-3 shadow-sm " + meta.className}
                   >
                     <div className="flex items-start gap-2">
                       <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-background/80">
-                        <Icon
-                          className="size-3.5 text-foreground"
-                          aria-hidden
-                        />
+                        <Icon className="size-3.5 text-foreground" aria-hidden />
                       </div>
 
                       <div className="min-w-0 flex-1">
@@ -379,12 +356,8 @@ function ManagerBrief({ content }: { content: string }) {
 
                         {item.action && (
                           <div className="mt-2.5 rounded-md border bg-background/70 px-2.5 py-2 text-xs leading-4">
-                            <span className="font-semibold text-foreground">
-                              Action:
-                            </span>{" "}
-                            <span className="text-muted-foreground">
-                              {item.action}
-                            </span>
+                            <span className="font-semibold text-foreground">Action:</span>{" "}
+                            <span className="text-muted-foreground">{item.action}</span>
                           </div>
                         )}
                       </div>
@@ -410,6 +383,7 @@ type StaffNovaTurn =
       sourceMessage?: string;
       understanding?: NovaIntentContract;
       preparation?: NovaPreparation;
+      intelligentPurchaseOrder?: IntelligentPurchaseOrderPlan;
       managerBrief?: boolean;
     };
 
@@ -475,11 +449,18 @@ function PurchaseOrderLifecycleActions({
         <p className="text-[11px] text-muted-foreground">
           Current status: {po.orderStatus}. Confirm to {verb} this purchase order.
         </p>
-        <Button type="button" size="sm" disabled={transition.isPending} onClick={() => transition.mutate(target)}>
+        <Button
+          type="button"
+          size="sm"
+          disabled={transition.isPending}
+          onClick={() => transition.mutate(target)}
+        >
           {transition.isPending ? (target === "approved" ? "Approving…" : "Submitting…") : label}
         </Button>
         {transition.data && <p className="text-xs text-foreground">{transition.data.message}</p>}
-        {transition.isError && <p className="text-xs text-destructive">{transition.error.message}</p>}
+        {transition.isError && (
+          <p className="text-xs text-destructive">{transition.error.message}</p>
+        )}
       </div>
     );
   }
@@ -490,12 +471,25 @@ function PurchaseOrderLifecycleActions({
         <div className="mt-2 space-y-1.5 rounded-md border bg-muted/20 px-2 py-2">
           <p className="text-xs font-medium">Review outstanding receiving quantities</p>
           <ul className="text-xs text-muted-foreground">
-            {receive.data.lines.map((line) => <li key={line.purchaseOrderItemId}>• {line.description} — {line.quantity}</li>)}
+            {receive.data.lines.map((line) => (
+              <li key={line.purchaseOrderItemId}>
+                • {line.description} — {line.quantity}
+              </li>
+            ))}
           </ul>
-          <p className="text-[11px] text-amber-600">Confirm only if the physical delivery matches these quantities.</p>
+          <p className="text-[11px] text-amber-600">
+            Confirm only if the physical delivery matches these quantities.
+          </p>
           <div className="flex gap-1.5">
-            <Button type="button" size="sm" variant="ghost" onClick={() => setReceiving(false)}>Cancel</Button>
-            <Button type="button" size="sm" disabled={receive.isPending} onClick={() => receive.mutate(true)}>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setReceiving(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={receive.isPending}
+              onClick={() => receive.mutate(true)}
+            >
               {receive.isPending ? "Receiving…" : "Confirm & receive"}
             </Button>
           </div>
@@ -504,12 +498,28 @@ function PurchaseOrderLifecycleActions({
     }
     return (
       <div className="mt-2 space-y-2 rounded-md border px-2.5 py-2">
-        <p className="text-xs font-medium">Receive stock against {po.documentNumber ?? po.reference ?? po.raw}.</p>
-        <p className="text-[11px] text-muted-foreground">Ask LexiBite will re-check outstanding quantities first. Nothing is posted until you confirm.</p>
-        <Button type="button" size="sm" variant="outline" disabled={receive.isPending} onClick={() => { setReceiving(true); receive.mutate(false); }}>
+        <p className="text-xs font-medium">
+          Receive stock against {po.documentNumber ?? po.reference ?? po.raw}.
+        </p>
+        <p className="text-[11px] text-muted-foreground">
+          Ask LexiBite will re-check outstanding quantities first. Nothing is posted until you
+          confirm.
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={receive.isPending}
+          onClick={() => {
+            setReceiving(true);
+            receive.mutate(false);
+          }}
+        >
           {receive.isPending ? "Checking…" : "Review receiving"}
         </Button>
-        {receive.data && !receive.data.preview && <p className="text-xs text-foreground">{receive.data.message}</p>}
+        {receive.data && !receive.data.preview && (
+          <p className="text-xs text-foreground">{receive.data.message}</p>
+        )}
         {receive.isError && <p className="text-xs text-destructive">{receive.error.message}</p>}
       </div>
     );
@@ -535,7 +545,10 @@ function PreparationActions({
   const [quantities, setQuantities] = useState<Record<string, number>>(() =>
     Object.fromEntries(
       contract.entities
-        .filter((entity) => entity.entityDomain === "inventory_item" && entity.resolvedId && entity.quantity)
+        .filter(
+          (entity) =>
+            entity.entityDomain === "inventory_item" && entity.resolvedId && entity.quantity,
+        )
         .map((entity) => [entity.resolvedId!, entity.quantity!.quantity]),
     ),
   );
@@ -577,12 +590,23 @@ function PreparationActions({
         <PurchaseOrderActions tenantId={tenantId} contract={reviewedContract} />
         <div className="rounded-md border border-dashed px-2.5 py-2">
           <p className="text-[11px] text-muted-foreground">
-            Prefer the approval-request stage? LexiBite can create a governed purchase request instead.
+            Prefer the approval-request stage? LexiBite can create a governed purchase request
+            instead.
           </p>
-          <Button type="button" size="sm" variant="ghost" disabled={commit.isPending} onClick={() => commit.mutate()}>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={commit.isPending}
+            onClick={() => commit.mutate()}
+          >
             {commit.isPending ? "Preparing request…" : "Prepare purchase request instead"}
           </Button>
-          {commit.isError && <p className="text-xs text-destructive">Something went wrong preparing the request — please try again.</p>}
+          {commit.isError && (
+            <p className="text-xs text-destructive">
+              Something went wrong preparing the request — please try again.
+            </p>
+          )}
         </div>
       </div>
     );
@@ -597,21 +621,34 @@ function PreparationActions({
         <div className="rounded-md border bg-muted/20 px-2.5 py-2">
           <p className="text-xs font-semibold text-foreground">Review {label} quantities</p>
           <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
-            Adjust the requested quantities before LexiBite creates the governed draft. Nothing moves yet.
+            Adjust the requested quantities before LexiBite creates the governed draft. Nothing
+            moves yet.
           </p>
           <div className="mt-2 space-y-1.5">
             {contract.entities
-              .filter((entity) => entity.entityDomain === "inventory_item" && entity.resolvedId && entity.quantity)
+              .filter(
+                (entity) =>
+                  entity.entityDomain === "inventory_item" && entity.resolvedId && entity.quantity,
+              )
               .map((entity) => {
                 const id = entity.resolvedId!;
                 return (
-                  <div key={id} className="flex items-center justify-between gap-2 rounded-lg border bg-card px-2 py-1.5">
+                  <div
+                    key={id}
+                    className="flex items-center justify-between gap-2 rounded-lg border bg-card px-2 py-1.5"
+                  >
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-foreground">{entity.resolvedName ?? entity.raw}</p>
-                      <p className="text-[10px] text-muted-foreground">Requested {entity.quantity!.quantity} {entity.quantity!.unitText}</p>
+                      <p className="text-xs font-medium text-foreground">
+                        {entity.resolvedName ?? entity.raw}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        Requested {entity.quantity!.quantity} {entity.quantity!.unitText}
+                      </p>
                     </div>
                     <Input
-                      type="number" min="0.01" step="0.01"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
                       value={quantities[id] ?? entity.quantity!.quantity}
                       onChange={(event) => {
                         const value = Number(event.target.value);
@@ -628,7 +665,11 @@ function PreparationActions({
         <Button type="button" size="sm" disabled={commit.isPending} onClick={() => commit.mutate()}>
           {commit.isPending ? "Preparing…" : `Prepare & open ${label}`}
         </Button>
-        {commit.isError && <p className="text-xs text-destructive">Something went wrong preparing this — please try again.</p>}
+        {commit.isError && (
+          <p className="text-xs text-destructive">
+            Something went wrong preparing this — please try again.
+          </p>
+        )}
       </div>
     );
   }
@@ -636,17 +677,33 @@ function PreparationActions({
   if (committed) {
     return (
       <div className="space-y-2">
-        <Button type="button" size="sm" variant="outline" onClick={() => navigate({ to: route.to, search: route.search })}>
-          Open {label}{committed.documentNumber ? ` (${committed.documentNumber})` : ""}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => navigate({ to: route.to, search: route.search })}
+        >
+          Open {label}
+          {committed.documentNumber ? ` (${committed.documentNumber})` : ""}
         </Button>
         {preparation.workflow === "purchase_request" && (
-          <PurchaseRequestLifecycleActions tenantId={tenantId} requestId={committed.createdRecordId} />
+          <PurchaseRequestLifecycleActions
+            tenantId={tenantId}
+            requestId={committed.createdRecordId}
+          />
         )}
-        {preparation.workflow === "requisition" && (
-          <RequisitionLifecycleActions tenantId={tenantId} requisitionId={committed.createdRecordId} />
+        {(preparation.workflow as string | null) === "requisition" && (
+          <RequisitionLifecycleActions
+            tenantId={tenantId}
+            requisitionId={committed.createdRecordId}
+          />
         )}
         {EXECUTABLE_WORKFLOWS.includes(preparation.workflow) && (
-          <ExecutionActions workflow={preparation.workflow as NovaExecutableWorkflow} recordId={committed.createdRecordId} tenantId={tenantId} />
+          <ExecutionActions
+            workflow={preparation.workflow as NovaExecutableWorkflow}
+            recordId={committed.createdRecordId}
+            tenantId={tenantId}
+          />
         )}
       </div>
     );
@@ -675,7 +732,13 @@ function PreparationActions({
   );
 }
 
-function PurchaseRequestLifecycleActions({ tenantId, requestId }: { tenantId: string; requestId: string }) {
+function PurchaseRequestLifecycleActions({
+  tenantId,
+  requestId,
+}: {
+  tenantId: string;
+  requestId: string;
+}) {
   const navigate = useNavigate();
   const getFn = useServerFn(getRestaurantPurchaseRequestFn);
   const transitionFn = useServerFn(transitionRestaurantPurchaseRequestFn);
@@ -689,25 +752,55 @@ function PurchaseRequestLifecycleActions({ tenantId, requestId }: { tenantId: st
     onSuccess: () => request.refetch(),
   });
   const status = request.data?.request?.status;
-  if (request.isLoading) return <p className="text-[11px] text-muted-foreground">Checking request status…</p>;
-  if (!request.data) return <p className="text-xs text-destructive">The purchase request could not be reloaded.</p>;
+  if (request.isLoading)
+    return <p className="text-[11px] text-muted-foreground">Checking request status…</p>;
+  if (!request.data)
+    return <p className="text-xs text-destructive">The purchase request could not be reloaded.</p>;
   const next =
-    status === "draft" ? { action: "submit" as const, label: "Submit request" } :
-    status === "submitted" ? { action: "approve" as const, label: "Approve request" } : null;
+    status === "draft"
+      ? { action: "submit" as const, label: "Submit request" }
+      : status === "submitted"
+        ? { action: "approve" as const, label: "Approve request" }
+        : null;
   if (!next) {
-    return <p className="text-[11px] text-muted-foreground">Request status: <span className="font-semibold">{status}</span>. Open the request for the next workflow stage.</p>;
+    return (
+      <p className="text-[11px] text-muted-foreground">
+        Request status: <span className="font-semibold">{status}</span>. Open the request for the
+        next workflow stage.
+      </p>
+    );
   }
   return (
     <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
       <p className="text-xs font-medium">Next action: {next.label}</p>
-      <p className="mt-0.5 text-[11px] text-muted-foreground">This changes the real purchase-request record and is checked again server-side.</p>
-      <Button type="button" size="sm" className="mt-2" disabled={transition.isPending} onClick={() => transition.mutate(next.action)}>
+      <p className="mt-0.5 text-[11px] text-muted-foreground">
+        This changes the real purchase-request record and is checked again server-side.
+      </p>
+      <Button
+        type="button"
+        size="sm"
+        className="mt-2"
+        disabled={transition.isPending}
+        onClick={() => transition.mutate(next.action)}
+      >
         {transition.isPending ? "Updating…" : next.label}
       </Button>
-      {transition.data && <p className="mt-1.5 text-xs text-foreground">Status: {transition.data.status}</p>}
-      {transition.isError && <p className="mt-1.5 text-xs text-destructive">{transition.error.message}</p>}
+      {transition.data && (
+        <p className="mt-1.5 text-xs text-foreground">Status: {transition.data.status}</p>
+      )}
+      {transition.isError && (
+        <p className="mt-1.5 text-xs text-destructive">{transition.error.message}</p>
+      )}
       {status === "approved" && (
-        <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => navigate({ to: "/admin/restaurant/procurement", search: { tab: "requests" } })}>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="mt-2"
+          onClick={() =>
+            navigate({ to: "/admin/restaurant/procurement", search: { tab: "requests" } })
+          }
+        >
           Open approved request
         </Button>
       )}
@@ -715,7 +808,13 @@ function PurchaseRequestLifecycleActions({ tenantId, requestId }: { tenantId: st
   );
 }
 
-function RequisitionLifecycleActions({ tenantId, requisitionId }: { tenantId: string; requisitionId: string }) {
+function RequisitionLifecycleActions({
+  tenantId,
+  requisitionId,
+}: {
+  tenantId: string;
+  requisitionId: string;
+}) {
   const getFn = useServerFn(getRequisitionFn);
   const submitFn = useServerFn(submitRequisitionFn);
   const approveFn = useServerFn(approveRequisitionFn);
@@ -725,73 +824,136 @@ function RequisitionLifecycleActions({ tenantId, requisitionId }: { tenantId: st
     queryFn: () => getFn({ data: { tenantId, id: requisitionId } }),
   });
   const [confirming, setConfirming] = useState(false);
-  const submit = useMutation({ mutationFn: () => submitFn({ data: { tenantId, requisitionId } }), onSuccess: () => requisition.refetch() });
+  const submit = useMutation({
+    mutationFn: () => submitFn({ data: { tenantId, requisitionId } }),
+    onSuccess: () => requisition.refetch(),
+  });
   const approve = useMutation({
-    mutationFn: () => approveFn({
-      data: {
-        tenantId,
-        requisitionId,
-        lines: (requisition.data?.lines ?? []).map((line) => ({
-          lineId: line.id,
-          approvedQuantity: Number(line.approved_quantity ?? line.requested_quantity ?? 0),
-        })),
-      },
-    }),
+    mutationFn: () =>
+      approveFn({
+        data: {
+          tenantId,
+          requisitionId,
+          lines: (requisition.data?.lines ?? []).map(
+            (line: {
+              id: string;
+              approved_quantity?: number | null;
+              requested_quantity?: number | null;
+              issued_quantity?: number | null;
+            }) => ({
+              lineId: line.id,
+              approvedQuantity: Number(line.approved_quantity ?? line.requested_quantity ?? 0),
+            }),
+          ),
+        },
+      }),
     onSuccess: () => requisition.refetch(),
   });
   const issue = useMutation({
-    mutationFn: () => issueFn({
-      data: {
-        tenantId,
-        requisitionId,
-        lines: (requisition.data?.lines ?? []).map((line) => ({
-          lineId: line.id,
-          issueQuantity: Math.max(0, Number(line.approved_quantity ?? line.requested_quantity ?? 0) - Number(line.issued_quantity ?? 0)),
-        })),
-      },
-    }),
+    mutationFn: () =>
+      issueFn({
+        data: {
+          tenantId,
+          requisitionId,
+          lines: (requisition.data?.lines ?? []).map(
+            (line: {
+              id: string;
+              approved_quantity?: number | null;
+              requested_quantity?: number | null;
+              issued_quantity?: number | null;
+            }) => ({
+              lineId: line.id,
+              issueQuantity: Math.max(
+                0,
+                Number(line.approved_quantity ?? line.requested_quantity ?? 0) -
+                  Number(line.issued_quantity ?? 0),
+              ),
+            }),
+          ),
+        },
+      }),
     onSuccess: () => requisition.refetch(),
   });
-  if (requisition.isLoading) return <p className="text-[11px] text-muted-foreground">Checking requisition status…</p>;
-  if (!requisition.data) return <p className="text-xs text-destructive">The requisition could not be reloaded.</p>;
+  if (requisition.isLoading)
+    return <p className="text-[11px] text-muted-foreground">Checking requisition status…</p>;
+  if (!requisition.data)
+    return <p className="text-xs text-destructive">The requisition could not be reloaded.</p>;
   const status = requisition.data.requisition.status;
-  if (status === "draft") return (
-    <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
-      <p className="text-xs font-medium">Next action: submit requisition</p>
-      <Button type="button" size="sm" className="mt-2" disabled={submit.isPending} onClick={() => submit.mutate()}>
-        {submit.isPending ? "Submitting…" : "Submit requisition"}
-      </Button>
-      {submit.isError && <p className="mt-1.5 text-xs text-destructive">{submit.error.message}</p>}
-    </div>
-  );
-  if (status === "submitted") return (
-    <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
-      <p className="text-xs font-medium">Next action: approve requisition</p>
-      <Button type="button" size="sm" className="mt-2" disabled={approve.isPending} onClick={() => approve.mutate()}>
-        {approve.isPending ? "Approving…" : "Approve requisition"}
-      </Button>
-      {approve.isError && <p className="mt-1.5 text-xs text-destructive">{approve.error.message}</p>}
-    </div>
-  );
-  if (status === "approved" || status === "partially_issued") return (
-    <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
-      <p className="text-xs font-medium">Next action: issue stock</p>
-      <p className="text-[11px] text-muted-foreground">LexiBite will issue only the outstanding approved quantities through the existing inventory ledger path.</p>
-      {!confirming ? (
-        <Button type="button" size="sm" className="mt-2" onClick={() => setConfirming(true)}>Review issue</Button>
-      ) : (
-        <div className="mt-2 flex gap-1.5">
-          <Button type="button" size="sm" variant="ghost" onClick={() => setConfirming(false)}>Cancel</Button>
-          <Button type="button" size="sm" disabled={issue.isPending} onClick={() => issue.mutate()}>
-            {issue.isPending ? "Issuing…" : "Confirm & issue"}
+  if (status === "draft")
+    return (
+      <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
+        <p className="text-xs font-medium">Next action: submit requisition</p>
+        <Button
+          type="button"
+          size="sm"
+          className="mt-2"
+          disabled={submit.isPending}
+          onClick={() => submit.mutate()}
+        >
+          {submit.isPending ? "Submitting…" : "Submit requisition"}
+        </Button>
+        {submit.isError && (
+          <p className="mt-1.5 text-xs text-destructive">{submit.error.message}</p>
+        )}
+      </div>
+    );
+  if (status === "submitted")
+    return (
+      <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
+        <p className="text-xs font-medium">Next action: approve requisition</p>
+        <Button
+          type="button"
+          size="sm"
+          className="mt-2"
+          disabled={approve.isPending}
+          onClick={() => approve.mutate()}
+        >
+          {approve.isPending ? "Approving…" : "Approve requisition"}
+        </Button>
+        {approve.isError && (
+          <p className="mt-1.5 text-xs text-destructive">{approve.error.message}</p>
+        )}
+      </div>
+    );
+  if (status === "approved" || status === "partially_issued")
+    return (
+      <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
+        <p className="text-xs font-medium">Next action: issue stock</p>
+        <p className="text-[11px] text-muted-foreground">
+          LexiBite will issue only the outstanding approved quantities through the existing
+          inventory ledger path.
+        </p>
+        {!confirming ? (
+          <Button type="button" size="sm" className="mt-2" onClick={() => setConfirming(true)}>
+            Review issue
           </Button>
-        </div>
-      )}
-      {issue.data && <p className="mt-1.5 text-xs text-foreground">Status: {issue.data.status}</p>}
-      {issue.isError && <p className="mt-1.5 text-xs text-destructive">{issue.error.message}</p>}
-    </div>
+        ) : (
+          <div className="mt-2 flex gap-1.5">
+            <Button type="button" size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={issue.isPending}
+              onClick={() => issue.mutate()}
+            >
+              {issue.isPending ? "Issuing…" : "Confirm & issue"}
+            </Button>
+          </div>
+        )}
+        {issue.data && (
+          <p className="mt-1.5 text-xs text-foreground">Status: {issue.data.status}</p>
+        )}
+        {issue.isError && <p className="mt-1.5 text-xs text-destructive">{issue.error.message}</p>}
+      </div>
+    );
+  return (
+    <p className="text-[11px] text-muted-foreground">
+      Requisition status: <span className="font-semibold">{status}</span>. No further Ask LexiBite
+      action is available from this state.
+    </p>
   );
-  return <p className="text-[11px] text-muted-foreground">Requisition status: <span className="font-semibold">{status}</span>. No further Ask LexiBite action is available from this state.</p>;
 }
 
 const EXECUTABLE_WORKFLOWS: readonly NovaPreparationWorkflow[] = ["stock_transfer"];
@@ -816,20 +978,21 @@ function IntelligentPurchaseOrderActions({
   );
 
   const create = useMutation({
-    mutationFn: () => createFn({
-      data: {
-        tenantId,
-        inventoryItemIds: plan.groups.flatMap((group) =>
-          group.lines.map((line) => line.inventoryItemId),
-        ),
-        supplierId: null,
-        idempotencyKey,
-        lineOverrides: Object.entries(quantities).map(([inventoryItemId, quantity]) => ({
-          inventoryItemId,
-          quantity,
-        })),
-      },
-    }),
+    mutationFn: () =>
+      createFn({
+        data: {
+          tenantId,
+          inventoryItemIds: plan.groups.flatMap((group) =>
+            group.lines.map((line) => line.inventoryItemId),
+          ),
+          supplierId: null,
+          idempotencyKey,
+          lineOverrides: Object.entries(quantities).map(([inventoryItemId, quantity]) => ({
+            inventoryItemId,
+            quantity,
+          })),
+        },
+      }),
     networkMode: "always",
   });
 
@@ -837,7 +1000,8 @@ function IntelligentPurchaseOrderActions({
     return (
       <div className="mt-2 space-y-2 rounded-xl border border-green-600/30 bg-green-600/10 px-3 py-2.5">
         <p className="text-xs font-semibold text-foreground">
-          {create.data.created.length} draft PO{create.data.created.length === 1 ? "" : "s"} created.
+          {create.data.created.length} draft PO{create.data.created.length === 1 ? "" : "s"}{" "}
+          created.
         </p>
         <div className="space-y-1">
           {create.data.created.map((po) => (
@@ -845,9 +1009,14 @@ function IntelligentPurchaseOrderActions({
               <span className="text-muted-foreground">
                 {po.documentNumber} · {po.supplierName} · {po.currency} {po.total.toLocaleString()}
               </span>
-              <Button type="button" size="sm" variant="outline" onClick={() =>
-                navigate({ to: "/admin/restaurant/procurement", search: { tab: "orders" } })
-              }>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  navigate({ to: "/admin/restaurant/procurement", search: { tab: "orders" } })
+                }
+              >
                 Open POs
               </Button>
             </div>
@@ -861,7 +1030,13 @@ function IntelligentPurchaseOrderActions({
     return (
       <div className="mt-2 rounded-xl border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
         Purchasing Intelligence has no safe PO draft from the current replenishment recommendations.
-        {plan.skipped.length > 0 && <div className="mt-1.5 space-y-1">{plan.skipped.slice(0, 4).map((reason) => <p key={reason}>• {reason}</p>)}</div>}
+        {plan.skipped.length > 0 && (
+          <div className="mt-1.5 space-y-1">
+            {plan.skipped.slice(0, 4).map((reason) => (
+              <p key={reason}>• {reason}</p>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -871,10 +1046,13 @@ function IntelligentPurchaseOrderActions({
       <div className="mt-2 space-y-2 rounded-xl border bg-card px-3 py-2.5">
         <p className="text-xs font-semibold text-foreground">Intelligent PO plan</p>
         <p className="text-[11px] leading-4 text-muted-foreground">
-          {plan.suggestionCount} replenishment recommendation{plan.suggestionCount === 1 ? "" : "s"}
-          {" "}→ {plan.groups.length} draft PO{plan.groups.length === 1 ? "" : "s"} · {plan.currency} {plan.totalEstimatedSpend.toLocaleString()}
+          {plan.suggestionCount} replenishment recommendation{plan.suggestionCount === 1 ? "" : "s"}{" "}
+          → {plan.groups.length} draft PO{plan.groups.length === 1 ? "" : "s"} · {plan.currency}{" "}
+          {plan.totalEstimatedSpend.toLocaleString()}
         </p>
-        <Button type="button" size="sm" onClick={() => setReviewing(true)}>Review intelligent PO</Button>
+        <Button type="button" size="sm" onClick={() => setReviewing(true)}>
+          Review intelligent PO
+        </Button>
       </div>
     );
   }
@@ -894,21 +1072,40 @@ function IntelligentPurchaseOrderActions({
     <div className="mt-2 space-y-2 rounded-xl border bg-card px-3 py-2.5">
       <div>
         <p className="text-xs font-semibold text-foreground">Purchasing Intelligence</p>
-        <p className="text-[11px] text-muted-foreground">Quantities come from the live replenishment engine. You can adjust them before the draft PO is created; supplier prices are revalidated server-side.</p>
+        <p className="text-[11px] text-muted-foreground">
+          Quantities come from the live replenishment engine. You can adjust them before the draft
+          PO is created; supplier prices are revalidated server-side.
+        </p>
       </div>
       <div className="space-y-2">
         {plan.groups.map((group) => (
           <section key={group.key} className="rounded-lg border bg-muted/20 p-2.5">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-semibold text-foreground">{group.supplierName}</p>
-              <span className="text-[11px] font-semibold tabular-nums text-foreground">{group.currency} {group.lines.reduce((sum, line) => sum + (quantities[line.inventoryItemId] ?? line.quantity) * line.unitPrice, 0).toLocaleString()}</span>
+              <span className="text-[11px] font-semibold tabular-nums text-foreground">
+                {group.currency}{" "}
+                {group.lines
+                  .reduce(
+                    (sum, line) =>
+                      sum + (quantities[line.inventoryItemId] ?? line.quantity) * line.unitPrice,
+                    0,
+                  )
+                  .toLocaleString()}
+              </span>
             </div>
             <div className="mt-1.5 space-y-1.5">
               {group.lines.map((line) => (
-                <div key={line.inventoryItemId} className="flex items-start justify-between gap-3 text-xs">
+                <div
+                  key={line.inventoryItemId}
+                  className="flex items-start justify-between gap-3 text-xs"
+                >
                   <div className="min-w-0 flex-1">
                     <p className="font-medium text-foreground">{line.description}</p>
-                    <p className="text-[11px] text-muted-foreground">{group.currency} {line.unitPrice.toLocaleString()} each · {line.currentQuantity} on hand · {line.leadTimeDays}d lead · recommended {line.quantity}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {group.currency} {line.unitPrice.toLocaleString()} each ·{" "}
+                      {line.currentQuantity} on hand · {line.leadTimeDays}d lead · recommended{" "}
+                      {line.quantity}
+                    </p>
                   </div>
                   <label className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
                     Qty
@@ -925,26 +1122,44 @@ function IntelligentPurchaseOrderActions({
                       aria-label={"Quantity for " + line.description}
                     />
                   </label>
-                  <span className="shrink-0 font-semibold tabular-nums text-foreground">{group.currency} {line.estimatedCost.toLocaleString()}</span>
+                  <span className="shrink-0 font-semibold tabular-nums text-foreground">
+                    {group.currency} {line.estimatedCost.toLocaleString()}
+                  </span>
                 </div>
               ))}
             </div>
           </section>
         ))}
       </div>
-      {plan.skipped.length > 0 && <div className="rounded-lg border border-amber-300/50 bg-amber-50/50 px-2.5 py-2 text-[11px] text-amber-700 dark:bg-amber-950/20 dark:text-amber-300"><p className="font-semibold">Not included</p>{plan.skipped.slice(0, 4).map((reason) => <p key={reason}>• {reason}</p>)}</div>}
-      <p className="text-[11px] text-muted-foreground">Nothing has been submitted or approved. Confirming below creates draft POs only. Edited quantities are validated again server-side.</p>
+      {plan.skipped.length > 0 && (
+        <div className="rounded-lg border border-amber-300/50 bg-amber-50/50 px-2.5 py-2 text-[11px] text-amber-700 dark:bg-amber-950/20 dark:text-amber-300">
+          <p className="font-semibold">Not included</p>
+          {plan.skipped.slice(0, 4).map((reason) => (
+            <p key={reason}>• {reason}</p>
+          ))}
+        </div>
+      )}
+      <p className="text-[11px] text-muted-foreground">
+        Nothing has been submitted or approved. Confirming below creates draft POs only. Edited
+        quantities are validated again server-side.
+      </p>
       <div className="rounded-lg border bg-muted/20 px-2.5 py-2 text-xs">
         <div className="flex items-center justify-between gap-3">
           <span className="text-muted-foreground">Reviewed estimated spend</span>
-          <span className="font-semibold tabular-nums">{plan.currency} {editedSpend.toLocaleString()}</span>
+          <span className="font-semibold tabular-nums">
+            {plan.currency} {editedSpend.toLocaleString()}
+          </span>
         </div>
       </div>
       {create.isError && <p className="text-xs text-destructive">{create.error.message}</p>}
       <div className="flex gap-1.5 pt-1">
-        <Button type="button" size="sm" variant="ghost" onClick={() => setReviewing(false)}>Cancel</Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => setReviewing(false)}>
+          Cancel
+        </Button>
         <Button type="button" size="sm" disabled={create.isPending} onClick={() => create.mutate()}>
-          {create.isPending ? "Creating draft POs…" : "Create " + plan.groups.length + " draft PO" + (plan.groups.length === 1 ? "" : "s")}
+          {create.isPending
+            ? "Creating draft POs…"
+            : "Create " + plan.groups.length + " draft PO" + (plan.groups.length === 1 ? "" : "s")}
         </Button>
       </div>
     </div>
@@ -1014,17 +1229,10 @@ function PurchaseOrderActions({
           This creates a real draft purchase order using live supplier prices. It is not submitted
           or approved until an explicit lifecycle action is confirmed.
         </p>
-        <Button
-          type="button"
-          size="sm"
-          disabled={create.isPending}
-          onClick={() => create.mutate()}
-        >
+        <Button type="button" size="sm" disabled={create.isPending} onClick={() => create.mutate()}>
           {create.isPending ? "Preparing PO…" : "Prepare Purchase Order"}
         </Button>
-        {create.isError && (
-          <p className="text-xs text-destructive">{create.error.message}</p>
-        )}
+        {create.isError && <p className="text-xs text-destructive">{create.error.message}</p>}
       </div>
     );
   }
@@ -1127,9 +1335,7 @@ function PurchaseOrderActions({
       )}
 
       {(transition.isError || receive.isError) && (
-        <p className="text-xs text-destructive">
-          {(transition.error ?? receive.error)?.message}
-        </p>
+        <p className="text-xs text-destructive">{(transition.error ?? receive.error)?.message}</p>
       )}
     </div>
   );
@@ -1362,6 +1568,7 @@ export function StaffNovaPanel({
   tenantId: string;
 }) {
   const askFn = useServerFn(askStaffNovaFn);
+  const navigate = useNavigate();
   const [turns, setTurns] = useState<StaffNovaTurn[]>([]);
   const [input, setInput] = useState("");
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -1385,7 +1592,7 @@ export function StaffNovaPanel({
           preparation: result.preparation,
           intelligentPurchaseOrder: result.intelligentPurchaseOrder,
           managerBrief: shouldRenderManagerBrief(message),
-          },
+        },
       ]);
     },
     onError: () => {
@@ -1434,9 +1641,8 @@ export function StaffNovaPanel({
           {turns.length === 0 && (
             <p className="text-sm text-muted-foreground">
               Ask about sales, menu performance, inventory, purchasing, kitchen performance, or
-              current findings and decisions for this restaurant. {PRODUCT.aiName} only answers
-              from this restaurant's own data — if it doesn't have what you're asking for, it'll
-              say so.
+              current findings and decisions for this restaurant. {PRODUCT.aiName} only answers from
+              this restaurant's own data — if it doesn't have what you're asking for, it'll say so.
             </p>
           )}
           {turns.map((t) =>
@@ -1466,34 +1672,57 @@ export function StaffNovaPanel({
                 ) : (
                   <AssistantAnswer content={t.content} />
                 )}
-                {t.sourceMessage && /\b(adjust|adjustment|correct|correction|reconcile)\b.{0,80}\b(stock|inventory|quantity|balance)\b/i.test(t.sourceMessage) && (
-                  <ActionWorkspace
-                    stage="review"
-                    title="Inventory adjustment"
-                    summary="Stock corrections must be reviewed and posted through Inventory Control with a reason."
-                  >
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => navigate({ to: "/admin/restaurant/inventory-control", search: { tab: "waste" } })}
+                {t.sourceMessage &&
+                  /\b(adjust|adjustment|correct|correction|reconcile)\b.{0,80}\b(stock|inventory|quantity|balance)\b/i.test(
+                    t.sourceMessage,
+                  ) && (
+                    <ActionWorkspace
+                      stage="review"
+                      title="Inventory adjustment"
+                      summary="Stock corrections must be reviewed and posted through Inventory Control with a reason."
                     >
-                      Open stock adjustments
-                    </Button>
-                    <p className="mt-1.5 text-[11px] text-muted-foreground">
-                      LexiBite does not silently post a stock correction from chat. The existing inventory form remains the authoritative adjustment workflow.
-                    </p>
-                  </ActionWorkspace>
-                )}
-                {t.understanding && ["approve_purchase_order", "submit_purchase_order", "receive_purchase_order"].includes(t.understanding.action) && (
-                  <ActionWorkspace
-                    stage={t.understanding.action === "approve_purchase_order" ? "approve" : t.understanding.action === "submit_purchase_order" ? "submit" : "receive"}
-                    title="Purchase order action"
-                    summary="Review the current state before LexiBite changes procurement records."
-                  >
-                    <PurchaseOrderLifecycleActions tenantId={tenantId} contract={t.understanding} />
-                  </ActionWorkspace>
-                )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          navigate({
+                            to: "/admin/restaurant/inventory-control",
+                            search: { tab: "waste" },
+                          })
+                        }
+                      >
+                        Open stock adjustments
+                      </Button>
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">
+                        LexiBite does not silently post a stock correction from chat. The existing
+                        inventory form remains the authoritative adjustment workflow.
+                      </p>
+                    </ActionWorkspace>
+                  )}
+                {t.understanding &&
+                  [
+                    "approve_purchase_order",
+                    "submit_purchase_order",
+                    "receive_purchase_order",
+                  ].includes(t.understanding.action) && (
+                    <ActionWorkspace
+                      stage={
+                        t.understanding.action === "approve_purchase_order"
+                          ? "approve"
+                          : t.understanding.action === "submit_purchase_order"
+                            ? "submit"
+                            : "receive"
+                      }
+                      title="Purchase order action"
+                      summary="Review the current state before LexiBite changes procurement records."
+                    >
+                      <PurchaseOrderLifecycleActions
+                        tenantId={tenantId}
+                        contract={t.understanding}
+                      />
+                    </ActionWorkspace>
+                  )}
                 {t.intelligentPurchaseOrder && (
                   <ActionWorkspace
                     stage="recommend"
@@ -1508,8 +1737,17 @@ export function StaffNovaPanel({
                 )}
                 {t.preparation && t.understanding && (
                   <ActionWorkspace
-                    stage={t.preparation.readiness === "ready" || t.preparation.readiness === "ready_with_warnings" ? "preview" : "review"}
-                    title={WORKFLOW_LABEL[t.preparation.workflow] ?? "Operational action"}
+                    stage={
+                      t.preparation.readiness === "ready" ||
+                      t.preparation.readiness === "ready_with_warnings"
+                        ? "preview"
+                        : "review"
+                    }
+                    title={
+                      t.preparation.workflow
+                        ? (WORKFLOW_LABEL[t.preparation.workflow] ?? "Operational action")
+                        : "Operational action"
+                    }
                     summary="LexiBite has translated the instruction into a governed operational preparation."
                   >
                     <PreparationActions

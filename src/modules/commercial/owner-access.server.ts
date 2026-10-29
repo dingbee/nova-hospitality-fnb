@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Supabase admin client and row shapes are untyped at this integration boundary. */
 /* Commercial customer owner access — platform-controlled onboarding. */
 import { assertCommercialAdmin } from "./access.server";
 import { writeCommercialAudit } from "./audit.server";
@@ -11,9 +12,7 @@ type Sb = any;
 
 function publicOrigin(): string {
   const configured =
-    process.env.LEXIBITE_APP_ORIGIN ??
-    process.env.PUBLIC_APP_URL ??
-    "https://lexibite.nolmark.co";
+    process.env.LEXIBITE_APP_ORIGIN ?? process.env.PUBLIC_APP_URL ?? "https://lexibite.nolmark.co";
   return configured.replace(/\/$/, "");
 }
 
@@ -40,7 +39,9 @@ export async function listOwnerAccess(
 
   let q = admin
     .from("commercial_owner_invitations")
-    .select("id, tenant_id, email, full_name, status, auth_user_id, invited_at, last_sent_at, accepted_at")
+    .select(
+      "id, tenant_id, email, full_name, status, auth_user_id, invited_at, last_sent_at, accepted_at",
+    )
     .order("created_at", { ascending: false });
 
   if (input.tenantId) q = q.eq("tenant_id", input.tenantId);
@@ -57,7 +58,12 @@ export async function listOwnerAccess(
     .in("id", tenantIds);
   if (tenantError) throw new Error(tenantError.message);
 
-  const names = new Map((tenants ?? []).map((t: any) => [t.id, t]));
+  const names = new Map<string, { name: string; slug: string | null }>(
+    (tenants ?? []).map((t: any) => [
+      String(t.id),
+      { name: String(t.name ?? ""), slug: t.slug ?? null },
+    ]),
+  );
 
   return (data ?? []).map((row: any) => ({
     ...row,
@@ -91,8 +97,13 @@ export async function inviteCommercialOwner(
 
   if (billingError) throw new Error(billingError.message);
   if (subError) throw new Error(subError.message);
-  if (billing?.commercial_status !== "active" || !["active", "trial"].includes(subscription?.status)) {
-    throw new Error("Customer must have an active commercial account and active/trial subscription before owner access can be issued.");
+  if (
+    billing?.commercial_status !== "active" ||
+    !["active", "trial"].includes(subscription?.status)
+  ) {
+    throw new Error(
+      "Customer must have an active commercial account and active/trial subscription before owner access can be issued.",
+    );
   }
 
   const { data: pending } = await admin
@@ -128,9 +139,7 @@ export async function inviteCommercialOwner(
   if (invitationError) throw new Error(invitationError.message);
 
   const origin = publicOrigin();
-  const redirectTo = origin
-    ? `${origin}/onboarding?activation=${invitation.id}`
-    : undefined;
+  const redirectTo = origin ? `${origin}/onboarding?activation=${invitation.id}` : undefined;
 
   const { data: invited, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, {
     data: { full_name: input.fullName ?? null },
