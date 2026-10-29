@@ -336,7 +336,7 @@ function NewConnection({
       title="Connect a channel"
       description="Connect an external ordering or delivery channel to this restaurant."
     >
-      {!provider ? (
+      {!provider || !channel ? (
         <p className="text-sm text-muted-foreground">No external channels are currently enabled by platform administration.</p>
       ) : (
         <>
