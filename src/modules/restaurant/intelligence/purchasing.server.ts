@@ -41,7 +41,7 @@ export async function getPurchasingIntelligence(
 
   let itemsQuery = sb
     .from("restaurant_inventory_items")
-    .select("id, name, current_quantity, average_cost, currency, unit_id")
+    .select("id, name, current_quantity, average_cost, currency, unit_id, purchase_unit_id, pack_size")
     .eq("tenant_id", tenantId);
   if (input.propertyId) itemsQuery = itemsQuery.eq("property_id", input.propertyId);
   if (input.locationId) itemsQuery = itemsQuery.eq("location_id", input.locationId);
@@ -59,17 +59,32 @@ export async function getPurchasingIntelligence(
     movesQuery,
     sb
       .from("restaurant_supplier_products")
-      .select("supplier_id, inventory_item_id, unit_id, unit_price, lead_time_days, active")
+      .select("supplier_id, inventory_item_id, unit_id, pack_size, unit_price, lead_time_days, active")
       .eq("tenant_id", tenantId),
     sb
       .from("restaurant_suppliers")
       .select("id, name, lead_time_days, reliability_score, status")
       .eq("tenant_id", tenantId),
-    sb
-      .from("restaurant_purchase_orders")
-      .select("id, supplier_id, status, order_date, expected_at, received_at, total")
-      .eq("tenant_id", tenantId),
+    (() => {
+      let q = sb
+        .from("restaurant_purchase_orders")
+        .select("id, supplier_id, status, order_date, expected_at, received_at, total, property_id, location_id")
+        .eq("tenant_id", tenantId);
+      if (input.propertyId) q = q.eq("property_id", input.propertyId);
+      if (input.locationId) q = q.eq("location_id", input.locationId);
+      return q;
+    })(),
   ]);
+
+  for (const [label, result] of [
+    ["inventory items", itemsRes],
+    ["stock movements", movesRes],
+    ["supplier products", productsRes],
+    ["suppliers", suppliersRes],
+    ["purchase orders", poRes],
+  ] as const) {
+    if (result.error) throw new Error("Unable to load " + label + " for purchasing intelligence: " + result.error.message);
+  }
 
   const items = (itemsRes.data ?? []) as any[];
   const moves = (movesRes.data ?? []) as any[];
@@ -98,15 +113,27 @@ export async function getPurchasingIntelligence(
       Number(line.quantity ?? 0) - Math.max(Number(line.received_quantity ?? 0), Number(line.accepted_quantity ?? 0)),
     );
     if (remaining <= 0) continue;
-    // Never subtract purchase-unit quantities from stock-unit quantities.
-    // Until an explicit conversion is available, suppress recommendations for
-    // an item with open inbound stock in a different unit rather than risk a
-    // duplicate order or a silent unit conversion error.
-    if (!line.unit_id || !item.unit_id || line.unit_id !== item.unit_id) {
+    // Convert outstanding PO quantities into the inventory stock unit
+    // using the item's configured purchase-unit relationship. Never infer a
+    // conversion from supplier price or unit names.
+    let stockFactor = 1;
+    if (line.unit_id === item.unit_id) {
+      stockFactor = 1;
+    } else if (
+      line.unit_id &&
+      item.purchase_unit_id &&
+      line.unit_id === item.purchase_unit_id &&
+      Number(item.pack_size) > 0
+    ) {
+      stockFactor = Number(item.pack_size);
+    } else {
       unsafeUnitItems.add(item.id);
       continue;
     }
-    outstandingByItem.set(item.id, (outstandingByItem.get(item.id) ?? 0) + remaining);
+    outstandingByItem.set(
+      item.id,
+      (outstandingByItem.get(item.id) ?? 0) + remaining * stockFactor,
+    );
   }
   const currency = (items[0]?.currency as string) ?? "TZS";
   const suppliers = (suppliersRes.data ?? []) as any[];
@@ -115,14 +142,31 @@ export async function getPurchasingIntelligence(
   const supplierById = new Map(suppliers.map((s) => [s.id, s]));
   const bestProduct = new Map<string, any>();
   for (const p of products) {
-    if (!p.inventory_item_id) continue;
+    if (!p.inventory_item_id || !p.unit_id) continue;
     const inventoryItem = items.find((item) => item.id === p.inventory_item_id);
-    // Supplier prices are comparable only when their configured purchase unit
-    // matches the inventory stock unit. Pack-size conversions are not guessed.
-    if (!inventoryItem?.unit_id || !p.unit_id || inventoryItem.unit_id !== p.unit_id) continue;
+    if (!inventoryItem?.unit_id) continue;
+    let stockUnitsPerPurchaseUnit = 1;
+    if (p.unit_id === inventoryItem.unit_id) {
+      stockUnitsPerPurchaseUnit = 1;
+    } else if (
+      inventoryItem.purchase_unit_id &&
+      p.unit_id === inventoryItem.purchase_unit_id &&
+      Number(inventoryItem.pack_size) > 0
+    ) {
+      stockUnitsPerPurchaseUnit = Number(inventoryItem.pack_size);
+    } else {
+      continue;
+    }
+    const price = Number(p.unit_price);
+    if (!Number.isFinite(price) || price < 0) continue;
+    const normalized = {
+      ...p,
+      stockUnitsPerPurchaseUnit,
+      normalizedStockUnitPrice: price / stockUnitsPerPurchaseUnit,
+    };
     const prev = bestProduct.get(p.inventory_item_id);
-    if (!prev || Number(p.unit_price ?? 0) < Number(prev.unit_price ?? 0)) {
-      bestProduct.set(p.inventory_item_id, p);
+    if (!prev || normalized.normalizedStockUnitPrice < prev.normalizedStockUnitPrice) {
+      bestProduct.set(p.inventory_item_id, normalized);
     }
   }
 
@@ -147,7 +191,7 @@ export async function getPurchasingIntelligence(
     const leadTime =
       Number(product?.lead_time_days ?? supplier?.lead_time_days ?? DEFAULT_LEAD_TIME) ||
       DEFAULT_LEAD_TIME;
-    const unitPrice = Number(product?.unit_price ?? it.average_cost ?? 0);
+    const unitPrice = Number(product?.normalizedStockUnitPrice ?? it.average_cost ?? 0);
     const qty = recommendedPurchaseQuantity(
       Number(it.current_quantity ?? 0) + (outstandingByItem.get(it.id) ?? 0),
       velocity,
