@@ -15,7 +15,14 @@ import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWor
 import { CHANNEL_PROVIDERS } from "../channel-catalog";
 import { listChannelDefinitionsFn } from "../channel-catalog.functions";
 import type { StoredChannelDefinition } from "../channel-catalog.server";
-import type { ChannelConnection, ChannelConnectionConfig, ChannelProviderDefinition } from "../channel-contracts";
+import type {
+  ChannelConnection,
+  ChannelConnectionConfig,
+  ChannelProviderDefinition,
+  CreateChannelConnectionInput,
+  TestChannelConnectionInput,
+  UpdateChannelConnectionInput,
+} from "../channel-contracts";
 import {
   createChannelConnectionFn,
   listChannelConnectionsFn,
@@ -175,24 +182,26 @@ function ConnectionRow({
   const [config, setConfig] = useState<ChannelConnectionConfig>(connection.config);
 
   const testMutation = useAdminMutation({
-    mutationFn: (data: Parameters<typeof testChannelConnectionFn>[0]["data"]) => test({ data }),
+    mutationFn: (data: TestChannelConnectionInput) => test({ data }),
     successMessage: "Connection test completed",
     onSuccess: onRefresh,
   });
   const updateMutation = useAdminMutation({
-    mutationFn: (data: Parameters<typeof updateChannelConnectionFn>[0]["data"]) => update({ data }),
+    mutationFn: (data: UpdateChannelConnectionInput) => update({ data }),
     successMessage: "Channel connection updated",
     onSuccess: () => { setEditing(false); setCredential(""); onRefresh(); },
   });
 
-  if (!provider) {
+  if (!provider || !channel) {
     return (
       <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4">
         <div className="flex items-center gap-2">
           <h3 className="font-semibold">{connection.label}</h3>
-          <Badge variant="destructive">Unknown provider</Badge>
+          <Badge variant="destructive">{!provider ? "Unknown provider" : "Unknown channel"}</Badge>
         </div>
-        <p className="mt-2 text-sm text-muted-foreground">Provider {connection.providerKey} is not currently registered. The connection is preserved but cannot be operated until its adapter is restored.</p>
+        <p className="mt-2 text-sm text-muted-foreground">{!provider
+            ? `Provider ${connection.providerKey} is not currently registered.`
+            : `Channel ${connection.channelKey} is not currently registered.`} The connection is preserved but cannot be operated until its catalogue entry and adapter are restored.</p>
       </div>
     );
   }
@@ -301,7 +310,7 @@ function NewConnection({
   }, [channelKey]);
 
   const mutation = useAdminMutation({
-    mutationFn: (data: Parameters<typeof createChannelConnectionFn>[0]["data"]) => create({ data }),
+    mutationFn: (data: CreateChannelConnectionInput) => create({ data }),
     successMessage: "Channel connection created",
     onSuccess: () => {
       setLabel("");
