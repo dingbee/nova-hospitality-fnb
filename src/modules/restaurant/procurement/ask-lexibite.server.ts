@@ -336,38 +336,6 @@ export async function createIntelligentPurchaseOrders(sb: Sb, userId: string, in
   const created = [];
   for (const group of plan.groups) {
     const reference = intelligentPurchaseOrderReference(input.idempotencyKey, group.key);
-    const { data: existing } = await sb
-      .from("restaurant_purchase_orders")
-      .select("id, document_number, reference, status, supplier_id, property_id, location_id, total, currency")
-      .eq("tenant_id", input.tenantId)
-      .eq("reference", reference)
-      .maybeSingle();
-
-    if (existing) {
-      const { data: existingLines } = await sb
-        .from("restaurant_purchase_order_items")
-        .select("id")
-        .eq("tenant_id", input.tenantId)
-        .eq("purchase_order_id", existing.id);
-
-      if ((existingLines ?? []).length !== group.lines.length || existing.supplier_id !== group.supplierId) {
-        throw new Error(
-          "An incomplete intelligent PO already exists for this request. Review the Procurement Centre before retrying.",
-        );
-      }
-
-      created.push({
-        id: existing.id as string,
-        documentNumber: existing.document_number as string,
-        status: existing.status as string,
-        supplierName: group.supplierName,
-        total: Number(existing.total),
-        currency: existing.currency,
-        lineCount: group.lines.length,
-      });
-      continue;
-    }
-
     const finalLines = group.lines.map((line) => {
       const override = input.lineOverrides.find(
         (item) => item.inventoryItemId === line.inventoryItemId,
@@ -378,6 +346,50 @@ export async function createIntelligentPurchaseOrders(sb: Sb, userId: string, in
       }
       return { ...line, quantity: finalQuantity };
     });
+
+    const { data: existing, error: existingError } = await sb
+      .from("restaurant_purchase_orders")
+      .select("id, document_number, reference, status, supplier_id, property_id, location_id, total, currency")
+      .eq("tenant_id", input.tenantId)
+      .eq("reference", reference)
+      .maybeSingle();
+    if (existingError) throw new Error("Unable to verify intelligent PO retry: " + existingError.message);
+
+    if (existing) {
+      const { data: existingLines, error: existingLinesError } = await sb
+        .from("restaurant_purchase_order_items")
+        .select("id, inventory_item_id, supplier_product_id, unit_id, quantity, unit_price")
+        .eq("tenant_id", input.tenantId)
+        .eq("purchase_order_id", existing.id);
+      if (existingLinesError) throw new Error("Unable to verify existing intelligent PO lines: " + existingLinesError.message);
+
+      const persisted = (existingLines ?? []) as any[];
+      const lineMatches = persisted.length === finalLines.length && finalLines.every((line) =>
+        persisted.some((saved) =>
+          saved.inventory_item_id === line.inventoryItemId &&
+          saved.supplier_product_id === line.supplierProductId &&
+          saved.unit_id === line.unitId &&
+          Number(saved.quantity) === Number(line.quantity) &&
+          Number(saved.unit_price) === Number(line.unitPrice),
+        ),
+      );
+      if (!lineMatches || existing.supplier_id !== group.supplierId) {
+        throw new Error(
+          "An intelligent PO already exists for this request but its persisted lines differ from the current plan. Review the Procurement Centre; the existing order was not changed.",
+        );
+      }
+
+      created.push({
+        id: existing.id as string,
+        documentNumber: existing.document_number as string,
+        status: existing.status as string,
+        supplierName: group.supplierName,
+        total: Number(existing.total),
+        currency: existing.currency,
+        lineCount: finalLines.length,
+      });
+      continue;
+    }
 
     const po = await createPurchaseOrder(sb, userId, {
       tenantId: input.tenantId,
