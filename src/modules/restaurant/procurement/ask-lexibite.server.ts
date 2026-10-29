@@ -43,7 +43,7 @@ export async function createAskLexiBitePurchaseOrder(
   if (entities.length === 0) throw new Error("At least one identified inventory item is required.");
 
   const itemIds = entities.map((entity) => entity.resolvedId!);
-  const [{ data: items }, { data: products }] = await Promise.all([
+  const [{ data: items, error: itemError }, { data: products, error: productError }] = await Promise.all([
     sb
       .from("restaurant_inventory_items")
       .select("id, name, unit_id, purchase_unit_id, pack_size, property_id, location_id, currency")
@@ -56,14 +56,37 @@ export async function createAskLexiBitePurchaseOrder(
       .eq("supplier_id", contract.supplier.resolvedId)
       .in("inventory_item_id", itemIds),
   ]);
+  if (itemError) throw new Error("Unable to validate purchase-order inventory: " + itemError.message);
+  if (productError) throw new Error("Unable to validate supplier pricing: " + productError.message);
 
   const itemById = new Map(((items ?? []) as any[]).map((item) => [item.id, item]));
   const productByItem = new Map<string, any>();
   for (const product of (products ?? []) as any[]) {
-    if (product.active === false) continue;
+    if (product.active === false || !product.inventory_item_id || !product.unit_id) continue;
+    const item = itemById.get(product.inventory_item_id);
+    if (!item?.unit_id) continue;
+    let stockUnitsPerPurchaseUnit = 1;
+    if (product.unit_id === item.unit_id) {
+      stockUnitsPerPurchaseUnit = 1;
+    } else if (
+      item.purchase_unit_id &&
+      product.unit_id === item.purchase_unit_id &&
+      Number(item.pack_size) > 0
+    ) {
+      stockUnitsPerPurchaseUnit = Number(item.pack_size);
+    } else {
+      continue;
+    }
+    const price = Number(product.unit_price);
+    if (!Number.isFinite(price) || price < 0) continue;
+    const normalized = {
+      ...product,
+      stockUnitsPerPurchaseUnit,
+      normalizedStockUnitPrice: price / stockUnitsPerPurchaseUnit,
+    };
     const previous = productByItem.get(product.inventory_item_id);
-    if (!previous || Number(product.unit_price ?? 0) < Number(previous.unit_price ?? 0)) {
-      productByItem.set(product.inventory_item_id, product);
+    if (!previous || normalized.normalizedStockUnitPrice < previous.normalizedStockUnitPrice) {
+      productByItem.set(product.inventory_item_id, normalized);
     }
   }
 
@@ -92,8 +115,9 @@ export async function createAskLexiBitePurchaseOrder(
     const requestedUnitId = entity.quantity?.resolvedUnitId ?? null;
     const purchaseUnitId = product.unit_id ?? null;
     if (!purchaseUnitId) throw new Error("No supplier purchase unit is configured for " + item.name + ".");
-    if (!item.unit_id || purchaseUnitId !== item.unit_id) {
-      throw new Error("The supplier purchase unit for " + item.name + " differs from the stock unit; configure an explicit unit conversion before ordering.");
+    const stockUnitsPerPurchaseUnit = Number(product.stockUnitsPerPurchaseUnit ?? 0);
+    if (!(stockUnitsPerPurchaseUnit > 0)) {
+      throw new Error("The supplier purchase unit for " + item.name + " cannot be converted to the stock unit.");
     }
     if (requestedUnitId && requestedUnitId !== purchaseUnitId) {
       throw new Error("The requested unit for " + item.name + " does not match the supplier's configured purchase unit.");
@@ -204,8 +228,8 @@ export async function previewIntelligentPurchaseOrders(
   };
 
   const [{ data: items, error: itemError }, { data: products, error: productError }, { data: suppliers, error: supplierError }] = await Promise.all([
-    sb.from("restaurant_inventory_items").select("id, name, unit_id, property_id, location_id, currency").eq("tenant_id", tenantId).in("id", itemIds),
-    sb.from("restaurant_supplier_products").select("id, supplier_id, inventory_item_id, unit_id, unit_price, active").eq("tenant_id", tenantId).in("inventory_item_id", itemIds),
+    sb.from("restaurant_inventory_items").select("id, name, unit_id, purchase_unit_id, pack_size, property_id, location_id, currency").eq("tenant_id", tenantId).in("id", itemIds),
+    sb.from("restaurant_supplier_products").select("id, supplier_id, inventory_item_id, unit_id, pack_size, unit_price, active").eq("tenant_id", tenantId).in("inventory_item_id", itemIds),
     sb.from("restaurant_suppliers").select("id, name").eq("tenant_id", tenantId),
   ]);
   if (itemError) throw new Error("Unable to validate replenishment inventory: " + itemError.message);
