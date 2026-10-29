@@ -1221,11 +1221,11 @@ export function stageRecipeComponentRow(
     const productById = (ref.products ?? []).find((product) => product.id === mapped.itemCode);
     const productMatch = productById
       ? {
-            status: "exact_match" as MatchStatus,
-            id: productById.id,
-            confidence: 1,
-            evidence: ["Exact tenant-scoped product ID matched."],
-          }
+          status: "exact_match" as MatchStatus,
+          id: productById.id,
+          confidence: 1,
+          evidence: ["Exact tenant-scoped product ID matched."],
+        }
       : classifyExisting(
           matchCatalogItem({ sku: mapped.itemCode }, productCandidates(ref.products ?? [])),
           `Item "${mapped.itemCode}"`,
