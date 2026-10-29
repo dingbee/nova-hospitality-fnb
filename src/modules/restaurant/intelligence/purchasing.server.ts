@@ -29,6 +29,9 @@ export async function getPurchasingIntelligence(
   },
 ): Promise<PurchasingIntelligence> {
   const { tenantId, windowDays } = input;
+  if (!Number.isFinite(windowDays) || windowDays <= 0) {
+    throw new Error("Purchasing intelligence requires a positive, finite analysis window.");
+  }
   await assertTenantRead(sb, userId, tenantId, {
     propertyId: input.propertyId ?? null,
     locationId: input.locationId ?? null,
@@ -108,10 +111,18 @@ export async function getPurchasingIntelligence(
   for (const line of openOrderLines) {
     const item = itemById.get(line.inventory_item_id);
     if (!item) continue;
-    const remaining = Math.max(
-      0,
-      Number(line.quantity ?? 0) - Number(line.accepted_quantity ?? 0),
-    );
+    const orderedQuantity = Number(line.quantity);
+    const acceptedQuantity = Number(line.accepted_quantity ?? 0);
+    if (
+      !Number.isFinite(orderedQuantity) ||
+      !Number.isFinite(acceptedQuantity) ||
+      orderedQuantity < 0 ||
+      acceptedQuantity < 0 ||
+      acceptedQuantity > orderedQuantity + 0.0001
+    ) {
+      throw new Error("Unable to safely net an outstanding purchase order with invalid line quantities.");
+    }
+    const remaining = Math.max(0, orderedQuantity - acceptedQuantity);
     if (remaining <= 0) continue;
     // Convert outstanding PO quantities into the inventory stock unit
     // using the item's configured purchase-unit relationship. Never infer a
@@ -174,9 +185,13 @@ export async function getPurchasingIntelligence(
   for (const m of moves) {
     if (m.occurred_at < start) continue;
     if (m.movement_type !== "consumption" && m.movement_type !== "wastage") continue;
+    const quantity = Number(m.quantity ?? 0);
+    if (!Number.isFinite(quantity)) {
+      throw new Error("Purchasing intelligence encountered a non-finite stock movement quantity.");
+    }
     consumed.set(
       m.inventory_item_id,
-      (consumed.get(m.inventory_item_id) ?? 0) + Math.abs(Number(m.quantity ?? 0)),
+      (consumed.get(m.inventory_item_id) ?? 0) + Math.abs(quantity),
     );
   }
 
@@ -184,6 +199,10 @@ export async function getPurchasingIntelligence(
   let expectedMonthlySpend = 0;
   for (const it of items) {
     if (unsafeUnitItems.has(it.id)) continue;
+    const currentQuantity = Number(it.current_quantity ?? 0);
+    if (!Number.isFinite(currentQuantity)) {
+      throw new Error("Purchasing intelligence encountered an invalid on-hand quantity for " + it.name + ".");
+    }
     const velocity = round((consumed.get(it.id) ?? 0) / windowDays, 3);
     if (velocity <= 0) continue;
     const product = bestProduct.get(it.id);
@@ -193,7 +212,7 @@ export async function getPurchasingIntelligence(
       DEFAULT_LEAD_TIME;
     const unitPrice = Number(product?.normalizedStockUnitPrice ?? it.average_cost ?? 0);
     const qty = recommendedPurchaseQuantity(
-      Number(it.current_quantity ?? 0) + (outstandingByItem.get(it.id) ?? 0),
+      currentQuantity + (outstandingByItem.get(it.id) ?? 0),
       velocity,
       leadTime,
       COVER_DAYS,
@@ -203,7 +222,7 @@ export async function getPurchasingIntelligence(
     suggestions.push({
       inventoryItemId: it.id,
       name: it.name,
-      currentQuantity: round(Number(it.current_quantity ?? 0), 2),
+      currentQuantity: round(currentQuantity, 2),
       dailyVelocity: velocity,
       leadTimeDays: leadTime,
       coverDays: COVER_DAYS,
