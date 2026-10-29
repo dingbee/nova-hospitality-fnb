@@ -137,7 +137,7 @@ jobs:
 
       - name: Report full test baseline
         if: steps.full_tests.outcome == 'failure'
-        run: echo "::warning::Full repository test suite remains non-clean (repository baseline: unrelated failures remain); scoped procurement and changed-path functional gate passed."
+        run: echo "::warning::Full repository test suite remains non-clean; scoped procurement and changed-path functional gate passed, while unrelated baseline failures remain."
 
       - name: Verify bundle origin
         run: bun run verify:bundle -- .output
