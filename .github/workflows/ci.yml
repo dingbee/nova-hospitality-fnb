@@ -151,7 +151,8 @@ jobs:
         run: |
           failed=0
           for gate in TYPECHECK LINT FULL_TESTS; do
-            outcome="${!gate}_OUTCOME"
+            var="${gate}_OUTCOME"
+            outcome="${!var}"
             if [ "$outcome" != "success" ]; then
               echo "::error::$gate gate did not pass (outcome: $outcome)."
               failed=1
