@@ -180,6 +180,8 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
 
     const cost = await consumeForOrderItem(fake.supabase, USER, {
       tenantId: TENANT,
+      propertyId: PROPERTY,
+      locationId: LOCATION,
       orderId: "order-1",
       orderItemId: "item-1",
       menuItemId: "menu-burger",
@@ -218,6 +220,8 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
 
     const cost = await consumeForOrderItem(fake.supabase, USER, {
       tenantId: TENANT,
+      propertyId: PROPERTY,
+      locationId: LOCATION,
       orderId: "order-1",
       orderItemId: "item-1",
       menuItemId: "menu-burger",
@@ -260,6 +264,8 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
 
     const args = {
       tenantId: TENANT,
+      propertyId: PROPERTY,
+      locationId: LOCATION,
       orderId: "order-1",
       orderItemId: "item-1",
       menuItemId: "menu-glass-of-wine",
@@ -311,6 +317,8 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
 
     const cost = await consumeForOrderItem(fake.supabase, USER, {
       tenantId: TENANT,
+      propertyId: PROPERTY,
+      locationId: LOCATION,
       orderId: "order-1",
       orderItemId: "item-1",
       menuItemId: "menu-glass-of-wine",
@@ -350,6 +358,8 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
     await expect(
       consumeForOrderItem(fake.supabase, USER, {
         tenantId: TENANT,
+        propertyId: PROPERTY,
+        locationId: LOCATION,
         orderId: "order-1",
         orderItemId: "item-1",
         menuItemId: "menu-burger",
