@@ -210,24 +210,11 @@ export async function ensureGuestTableSession(sb: Sb, tableId: string) {
     opened_at: string;
   }[];
   if (orders.length === 0) {
-    const { data: staleSession } = await sb
-      .from("restaurant_guest_sessions")
-      .select("id")
-      .eq("tenant_id", table.tenantId)
-      .eq("table_id", table.tableId)
-      .eq("status", "active")
-      .maybeSingle();
-    if (staleSession) {
-      await sb
-        .from("restaurant_guest_sessions")
-        .update({
-          status: "closed",
-          closed_at: new Date().toISOString(),
-          closed_reason: "table_has_no_open_orders",
-        })
-        .eq("id", staleSession.id)
-        .eq("status", "active");
-    }
+    // No unlinked staff-side order needs adoption. Do not close an active
+    // guest session here: it may already own guest orders, and projection or
+    // menu reads must not release that session as a side effect. The
+    // explicit resolve/start path closes stale sessions after checking all
+    // open orders, including those already linked to a guest session.
     return { hasOpenOrders: false, activeOrderId: null as string | null };
   }
 
