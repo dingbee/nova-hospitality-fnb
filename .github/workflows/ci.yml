@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   CI: true
@@ -53,6 +53,27 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+
+      # One-time formatting cleanup for this P0 closure branch. This step is
+      # removed after the formatting commit so ordinary CI stays read-only.
+      - name: Format changed source for P0 closure
+        if: github.head_ref == 'fix/procurement-integrity-followthrough'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_sha="$(git merge-base origin/main HEAD)"
+          files="$(git diff --name-only "$base_sha" "$GITHUB_SHA" -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
+          if [ -n "$files" ]; then
+            printf '%s\\n' "$files"
+            bunx prettier --write $files
+            if ! git diff --quiet -- $files; then
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add -- $files
+              git commit -m "style: format changed source for clean CI"
+              git push origin "HEAD:$GITHUB_HEAD_REF"
+            fi
+          fi
 
       - name: Generate production artifacts
         run: bun run build
