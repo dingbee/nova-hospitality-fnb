@@ -542,8 +542,7 @@ async function stageCsv(tenantId: string, workspaceId: string, csv: string, doma
     text: csv,
   } as any);
   await parseImportSource(sb, USER, { tenantId, sourceId: source.id });
-  const headers = csv.split("
-")[0]!.split(",");
+  const headers = csv.split("\n")[0]!.split(",");
   const mapping = headers.map((h) => ({
     sourceColumn: h,
     canonicalField: h.trim() === "" ? null : mapHeader(domain, h),
@@ -1815,8 +1814,7 @@ describe("scale: a realistically large single-sheet import", () => {
     // reviewer re-opens the mapping screen) must not duplicate staged rows
     // at this volume — the dedupe_key gating (Phase 6) holds under volume,
     // not just for a handful of rows.
-    const headers = csv.split("
-")[0]!.split(",");
+    const headers = csv.split("\n")[0]!.split(",");
     const mapping = headers.map((h) => ({
       sourceColumn: h,
       canonicalField: mapHeader("inventory_item", h),
