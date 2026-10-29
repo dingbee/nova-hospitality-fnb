@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { CHANNEL_TYPES } from "../channel-contracts";
 import type { ChannelProviderDefinition } from "../channel-contracts";
+import type { UpsertChannelDefinitionInput } from "../channel-catalog.functions";
 import {
   listAllChannelDefinitionsForAdminFn,
   listChannelProvidersForAdminFn,
@@ -145,7 +146,7 @@ function ChannelEditor({
   }, [channel, providerKey, providers]);
 
   const mutation = useAdminMutation({
-    mutationFn: (data: Parameters<typeof upsertChannelDefinitionFn>[0]["data"]) => upsertChannelDefinitionFn({ data }),
+    mutationFn: (data: UpsertChannelDefinitionInput) => upsertChannelDefinitionFn({ data }),
     successMessage: channel ? "Channel definition updated" : "Channel definition added",
     onSuccess: onSaved,
   });
