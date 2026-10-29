@@ -102,7 +102,7 @@ export async function getPurchasingIntelligence(
     // Until an explicit conversion is available, suppress recommendations for
     // an item with open inbound stock in a different unit rather than risk a
     // duplicate order or a silent unit conversion error.
-    if (line.unit_id && item.unit_id && line.unit_id !== item.unit_id) {
+    if (!line.unit_id || !item.unit_id || line.unit_id !== item.unit_id) {
       unsafeUnitItems.add(item.id);
       continue;
     }
