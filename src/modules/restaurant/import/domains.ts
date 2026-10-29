@@ -85,6 +85,7 @@ const KNOWN_SHEET_IDENTITIES: Array<{
   { pattern: /^(?:\d+_)?MENU_ITEMS$/, kind: "supported", label: "Menu items", domain: "menu_item", reason: "The sheet name is an exact supported LexiBite menu-item identity." },
   { pattern: /^(?:\d+_)?PRODUCTS$/, kind: "supported", label: "Products / station links", domain: "product_station", reason: "The product export maps to LexiBite's existing menu-item ↔ station product bridge." },
   { pattern: /^(?:\d+_)?INVENTORY_CATEGORIES$/, kind: "unsupported", label: "Inventory categories", reason: "Inventory-category master data is not an importable domain yet." },
+  { pattern: /^(?:\d+_)?INVENTORY$/, kind: "supported", label: "Inventory items", domain: "inventory_item", reason: "The customer-facing template's INVENTORY sheet is the supported inventory-item identity." },
   { pattern: /^(?:\d+_)?INVENTORY_ITEMS$/, kind: "supported", label: "Inventory items", domain: "inventory_item", reason: "The sheet name is an exact supported LexiBite inventory identity." },
   { pattern: /^(?:\d+_)?RECIPES$/, kind: "unsupported", label: "Recipes", reason: "The current importer writes recipe components; this source recipe header/version table is not the same import contract." },
   { pattern: /^(?:\d+_)?RECIPE_LINES$/, kind: "supported", label: "Recipe ingredients", domain: "recipe_component", reason: "The sheet name is an exact supported LexiBite recipe-component identity." },
