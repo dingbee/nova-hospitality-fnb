@@ -68,12 +68,13 @@ export async function createFirstOutlet(
     slug: slugify(input.propertyName),
     timezone: "Africa/Dar_es_Salaam",
     currency: "TZS",
-    status: "active",
+    status: "pending_activation",
   });
 
   const location = await upsertLocation(sb, userId, {
     tenantId: input.tenantId,
     propertyId: property.id,
+    scope: "property",
     name: input.outletName,
     slug: slugify(input.outletName),
     locationType: "restaurant",
