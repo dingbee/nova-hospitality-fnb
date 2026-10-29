@@ -28,7 +28,7 @@ vi.mock("../purchasing/purchasing.server", () => ({
   transitionPurchaseOrder: vi.fn(),
 }));
 
-import { createIntelligentPurchaseOrders } from "./ask-lexibite.server";
+import { createIntelligentPurchaseOrders, previewIntelligentPurchaseOrders } from "./ask-lexibite.server";
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
@@ -45,7 +45,7 @@ function chain(result: unknown) {
   return q;
 }
 
-function sbWithExisting(existing: unknown) {
+function sbWithExisting(existing: unknown, productUnitId = UNIT) {
   return {
     from: vi.fn((table: string) => {
       if (table === "restaurant_inventory_items") {
@@ -67,7 +67,7 @@ function sbWithExisting(existing: unknown) {
             id: PRODUCT,
             supplier_id: SUPPLIER,
             inventory_item_id: ITEM,
-            unit_id: UNIT,
+            unit_id: productUnitId,
             unit_price: 12000,
             active: true,
           }],
@@ -89,6 +89,46 @@ function sbWithExisting(existing: unknown) {
 }
 
 describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
+  it("refuses a replenishment PO when supplier unit differs from the stock unit", async () => {
+    mocks.assertCapability.mockResolvedValue(undefined);
+    mocks.getTenantScope.mockResolvedValue({});
+    mocks.resolveMultiPropertyScope.mockResolvedValue(null);
+    mocks.getPurchasingIntelligence.mockResolvedValue({
+      generatedAt: "2026-10-05T00:00:00.000Z",
+      windowDays: 30,
+      currency: "TZS",
+      suggestions: [{
+        inventoryItemId: ITEM,
+        name: "Beef",
+        supplierId: SUPPLIER,
+        supplierName: "Fresh Supplier",
+        recommendedQuantity: 10,
+        estimatedCost: 120000,
+        currentQuantity: 2,
+        dailyVelocity: 1,
+        leadTimeDays: 2,
+        coverDays: 5,
+      }],
+      suppliers: [],
+      spendChangePercent: null,
+      expectedMonthlySpend: 0,
+      previousMonthlySpend: 0,
+    });
+
+    const plan = await previewIntelligentPurchaseOrders(sbWithExisting(null, "88888888-8888-4888-8888-888888888888"), USER, {
+      tenantId: TENANT,
+      inventoryItemIds: [],
+      supplierId: null,
+      idempotencyKey: IDEMPOTENCY,
+      lineOverrides: [],
+    });
+
+    expect(plan.groups).toHaveLength(0);
+    expect(plan.skipped).toContain(
+      "Beef: supplier purchase unit differs from the stock unit; an explicit conversion is required before a safe replenishment PO can be drafted.",
+    );
+  });
+
   it("persists the Purchasing Intelligence quantity and a line override as the actual PO line quantity", async () => {
     mocks.assertCapability.mockResolvedValue(undefined);
     mocks.getTenantScope.mockResolvedValue({});
