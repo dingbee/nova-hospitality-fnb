@@ -110,7 +110,7 @@ export async function getPurchasingIntelligence(
     if (!item) continue;
     const remaining = Math.max(
       0,
-      Number(line.quantity ?? 0) - Math.max(Number(line.received_quantity ?? 0), Number(line.accepted_quantity ?? 0)),
+      Number(line.quantity ?? 0) - Number(line.accepted_quantity ?? 0),
     );
     if (remaining <= 0) continue;
     // Convert outstanding PO quantities into the inventory stock unit
