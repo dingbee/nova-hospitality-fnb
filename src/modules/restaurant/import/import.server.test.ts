@@ -29,7 +29,7 @@ function resetDb() {
   db.restaurant_inventory_units = [
     { id: "u-kg", code: "kg", name: "Kilogram", dimension: "mass", factor: 1000, tenant_id: null },
     { id: "u-g", code: "g", name: "Gram", dimension: "mass", factor: 1, tenant_id: null },
-    { id: "u-ml", code: "ml", name: "Millilitre", dimension: "volume", factor: 1, tenant_id: null },
+    { id: "u-ml", code: "ml", name: "Millilitre", dimension: "volume", factor: 1, tenant_id: null },\n    { id: "u-btl", code: "btl", name: "Bottle", dimension: "count", factor: 1, tenant_id: null },\n    { id: "u-ctn", code: "ctn", name: "Carton", dimension: "count", factor: 12, base_unit_id: "u-btl", tenant_id: null },
   ];
   db.restaurant_suppliers = [];
   db.restaurant_inventory_items = [];
