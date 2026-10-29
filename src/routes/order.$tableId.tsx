@@ -547,6 +547,7 @@ function GuestOrderPage() {
       <TableSessionScreen
         tableId={tableId}
         justPlacedOrderId={null}
+        paymentTiming={menu.data?.table.guestPaymentTiming ?? "pay_after_service"}
         onOrderMore={() => {
           setContinueOrdering(true);
         }}
