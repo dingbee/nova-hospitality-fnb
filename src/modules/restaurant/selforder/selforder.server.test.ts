@@ -96,6 +96,9 @@ function fakeSb(rows: Record<string, any[]>) {
         limit() {
           return builder;
         },
+        order() {
+          return builder;
+        },
         maybeSingle: async () => ({ data: filtered[0] ?? null }),
         then: (resolve: (v: { data: any[] }) => unknown) => resolve({ data: filtered }),
       };
@@ -421,6 +424,21 @@ function fakeSessionsSb(initialRows: any[] = []) {
   let seq = rows.length;
 
   function from(table: string) {
+    if (table === "restaurant_orders") {
+      let builder: any;
+      let filtered: any[] = [];
+      builder = {
+        select: () => builder,
+        eq: () => builder,
+        in: () => builder,
+        order: () => builder,
+        limit: () => builder,
+        maybeSingle: async () => ({ data: filtered[0] ?? null, error: null }),
+        then: (resolve: (value: { data: any[]; error: null }) => unknown) =>
+          resolve({ data: filtered, error: null }),
+      };
+      return builder;
+    }
     if (table !== "restaurant_guest_sessions") throw new Error(`unexpected table ${table}`);
     const eqFilters: Array<[string, unknown]> = [];
     const ltFilters: Array<[string, unknown]> = [];
