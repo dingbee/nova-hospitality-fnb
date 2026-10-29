@@ -98,9 +98,11 @@ export function evaluateRoomChargeEligibility(
 export function folioIdempotencyKey(input: {
   tenantId: string;
   orderId: string;
+  splitBillId?: string;
   clientRequestId: string;
 }): string {
-  return `rest:${input.tenantId}:${input.orderId}:${input.clientRequestId}`;
+  const billScope = input.splitBillId ? `:${input.splitBillId}` : "";
+  return `rest:${input.tenantId}:${input.orderId}${billScope}:${input.clientRequestId}`;
 }
 
 /** Only what the confirmation screen may display. */
