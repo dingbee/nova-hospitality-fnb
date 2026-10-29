@@ -138,7 +138,13 @@ function makeFakeSupabase(opts: {
         };
       }
       if (table === "restaurant_members") {
-        const rows = (opts.restaurantMembers ?? []).filter(
+        // Unless a test explicitly supplies membership rows, model the caller
+        // as a tenant-wide owner. This keeps the fake aligned with the
+        // authorization boundary introduced for scoped ticket reads.
+        const members = opts.restaurantMembers ?? [
+          { tenant_id: TENANT, user_id: USER, role: "owner" },
+        ];
+        const rows = members.filter(
           (m) => m.tenant_id === filters.tenant_id && m.user_id === filters.user_id,
         );
         return { data: rows, error: null };
