@@ -37,6 +37,7 @@ function buildStartHereSheet(): XLSX.WorkSheet {
     ["LEXIBITE  |  OFFICIAL IMPORT TEMPLATE v1.0"],
     [],
     ["Template marker", LEXIBITE_TEMPLATE_MARKER],
+    [`Template Version: ${LEXIBITE_TEMPLATE_VERSION}`],
     ["Template version", LEXIBITE_TEMPLATE_VERSION],
     ["Purpose", "Official LexiBite Restaurant & Bar OS master-data import workbook for Import Studio."],
     [
