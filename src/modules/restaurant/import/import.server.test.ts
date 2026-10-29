@@ -657,12 +657,7 @@ describe("duplicate inventory / re-import", () => {
     const csv = `Name,SKU
 Rice,ITM-1
 `;
-    const source = await stageCsv(
-      TENANT,
-      ws.id,
-      csv,
-      "inventory_item",
-    );
+    const source = await stageCsv(TENANT, ws.id, csv, "inventory_item");
     const first = (
       await listStagedRecords(sb, USER, { tenantId: TENANT, workspaceId: ws.id, limit: 100 } as any)
     ).length;
@@ -1916,12 +1911,7 @@ describe("scale: a realistically large single-sheet import", () => {
       lines.push(`Bulk Item ${i},BULK-${i},1000,1`);
     }
     const csv = lines.join("\n");
-    const source = await stageCsv(
-      TENANT,
-      ws.id,
-      csv,
-      "inventory_item",
-    );
+    const source = await stageCsv(TENANT, ws.id, csv, "inventory_item");
 
     const staged = await listStagedRecords(sb, USER, {
       tenantId: TENANT,
