@@ -643,7 +643,7 @@ function PreparationActions({
         {preparation.workflow === "purchase_request" && (
           <PurchaseRequestLifecycleActions tenantId={tenantId} requestId={committed.createdRecordId} />
         )}
-        {preparation.workflow === "requisition" && (
+        {(preparation.workflow as string | null) === "requisition" && (
           <RequisitionLifecycleActions tenantId={tenantId} requisitionId={committed.createdRecordId} />
         )}
         {EXECUTABLE_WORKFLOWS.includes(preparation.workflow) && (
@@ -1511,7 +1511,7 @@ export function StaffNovaPanel({
                 {t.preparation && t.understanding && (
                   <ActionWorkspace
                     stage={t.preparation.readiness === "ready" || t.preparation.readiness === "ready_with_warnings" ? "preview" : "review"}
-                    title={WORKFLOW_LABEL[t.preparation.workflow] ?? "Operational action"}
+                    title={t.preparation.workflow ? WORKFLOW_LABEL[t.preparation.workflow] ?? "Operational action" : "Operational action"}
                     summary="LexiBite has translated the instruction into a governed operational preparation."
                   >
                     <PreparationActions
