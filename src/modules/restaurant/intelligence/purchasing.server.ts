@@ -59,7 +59,7 @@ export async function getPurchasingIntelligence(
     movesQuery,
     sb
       .from("restaurant_supplier_products")
-      .select("supplier_id, inventory_item_id, unit_price, lead_time_days, active")
+      .select("supplier_id, inventory_item_id, unit_id, unit_price, lead_time_days, active")
       .eq("tenant_id", tenantId),
     sb
       .from("restaurant_suppliers")
@@ -116,6 +116,10 @@ export async function getPurchasingIntelligence(
   const bestProduct = new Map<string, any>();
   for (const p of products) {
     if (!p.inventory_item_id) continue;
+    const inventoryItem = items.find((item) => item.id === p.inventory_item_id);
+    // Supplier prices are comparable only when their configured purchase unit
+    // matches the inventory stock unit. Pack-size conversions are not guessed.
+    if (!inventoryItem?.unit_id || !p.unit_id || inventoryItem.unit_id !== p.unit_id) continue;
     const prev = bestProduct.get(p.inventory_item_id);
     if (!prev || Number(p.unit_price ?? 0) < Number(prev.unit_price ?? 0)) {
       bestProduct.set(p.inventory_item_id, p);
