@@ -84,6 +84,15 @@ function fakeSb(rows: Record<string, any[]>) {
           filtered = filtered.filter((r) => r[col] === val);
           return builder;
         },
+        in(col: string, vals: unknown[]) {
+          const allowed = new Set(vals);
+          filtered = filtered.filter((r) => allowed.has(r[col]));
+          return builder;
+        },
+        lte(col: string, val: string | number) {
+          filtered = filtered.filter((r) => r[col] != null && r[col] <= val);
+          return builder;
+        },
         limit() {
           return builder;
         },
