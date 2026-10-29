@@ -141,3 +141,20 @@ jobs:
 
       - name: Verify bundle origin
         run: bun run verify:bundle -- .output
+
+      - name: Enforce clean repository-wide quality gates
+        if: always()
+        env:
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          FULL_TESTS_OUTCOME: ${{ steps.full_tests.outcome }}
+        run: |
+          failed=0
+          for gate in TYPECHECK LINT FULL_TESTS; do
+            outcome="${!gate}_OUTCOME"
+            if [ "$outcome" != "success" ]; then
+              echo "::error::$gate gate did not pass (outcome: $outcome)."
+              failed=1
+            fi
+          done
+          exit "$failed"
