@@ -95,7 +95,7 @@ describe("activateInvitedOwner — invitation-bound owner activation", () => {
       data: [{ tenant_id: TENANT, member_id: "member-1" }],
       error: null,
     });
-    await (await import("./onboarding.server")).activateInvitedOwner(
+    await activateInvitedOwner(
       { rpc },
       OWNER,
       "33333333-3333-3333-3333-333333333333",
@@ -108,7 +108,7 @@ describe("activateInvitedOwner — invitation-bound owner activation", () => {
   it("fails closed if the RPC returns no activation identity", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
     await expect(
-      (await import("./onboarding.server")).activateInvitedOwner(
+      activateInvitedOwner(
         { rpc },
         OWNER,
         "33333333-3333-3333-3333-333333333333",
