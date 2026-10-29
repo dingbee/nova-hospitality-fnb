@@ -750,7 +750,12 @@ function RequisitionLifecycleActions({ tenantId, requisitionId }: { tenantId: st
       data: {
         tenantId,
         requisitionId,
-        lines: (requisition.data?.lines ?? []).map((line) => ({
+        lines: (requisition.data?.lines ?? []).map((line: {
+          id: string;
+          approved_quantity?: number | null;
+          requested_quantity?: number | null;
+          issued_quantity?: number | null;
+        }) => ({
           lineId: line.id,
           issueQuantity: Math.max(0, Number(line.approved_quantity ?? line.requested_quantity ?? 0) - Number(line.issued_quantity ?? 0)),
         })),
