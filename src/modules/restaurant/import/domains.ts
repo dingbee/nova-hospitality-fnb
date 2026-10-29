@@ -240,7 +240,7 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "categoryName",
       label: "Category",
       required: false,
-      aliases: alias("Category", "Item Category", "Group"),
+      aliases: alias("Category", "Item Category", "Group", "inventory_category", "categoryName"),
     },
     {
       field: "unitCode",
