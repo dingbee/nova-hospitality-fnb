@@ -229,6 +229,10 @@ export async function previewIntelligentPurchaseOrders(
     if (!product) { skipped.push(suggestion.name + ": no active supplier price is currently configured."); continue; }
     const unitId = product.unit_id ?? item.unit_id ?? null;
     if (!unitId) { skipped.push(suggestion.name + ": no purchase unit is configured."); continue; }
+    if (item.unit_id && product.unit_id && item.unit_id !== product.unit_id) {
+      skipped.push(suggestion.name + ": supplier purchase unit differs from the stock unit; an explicit conversion is required before a safe replenishment PO can be drafted.");
+      continue;
+    }
     const supplier = supplierById.get(suggestion.supplierId);
     if (!supplier) { skipped.push(suggestion.name + ": selected supplier could not be revalidated."); continue; }
 
