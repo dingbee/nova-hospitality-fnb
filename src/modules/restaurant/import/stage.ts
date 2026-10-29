@@ -268,8 +268,9 @@ export function stageInventoryItemRow(
     const cat = ref.categories.find(
       (c) => c.name.toLowerCase() === mapped.categoryName!.toLowerCase(),
     );
+    // Categories are optional enrichment: an unknown name must not block
+    // importing an otherwise valid inventory item. Leave it uncategorised.
     if (cat) categoryId = cat.id;
-    else errors.push(`Category "${mapped.categoryName}" not found — will be left uncategorised.`);
   }
 
   const unitRes = resolveUnit(mapped.unitCode, ref.units);
