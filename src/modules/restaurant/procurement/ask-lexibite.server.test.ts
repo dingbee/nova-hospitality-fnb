@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- the in-memory Supabase test double mirrors the untyped client surface. */
 import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
