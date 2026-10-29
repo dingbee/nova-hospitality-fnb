@@ -31,7 +31,15 @@ function resetDb() {
     { id: "u-g", code: "g", name: "Gram", dimension: "mass", factor: 1, tenant_id: null },
     { id: "u-ml", code: "ml", name: "Millilitre", dimension: "volume", factor: 1, tenant_id: null },
     { id: "u-btl", code: "btl", name: "Bottle", dimension: "count", factor: 1, tenant_id: null },
-    { id: "u-ctn", code: "ctn", name: "Carton", dimension: "count", factor: 12, base_unit_id: "u-btl", tenant_id: null },
+    {
+      id: "u-ctn",
+      code: "ctn",
+      name: "Carton",
+      dimension: "count",
+      factor: 12,
+      base_unit_id: "u-btl",
+      tenant_id: null,
+    },
   ];
   db.restaurant_suppliers = [];
   db.restaurant_inventory_items = [];
@@ -622,12 +630,16 @@ describe("staging a clean inventory import", () => {
       brand: null,
     });
     const ws = await createImportWorkspace(sb, USER, { tenantId: TENANT, name: "Test" } as any);
-    const csv =
-      `Name,SKU,Barcode,OpeningQty,Unit,Cost
+    const csv = `Name,SKU,Barcode,OpeningQty,Unit,Cost
 Rice,ITM-9,,250,kg,3000
 Beef,,,10,kg,15000
 `;
-    await stageCsv(TENANT, ws.id, csv, "inventory_item");
+    await stageCsv(
+      TENANT,
+      ws.id,
+      csv,
+      $3,
+    );
 
     const staged = await listStagedRecords(sb, USER, {
       tenantId: TENANT,
@@ -650,7 +662,12 @@ describe("duplicate inventory / re-import", () => {
     const csv = `Name,SKU
 Rice,ITM-1
 `;
-    const source = await stageCsv(TENANT, ws.id, csv, "inventory_item");
+    const source = await stageCsv(
+      TENANT,
+      ws.id,
+      csv,
+      $3,
+    );
     const first = (
       await listStagedRecords(sb, USER, { tenantId: TENANT, workspaceId: ws.id, limit: 100 } as any)
     ).length;
@@ -1799,7 +1816,12 @@ describe("scale: a realistically large single-sheet import", () => {
       lines.push(`Bulk Item ${i},BULK-${i},1000,1`);
     }
     const csv = lines.join("\n");
-    const source = await stageCsv(TENANT, ws.id, csv, "inventory_item");
+    const source = await stageCsv(
+      TENANT,
+      ws.id,
+      csv,
+      $3,
+    );
 
     const staged = await listStagedRecords(sb, USER, {
       tenantId: TENANT,
