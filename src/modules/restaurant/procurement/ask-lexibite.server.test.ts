@@ -165,7 +165,7 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
 
     expect(plan.groups).toHaveLength(0);
     expect(plan.skipped).toContain(
-      "Beef: supplier purchase unit differs from the stock unit; an explicit conversion is required before a safe replenishment PO can be drafted.",
+      "Beef: supplier purchase unit differs from the stock unit and no valid pack-size conversion is configured.",
     );
   });
 
