@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Supabase admin client and row shapes are untyped at this integration boundary. */
 /* Commercial customer owner access — platform-controlled onboarding. */
 import { assertCommercialAdmin } from "./access.server";
 import { writeCommercialAudit } from "./audit.server";
