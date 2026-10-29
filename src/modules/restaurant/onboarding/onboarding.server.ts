@@ -20,6 +20,24 @@ import type {
 
 type Sb = any;
 
+/**
+ * Accepts a commercial owner invitation through the database's authenticated
+ * SECURITY DEFINER RPC. Tenant, member role, invitation ownership and
+ * subscription eligibility are derived and enforced in PostgreSQL; the
+ * browser never supplies a tenant id or role.
+ */
+export async function activateInvitedOwner(sb: Sb, _userId: string, invitationId: string) {
+  const { data, error } = await sb.rpc("restaurant_activate_invited_owner", {
+    _invitation_id: invitationId,
+  });
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.tenant_id || !row?.member_id) {
+    throw new Error("Invitation activation did not return a tenant and member.");
+  }
+  return { tenantId: row.tenant_id as string, memberId: row.member_id as string };
+}
+
 function slugify(input: string): string {
   const base = input
     .toLowerCase()
