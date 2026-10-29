@@ -11,7 +11,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const movements: any[] = [];
 const events: any[] = [];
-const poBridgeMocks = vi.hoisted(() => ({ createPurchaseOrder: vi.fn(), transitionPurchaseOrder: vi.fn() }));
+const poBridgeMocks = vi.hoisted(() => ({
+  createPurchaseOrder: vi.fn(),
+  transitionPurchaseOrder: vi.fn(),
+}));
 
 vi.mock("../core/access.server", () => ({
   assertCapability: vi.fn(async () => true),
@@ -301,53 +304,115 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
     const idempotencyKey = "77777777-7777-4777-8777-777777777777";
     const recent = new Date(Date.now() - 86400000).toISOString();
 
-    db["restaurant_inventory_items"] = [{
-      id: inventoryId, tenant_id: TENANT, property_id: null, location_id: null,
-      name: "Tomatoes", current_quantity: 2, average_cost: 1000, currency: "TZS",
-      unit_id: stockUnitId, purchase_unit_id: stockUnitId, pack_size: 1, track_batches: false,
-    }];
-    db["restaurant_stock_movements"] = [{
-      tenant_id: TENANT, property_id: null, location_id: null, inventory_item_id: inventoryId,
-      movement_type: "consumption", quantity: 300, total_cost: 300000, occurred_at: recent,
-    }];
-    db["restaurant_supplier_products"] = [{
-      id: supplierProductId, tenant_id: TENANT, supplier_id: supplierId,
-      inventory_item_id: inventoryId, unit_id: stockUnitId, unit_price: 1000,
-      pack_size: 1, lead_time_days: 2, active: true,
-    }];
-    db["restaurant_suppliers"] = [{
-      id: supplierId, tenant_id: TENANT, name: "Bridge Supplier", lead_time_days: 2,
-      reliability_score: 80, status: "active",
-    }];
+    db["restaurant_inventory_items"] = [
+      {
+        id: inventoryId,
+        tenant_id: TENANT,
+        property_id: null,
+        location_id: null,
+        name: "Tomatoes",
+        current_quantity: 2,
+        average_cost: 1000,
+        currency: "TZS",
+        unit_id: stockUnitId,
+        purchase_unit_id: stockUnitId,
+        pack_size: 1,
+        track_batches: false,
+      },
+    ];
+    db["restaurant_stock_movements"] = [
+      {
+        tenant_id: TENANT,
+        property_id: null,
+        location_id: null,
+        inventory_item_id: inventoryId,
+        movement_type: "consumption",
+        quantity: 300,
+        total_cost: 300000,
+        occurred_at: recent,
+      },
+    ];
+    db["restaurant_supplier_products"] = [
+      {
+        id: supplierProductId,
+        tenant_id: TENANT,
+        supplier_id: supplierId,
+        inventory_item_id: inventoryId,
+        unit_id: stockUnitId,
+        unit_price: 1000,
+        pack_size: 1,
+        lead_time_days: 2,
+        active: true,
+      },
+    ];
+    db["restaurant_suppliers"] = [
+      {
+        id: supplierId,
+        tenant_id: TENANT,
+        name: "Bridge Supplier",
+        lead_time_days: 2,
+        reliability_score: 80,
+        status: "active",
+      },
+    ];
     db["restaurant_purchase_orders"] = [];
     db["restaurant_purchase_order_items"] = [];
     db["restaurant_inventory_batches"] = [];
     db["restaurant_goods_receipts"] = [];
     db["restaurant_goods_receipt_items"] = [];
 
-    poBridgeMocks.createPurchaseOrder.mockImplementation(async (_sb: any, _user: string, input: any) => {
-      const po = {
-        id: purchaseOrderId, tenant_id: input.tenantId, document_number: "PO-BRIDGE",
-        reference: input.reference, status: "draft", supplier_id: input.supplierId,
-        property_id: input.propertyId ?? null, location_id: input.locationId ?? null,
-        total: input.lines.reduce((sum: number, item: any) => sum + item.quantity * item.unitPrice, 0),
-        currency: input.currency, correlation_id: "corr-bridge", expected_at: null,
-      };
-      db["restaurant_purchase_orders"]!.push(po);
-      for (const item of input.lines) {
-        db["restaurant_purchase_order_items"]!.push({
-          id: id("poi-bridge"), tenant_id: input.tenantId, purchase_order_id: purchaseOrderId,
-          inventory_item_id: item.inventoryItemId, supplier_product_id: item.supplierProductId,
-          unit_id: item.unitId, description: item.description, quantity: item.quantity,
-          unit_price: item.unitPrice, received_quantity: 0, accepted_quantity: 0, rejected_quantity: 0,
-        });
-      }
-      return { id: po.id, document_number: po.document_number, status: po.status, total: po.total, currency: po.currency };
-    });
+    poBridgeMocks.createPurchaseOrder.mockImplementation(
+      async (_sb: any, _user: string, input: any) => {
+        const po = {
+          id: purchaseOrderId,
+          tenant_id: input.tenantId,
+          document_number: "PO-BRIDGE",
+          reference: input.reference,
+          status: "draft",
+          supplier_id: input.supplierId,
+          property_id: input.propertyId ?? null,
+          location_id: input.locationId ?? null,
+          total: input.lines.reduce(
+            (sum: number, item: any) => sum + item.quantity * item.unitPrice,
+            0,
+          ),
+          currency: input.currency,
+          correlation_id: "corr-bridge",
+          expected_at: null,
+        };
+        db["restaurant_purchase_orders"]!.push(po);
+        for (const item of input.lines) {
+          db["restaurant_purchase_order_items"]!.push({
+            id: id("poi-bridge"),
+            tenant_id: input.tenantId,
+            purchase_order_id: purchaseOrderId,
+            inventory_item_id: item.inventoryItemId,
+            supplier_product_id: item.supplierProductId,
+            unit_id: item.unitId,
+            description: item.description,
+            quantity: item.quantity,
+            unit_price: item.unitPrice,
+            received_quantity: 0,
+            accepted_quantity: 0,
+            rejected_quantity: 0,
+          });
+        }
+        return {
+          id: po.id,
+          document_number: po.document_number,
+          status: po.status,
+          total: po.total,
+          currency: po.currency,
+        };
+      },
+    );
 
     const request = {
-      tenantId: TENANT, inventoryItemIds: [], supplierId: supplierId,
-      idempotencyKey, lineOverrides: [],
+      tenantId: TENANT,
+      inventoryItemIds: [],
+      supplierId: supplierId,
+      idempotencyKey,
+      lineOverrides: [],
     };
     const first = await createIntelligentPurchaseOrders(sb, USER, request as any);
     const retry = await createIntelligentPurchaseOrders(sb, USER, request as any);
@@ -364,25 +429,31 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
       purchaseOrderId,
       currency: "TZS",
       post: true,
-      lines: [{
-        purchaseOrderItemId: persistedLine.id,
-        inventoryItemId: inventoryId,
-        unitId: stockUnitId,
-        description: "Tomatoes",
-        orderedQuantity: persistedLine.quantity,
-        receivedQuantity: 10,
-        acceptedQuantity: 8,
-        rejectedQuantity: 2,
-        damagedQuantity: 0,
-        orderedUnitCost: 1000,
-        unitCost: 1000,
-        rejectionReason: "Damaged on arrival",
-      }],
+      lines: [
+        {
+          purchaseOrderItemId: persistedLine.id,
+          inventoryItemId: inventoryId,
+          unitId: stockUnitId,
+          description: "Tomatoes",
+          orderedQuantity: persistedLine.quantity,
+          receivedQuantity: 10,
+          acceptedQuantity: 8,
+          rejectedQuantity: 2,
+          damagedQuantity: 0,
+          orderedUnitCost: 1000,
+          unitCost: 1000,
+          rejectionReason: "Damaged on arrival",
+        },
+      ],
     } as any);
 
     expect(receipt.posted).toBe(true);
     expect(movements).toHaveLength(1);
-    expect(movements[0]).toMatchObject({ inventoryItemId: inventoryId, quantity: 8, movementType: "purchase_receipt" });
+    expect(movements[0]).toMatchObject({
+      inventoryItemId: inventoryId,
+      quantity: 8,
+      movementType: "purchase_receipt",
+    });
     expect(persistedLine.received_quantity).toBe(10);
     expect(persistedLine.accepted_quantity).toBe(8);
     expect(persistedLine.rejected_quantity).toBe(2);

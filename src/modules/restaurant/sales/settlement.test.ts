@@ -82,7 +82,13 @@ describe("settlement lifecycle", () => {
   });
 
   it("asks for receipt delivery, then table release, after closing", () => {
-    const closed = { status: "closed", total: 100, paid_total: 100, payment_state: "paid", table_id: "t1" };
+    const closed = {
+      status: "closed",
+      total: 100,
+      paid_total: 100,
+      payment_state: "paid",
+      table_id: "t1",
+    };
     expect(deriveLifecycle({ order: closed, items: served }).nextAction).toBe("deliver-receipt");
     const delivered = deriveLifecycle({
       order: closed,

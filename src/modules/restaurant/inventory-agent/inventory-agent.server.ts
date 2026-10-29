@@ -30,10 +30,7 @@ import type { RestaurantFinding } from "../decisions/decision.types";
 type Sb = any;
 
 const INVENTORY_ACTION_TYPE = "restaurant.inventory.replenish_review";
-const INVENTORY_FINDING_KINDS = new Set([
-  "inventory_shortage",
-  "purchasing_replenishment",
-]);
+const INVENTORY_FINDING_KINDS = new Set(["inventory_shortage", "purchasing_replenishment"]);
 
 export interface InventoryAgentRunInput {
   tenantId: string;
@@ -156,14 +153,21 @@ export async function runInventoryAgent(
       severity: String(finding.severity ?? "unknown"),
       confidence: Number(row.confidence ?? 0),
       headline: String(finding.headline ?? row.decision_key),
-      facts: JSON.parse(JSON.stringify(finding.facts ?? {})) as Record<string, InventoryAgentJsonValue>,
+      facts: JSON.parse(JSON.stringify(finding.facts ?? {})) as Record<
+        string,
+        InventoryAgentJsonValue
+      >,
       recommendedOptionKey: row.recommended_option_key ?? null,
       recommendedActionType: selected?.option?.actionType ?? null,
       actionId: row.action_id ?? null,
       actionStatus: action?.status ?? null,
-      verification: action?.verification_result == null
-        ? null
-        : JSON.parse(JSON.stringify(action.verification_result)) as Record<string, InventoryAgentJsonValue>,
+      verification:
+        action?.verification_result == null
+          ? null
+          : (JSON.parse(JSON.stringify(action.verification_result)) as Record<
+              string,
+              InventoryAgentJsonValue
+            >),
     };
   });
 
@@ -229,18 +233,23 @@ export async function executeApprovedInventoryAgentActions(
   const { data: actions, error: actionError } = await sb
     .from("intelligence_actions")
     .select("id, decision_id, action_type, status, created_at")
-    .in("decision_id", decisionRows.map((row) => row.id))
+    .in(
+      "decision_id",
+      decisionRows.map((row) => row.id),
+    )
     .eq("action_type", INVENTORY_ACTION_TYPE)
     .order("created_at", { ascending: true });
 
   if (actionError) throw new Error(actionError.message);
 
-  const eligible = ((actions ?? []) as Array<{
-    id: string;
-    decision_id: string;
-    action_type: string;
-    status: string;
-  }>)
+  const eligible = (
+    (actions ?? []) as Array<{
+      id: string;
+      decision_id: string;
+      action_type: string;
+      status: string;
+    }>
+  )
     .filter(
       (row) =>
         row.action_type === INVENTORY_ACTION_TYPE &&
@@ -330,19 +339,24 @@ export async function verifyExecutedInventoryAgentActions(
   const { data: actions, error: actionError } = await sb
     .from("intelligence_actions")
     .select("id, decision_id, action_type, status, created_at")
-    .in("decision_id", decisionRows.map((row) => row.id))
+    .in(
+      "decision_id",
+      decisionRows.map((row) => row.id),
+    )
     .eq("action_type", INVENTORY_ACTION_TYPE)
     .eq("status", "executed")
     .order("created_at", { ascending: true });
 
   if (actionError) throw new Error(actionError.message);
 
-  const eligible = ((actions ?? []) as Array<{
-    id: string;
-    decision_id: string;
-    action_type: string;
-    status: string;
-  }>)
+  const eligible = (
+    (actions ?? []) as Array<{
+      id: string;
+      decision_id: string;
+      action_type: string;
+      status: string;
+    }>
+  )
     .filter((row) => row.action_type === INVENTORY_ACTION_TYPE && row.status === "executed")
     .slice(0, limit);
 

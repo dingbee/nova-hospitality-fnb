@@ -15,9 +15,7 @@ function recoverFromStaleDynamicImport(error: Error): boolean {
   }
 
   try {
-    const lastRecovery = Number(
-      window.sessionStorage.getItem(DYNAMIC_IMPORT_RECOVERY_KEY) ?? "0",
-    );
+    const lastRecovery = Number(window.sessionStorage.getItem(DYNAMIC_IMPORT_RECOVERY_KEY) ?? "0");
     const now = Date.now();
 
     // Prevent a broken deployment or persistent client failure from causing

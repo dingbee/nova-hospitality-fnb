@@ -234,7 +234,10 @@ function extractQualifiers(text: string): { constraints: string[]; matches: Qual
 }
 
 function extractPurchaseOrderReference(text: string): { raw: string; remaining: string } | null {
-  const match = /\b(?:purchase\s+order|po)\s*(?:#|number|no\.?|ref(?:erence)?)?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9._/-]{0,39})/i.exec(text);
+  const match =
+    /\b(?:purchase\s+order|po)\s*(?:#|number|no\.?|ref(?:erence)?)?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9._/-]{0,39})/i.exec(
+      text,
+    );
   if (!match) return null;
   const raw = match[1].replace(/^PO[-#](?=[A-Za-z0-9])/i, "");
   return { raw, remaining: text.replace(match[0], " ") };

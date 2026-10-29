@@ -27,7 +27,10 @@ import { fetchSellableCatalog } from "../sales/pos.server";
 import { createGuestOrder, recalcOrder, type SalesLineInput } from "../sales/sales.server";
 import { fireGuestOrder } from "../kitchen/kitchen.server";
 import { resolveGuestPaymentTiming, type GuestPaymentTiming } from "../payments/payment-timing";
-import { resolveServiceConfiguration, type ResolvedServiceConfiguration } from "../operations/service-config";
+import {
+  resolveServiceConfiguration,
+  type ResolvedServiceConfiguration,
+} from "../operations/service-config";
 import type { GuestLineInput } from "./selforder.contracts";
 
 type Sb = any;

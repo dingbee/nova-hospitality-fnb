@@ -132,7 +132,7 @@ function makeFakeSupabase(initial: Record<string, any[]>) {
         return api;
       },
       is(col: string, val: unknown) {
-        filters.push((r) => val == null ? r[col] == null : r[col] === val);
+        filters.push((r) => (val == null ? r[col] == null : r[col] === val));
         return api;
       },
       in(col: string, vals: unknown[]) {
@@ -214,7 +214,12 @@ function baseRows(overrides: Partial<Record<string, any[]>> = {}) {
       },
     ],
     restaurant_tenants: [
-      { id: TENANT, name: "Demo", status: "active", settings: { onboarding: { operatingMode: "table_service" } } },
+      {
+        id: TENANT,
+        name: "Demo",
+        status: "active",
+        settings: { onboarding: { operatingMode: "table_service" } },
+      },
       { id: OTHER_TENANT, name: "Other tenant", status: "active", settings: null },
     ],
     restaurant_currencies: [],

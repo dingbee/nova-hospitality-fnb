@@ -90,7 +90,7 @@ function fakeSb(rows: Record<string, any[]>) {
           return builder;
         },
         is(col: string, val: unknown) {
-          filtered = filtered.filter((r) => val == null ? r[col] == null : r[col] === val);
+          filtered = filtered.filter((r) => (val == null ? r[col] == null : r[col] === val));
           return builder;
         },
         lte(col: string, val: string | number) {

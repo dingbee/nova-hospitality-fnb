@@ -23,15 +23,25 @@ export const FOLIO_FAILURE_CODES = [
 export type FolioFailureCode = (typeof FOLIO_FAILURE_CODES)[number];
 
 /** Posting states the till may see. `unknown` is never treated as settled. */
-export const FOLIO_POSTING_STATUSES = ["pending", "posted", "failed", "unknown", "reversed"] as const;
+export const FOLIO_POSTING_STATUSES = [
+  "pending",
+  "posted",
+  "failed",
+  "unknown",
+  "reversed",
+] as const;
 export type FolioPostingStatus = (typeof FOLIO_POSTING_STATUSES)[number];
 
 const MESSAGES: Record<FolioFailureCode, string> = {
-  guest_not_found: "No in-house guest is linked to that room. Check the room number with reception.",
-  stay_not_active: "That stay is not checked in, so its folio is closed. Take another form of payment.",
-  room_not_eligible: "This room is not eligible for outlet charges. Reception must authorise it first.",
+  guest_not_found:
+    "No in-house guest is linked to that room. Check the room number with reception.",
+  stay_not_active:
+    "That stay is not checked in, so its folio is closed. Take another form of payment.",
+  room_not_eligible:
+    "This room is not eligible for outlet charges. Reception must authorise it first.",
   folio_unavailable: "The guest folio could not be opened. Ask reception to check the reservation.",
-  pms_unavailable: "The property system did not answer. Do not retry blindly — verify the folio first.",
+  pms_unavailable:
+    "The property system did not answer. Do not retry blindly — verify the folio first.",
   posting_rejected: "The property system rejected the charge. Take another form of payment.",
   duplicate_posting: "This charge has already been posted to the folio.",
   currency_mismatch: "The folio is held in a different currency to this bill.",

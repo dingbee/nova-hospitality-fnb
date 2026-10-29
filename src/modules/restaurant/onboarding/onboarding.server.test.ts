@@ -81,11 +81,7 @@ describe("activateInvitedOwner — invitation-bound owner activation", () => {
       error: { message: "This customer subscription is not currently active." },
     });
     await expect(
-      activateInvitedOwner(
-        { rpc },
-        OWNER,
-        "33333333-3333-3333-3333-333333333333",
-      ),
+      activateInvitedOwner({ rpc }, OWNER, "33333333-3333-3333-3333-333333333333"),
     ).rejects.toThrow(/subscription is not currently active/);
     expect(rpc).toHaveBeenCalledTimes(1);
   });
@@ -95,11 +91,7 @@ describe("activateInvitedOwner — invitation-bound owner activation", () => {
       data: [{ tenant_id: TENANT, member_id: "member-1" }],
       error: null,
     });
-    await activateInvitedOwner(
-      { rpc },
-      OWNER,
-      "33333333-3333-3333-3333-333333333333",
-    );
+    await activateInvitedOwner({ rpc }, OWNER, "33333333-3333-3333-3333-333333333333");
     expect(rpc.mock.calls[0]?.[1]).toEqual({
       _invitation_id: "33333333-3333-3333-3333-333333333333",
     });
@@ -108,11 +100,7 @@ describe("activateInvitedOwner — invitation-bound owner activation", () => {
   it("fails closed if the RPC returns no activation identity", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
     await expect(
-      activateInvitedOwner(
-        { rpc },
-        OWNER,
-        "33333333-3333-3333-3333-333333333333",
-      ),
+      activateInvitedOwner({ rpc }, OWNER, "33333333-3333-3333-3333-333333333333"),
     ).rejects.toThrow(/did not return a tenant and member/);
   });
 });

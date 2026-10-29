@@ -45,13 +45,14 @@ export function resolveGuestPaymentTiming(settings: unknown): GuestPaymentTiming
   ) {
     return "pay_first";
   }
-  if (
-    configuredServiceMode === "table_service" ||
-    configuredServiceMode === "room_service"
-  ) {
+  if (configuredServiceMode === "table_service" || configuredServiceMode === "room_service") {
     return "pay_after_service";
   }
-  if (serviceMode === "counter_service" || serviceMode === "takeaway" || serviceMode === "self_service") {
+  if (
+    serviceMode === "counter_service" ||
+    serviceMode === "takeaway" ||
+    serviceMode === "self_service"
+  ) {
     return "pay_first";
   }
   return defaultGuestPaymentTimingForOperatingMode(root.onboarding?.operatingMode);

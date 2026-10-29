@@ -174,7 +174,10 @@ function makeFakeSupabaseForProperty() {
         if (wantCount) result.count = matches.length;
         return result;
       }
-      return { data: matches[0] ?? null, error: mode === "single" && !matches[0] ? { message: "not found" } : null };
+      return {
+        data: matches[0] ?? null,
+        error: mode === "single" && !matches[0] ? { message: "not found" } : null,
+      };
     }
     return api;
   }
@@ -222,7 +225,11 @@ describe("upsertProperty — P01 commercial classification wiring", () => {
       currency: "TZS",
       status: "active",
     } as any);
-    expect((result as any).commercial).toMatchObject({ classification: "base", chargeable: false, activationState: "active" });
+    expect((result as any).commercial).toMatchObject({
+      classification: "base",
+      chargeable: false,
+      activationState: "active",
+    });
     expect((result as any).status).toBe("active");
     expect(classifyPropertyMock).toHaveBeenCalledTimes(1);
     expect(classifyPropertyMock).toHaveBeenCalledWith(sb, OWNER, TENANT, (result as any).id);

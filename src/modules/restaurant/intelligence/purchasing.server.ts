@@ -44,7 +44,9 @@ export async function getPurchasingIntelligence(
 
   let itemsQuery = sb
     .from("restaurant_inventory_items")
-    .select("id, name, current_quantity, average_cost, currency, unit_id, purchase_unit_id, pack_size")
+    .select(
+      "id, name, current_quantity, average_cost, currency, unit_id, purchase_unit_id, pack_size",
+    )
     .eq("tenant_id", tenantId);
   if (input.propertyId) itemsQuery = itemsQuery.eq("property_id", input.propertyId);
   if (input.locationId) itemsQuery = itemsQuery.eq("location_id", input.locationId);
@@ -62,7 +64,9 @@ export async function getPurchasingIntelligence(
     movesQuery,
     sb
       .from("restaurant_supplier_products")
-      .select("supplier_id, inventory_item_id, unit_id, pack_size, unit_price, lead_time_days, active")
+      .select(
+        "supplier_id, inventory_item_id, unit_id, pack_size, unit_price, lead_time_days, active",
+      )
       .eq("tenant_id", tenantId),
     sb
       .from("restaurant_suppliers")
@@ -71,7 +75,9 @@ export async function getPurchasingIntelligence(
     (() => {
       let q = sb
         .from("restaurant_purchase_orders")
-        .select("id, supplier_id, status, order_date, expected_at, received_at, total, property_id, location_id")
+        .select(
+          "id, supplier_id, status, order_date, expected_at, received_at, total, property_id, location_id",
+        )
         .eq("tenant_id", tenantId);
       if (input.propertyId) q = q.eq("property_id", input.propertyId);
       if (input.locationId) q = q.eq("location_id", input.locationId);
@@ -86,7 +92,10 @@ export async function getPurchasingIntelligence(
     ["suppliers", suppliersRes],
     ["purchase orders", poRes],
   ] as const) {
-    if (result.error) throw new Error("Unable to load " + label + " for purchasing intelligence: " + result.error.message);
+    if (result.error)
+      throw new Error(
+        "Unable to load " + label + " for purchasing intelligence: " + result.error.message,
+      );
   }
 
   const items = (itemsRes.data ?? []) as any[];
@@ -99,10 +108,13 @@ export async function getPurchasingIntelligence(
   if (eligibleOrderIds.length > 0) {
     const { data, error } = await sb
       .from("restaurant_purchase_order_items")
-      .select("purchase_order_id, inventory_item_id, unit_id, quantity, received_quantity, accepted_quantity")
+      .select(
+        "purchase_order_id, inventory_item_id, unit_id, quantity, received_quantity, accepted_quantity",
+      )
       .eq("tenant_id", tenantId)
       .in("purchase_order_id", eligibleOrderIds);
-    if (error) throw new Error("Unable to account for outstanding purchase orders: " + error.message);
+    if (error)
+      throw new Error("Unable to account for outstanding purchase orders: " + error.message);
     openOrderLines = (data ?? []) as any[];
   }
   const itemById = new Map(items.map((item) => [item.id, item]));
@@ -120,7 +132,9 @@ export async function getPurchasingIntelligence(
       acceptedQuantity < 0 ||
       acceptedQuantity > orderedQuantity + 0.0001
     ) {
-      throw new Error("Unable to safely net an outstanding purchase order with invalid line quantities.");
+      throw new Error(
+        "Unable to safely net an outstanding purchase order with invalid line quantities.",
+      );
     }
     const remaining = Math.max(0, orderedQuantity - acceptedQuantity);
     if (remaining <= 0) continue;
@@ -141,10 +155,7 @@ export async function getPurchasingIntelligence(
       unsafeUnitItems.add(item.id);
       continue;
     }
-    outstandingByItem.set(
-      item.id,
-      (outstandingByItem.get(item.id) ?? 0) + remaining * stockFactor,
-    );
+    outstandingByItem.set(item.id, (outstandingByItem.get(item.id) ?? 0) + remaining * stockFactor);
   }
   const currency = (items[0]?.currency as string) ?? "TZS";
   const suppliers = (suppliersRes.data ?? []) as any[];
@@ -201,7 +212,9 @@ export async function getPurchasingIntelligence(
     if (unsafeUnitItems.has(it.id)) continue;
     const currentQuantity = Number(it.current_quantity ?? 0);
     if (!Number.isFinite(currentQuantity)) {
-      throw new Error("Purchasing intelligence encountered an invalid on-hand quantity for " + it.name + ".");
+      throw new Error(
+        "Purchasing intelligence encountered an invalid on-hand quantity for " + it.name + ".",
+      );
     }
     const velocity = round((consumed.get(it.id) ?? 0) / windowDays, 3);
     if (velocity <= 0) continue;

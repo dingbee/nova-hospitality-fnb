@@ -150,7 +150,9 @@ export async function consumeForRecipeSale(
     .in("id", ids);
   const meta = new Map<string, any>(((items ?? []) as any[]).map((r) => [r.id, r]));
   if (meta.size !== ids.length) {
-    throw new Error("Recipe consumption blocked: one or more inventory items are missing or outside this tenant.");
+    throw new Error(
+      "Recipe consumption blocked: one or more inventory items are missing or outside this tenant.",
+    );
   }
 
   // POS consumption must stay inside the order's property and serving location.
@@ -166,7 +168,9 @@ export async function consumeForRecipeSale(
     : { data: null, error: null };
   if (locationError) throw new Error(locationError.message);
   if (args.locationId && !orderLocation) {
-    throw new Error("Recipe consumption blocked: the order location does not belong to this tenant.");
+    throw new Error(
+      "Recipe consumption blocked: the order location does not belong to this tenant.",
+    );
   }
   if (
     orderLocation &&
@@ -175,7 +179,9 @@ export async function consumeForRecipeSale(
       !orderLocation.property_id ||
       (args.propertyId != null && orderLocation.property_id !== args.propertyId))
   ) {
-    throw new Error("Recipe consumption blocked: POS location must be active and scoped to the order property.");
+    throw new Error(
+      "Recipe consumption blocked: POS location must be active and scoped to the order property.",
+    );
   }
   const orderPropertyId = args.propertyId ?? orderLocation?.property_id ?? null;
   if (!orderPropertyId) {
@@ -183,7 +189,9 @@ export async function consumeForRecipeSale(
   }
   for (const [itemId, info] of meta) {
     if (!info.property_id || info.property_id !== orderPropertyId) {
-      throw new Error(`Recipe consumption blocked: "${info.name ?? itemId}" is not assigned to this property. Transfer stock to a property-scoped inventory item before sale.`);
+      throw new Error(
+        `Recipe consumption blocked: "${info.name ?? itemId}" is not assigned to this property. Transfer stock to a property-scoped inventory item before sale.`,
+      );
     }
     if (args.locationId && info.location_id && info.location_id !== args.locationId) {
       // Explicit POS location always wins; never silently post against the

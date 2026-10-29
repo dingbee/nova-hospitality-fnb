@@ -31,7 +31,14 @@ const LINE_DIP = "66666666-6666-6666-6666-666666666666";
 const SAUCE_LINE_TOMATO = "77777777-7777-7777-7777-777777777777";
 const TOMATO_ITEM = "88888888-8888-8888-8888-888888888888";
 
-function makeFakeSupabase(options: { itemProperty?: string | null; locationScope?: string; locationProperty?: string | null; locationStatus?: string } = {}) {
+function makeFakeSupabase(
+  options: {
+    itemProperty?: string | null;
+    locationScope?: string;
+    locationProperty?: string | null;
+    locationStatus?: string;
+  } = {},
+) {
   const recipes: Record<string, any> = {
     [BURGER_RECIPE]: { id: BURGER_RECIPE, yield_quantity: 1, produces_inventory_item_id: null },
     [SAUCE_RECIPE]: { id: SAUCE_RECIPE, yield_quantity: 1, produces_inventory_item_id: null },
@@ -130,7 +137,20 @@ function makeFakeSupabase(options: { itemProperty?: string | null; locationScope
         return { data: [tomatoItem], error: null };
       }
       if (table === "restaurant_locations" && op === "select") {
-        return { data: filters.id === LOCATION ? { id: LOCATION, property_id: options.locationProperty === undefined ? PROPERTY : options.locationProperty, scope: options.locationScope ?? "property", is_storage: true, status: options.locationStatus ?? "active" } : null, error: null };
+        return {
+          data:
+            filters.id === LOCATION
+              ? {
+                  id: LOCATION,
+                  property_id:
+                    options.locationProperty === undefined ? PROPERTY : options.locationProperty,
+                  scope: options.locationScope ?? "property",
+                  is_storage: true,
+                  status: options.locationStatus ?? "active",
+                }
+              : null,
+          error: null,
+        };
       }
       if (table === "restaurant_inventory_units" && op === "select") {
         return { data: [], error: null };
@@ -212,19 +232,25 @@ describe("consumeForRecipeSale — property and location boundary regressions", 
 
   it("rejects a tenant central store as the POS serving location before posting movements", async () => {
     const fake = makeFakeSupabase({ locationScope: "tenant", locationProperty: null });
-    await expect(consumeForRecipeSale(fake.supabase as any, USER, args)).rejects.toThrow(/POS location must be active and scoped/);
+    await expect(consumeForRecipeSale(fake.supabase as any, USER, args)).rejects.toThrow(
+      /POS location must be active and scoped/,
+    );
     expect(fake.movements).toHaveLength(0);
   });
 
   it("rejects an inactive POS location before posting movements", async () => {
     const fake = makeFakeSupabase({ locationStatus: "inactive" });
-    await expect(consumeForRecipeSale(fake.supabase as any, USER, args)).rejects.toThrow(/POS location must be active and scoped/);
+    await expect(consumeForRecipeSale(fake.supabase as any, USER, args)).rejects.toThrow(
+      /POS location must be active and scoped/,
+    );
     expect(fake.movements).toHaveLength(0);
   });
 
   it("rejects inventory assigned to another property before posting movements", async () => {
     const fake = makeFakeSupabase({ itemProperty: "99999999-9999-9999-9999-999999999999" });
-    await expect(consumeForRecipeSale(fake.supabase as any, USER, args)).rejects.toThrow(/not assigned to this property/);
+    await expect(consumeForRecipeSale(fake.supabase as any, USER, args)).rejects.toThrow(
+      /not assigned to this property/,
+    );
     expect(fake.movements).toHaveLength(0);
   });
 });
