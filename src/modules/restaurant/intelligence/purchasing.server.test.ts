@@ -93,6 +93,26 @@ describe("Purchasing Intelligence procurement integrity", () => {
     });
   });
 
+  it("chooses supplier prices by normalized cost per stock unit, not sticker price per pack", async () => {
+    const cheaperSupplier = "77777777-7777-4777-8777-777777777777";
+    tables.restaurant_supplier_products.push({
+      tenant_id: TENANT, supplier_id: cheaperSupplier, inventory_item_id: ITEM,
+      unit_id: STOCK_UNIT, pack_size: 1, unit_price: 8, lead_time_days: 2, active: true,
+    });
+    tables.restaurant_suppliers.push({
+      tenant_id: TENANT, id: cheaperSupplier, name: "Stock Unit Supplier",
+      lead_time_days: 2, reliability_score: 80, status: "active",
+    });
+    const result = await getPurchasingIntelligence(fakeSupabase(), "user-1", {
+      tenantId: TENANT, windowDays: 30,
+    });
+    expect(result.suggestions[0]).toMatchObject({
+      supplierId: cheaperSupplier,
+      recommendedQuantity: 2,
+      estimatedCost: 16,
+    });
+  });
+
   it("suppresses recommendations when inbound PO units cannot be normalized safely", async () => {
     seed({ openLineUnit: "77777777-7777-4777-8777-777777777777", purchaseUnit: null, packSize: 1 });
     tables.restaurant_supplier_products[0]!.unit_id = STOCK_UNIT;
