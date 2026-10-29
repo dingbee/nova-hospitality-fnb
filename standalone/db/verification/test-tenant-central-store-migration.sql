@@ -176,7 +176,7 @@ END $$;
 -- property's commercial activation state. Install the prior guard first so
 -- this test proves the migration changes the active trigger function.
 CREATE OR REPLACE FUNCTION public.restaurant_location_property_activation_guard()
-RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_property_status text;
 BEGIN
   IF NEW.status = 'active' THEN
@@ -189,7 +189,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$;
+$$;
 DROP TRIGGER IF EXISTS restaurant_location_property_activation_guard ON public.restaurant_locations;
 CREATE TRIGGER restaurant_location_property_activation_guard
 BEFORE INSERT OR UPDATE OF property_id, status ON public.restaurant_locations
@@ -200,7 +200,7 @@ FOR EACH ROW EXECUTE FUNCTION public.restaurant_location_property_activation_gua
 INSERT INTO public.restaurant_properties (id, tenant_id, slug, status) VALUES
  ('10000000-0000-4000-8000-000000000003','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','pending-property','pending');
 
-DO $
+DO $$
 BEGIN
   INSERT INTO public.restaurant_locations
     (id, tenant_id, property_id, parent_id, slug, name, location_type, is_storage, scope, status)
@@ -219,6 +219,6 @@ BEGIN
   EXCEPTION WHEN check_violation THEN
     IF SQLERRM NOT LIKE '%PROPERTY_NOT_ACTIVE%' THEN RAISE; END IF;
   END;
-END $;
+END $$;
 
 ROLLBACK;
