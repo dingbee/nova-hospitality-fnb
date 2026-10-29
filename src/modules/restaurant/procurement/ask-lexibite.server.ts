@@ -592,8 +592,13 @@ export async function receiveAskLexiBitePurchaseOrder(
   return {
     preview: false,
     lines: previewLines,
-    orderStatus: result.orderStatus,
+    orderStatus: "orderStatus" in result ? result.orderStatus : null,
     receiptDocumentNumber: result.documentNumber,
-    message: "Goods receipt " + result.documentNumber + " posted. Purchase order status: " + result.orderStatus + ".",
+    message:
+      "Goods receipt " +
+      result.documentNumber +
+      " posted. Purchase order status: " +
+      ("orderStatus" in result ? result.orderStatus : "updated") +
+      ".",
   };
 }
