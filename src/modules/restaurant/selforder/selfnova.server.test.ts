@@ -70,6 +70,10 @@ function fakeDb(rows: Record<string, any[]>) {
         filtered = filtered.filter((r) => r[col] === val);
         return builder;
       },
+      is(col: string, val: unknown) {
+        filtered = filtered.filter((r) => val == null ? r[col] == null : r[col] === val);
+        return builder;
+      },
       in(col: string, vals: unknown[]) {
         const set = new Set(vals);
         filtered = filtered.filter((r) => set.has(r[col]));
