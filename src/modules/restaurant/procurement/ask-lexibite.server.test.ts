@@ -28,7 +28,7 @@ vi.mock("../purchasing/purchasing.server", () => ({
   transitionPurchaseOrder: vi.fn(),
 }));
 
-import { createIntelligentPurchaseOrders, previewIntelligentPurchaseOrders } from "./ask-lexibite.server";
+import { createAskLexiBitePurchaseOrder, createIntelligentPurchaseOrders, previewIntelligentPurchaseOrders } from "./ask-lexibite.server";
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
@@ -166,6 +166,32 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
     expect(plan.groups).toHaveLength(0);
     expect(plan.skipped).toContain(
       "Beef: supplier purchase unit differs from the stock unit and no valid pack-size conversion is configured.",
+    );
+  });
+
+  it("converts an explicitly requested stock quantity into configured supplier packs", async () => {
+    mocks.assertCapability.mockResolvedValue(undefined);
+    mocks.getTenantScope.mockResolvedValue({});
+    mocks.resolveMultiPropertyScope.mockResolvedValue(null);
+    mocks.resolveTenantCurrency.mockResolvedValue("TZS");
+    mocks.createPurchaseOrder.mockResolvedValue({
+      id: "po-stock-unit", document_number: "PO-STOCK-UNIT", status: "draft", total: 24000, currency: "TZS",
+    });
+    const supplierPurchaseUnit = "88888888-8888-4888-8888-888888888888";
+    const sb = sbWithExisting(null, supplierPurchaseUnit, supplierPurchaseUnit, 6);
+    await createAskLexiBitePurchaseOrder(sb, USER, {
+      tenantId: TENANT,
+      contract: {
+        action: "prepare_purchase_order",
+        supplier: { resolvedId: SUPPLIER, status: "exact" },
+        entities: [{
+          status: "exact", resolvedId: ITEM, resolvedName: "Beef", raw: "Beef",
+          quantity: { quantity: 11, resolvedUnitId: UNIT },
+        }],
+      },
+    } as any);
+    expect(mocks.createPurchaseOrder.mock.calls.at(-1)?.[2].lines[0]).toEqual(
+      expect.objectContaining({ inventoryItemId: ITEM, unitId: supplierPurchaseUnit, quantity: 2, unitPrice: 12000 }),
     );
   });
 
