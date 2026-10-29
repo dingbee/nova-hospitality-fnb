@@ -308,7 +308,7 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
     }];
     db["restaurant_stock_movements"] = [{
       tenant_id: TENANT, property_id: null, location_id: null, inventory_item_id: inventoryId,
-      movement_type: "consumption", quantity: 30, total_cost: 30000, occurred_at: recent,
+      movement_type: "consumption", quantity: 300, total_cost: 300000, occurred_at: recent,
     }];
     db["restaurant_supplier_products"] = [{
       id: supplierProductId, tenant_id: TENANT, supplier_id: supplierId,
