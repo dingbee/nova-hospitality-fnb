@@ -41,7 +41,7 @@ export async function getPurchasingIntelligence(
 
   let itemsQuery = sb
     .from("restaurant_inventory_items")
-    .select("id, name, current_quantity, average_cost, currency")
+    .select("id, name, current_quantity, average_cost, currency, unit_id")
     .eq("tenant_id", tenantId);
   if (input.propertyId) itemsQuery = itemsQuery.eq("property_id", input.propertyId);
   if (input.locationId) itemsQuery = itemsQuery.eq("location_id", input.locationId);
@@ -73,6 +73,41 @@ export async function getPurchasingIntelligence(
 
   const items = (itemsRes.data ?? []) as any[];
   const moves = (movesRes.data ?? []) as any[];
+  const orders = (poRes.data ?? []) as any[];
+  const eligibleOrderIds = orders
+    .filter((order) => order.status === "approved" || order.status === "partially_received")
+    .map((order) => order.id);
+  let openOrderLines: any[] = [];
+  if (eligibleOrderIds.length > 0) {
+    const { data, error } = await sb
+      .from("restaurant_purchase_order_items")
+      .select("purchase_order_id, inventory_item_id, unit_id, quantity, received_quantity, accepted_quantity")
+      .eq("tenant_id", tenantId)
+      .in("purchase_order_id", eligibleOrderIds);
+    if (error) throw new Error("Unable to account for outstanding purchase orders: " + error.message);
+    openOrderLines = (data ?? []) as any[];
+  }
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const outstandingByItem = new Map<string, number>();
+  const unsafeUnitItems = new Set<string>();
+  for (const line of openOrderLines) {
+    const item = itemById.get(line.inventory_item_id);
+    if (!item) continue;
+    const remaining = Math.max(
+      0,
+      Number(line.quantity ?? 0) - Math.max(Number(line.received_quantity ?? 0), Number(line.accepted_quantity ?? 0)),
+    );
+    if (remaining <= 0) continue;
+    // Never subtract purchase-unit quantities from stock-unit quantities.
+    // Until an explicit conversion is available, suppress recommendations for
+    // an item with open inbound stock in a different unit rather than risk a
+    // duplicate order or a silent unit conversion error.
+    if (line.unit_id && item.unit_id && line.unit_id !== item.unit_id) {
+      unsafeUnitItems.add(item.id);
+      continue;
+    }
+    outstandingByItem.set(item.id, (outstandingByItem.get(item.id) ?? 0) + remaining);
+  }
   const currency = (items[0]?.currency as string) ?? "TZS";
   const suppliers = (suppliersRes.data ?? []) as any[];
   const products = ((productsRes.data ?? []) as any[]).filter((p) => p.active !== false);
@@ -100,6 +135,7 @@ export async function getPurchasingIntelligence(
   const suggestions: PurchaseSuggestion[] = [];
   let expectedMonthlySpend = 0;
   for (const it of items) {
+    if (unsafeUnitItems.has(it.id)) continue;
     const velocity = round((consumed.get(it.id) ?? 0) / windowDays, 3);
     if (velocity <= 0) continue;
     const product = bestProduct.get(it.id);
@@ -109,7 +145,7 @@ export async function getPurchasingIntelligence(
       DEFAULT_LEAD_TIME;
     const unitPrice = Number(product?.unit_price ?? it.average_cost ?? 0);
     const qty = recommendedPurchaseQuantity(
-      Number(it.current_quantity ?? 0),
+      Number(it.current_quantity ?? 0) + (outstandingByItem.get(it.id) ?? 0),
       velocity,
       leadTime,
       COVER_DAYS,
@@ -131,7 +167,6 @@ export async function getPurchasingIntelligence(
   }
   suggestions.sort((a, b) => b.estimatedCost - a.estimatedCost);
 
-  const orders = (poRes.data ?? []) as any[];
   const ranking: SupplierReliability[] = suppliers.map((s) => {
     const own = orders.filter((o) => o.supplier_id === s.id && o.received_at);
     const onTime = own.filter(
