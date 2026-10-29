@@ -90,11 +90,14 @@ export async function createAskLexiBitePurchaseOrder(
     }
 
     const requestedUnitId = entity.quantity?.resolvedUnitId ?? null;
-    const purchaseUnitId = product.unit_id ?? item.unit_id ?? null;
-    if (requestedUnitId && purchaseUnitId && requestedUnitId !== purchaseUnitId) {
+    const purchaseUnitId = product.unit_id ?? null;
+    if (!purchaseUnitId) throw new Error("No supplier purchase unit is configured for " + item.name + ".");
+    if (!item.unit_id || purchaseUnitId !== item.unit_id) {
+      throw new Error("The supplier purchase unit for " + item.name + " differs from the stock unit; configure an explicit unit conversion before ordering.");
+    }
+    if (requestedUnitId && requestedUnitId !== purchaseUnitId) {
       throw new Error("The requested unit for " + item.name + " does not match the supplier's configured purchase unit.");
     }
-    if (!purchaseUnitId) throw new Error("No purchase unit is configured for " + item.name + ".");
 
     lines.push({
       inventoryItemId: item.id,
