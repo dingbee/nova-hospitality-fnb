@@ -638,7 +638,7 @@ Beef,,,10,kg,15000
       TENANT,
       ws.id,
       csv,
-      $3,
+      "inventory_item",
     );
 
     const staged = await listStagedRecords(sb, USER, {
@@ -666,7 +666,7 @@ Rice,ITM-1
       TENANT,
       ws.id,
       csv,
-      $3,
+      "inventory_item",
     );
     const first = (
       await listStagedRecords(sb, USER, { tenantId: TENANT, workspaceId: ws.id, limit: 100 } as any)
@@ -1820,7 +1820,7 @@ describe("scale: a realistically large single-sheet import", () => {
       TENANT,
       ws.id,
       csv,
-      $3,
+      "inventory_item",
     );
 
     const staged = await listStagedRecords(sb, USER, {
