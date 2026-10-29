@@ -287,12 +287,12 @@ async function buildRecipeProcurementEvidence(sb: Sb, tenantId: string, property
       .order("order_date", { ascending: false })
       .limit(50),
   ]);
-  let recipes = (recipesRes.data ?? []) as any[],
-    products = (productsRes.data ?? []) as any[],
-    lines = (linesRes.data ?? []) as any[];
-  let items = (itemsRes.data ?? []) as any[],
-    units = (unitsRes.data ?? []) as any[],
-    orders = (poRes.data ?? []) as any[];
+  let recipes = (recipesRes.data ?? []) as any[];
+  const products = (productsRes.data ?? []) as any[];
+  const lines = (linesRes.data ?? []) as any[];
+  let items = (itemsRes.data ?? []) as any[];
+  const units = (unitsRes.data ?? []) as any[];
+  let orders = (poRes.data ?? []) as any[];
   if (propertyId) {
     recipes = recipes.filter((r) => r.property_id == null || r.property_id === propertyId);
     items = items.filter((i) => i.property_id == null || i.property_id === propertyId);
