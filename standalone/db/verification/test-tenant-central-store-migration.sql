@@ -73,9 +73,9 @@ INSERT INTO public.restaurant_locations (id, tenant_id, property_id, parent_id, 
  ('20000000-0000-4000-8000-000000000001','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','10000000-0000-4000-8000-000000000001',NULL,'property-store-a','Property Store A',true),
  ('20000000-0000-4000-8000-000000000002','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','10000000-0000-4000-8000-000000000002',NULL,'property-store-b','Property Store B',true);
 
-DO $ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $;
-DO $ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $;
-DO $ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object THEN NULL; END $;
+DO $roles_anon$ BEGIN EXECUTE 'CREATE ROLE anon'; EXCEPTION WHEN duplicate_object THEN NULL; END $roles_anon$;
+DO $roles_auth$ BEGIN EXECUTE 'CREATE ROLE authenticated'; EXCEPTION WHEN duplicate_object THEN NULL; END $roles_auth$;
+DO $roles_service$ BEGIN EXECUTE 'CREATE ROLE service_role'; EXCEPTION WHEN duplicate_object THEN NULL; END $roles_service$;
 
 \i standalone/db/migrations/0109_property_location_integrity.sql
 \i standalone/db/migrations/0110_tenant_central_store_scope.sql
