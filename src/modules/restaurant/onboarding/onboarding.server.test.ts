@@ -37,7 +37,7 @@ vi.mock("../events/emit.server", () => ({
 }));
 
 const {
-  bootstrapTenant,
+  activateInvitedOwner,
   createFirstOutlet,
   setOperatingModel,
   getOnboardingStatus,
@@ -64,7 +64,7 @@ describe("activateInvitedOwner — invitation-bound owner activation", () => {
       data: [{ tenant_id: TENANT, member_id: "member-1" }],
       error: null,
     });
-    const result = await (await import("./onboarding.server")).activateInvitedOwner(
+    const result = await activateInvitedOwner(
       { rpc },
       OWNER,
       "33333333-3333-3333-3333-333333333333",
@@ -81,7 +81,7 @@ describe("activateInvitedOwner — invitation-bound owner activation", () => {
       error: { message: "This customer subscription is not currently active." },
     });
     await expect(
-      (await import("./onboarding.server")).activateInvitedOwner(
+      activateInvitedOwner(
         { rpc },
         OWNER,
         "33333333-3333-3333-3333-333333333333",
