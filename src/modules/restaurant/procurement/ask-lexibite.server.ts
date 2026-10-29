@@ -274,7 +274,17 @@ export async function previewIntelligentPurchaseOrders(
     const item = itemById.get(suggestion.inventoryItemId);
     if (!item) { skipped.push(suggestion.name + ": inventory item could not be revalidated."); continue; }
     const product = productByKey.get(suggestion.supplierId + ":" + suggestion.inventoryItemId);
-    if (!product) { skipped.push(suggestion.name + ": no active supplier price is currently configured."); continue; }
+    if (!product) {
+      const hasUnconvertiblePrice = ((products ?? []) as any[]).some((candidate) =>
+        candidate.active !== false &&
+        candidate.supplier_id === suggestion.supplierId &&
+        candidate.inventory_item_id === suggestion.inventoryItemId,
+      );
+      skipped.push(hasUnconvertiblePrice
+        ? suggestion.name + ": supplier purchase unit differs from the stock unit and no valid pack-size conversion is configured."
+        : suggestion.name + ": no active supplier price is currently configured.");
+      continue;
+    }
     const unitId = product.unit_id ?? null;
     if (!unitId) { skipped.push(suggestion.name + ": no supplier purchase unit is configured."); continue; }
     const stockUnitsPerPurchaseUnit = Number(product.stockUnitsPerPurchaseUnit ?? 0);
