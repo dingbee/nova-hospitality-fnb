@@ -429,9 +429,9 @@ function fakeSessionsSb(initialRows: any[] = []) {
 
   function from(table: string) {
     if (table === "restaurant_orders") {
-      let builder: any;
+      // eslint-disable-next-line prefer-const -- the query builder's methods reassign this closure-held filter.
       let filtered: any[] = [];
-      builder = {
+      const builder: any = {
         select: () => builder,
         eq: () => builder,
         in: () => builder,
