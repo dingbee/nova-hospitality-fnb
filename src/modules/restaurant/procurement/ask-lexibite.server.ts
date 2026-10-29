@@ -103,7 +103,7 @@ export async function createAskLexiBitePurchaseOrder(
     const item = itemById.get(entity.resolvedId!);
     if (!item) throw new Error("Inventory item was not found: " + (entity.resolvedName ?? entity.raw) + ".");
     const quantity = entity.quantity?.quantity ?? null;
-    if (quantity == null || quantity <= 0) {
+    if (quantity == null || !Number.isFinite(quantity) || quantity <= 0) {
       throw new Error("Quantity is required for " + item.name + " before creating the purchase order.");
     }
 
