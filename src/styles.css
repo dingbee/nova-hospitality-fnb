@@ -1070,3 +1070,47 @@
 /* ---------- Colour-scheme hint (native controls, scrollbars) ---------- */
 [data-os-theme="dark"] { color-scheme: dark; }
 [data-os-theme="light"] { color-scheme: light; }
+
+/* ============================================================
+   LEXIBITE OS — ENTERPRISE TYPOGRAPHY STANDARD
+   Scoped to the authenticated operating system. The public
+   marketing site and LexiBite brand assets remain unchanged.
+   Presentation only: no layout, workflow, or data changes.
+   ============================================================ */
+.nova-os {
+  --font-display: var(--font-sans);
+  --font-serif: var(--font-sans);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  font-weight: 400;
+}
+
+.nova-os :is(h1, h2, h3, h4, h5, h6) {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+}
+
+.nova-os .font-display,
+.nova-os :is(.type-display, .type-hero, .type-h1, .type-h2, .type-h3) {
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+
+.nova-os .font-light {
+  font-weight: 400;
+}
+
+.nova-os .tabular-nums {
+  font-variant-numeric: lining-nums tabular-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+
+.nova-os :is(input, textarea, select, button) {
+  font-family: var(--font-sans);
+}
+
+.nova-os .text-muted-foreground {
+  color: var(--os-ink-3);
+}

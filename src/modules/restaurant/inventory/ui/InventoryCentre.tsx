@@ -49,6 +49,7 @@ import {
 } from "../control.functions";
 import { listRestaurantUnitsFn, upsertRestaurantInventoryItemFn } from "../inventory.functions";
 import { INVENTORY_ITEM_TYPES } from "../../core/contracts";
+import { formatDateTime, formatMoney, formatQuantity } from "@/modules/restaurant/ui/presentation";
 import {
   executeApprovedInventoryAgentActionsFn,
   runInventoryAgentFn,
@@ -68,9 +69,8 @@ const TABS = [
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
-const money = (n: number, currency = "TZS") =>
-  `${currency} ${Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-const qty = (n: number) => Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 3 });
+const money = formatMoney;
+const qty = formatQuantity;
 
 function Row({ children }: { children: React.ReactNode }) {
   return (
@@ -511,6 +511,7 @@ function NewItemForm({ tenantId, onCreated }: { tenantId: string; onCreated: () 
 function PositionsTab({ tenantId }: { tenantId: string }) {
   const fn = useServerFn(listStockPositionsFn);
   const locFn = useServerFn(listInventoryLocationsFn);
+  const unitsFn = useServerFn(listRestaurantUnitsFn);
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [locationId, setLocationId] = useState("");
@@ -521,6 +522,15 @@ function PositionsTab({ tenantId }: { tenantId: string }) {
     queryKey: ["restaurant.inventory.locations", tenantId],
     queryFn: () => locFn({ data: { tenantId, storageOnly: false, includeInactive: true } }),
   });
+  const units = useQuery({
+    queryKey: ["restaurant.inventory.units", tenantId],
+    queryFn: () => unitsFn({ data: { tenantId } }),
+    staleTime: 5 * 60_000,
+  });
+  const unitNames = useMemo(
+    () => new Map(((units.data ?? []) as any[]).map((unit) => [unit.id, unit.name || unit.code])),
+    [units.data],
+  );
   const q = useQuery({
     queryKey: ["restaurant.inventory.positions", tenantId, locationId, lowOnly, search],
     queryFn: () =>
@@ -594,9 +604,11 @@ function PositionsTab({ tenantId }: { tenantId: string }) {
                       {p.name}
                     </span>
                     {p.sku && <span className="ml-2 text-xs text-muted-foreground">{p.sku}</span>}
-                    <span className="block text-xs text-muted-foreground">
-                      on hand {qty(p.onHand)} · reserved {qty(p.reserved)} · available{" "}
-                      {qty(p.available)} · incoming {qty(p.incoming)}
+                    <span className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+                      <span><span className="text-muted-foreground">On hand</span><span className="ml-1 font-medium tabular-nums">{qty(p.onHand)}{p.unitId && unitNames.get(p.unitId) ? " " + unitNames.get(p.unitId) : ""}</span></span>
+                      <span><span className="text-muted-foreground">Reserved</span><span className="ml-1 font-medium tabular-nums">{qty(p.reserved)}</span></span>
+                      <span><span className="text-muted-foreground">Available</span><span className="ml-1 font-medium tabular-nums">{qty(p.available)}</span></span>
+                      <span><span className="text-muted-foreground">Incoming</span><span className="ml-1 font-medium tabular-nums">{qty(p.incoming)}</span></span>
                     </span>
                   </span>
                   <span className="flex items-center gap-2 text-xs">
@@ -621,9 +633,10 @@ function PositionsTab({ tenantId }: { tenantId: string }) {
                           className="flex justify-between gap-3"
                         >
                           <span>{l.locationName}</span>
-                          <span className="text-muted-foreground">
-                            on hand {qty(l.onHand)} · reserved {qty(l.reserved)} · available{" "}
-                            {qty(l.available)}
+                          <span className="text-right text-muted-foreground">
+                            On hand {qty(l.onHand)}{p.unitId && unitNames.get(p.unitId) ? " " + unitNames.get(p.unitId) : ""}
+                            <br />
+                            Reserved {qty(l.reserved)} · Available {qty(l.available)}
                           </span>
                         </li>
                       ))
@@ -837,7 +850,7 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
                       <span className="block text-xs text-muted-foreground">
                         {t.source_location_name ?? "Source"} →{" "}
                         {t.destination_location_name ?? "Destination"} ·{" "}
-                        {new Date(t.created_at).toLocaleString()}
+                        {formatDateTime(t.created_at)}
                       </span>
                     </span>
                     <StatusChip tone={b.tone}>{b.label}</StatusChip>
@@ -1135,7 +1148,7 @@ function WasteTab({ tenantId }: { tenantId: string }) {
                   </span>
                   <span className="block text-xs text-muted-foreground">
                     {qty(r.quantity)} units
-                    {r.needed_at ? ` · needed ${new Date(r.needed_at).toLocaleDateString()}` : ""}
+                    {r.needed_at ? ` · needed ${formatDateTime(r.needed_at)}` : ""}
                   </span>
                 </span>
                 <StatusChip tone="info">{r.status}</StatusChip>
@@ -1338,7 +1351,7 @@ function StocktakeTab({ tenantId }: { tenantId: string }) {
                     <span className="min-w-0">
                       <span className="font-medium">{s.stocktake_number}</span>
                       <span className="block text-xs text-muted-foreground">
-                        {s.location_name} · {new Date(s.created_at).toLocaleString()}
+                        {s.location_name} · {formatDateTime(s.created_at)}
                         {Number(s.variance_value ?? 0) > 0
                           ? ` · variance ${money(Number(s.variance_value))}`
                           : ""}

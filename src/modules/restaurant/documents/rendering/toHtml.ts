@@ -64,8 +64,8 @@ export const DOCUMENT_PRINT_CSS = `
   header.doc-head h1 { font-size:18px; margin:0 0 4px; letter-spacing:.04em; text-transform:uppercase; }
   .muted { color:#555; }
   .cols { display:flex; gap:24px; margin-top:14px; }
-  .cols > div { flex:1; }
-  .kv { display:flex; justify-content:space-between; gap:12px; padding:2px 0; border-bottom:1px dotted #ddd; }
+  .cols > div { flex:1; min-width:0; }
+  .kv { display:flex; justify-content:space-between; gap:12px; padding:2px 0; }
   .kv .k { color:#555; }
   .kv.em .v { font-weight:700; }
   h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; margin:16px 0 6px; }
@@ -83,6 +83,28 @@ export const DOCUMENT_PRINT_CSS = `
   .chip { display:inline-block; border:1px solid #111; border-radius:3px; padding:1px 6px; font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
   .block { break-inside: avoid; }
   .receipt .doc { max-width:72mm; }
+
+  /* Screen-only fit: retain the A4 print geometry while making the preview
+     readable inside narrow mobile iframes. */
+  @media screen and (max-width: 640px) {
+    body { font-size: 10px; }
+    .doc { width:100%; max-width:100%; padding:10px; }
+    header.doc-head { align-items:flex-start; flex-wrap:wrap; gap:10px; }
+    header.doc-head > div:first-child { flex:1 1 58%; min-width:0; }
+    header.doc-head > div:last-child { flex:0 1 38%; min-width:0; overflow-wrap:anywhere; }
+    header.doc-head h1 { font-size:15px; overflow-wrap:anywhere; }
+    .cols { flex-wrap:wrap; gap:8px; }
+    .cols > div { flex:1 1 100%; }
+    .kv { gap:8px; overflow-wrap:anywhere; }
+    .kv > span { min-width:0; overflow-wrap:anywhere; }
+    table { table-layout:fixed; }
+    th, td { padding:4px 3px; font-size:9px; overflow-wrap:anywhere; word-break:break-word; }
+    th { letter-spacing:0; }
+    .totals { width:100%; }
+    .sign { flex-wrap:wrap; gap:16px; }
+    .sign div { flex:1 1 40%; min-width:0; }
+    .receipt .doc { max-width:100%; }
+  }
 `;
 
 export function documentToHtml(doc: RestaurantDocument): string {
@@ -126,6 +148,7 @@ export function documentToHtml(doc: RestaurantDocument): string {
     : "";
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${esc(doc.number ?? doc.title)}</title>
 <style>${DOCUMENT_PRINT_CSS}</style></head>
 <body class="${doc.type === "customer_receipt" ? "receipt" : ""}">

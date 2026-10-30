@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, LogOut, ShieldAlert } from "lucide-react";
@@ -14,12 +14,35 @@ import { NavPanel } from "./NavPanel";
 import { MobileNavDrawer } from "./MobileNavDrawer";
 import { Breadcrumb } from "./Breadcrumb";
 
+const DESKTOP_NAV_SCROLL_KEY = "nova-navigation-scroll-desktop";
+
 export function NovaShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: principal, error: principalError } = usePrincipal();
   const { data: workspace } = useRestaurantWorkspace();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  const desktopNavRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = desktopNavRef.current;
+    if (!element) return;
+    try {
+      const saved = Number(window.localStorage.getItem(DESKTOP_NAV_SCROLL_KEY) ?? 0);
+      if (Number.isFinite(saved) && saved > 0) element.scrollTop = saved;
+    } catch {
+      // Navigation remains usable when browser storage is unavailable.
+    }
+  }, []);
+  const saveDesktopNavScroll = () => {
+    const element = desktopNavRef.current;
+    if (!element) return;
+    try {
+      window.localStorage.setItem(DESKTOP_NAV_SCROLL_KEY, String(element.scrollTop));
+    } catch {
+      // Ignore storage restrictions; scrolling remains unaffected.
+    }
+  };
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -127,11 +150,15 @@ export function NovaShell({ children }: { children: ReactNode }) {
       <div className="flex">
         <aside
           aria-label="Primary navigation"
-          className={`sticky top-16 hidden h-[calc(100vh-4rem)] shrink-0 flex-col overflow-y-auto border-r border-[color:var(--nova-line)] bg-[color:var(--nova-surface)] transition-[width] duration-150 lg:flex ${
+          className={`sticky top-16 hidden h-[calc(100vh-4rem)] shrink-0 flex-col border-r border-[color:var(--nova-line)] bg-[color:var(--nova-surface)] transition-[width] duration-150 lg:flex ${
             railCollapsed ? "w-16" : "w-64"
           }`}
         >
-          <div className="flex-1 overflow-y-auto">
+          <div
+            ref={desktopNavRef}
+            onScroll={saveDesktopNavScroll}
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+          >
             <NavPanel
               groups={groups}
               collapsed={collapsed}
@@ -173,7 +200,7 @@ export function NovaShell({ children }: { children: ReactNode }) {
             </div>
           )}
           {/* min-h-0 lets a workspace page (e.g. POS, KDS) opt into filling exactly
-              the remaining height with its own `h-full` root and manage its own
+              the remaining height with its own h-full root and manage its own
               internal scroll regions — main itself is the one scroll container for
               every other page, unchanged. */}
           <div className="mx-auto min-h-0 w-full max-w-[1600px] flex-1 space-y-6">{children}</div>

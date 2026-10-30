@@ -229,7 +229,7 @@ export function RequisitionsWorkspace({ initialStatus }: { initialStatus?: strin
         }
       />
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap justify-center gap-2 sm:justify-start">
         <nav className="flex flex-wrap gap-1 rounded-lg border bg-card p-1 text-sm">
           {STATUS_FILTERS.map((s) => (
             <button
