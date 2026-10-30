@@ -45,7 +45,7 @@ function AuthPage() {
   };
 
   return (
-    <main className="min-h-screen bg-[#f7f8f5] text-[#172019]">
+    <main className="min-h-screen bg-[#f7f8f5] font-sans text-[#172019] [hyphens:none] [overflow-wrap:normal] [word-break:normal]">
       <div className="mx-auto grid min-h-screen w-full max-w-[1280px] lg:grid-cols-[1.05fr_0.95fr]">
         <section className="relative hidden overflow-hidden bg-[#173d22] px-12 py-12 text-white lg:flex lg:flex-col lg:justify-between xl:px-16">
           <div className="absolute -right-32 -top-32 h-80 w-80 rounded-full border-[56px] border-white/5" />
@@ -63,7 +63,7 @@ function AuthPage() {
             <p className="mb-5 text-xs font-semibold uppercase tracking-[0.22em] text-[#d7a653]">
               {PRODUCT.tagline}
             </p>
-            <h1 className="max-w-lg text-4xl font-semibold leading-[1.08] tracking-[-0.03em] xl:text-5xl">
+            <h1 className="max-w-lg font-sans text-4xl font-semibold leading-[1.08] tracking-[-0.03em] [hyphens:none] [overflow-wrap:normal] [word-break:normal] xl:text-5xl">
               The operating system for modern restaurant & bar operations.
             </h1>
             <p className="mt-6 max-w-md text-sm leading-7 text-white/70">
@@ -93,7 +93,7 @@ function AuthPage() {
 
             <div className="mb-8">
               <p className="text-sm font-medium text-[#55705a]">Staff portal</p>
-              <h2 className="mt-2 text-3xl font-semibold tracking-[-0.025em] text-[#172019]">
+              <h2 className="mt-2 font-sans text-3xl font-semibold tracking-[-0.025em] text-[#172019] [hyphens:none] [overflow-wrap:normal] [word-break:normal]">
                 Welcome back
               </h2>
               <p className="mt-2 text-sm leading-6 text-[#667069]">
