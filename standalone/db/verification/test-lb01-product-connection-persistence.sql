@@ -83,7 +83,7 @@ BEGIN
    RAISE EXCEPTION 'Cross-property request should have been denied';
  EXCEPTION WHEN insufficient_privilege THEN NULL;
  END;
-END $$;
+END $lb01property$;
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
