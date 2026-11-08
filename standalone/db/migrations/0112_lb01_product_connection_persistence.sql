@@ -27,8 +27,6 @@ CREATE TABLE IF NOT EXISTS public.staynas_product_connections (
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT staynas_product_connections_tenant_property_unique UNIQUE (integration_tenant_id, integration_property_id),
   CONSTRAINT staynas_product_connections_canonical_property_unique UNIQUE (integration_property_id),
-  CONSTRAINT staynas_product_connections_local_property_unique UNIQUE (local_property_id),
-  CONSTRAINT staynas_product_connections_remote_property_unique UNIQUE (remote_tenant_id, remote_property_id),
   CONSTRAINT staynas_product_connections_approval_consistency CHECK (
     (local_approved_at IS NULL AND local_approved_by IS NULL)
     OR (local_approved_at IS NOT NULL AND local_approved_by IS NOT NULL)
@@ -45,6 +43,10 @@ CREATE INDEX IF NOT EXISTS staynas_product_connections_tenant_idx
   ON public.staynas_product_connections(local_tenant_id, status);
 CREATE INDEX IF NOT EXISTS staynas_product_connections_remote_idx
   ON public.staynas_product_connections(remote_tenant_id, remote_property_id);
+CREATE UNIQUE INDEX IF NOT EXISTS staynas_product_connections_local_current_uidx
+  ON public.staynas_product_connections(local_property_id) WHERE status <> 'revoked';
+CREATE UNIQUE INDEX IF NOT EXISTS staynas_product_connections_remote_current_uidx
+  ON public.staynas_product_connections(remote_tenant_id, remote_property_id) WHERE status <> 'revoked';
 
 CREATE TABLE IF NOT EXISTS public.staynas_product_connection_audit (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
