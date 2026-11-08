@@ -124,7 +124,7 @@ jobs:
             src/modules/restaurant/bar/ticket-items.test.ts \
             src/modules/restaurant/sales/service-recovery.contracts.test.ts \
             src/modules/restaurant/ui/useRestaurantWorkspace.test.ts \
-            src/modules/restaurant/inventory/locations.server.test.ts
+            src/modules/restaurant/inventory/locations.server.test.ts \\\n            src/modules/api-platform/lb01.contracts.test.ts
 
       - name: Full test suite (repository baseline)
         id: full_tests
