@@ -178,14 +178,13 @@ RESET ROLE;
 SET LOCAL ROLE service_role;
 SELECT set_config('request.test_role','service_role',true);
 DO $lb01rotation$
-DECLARE _old_status text; _new_status text; _audit_count integer; _actor uuid;
+DECLARE _old_status text; _new_status text; _audit_count integer;
 BEGIN
  SELECT status INTO _old_status FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef01';
  SELECT status INTO _new_status FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02';
  SELECT count(*) INTO _audit_count FROM public.product_service_credential_audit WHERE action IN ('issued','rotated');
- _actor := auth.uid();
  IF _old_status IS DISTINCT FROM 'revoked' OR _new_status IS DISTINCT FROM 'active' OR _audit_count < 2 THEN
-   RAISE EXCEPTION 'Credential rotation assertion: old=%, new=%, audit=%, auth_uid=%', _old_status, _new_status, _audit_count, _actor;
+   RAISE EXCEPTION 'Credential rotation assertion: old=%, new=%, audit=%', _old_status, _new_status, _audit_count;
  END IF;
 END $lb01rotation$;
 DO $lb01nonce$
