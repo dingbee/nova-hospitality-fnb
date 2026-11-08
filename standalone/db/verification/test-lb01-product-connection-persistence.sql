@@ -179,10 +179,10 @@ SET LOCAL ROLE service_role;
 SELECT set_config('request.test_role','service_role',true);
 DO $lb01rotation$
 BEGIN
- IF (SELECT status FROM public.product_service_credentials WHERE id=(SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef01')) <> 'revoked' THEN
+ IF (SELECT status FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef01') IS DISTINCT FROM 'revoked' THEN
    RAISE EXCEPTION 'Credential rotation must revoke the previous credential';
  END IF;
- IF (SELECT status FROM public.product_service_credentials WHERE id=(SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02')) <> 'active' THEN
+ IF (SELECT status FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02') IS DISTINCT FROM 'active' THEN
    RAISE EXCEPTION 'Credential rotation must leave exactly one active credential';
  END IF;
  IF (SELECT count(*) FROM public.product_service_credential_audit WHERE action IN ('issued','rotated')) < 2 THEN
