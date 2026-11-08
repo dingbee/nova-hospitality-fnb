@@ -37,6 +37,7 @@ INSERT INTO public.restaurant_members(tenant_id,user_id,property_id,role) VALUES
  ('10000000-0000-4000-8000-000000000002','cccccccc-cccc-4ccc-8ccc-ccccccccccc3','20000000-0000-4000-8000-000000000003','owner');
 
 \i standalone/db/migrations/0112_lb01_product_connection_persistence.sql
+\i standalone/db/migrations/0113_lb01_service_auth_nonce_ledger.sql
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.test_user_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',true);
