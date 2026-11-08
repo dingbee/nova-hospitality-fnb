@@ -97,7 +97,7 @@ SELECT public.lexibite_set_staynas_connection_state(
 SELECT public.lexibite_set_staynas_connection_state(
  (SELECT id FROM public.staynas_product_connections WHERE correlation_id='lb01-test-connection-b'),'revoke','test revocation'
 );
-DO $$
+DO $lb01revocation$
 BEGIN
  IF (SELECT status FROM public.staynas_product_connections WHERE correlation_id='lb01-test-connection-b') <> 'revoked' THEN
    RAISE EXCEPTION 'Connection revocation did not persist';
@@ -108,6 +108,7 @@ BEGIN
  EXCEPTION WHEN raise_exception THEN
    IF SQLERRM = 'Revoked connection must not be re-approved' THEN RAISE; END IF;
  END;
+END $lb01revocation$;
 -- A single integration tenant may map multiple properties.
 SELECT set_config('request.test_user_id','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',true);
 SELECT public.lexibite_request_staynas_connection(
