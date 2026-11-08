@@ -91,7 +91,7 @@ Execution order: inspect → design → implement → test → verify → report
 
 ## LB-01.02 — durable connection lifecycle
 
-The LB-01 branch now adds a product-local connection registry and append-only audit history in each product database. The registries share canonical integration tenant/property UUIDs while retaining each product's own native tenant/property identifiers. One integration tenant can own multiple property mappings; each native property can have only one active historical mapping row in this initial version.
+The LB-01 branch now adds a product-local connection registry and append-only audit history in each product database. The registries share canonical integration tenant/property UUIDs while retaining each product's own native tenant/property identifiers. One integration tenant can own multiple property mappings; each native property can have only one non-revoked mapping at a time; revoked history remains immutable and a fresh authorization can create a new mapping with new canonical identifiers.
 
 The lifecycle is pending → active, with suspension/resumption and terminal revocation. A mapping cannot become active until the local administrator approval and remote service-confirmed approval timestamps both exist. Human request, approval, suspension, resumption and revocation actions are written to the local audit ledger. Remote approval is accepted only through a service-role-only database function; the future HTTP adapter must verify the signed service request and bind its authenticated credential to the expected remote tenant/property before invoking it.
 
