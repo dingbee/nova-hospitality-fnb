@@ -106,7 +106,7 @@ Both products now implement the same versioned request-signing canonicalization 
 
 Verification rejects malformed signatures, malformed nonces, invalid secrets and timestamps outside a five-minute clock-skew window. StayNas uses Web Crypto; LexiBite uses Node crypto. The protocol canonicalization and test vectors are aligned across both repositories. Unit tests cover valid signatures, body/method/path tampering, invalid secrets, malformed values and stale/future timestamps.
 
-**Security boundary:** signature verification by itself does not prevent replay. Every receiving adapter MUST atomically claim `(credential_id, nonce)` in a durable nonce ledger with a unique constraint, before any approval RPC or business operation. A repeated valid signature must be rejected at that ledger. The helpers intentionally do not claim to implement this persistence gate.
+**Security boundary:** signature verification by itself does not prevent replay. LB-01.03B now supplies the durable unique nonce ledger and a service-role-only atomic claim RPC. The HTTP receiver must call the claim RPC after HMAC verification and before any approval RPC or business operation.
 
 ### Remaining LB-01.03 acceptance gates
 
@@ -117,7 +117,7 @@ Verification rejects malformed signatures, malformed nonces, invalid secrets and
 - End-to-end tests across both product adapters, including wrong tenant/property, revoked/expired credentials, replay, clock skew, signature tampering and idempotent retry.
 - Security review and current-head CI acceptance.
 
-No production migration, live credential, database mutation, tenant-data change, deployment or PR merge is included in LB-01.03A. The PRs remain draft pending full LB-01.03 acceptance.
+No production migration, live credential, tenant-data change, deployment or PR merge is included in LB-01.03A/B. The PRs remain draft pending full LB-01.03 acceptance.
 
 
 ## LB-01.03B — durable service credentials and replay ledger
@@ -126,7 +126,7 @@ Each product now has a server-only credential registry bound by foreign key to i
 
 A separate nonce ledger has a unique constraint on (credential ID, nonce). The service-role-only claim function atomically inserts a nonce and returns false for replay, expired credentials, unknown credentials, malformed nonce values, invalid expiry windows or a connection that is not active. A bounded cleanup RPC removes expired nonce rows using `FOR UPDATE SKIP LOCKED`. Both tables have RLS enabled and no anon/authenticated table privileges; only the backend service role can access them.
 
-Isolated PostgreSQL verification now exercises first-use acceptance, duplicate replay rejection, expired/unknown credential rejection, active-mapping enforcement and denial of authenticated-user reads. No live credential is issued and no production migration is applied.
+Server-side issue/rotation/revocation RPCs enforce local property-administrator authority, one active credential per connection, 32-byte hash-only storage, expiry limits and append-only credential audit evidence. Server-only application helpers generate 256-bit bearer secrets, disclose each secret once, hash the decoded secret bytes, verify incoming credentials in constant time, validate the HMAC request, derive scope from the credential-bound connection and atomically claim the nonce before returning an authenticated connection context.\n\nIsolated PostgreSQL verification exercises authorized issue, rotation, revocation, audit evidence, first-use nonce acceptance, duplicate replay rejection, revoked/expired/unknown credential rejection, active-mapping enforcement, cross-tenant denial and denial of authenticated-user reads. No live credential is issued and no production migration is applied.
 
 ### Remaining LB-01.03 acceptance gates
 
