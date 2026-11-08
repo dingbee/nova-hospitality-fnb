@@ -109,7 +109,7 @@ export async function authenticateLb01ServiceRequest(
   });
   if (!valid) throw new Error("Unauthorized LB-01 service request.");
 
-  const nonceExpiry = new Date((Number(timestamp) + 300) * 1000).toISOString();
+  const nonceExpiry = new Date(Math.min(Number(timestamp) + 300, Math.floor(Date.now() / 1000) + 300) * 1000).toISOString();
   const { data: claimed, error: nonceError } = await supabaseAdmin.rpc("lb01_claim_service_nonce", {
     _credential_id: credential.id,
     _nonce: nonce,
