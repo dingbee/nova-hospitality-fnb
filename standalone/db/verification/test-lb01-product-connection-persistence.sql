@@ -223,7 +223,7 @@ RESET ROLE;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.test_user_id','cccccccc-cccc-4ccc-8ccc-ccccccccccc3',true);
-SELECT public.lb01_revoke_product_service_credential((SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02'),'test revocation');
+SELECT public.lb01_revoke_product_service_credential(:'active_credential_id','test revocation');
 RESET ROLE;
 
 SET LOCAL ROLE service_role;
