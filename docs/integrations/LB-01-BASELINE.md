@@ -118,3 +118,19 @@ Verification rejects malformed signatures, malformed nonces, invalid secrets and
 - Security review and current-head CI acceptance.
 
 No production migration, live credential, database mutation, tenant-data change, deployment or PR merge is included in LB-01.03A. The PRs remain draft pending full LB-01.03 acceptance.
+
+
+## LB-01.03B — durable service credentials and replay ledger
+
+Each product now has a server-only credential registry bound by foreign key to its local product-connection record. Only a 24-hex lookup prefix and 32-byte SHA-256 digest are stored; the raw bearer secret is never stored. Credential rows carry active/revoked state, expiry, creator and revocation evidence, with at most one active credential per connection.
+
+A separate nonce ledger has a unique constraint on (credential ID, nonce). The service-role-only claim function atomically inserts a nonce and returns false for replay, expired credentials, unknown credentials, malformed nonce values, invalid expiry windows or a connection that is not active. A bounded cleanup RPC removes expired nonce rows using `FOR UPDATE SKIP LOCKED`. Both tables have RLS enabled and no anon/authenticated table privileges; only the backend service role can access them.
+
+Isolated PostgreSQL verification now exercises first-use acceptance, duplicate replay rejection, expired/unknown credential rejection, active-mapping enforcement and denial of authenticated-user reads. No live credential is issued and no production migration is applied.
+
+### Remaining LB-01.03 acceptance gates
+
+- Server-side credential issuance, one-time disclosure, rotation and revocation application workflow, bound to the human-approved local connection.
+- HTTP sender/receiver adapters that validate signatures against the stored credential hash, atomically claim nonces, derive tenant/property scope from the credential-bound connection and invoke only the service-role approval RPC.
+- End-to-end tests across both products, including wrong tenant/property, revoked/expired credentials, replay, clock skew, signature tampering and idempotent retry.
+- Security review and current-head CI acceptance.
