@@ -142,4 +142,62 @@ BEGIN
  END;
 END $lb01test$;
 RESET ROLE;
+-- LB-01.03B: server-only credential storage and atomic nonce replay prevention.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.test_user_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',true);
+SELECT set_config('request.test_role','authenticated',true);
+SELECT public.lexibite_request_staynas_connection(
+ '30000000-0000-4000-8000-000000000009','40000000-0000-4000-8000-000000000009',
+ '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',
+ '50000000-0000-4000-8000-000000000009','60000000-0000-4000-8000-000000000009','lb01-test-auth-active'
+) AS service_connection_id \gset
+SELECT public.lexibite_approve_staynas_connection(:'service_connection_id');
+RESET ROLE;
+
+SET LOCAL ROLE service_role;
+SELECT set_config('request.test_role','service_role',true);
+SELECT public.lexibite_record_staynas_approval(
+ '30000000-0000-4000-8000-000000000009','40000000-0000-4000-8000-000000000009',
+ '50000000-0000-4000-8000-000000000009','60000000-0000-4000-8000-000000000009','lb01-test-auth-active'
+);
+INSERT INTO public.product_service_credentials(
+ id, connection_id, credential_prefix, credential_hash, expires_at, created_by
+) VALUES (
+ '70000000-0000-4000-8000-000000000001',
+ (SELECT id FROM public.staynas_product_connections WHERE correlation_id='lb01-test-auth-active'),
+ 'abcdef0123456789abcdef01', decode(repeat('ab',32),'hex'), now() + interval '1 day',
+ 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+);
+DO $lb01nonce$
+DECLARE _first boolean; _replay boolean; _expired boolean; _unknown boolean;
+BEGIN
+ _first := public.lb01_claim_service_nonce('70000000-0000-4000-8000-000000000001','0123456789abcdef0123456789abcdef',now()+interval '5 minutes');
+ _replay := public.lb01_claim_service_nonce('70000000-0000-4000-8000-000000000001','0123456789abcdef0123456789abcdef',now()+interval '5 minutes');
+ _expired := public.lb01_claim_service_nonce('70000000-0000-4000-8000-000000000001','fedcba9876543210fedcba9876543210',now()-interval '1 second');
+ _unknown := public.lb01_claim_service_nonce('70000000-0000-4000-8000-000000000099','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',now()+interval '5 minutes');
+ IF NOT _first OR _replay OR _expired OR _unknown THEN
+   RAISE EXCEPTION 'Nonce ledger did not enforce first-use, replay, expiry and credential binding';
+ END IF;
+ IF (SELECT count(*) FROM public.product_service_nonces WHERE credential_id='70000000-0000-4000-8000-000000000001') <> 1 THEN
+   RAISE EXCEPTION 'Expected exactly one accepted nonce';
+ END IF;
+END $lb01nonce$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+DO $lb01credentialisolation$
+BEGIN
+ BEGIN
+   PERFORM 1 FROM public.product_service_credentials;
+   RAISE EXCEPTION 'Authenticated users must not read service credentials';
+ EXCEPTION WHEN insufficient_privilege THEN NULL;
+ END;
+ BEGIN
+   PERFORM 1 FROM public.product_service_nonces;
+   RAISE EXCEPTION 'Authenticated users must not read service nonces';
+ EXCEPTION WHEN insufficient_privilege THEN NULL;
+ END;
+END $lb01credentialisolation$;
+RESET ROLE;
+
 ROLLBACK;
