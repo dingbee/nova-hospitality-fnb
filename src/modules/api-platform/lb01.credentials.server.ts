@@ -78,7 +78,9 @@ export async function authenticateLb01ServiceRequest(
     throw new Error("Unauthorized LB-01 service request.");
   }
 
-  const expected = createHash("sha256").update(parsed.secret, "utf8").digest();
+  const secretBytes = Buffer.from(parsed.secret, "base64url");
+  if (secretBytes.length !== 32) throw new Error("Unauthorized LB-01 service request.");
+  const expected = createHash("sha256").update(secretBytes).digest();
   const stored = storedHashBytes(credential.credential_hash);
   if (!stored || stored.length !== expected.length || !timingSafeEqual(stored, expected)) {
     throw new Error("Unauthorized LB-01 service request.");
