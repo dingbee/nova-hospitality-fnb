@@ -124,7 +124,7 @@ SELECT public.lexibite_request_staynas_connection(
 );
 -- A different tenant cannot enumerate or administer this property's mapping.
 SELECT set_config('request.test_user_id','cccccccc-cccc-4ccc-8ccc-ccccccccccc3',true);
-DO $
+DO $lb01test$
 BEGIN
  IF (SELECT count(*) FROM public.staynas_product_connections) <> 0 THEN
    RAISE EXCEPTION 'Other tenant must not read connection';
@@ -138,6 +138,6 @@ BEGIN
    RAISE EXCEPTION 'Cross-tenant request should have been denied';
  EXCEPTION WHEN insufficient_privilege THEN NULL;
  END;
-END $;
+END $lb01test$;
 RESET ROLE;
 ROLLBACK;
