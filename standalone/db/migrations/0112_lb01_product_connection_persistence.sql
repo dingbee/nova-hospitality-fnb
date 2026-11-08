@@ -109,7 +109,7 @@ BEGIN
   VALUES (_connection_id, 'requested', _uid, 'human');
   RETURN _connection_id;
 END;
-$$;
+$lb01$;
 
 CREATE OR REPLACE FUNCTION public.lexibite_approve_staynas_connection(_connection_id uuid)
 RETURNS text
@@ -135,7 +135,7 @@ BEGIN
   VALUES (_connection_id, 'locally_approved', _uid, 'human');
   RETURN _row.status;
 END;
-$$;
+$lb01$;
 
 -- Called only by the authenticated StayNas service adapter after validating
 -- the signed request and binding it to the canonical IDs in the request.
@@ -165,7 +165,7 @@ BEGIN
   VALUES (_row.id, 'remotely_approved', 'remote_service');
   RETURN _row.status;
 END;
-$$;
+$lb01$;
 
 CREATE OR REPLACE FUNCTION public.lexibite_set_staynas_connection_state(
   _connection_id uuid, _action text, _reason text DEFAULT NULL
@@ -198,7 +198,7 @@ BEGIN
   SELECT status INTO _row.status FROM public.staynas_product_connections WHERE id=_connection_id;
   RETURN _row.status;
 END;
-$$;
+$lb01$;
 
 REVOKE ALL ON FUNCTION public.lexibite_request_staynas_connection(uuid,uuid,uuid,uuid,uuid,uuid,text) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.lexibite_approve_staynas_connection(uuid) FROM PUBLIC, anon;
