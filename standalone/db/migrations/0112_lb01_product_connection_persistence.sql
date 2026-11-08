@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS public.staynas_product_connections (
   correlation_id text NOT NULL CHECK (length(btrim(correlation_id)) BETWEEN 8 AND 128),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT staynas_product_connections_canonical_tenant_unique UNIQUE (integration_tenant_id),
+  CONSTRAINT staynas_product_connections_tenant_property_unique UNIQUE (integration_tenant_id, integration_property_id),
   CONSTRAINT staynas_product_connections_canonical_property_unique UNIQUE (integration_property_id),
   CONSTRAINT staynas_product_connections_local_property_unique UNIQUE (local_property_id),
   CONSTRAINT staynas_product_connections_remote_property_unique UNIQUE (remote_tenant_id, remote_property_id),
