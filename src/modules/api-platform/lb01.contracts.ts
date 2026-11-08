@@ -2,7 +2,7 @@
  * LB-01 cross-product integration contracts.
  *
  * Pure schemas only: no network, credentials, database access, or event publishing.
- * Keep byte-for-byte compatible with StayNas's matching contract module.
+ * Keep byte-for-byte compatible with the other product's matching contract module.
  */
 import { z } from "zod";
 
@@ -12,7 +12,8 @@ export const integrationProductSchema = z.enum(INTEGRATION_PRODUCTS);
 export type IntegrationProduct = z.infer<typeof integrationProductSchema>;
 
 const uuid = z.string().uuid();
-const isoUtc = z.string().datetime({ offset: true });
+// Z-only timestamps: cross-product event times are always UTC.
+const isoUtc = z.string().datetime();
 
 export const integrationTenantIdentitySchema = z.object({
   product: integrationProductSchema,
