@@ -81,7 +81,7 @@ CREATE OR REPLACE FUNCTION public.lexibite_request_staynas_connection(
   _remote_tenant_id uuid, _remote_property_id uuid, _correlation_id text
 ) RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
-AS $lb01$$
+AS $lb01$
 DECLARE _uid uuid := auth.uid(); _connection_id uuid;
 BEGIN
   IF _uid IS NULL THEN RAISE EXCEPTION 'Authentication required' USING ERRCODE = '42501'; END IF;
@@ -114,7 +114,7 @@ $$;
 CREATE OR REPLACE FUNCTION public.lexibite_approve_staynas_connection(_connection_id uuid)
 RETURNS text
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
-AS $lb01$$
+AS $lb01$
 DECLARE _uid uuid := auth.uid(); _row public.staynas_product_connections%ROWTYPE;
 BEGIN
   IF _uid IS NULL THEN RAISE EXCEPTION 'Authentication required' USING ERRCODE = '42501'; END IF;
@@ -144,7 +144,7 @@ CREATE OR REPLACE FUNCTION public.lexibite_record_staynas_approval(
   _remote_tenant_id uuid, _remote_property_id uuid, _correlation_id text
 ) RETURNS text
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
-AS $lb01$$
+AS $lb01$
 DECLARE _row public.staynas_product_connections%ROWTYPE;
 BEGIN
   IF coalesce(auth.role(), '') <> 'service_role' THEN
@@ -171,7 +171,7 @@ CREATE OR REPLACE FUNCTION public.lexibite_set_staynas_connection_state(
   _connection_id uuid, _action text, _reason text DEFAULT NULL
 ) RETURNS text
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
-AS $lb01$$
+AS $lb01$
 DECLARE _uid uuid := auth.uid(); _row public.staynas_product_connections%ROWTYPE; _audit_action text;
 BEGIN
   IF _uid IS NULL THEN RAISE EXCEPTION 'Authentication required' USING ERRCODE = '42501'; END IF;
