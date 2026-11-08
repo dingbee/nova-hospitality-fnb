@@ -57,7 +57,7 @@ SELECT public.lexibite_record_staynas_approval(
 );
 RESET ROLE;
 
-DO $$
+DO $lb01revocation$
 BEGIN
  IF (SELECT status FROM public.staynas_product_connections WHERE correlation_id='lb01-test-connection-b') <> 'active' THEN
    RAISE EXCEPTION 'Connection must activate only after both approvals';
