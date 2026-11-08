@@ -209,4 +209,3 @@ GRANT EXECUTE ON FUNCTION public.lexibite_approve_staynas_connection(uuid) TO au
 GRANT EXECUTE ON FUNCTION public.lexibite_record_staynas_approval(uuid,uuid,uuid,uuid,text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.lexibite_set_staynas_connection_state(uuid,text,text) TO authenticated;
 
-COMMIT;
