@@ -174,10 +174,10 @@ SELECT public.lb01_issue_product_service_credential(
 ) AS active_credential_id \gset
 DO $lb01rotation$
 BEGIN
- IF (SELECT status FROM public.product_service_credentials WHERE id=:'first_credential_id') <> 'revoked' THEN
+ IF (SELECT status FROM public.product_service_credentials WHERE id=(SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef01')) <> 'revoked' THEN
    RAISE EXCEPTION 'Credential rotation must revoke the previous credential';
  END IF;
- IF (SELECT status FROM public.product_service_credentials WHERE id=:'active_credential_id') <> 'active' THEN
+ IF (SELECT status FROM public.product_service_credentials WHERE id=(SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02')) <> 'active' THEN
    RAISE EXCEPTION 'Credential rotation must leave exactly one active credential';
  END IF;
  IF (SELECT count(*) FROM public.product_service_credential_audit WHERE action IN ('issued','rotated')) < 2 THEN
@@ -191,15 +191,15 @@ SELECT set_config('request.test_role','service_role',true);
 DO $lb01nonce$
 DECLARE _first boolean; _replay boolean; _old_credential boolean; _expired boolean; _unknown boolean;
 BEGIN
- _first := public.lb01_claim_service_nonce(:'active_credential_id','0123456789abcdef0123456789abcdef',now()+interval '5 minutes');
- _replay := public.lb01_claim_service_nonce(:'active_credential_id','0123456789abcdef0123456789abcdef',now()+interval '5 minutes');
- _old_credential := public.lb01_claim_service_nonce(:'first_credential_id','fedcba9876543210fedcba9876543210',now()+interval '5 minutes');
- _expired := public.lb01_claim_service_nonce(:'active_credential_id','fedcba9876543210fedcba9876543211',now()-interval '1 second');
+ _first := public.lb01_claim_service_nonce((SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02'),'0123456789abcdef0123456789abcdef',now()+interval '5 minutes');
+ _replay := public.lb01_claim_service_nonce((SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02'),'0123456789abcdef0123456789abcdef',now()+interval '5 minutes');
+ _old_credential := public.lb01_claim_service_nonce((SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef01'),'fedcba9876543210fedcba9876543210',now()+interval '5 minutes');
+ _expired := public.lb01_claim_service_nonce((SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02'),'fedcba9876543210fedcba9876543211',now()-interval '1 second');
  _unknown := public.lb01_claim_service_nonce('70000000-0000-4000-8000-000000000099','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',now()+interval '5 minutes');
  IF NOT _first OR _replay OR _old_credential OR _expired OR _unknown THEN
    RAISE EXCEPTION 'Nonce ledger did not enforce first-use, replay, revoked/expired and credential binding';
  END IF;
- IF (SELECT count(*) FROM public.product_service_nonces WHERE credential_id=:'active_credential_id') <> 1 THEN
+ IF (SELECT count(*) FROM public.product_service_nonces WHERE credential_id=(SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02')) <> 1 THEN
    RAISE EXCEPTION 'Expected exactly one accepted nonce';
  END IF;
 END $lb01nonce$;
@@ -222,14 +222,14 @@ RESET ROLE;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.test_user_id','cccccccc-cccc-4ccc-8ccc-ccccccccccc3',true);
-SELECT public.lb01_revoke_product_service_credential(:'active_credential_id','test revocation');
+SELECT public.lb01_revoke_product_service_credential((SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02'),'test revocation');
 RESET ROLE;
 
 SET LOCAL ROLE service_role;
 SELECT set_config('request.test_role','service_role',true);
 DO $lb01revoked$
 BEGIN
- IF public.lb01_claim_service_nonce(:'active_credential_id','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',now()+interval '5 minutes') THEN
+ IF public.lb01_claim_service_nonce((SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02'),'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',now()+interval '5 minutes') THEN
    RAISE EXCEPTION 'Revoked credential must not claim new nonces';
  END IF;
 END $lb01revoked$;
