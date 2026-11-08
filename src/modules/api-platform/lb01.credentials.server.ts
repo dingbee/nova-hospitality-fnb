@@ -32,8 +32,9 @@ export async function issueLb01ServiceCredential(
   expiresAt: string,
 ): Promise<{ credentialId: string; token: string; expiresAt: string }> {
   const prefix = randomBytes(12).toString("hex");
-  const secret = randomBytes(32).toString("base64url");
-  const digest = createHash("sha256").update(secret, "utf8").digest("hex");
+  const secretBytes = randomBytes(32);
+  const secret = secretBytes.toString("base64url");
+  const digest = createHash("sha256").update(secretBytes).digest("hex");
   const { data, error } = await callerClient.rpc("lb01_issue_product_service_credential", {
     _connection_id: connectionId,
     _prefix: prefix,
