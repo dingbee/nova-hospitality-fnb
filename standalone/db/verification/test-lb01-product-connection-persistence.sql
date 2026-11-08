@@ -172,6 +172,11 @@ SELECT public.lb01_issue_product_service_credential(
 SELECT public.lb01_issue_product_service_credential(
  :'service_connection_id','abcdef0123456789abcdef02',decode(repeat('bb',32),'hex'),now()+interval '1 day'
 ) AS active_credential_id \gset
+
+RESET ROLE;
+
+SET LOCAL ROLE service_role;
+SELECT set_config('request.test_role','service_role',true);
 DO $lb01rotation$
 BEGIN
  IF (SELECT status FROM public.product_service_credentials WHERE id=(SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef01')) <> 'revoked' THEN
@@ -184,10 +189,6 @@ BEGIN
    RAISE EXCEPTION 'Credential issuance and rotation must be audited';
  END IF;
 END $lb01rotation$;
-RESET ROLE;
-
-SET LOCAL ROLE service_role;
-SELECT set_config('request.test_role','service_role',true);
 DO $lb01nonce$
 DECLARE _first boolean; _replay boolean; _old_credential boolean; _expired boolean; _unknown boolean;
 BEGIN
