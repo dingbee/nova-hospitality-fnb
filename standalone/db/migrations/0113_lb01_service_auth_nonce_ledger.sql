@@ -54,8 +54,14 @@ BEGIN
     RETURN false;
   END IF;
   IF NOT EXISTS (
-    SELECT 1 FROM public.product_service_credentials c
-    WHERE c.id = _credential_id AND c.status = 'active' AND c.expires_at > now()
+    SELECT 1
+    FROM public.product_service_credentials c
+    JOIN public.staynas_product_connections p ON p.id = c.connection_id
+    WHERE c.id = _credential_id
+      AND c.status = 'active'
+      AND c.expires_at > now()
+      AND p.status = 'active'
+      AND _expires_at <= c.expires_at
   ) THEN
     RETURN false;
   END IF;
