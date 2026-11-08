@@ -32,7 +32,7 @@ function decodeSecret(secretBase64Url: string): Buffer | null {
 
 function canonicalRequest(input: Pick<Lb01SignedRequest, "method" | "pathname" | "rawBody" | "timestamp" | "nonce">): string {
   const bodyDigest = createHash("sha256").update(input.rawBody, "utf8").digest("hex");
-  return ["LB01-HMAC-SHA256-V1", input.timestamp, input.nonce, input.method.toUpperCase(), input.pathname, bodyDigest].join("\\n");
+  return ["LB01-HMAC-SHA256-V1", input.timestamp, input.nonce, input.method.toUpperCase(), input.pathname, bodyDigest].join("\n");
 }
 
 export function signLb01Request(
@@ -61,7 +61,7 @@ export function verifyLb01Request(
   if (!Number.isSafeInteger(timestamp) || Math.abs(nowSeconds - timestamp) > LB01_MAX_CLOCK_SKEW_SECONDS) return false;
   if (!/^[A-Za-z0-9_-]{16,128}$/.test(input.nonce)) return false;
   if (!/^[A-Z]{3,10}$/.test(input.method.toUpperCase())) return false;
-  if (!input.pathname.startsWith("/") || input.pathname.includes("\\n")) return false;
+  if (!input.pathname.startsWith("/") || input.pathname.includes("\n")) return false;
   const match = /^v1=([a-f0-9]{64})$/.exec(input.signature);
   if (!match) return false;
 
