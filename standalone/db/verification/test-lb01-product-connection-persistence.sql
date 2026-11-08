@@ -144,11 +144,11 @@ END $lb01test$;
 RESET ROLE;
 -- LB-01.03B: server-only credential storage and atomic nonce replay prevention.
 SET LOCAL ROLE authenticated;
-SELECT set_config('request.test_user_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',true);
+SELECT set_config('request.test_user_id','cccccccc-cccc-4ccc-8ccc-ccccccccccc3',true);
 SELECT set_config('request.test_role','authenticated',true);
 SELECT public.lexibite_request_staynas_connection(
  '30000000-0000-4000-8000-000000000009','40000000-0000-4000-8000-000000000009',
- '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',
+ '10000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000003',
  '50000000-0000-4000-8000-000000000009','60000000-0000-4000-8000-000000000009','lb01-test-auth-active'
 ) AS service_connection_id \gset
 SELECT public.lexibite_approve_staynas_connection(:'service_connection_id');
