@@ -142,7 +142,8 @@ BEGIN
  END;
 END $lb01test$;
 RESET ROLE;
--- LB-01.03B: server-only credential storage and atomic nonce replay prevention.
+
+-- LB-01.03B: scoped credential issue/rotation/revocation and durable nonce replay prevention.
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.test_user_id','cccccccc-cccc-4ccc-8ccc-ccccccccccc3',true);
 SELECT set_config('request.test_role','authenticated',true);
@@ -160,28 +161,78 @@ SELECT public.lexibite_record_staynas_approval(
  '30000000-0000-4000-8000-000000000009','40000000-0000-4000-8000-000000000009',
  '50000000-0000-4000-8000-000000000009','60000000-0000-4000-8000-000000000009','lb01-test-auth-active'
 );
-INSERT INTO public.product_service_credentials(
- id, connection_id, credential_prefix, credential_hash, expires_at, created_by
-) VALUES (
- '70000000-0000-4000-8000-000000000001',
- (SELECT id FROM public.staynas_product_connections WHERE correlation_id='lb01-test-auth-active'),
- 'abcdef0123456789abcdef01', decode(repeat('ab',32),'hex'), now() + interval '1 day',
- 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
-);
-DO $lb01nonce$
-DECLARE _first boolean; _replay boolean; _expired boolean; _unknown boolean;
+RESET ROLE;
+
+-- Only the property administrator may issue or rotate the connection credential.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.test_user_id','cccccccc-cccc-4ccc-8ccc-ccccccccccc3',true);
+SELECT public.lb01_issue_product_service_credential(
+ :'service_connection_id','abcdef0123456789abcdef01',decode(repeat('aa',32),'hex'),now()+interval '1 day'
+) AS first_credential_id \gset
+SELECT public.lb01_issue_product_service_credential(
+ :'service_connection_id','abcdef0123456789abcdef02',decode(repeat('bb',32),'hex'),now()+interval '1 day'
+) AS active_credential_id \gset
+DO $lb01rotation$
 BEGIN
- _first := public.lb01_claim_service_nonce('70000000-0000-4000-8000-000000000001','0123456789abcdef0123456789abcdef',now()+interval '5 minutes');
- _replay := public.lb01_claim_service_nonce('70000000-0000-4000-8000-000000000001','0123456789abcdef0123456789abcdef',now()+interval '5 minutes');
- _expired := public.lb01_claim_service_nonce('70000000-0000-4000-8000-000000000001','fedcba9876543210fedcba9876543210',now()-interval '1 second');
- _unknown := public.lb01_claim_service_nonce('70000000-0000-4000-8000-000000000099','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',now()+interval '5 minutes');
- IF NOT _first OR _replay OR _expired OR _unknown THEN
-   RAISE EXCEPTION 'Nonce ledger did not enforce first-use, replay, expiry and credential binding';
+ IF (SELECT status FROM public.product_service_credentials WHERE id=:'first_credential_id') <> 'revoked' THEN
+   RAISE EXCEPTION 'Credential rotation must revoke the previous credential';
  END IF;
- IF (SELECT count(*) FROM public.product_service_nonces WHERE credential_id='70000000-0000-4000-8000-000000000001') <> 1 THEN
+ IF (SELECT status FROM public.product_service_credentials WHERE id=:'active_credential_id') <> 'active' THEN
+   RAISE EXCEPTION 'Credential rotation must leave exactly one active credential';
+ END IF;
+ IF (SELECT count(*) FROM public.product_service_credential_audit WHERE action IN ('issued','rotated')) < 2 THEN
+   RAISE EXCEPTION 'Credential issuance and rotation must be audited';
+ END IF;
+END $lb01rotation$;
+RESET ROLE;
+
+SET LOCAL ROLE service_role;
+SELECT set_config('request.test_role','service_role',true);
+DO $lb01nonce$
+DECLARE _first boolean; _replay boolean; _old_credential boolean; _expired boolean; _unknown boolean;
+BEGIN
+ _first := public.lb01_claim_service_nonce(:'active_credential_id','0123456789abcdef0123456789abcdef',now()+interval '5 minutes');
+ _replay := public.lb01_claim_service_nonce(:'active_credential_id','0123456789abcdef0123456789abcdef',now()+interval '5 minutes');
+ _old_credential := public.lb01_claim_service_nonce(:'first_credential_id','fedcba9876543210fedcba9876543210',now()+interval '5 minutes');
+ _expired := public.lb01_claim_service_nonce(:'active_credential_id','fedcba9876543210fedcba9876543211',now()-interval '1 second');
+ _unknown := public.lb01_claim_service_nonce('70000000-0000-4000-8000-000000000099','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',now()+interval '5 minutes');
+ IF NOT _first OR _replay OR _old_credential OR _expired OR _unknown THEN
+   RAISE EXCEPTION 'Nonce ledger did not enforce first-use, replay, revoked/expired and credential binding';
+ END IF;
+ IF (SELECT count(*) FROM public.product_service_nonces WHERE credential_id=:'active_credential_id') <> 1 THEN
    RAISE EXCEPTION 'Expected exactly one accepted nonce';
  END IF;
 END $lb01nonce$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.test_user_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',true);
+DO $lb01deniedissue$
+BEGIN
+ BEGIN
+   PERFORM public.lb01_issue_product_service_credential(
+     (SELECT id FROM public.staynas_product_connections WHERE correlation_id='lb01-test-auth-active'),
+     'abcdef0123456789abcdef03',decode(repeat('cc',32),'hex'),now()+interval '1 day'
+   );
+   RAISE EXCEPTION 'Cross-tenant credential issuance should be denied';
+ EXCEPTION WHEN insufficient_privilege THEN NULL;
+ END;
+END $lb01deniedissue$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.test_user_id','cccccccc-cccc-4ccc-8ccc-ccccccccccc3',true);
+SELECT public.lb01_revoke_product_service_credential(:'active_credential_id','test revocation');
+RESET ROLE;
+
+SET LOCAL ROLE service_role;
+SELECT set_config('request.test_role','service_role',true);
+DO $lb01revoked$
+BEGIN
+ IF public.lb01_claim_service_nonce(:'active_credential_id','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',now()+interval '5 minutes') THEN
+   RAISE EXCEPTION 'Revoked credential must not claim new nonces';
+ END IF;
+END $lb01revoked$;
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
