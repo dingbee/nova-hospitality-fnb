@@ -1,8 +1,8 @@
 # LB-01 — StayNas × LexiBite Integration Foundation
 
-Status: **Durable mapping implementation added — isolated database verification pending**
+Status: **LB-01.02 database verification passed; LB-01.03 secure-auth primitives implemented, reciprocal exchange not yet certified**
 Contract version: **1.0.0**
-Scope: architecture, canonical identity, contract and event schemas only. No production operational integration is enabled.
+Scope: architecture, canonical identity, durable mapping, signed service-auth primitives and contract schemas. No production operational integration is enabled.
 
 ## Product boundaries
 
@@ -98,3 +98,23 @@ The lifecycle is pending → active, with suspension/resumption and terminal rev
 Authenticated users receive read-only access to mappings visible within their own property scope. All writes go through SECURITY DEFINER RPCs that perform explicit property-scoped owner/manager authorization. Service-role execution is limited to the remote-approval RPC. No service-role key is exposed to browser clients.
 
 Verification is provided by isolated PostgreSQL scripts and CI workflows. These tests do not apply migrations to production databases. The reciprocal HTTP transport, HMAC verification/nonce store, credential issuance and rotation UI, and end-to-end two-product approval exchange remain follow-on implementation gates; LB-01 is not release-certified until those are implemented and tested.
+
+
+## LB-01.03A — signed service-authentication primitives
+
+Both products now implement the same versioned request-signing canonicalization using HMAC-SHA256 over the protocol version, timestamp, nonce, uppercase HTTP method, request path and SHA-256 digest of the exact raw request body. The shared header names are `x-lb01-timestamp`, `x-lb01-nonce` and `x-lb01-signature`; signatures use the `v1=<hex>` form. Secrets must decode to exactly 32 bytes and are supplied to these pure helpers by server-side callers only.
+
+Verification rejects malformed signatures, malformed nonces, invalid secrets and timestamps outside a five-minute clock-skew window. StayNas uses Web Crypto; LexiBite uses Node crypto. The protocol canonicalization and test vectors are aligned across both repositories. Unit tests cover valid signatures, body/method/path tampering, invalid secrets, malformed values and stale/future timestamps.
+
+**Security boundary:** signature verification by itself does not prevent replay. Every receiving adapter MUST atomically claim `(credential_id, nonce)` in a durable nonce ledger with a unique constraint, before any approval RPC or business operation. A repeated valid signature must be rejected at that ledger. The helpers intentionally do not claim to implement this persistence gate.
+
+### Remaining LB-01.03 acceptance gates
+
+- Durable nonce storage, atomic replay rejection and expiry/cleanup.
+- Server-side credential issuance, secret hashing/storage, one-time disclosure, rotation and revocation, bound to one authorized product/tenant/property mapping.
+- HTTP sender/receiver adapters using the exact raw body and protocol headers.
+- Reciprocal approval exchange that derives tenant/property identity from the authenticated credential and invokes only the opposite product's service-role approval RPC.
+- End-to-end tests across both product adapters, including wrong tenant/property, revoked/expired credentials, replay, clock skew, signature tampering and idempotent retry.
+- Security review and current-head CI acceptance.
+
+No production migration, live credential, database mutation, tenant-data change, deployment or PR merge is included in LB-01.03A. The PRs remain draft pending full LB-01.03 acceptance.
