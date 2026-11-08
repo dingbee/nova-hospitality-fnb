@@ -22,7 +22,8 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public AS $
 $$;
 INSERT INTO auth.users(id) VALUES
  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'),
- ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2');
+ ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'),
+ ('cccccccc-cccc-4ccc-8ccc-ccccccccccc3');
 INSERT INTO public.restaurant_tenants(id) VALUES
  ('10000000-0000-4000-8000-000000000001'),
  ('10000000-0000-4000-8000-000000000002');
@@ -32,7 +33,8 @@ INSERT INTO public.restaurant_properties(id,tenant_id) VALUES
  ('20000000-0000-4000-8000-000000000003','10000000-0000-4000-8000-000000000002');
 INSERT INTO public.restaurant_members(tenant_id,user_id,property_id,role) VALUES
  ('10000000-0000-4000-8000-000000000001','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1','20000000-0000-4000-8000-000000000001','owner'),
- ('10000000-0000-4000-8000-000000000001','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2','20000000-0000-4000-8000-000000000002','owner');
+ ('10000000-0000-4000-8000-000000000001','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2','20000000-0000-4000-8000-000000000002','owner'),
+ ('10000000-0000-4000-8000-000000000002','cccccccc-cccc-4ccc-8ccc-ccccccccccc3','20000000-0000-4000-8000-000000000003','owner');
 
 \i standalone/db/migrations/0112_lb01_product_connection_persistence.sql
 
@@ -106,6 +108,36 @@ BEGIN
  EXCEPTION WHEN raise_exception THEN
    IF SQLERRM = 'Revoked connection must not be re-approved' THEN RAISE; END IF;
  END;
-END $$;
+-- A single integration tenant may map multiple properties.
+SELECT set_config('request.test_user_id','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',true);
+SELECT public.lexibite_request_staynas_connection(
+ '30000000-0000-4000-8000-000000000001','40000000-0000-4000-8000-000000000002',
+ '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+ '50000000-0000-4000-8000-000000000001','60000000-0000-4000-8000-000000000002','lb01-test-second-property'
+);
+-- Revocation permits a fresh authorization with new canonical identifiers.
+SELECT set_config('request.test_user_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',true);
+SELECT public.lexibite_request_staynas_connection(
+ '30000000-0000-4000-8000-000000000003','40000000-0000-4000-8000-000000000003',
+ '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',
+ '50000000-0000-4000-8000-000000000003','60000000-0000-4000-8000-000000000003','lb01-test-reauthorization'
+);
+-- A different tenant cannot enumerate or administer this property's mapping.
+SELECT set_config('request.test_user_id','cccccccc-cccc-4ccc-8ccc-ccccccccccc3',true);
+DO $
+BEGIN
+ IF (SELECT count(*) FROM public.staynas_product_connections) <> 0 THEN
+   RAISE EXCEPTION 'Other tenant must not read connection';
+ END IF;
+ BEGIN
+   PERFORM public.lexibite_request_staynas_connection(
+    '30000000-0000-4000-8000-000000000004','40000000-0000-4000-8000-000000000004',
+    '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',
+    '50000000-0000-4000-8000-000000000004','60000000-0000-4000-8000-000000000004','lb01-test-cross-tenant'
+   );
+   RAISE EXCEPTION 'Cross-tenant request should have been denied';
+ EXCEPTION WHEN insufficient_privilege THEN NULL;
+ END;
+END $;
 RESET ROLE;
 ROLLBACK;
