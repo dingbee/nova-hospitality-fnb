@@ -57,7 +57,7 @@ SELECT public.lexibite_record_staynas_approval(
 );
 RESET ROLE;
 
-DO $
+DO $lb01active$
 BEGIN
  IF (SELECT status FROM public.staynas_product_connections WHERE correlation_id='lb01-test-connection-b') <> 'active' THEN
    RAISE EXCEPTION 'Connection must activate only after both approvals';
@@ -65,11 +65,11 @@ BEGIN
  IF (SELECT count(*) FROM public.staynas_product_connection_audit WHERE action IN ('requested','locally_approved','remotely_approved')) <> 3 THEN
    RAISE EXCEPTION 'Expected request and both approval audit records';
  END IF;
-END $$;
+END $lb01active$;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.test_user_id','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',true);
-DO $$
+DO $lb01property$
 BEGIN
  IF (SELECT count(*) FROM public.staynas_product_connections) <> 0 THEN
    RAISE EXCEPTION 'Other property member must not read connection';
