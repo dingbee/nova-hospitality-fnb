@@ -62,7 +62,7 @@ export const Route = createFileRoute("/api/integrations/lb01/credential-exchange
             iv: row.encryption_iv,
             tag: row.encryption_tag,
             connectionId: row.connection_id,
-            peerProduct: body.requesterProduct,
+            peerProduct: "lexibite",
           });
           if (!token.startsWith("lb01_v1_" + row.credential_prefix + "_")) {
             return Response.json({ error: "handoff_integrity_failed" }, { status: 500 });
