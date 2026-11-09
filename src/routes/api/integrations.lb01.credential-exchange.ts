@@ -10,8 +10,15 @@ const inputSchema = z.object({
   requesterProduct: z.literal("staynas"),
 }).strict();
 
+type DbResult = { data: unknown; error: unknown };
+type DbQuery = PromiseLike<DbResult> & {
+  select(columns: string): DbQuery;
+  eq(column: string, value: unknown): DbQuery;
+  maybeSingle(): Promise<DbResult>;
+};
 type DbClient = {
-  rpc(name: string, args: Record<string, unknown>): Promise<{ data: unknown; error: unknown }>;
+  rpc(name: string, args: Record<string, unknown>): Promise<DbResult>;
+  from(table: string): DbQuery;
 };
 
 export const Route = createFileRoute("/api/integrations/lb01/credential-exchange")({
@@ -42,6 +49,14 @@ export const Route = createFileRoute("/api/integrations/lb01/credential-exchange
           if (!row || typeof row.connection_id !== "string" || typeof row.credential_prefix !== "string") {
             return Response.json({ error: "handoff_invalid_or_expired" }, { status: 404 });
           }
+          const mappingResult = await admin.from("staynas_product_connections")
+            .select("integration_tenant_id, integration_property_id, local_tenant_id, local_property_id, remote_tenant_id, remote_property_id, remote_product, status, correlation_id")
+            .eq("id", row.connection_id).maybeSingle();
+          const mapping = mappingResult.data as Record<string, unknown> | null;
+          if (mappingResult.error || !mapping || mapping.status !== "pending" && mapping.status !== "active"
+            || mapping.remote_product !== "staynas") {
+            return Response.json({ error: "handoff_mapping_unavailable" }, { status: 404 });
+          }
           const token = decryptLb01PeerCredential({
             ciphertext: row.encrypted_token,
             iv: row.encryption_iv,
@@ -52,7 +67,17 @@ export const Route = createFileRoute("/api/integrations/lb01/credential-exchange
           if (!token.startsWith("lb01_v1_" + row.credential_prefix + "_")) {
             return Response.json({ error: "handoff_integrity_failed" }, { status: 500 });
           }
-          return Response.json({ token }, {
+          return Response.json({
+            token,
+            integrationTenantId: mapping.integration_tenant_id,
+            integrationPropertyId: mapping.integration_property_id,
+            correlationId: mapping.correlation_id,
+            issuerTenantId: mapping["local_tenant_id"],
+            issuerPropertyId: mapping.local_property_id,
+            targetTenantId: mapping.remote_tenant_id,
+            targetPropertyId: mapping.remote_property_id,
+            peerProduct: body.requesterProduct,
+          }, {
             headers: {
               "Cache-Control": "no-store, private, max-age=0",
               Pragma: "no-cache",
