@@ -298,6 +298,7 @@ BEGIN
     _connection,'abcdef0123456789abcdef04',decode(repeat('dd',32),'hex'),now()+interval '1 day'
   );
   IF _credential IS NULL THEN RAISE EXCEPTION 'Pending connection credential issuance failed'; END IF;
+  INSERT INTO lb01_test_credential_ids(label, credential_id) VALUES ('pending', _credential);
 END $lb01pending$;
 RESET ROLE;
 
@@ -312,25 +313,25 @@ SELECT c.id, p.id, 'staynas', c.correlation_id,
   decode(repeat('bb',12),'hex'), decode(repeat('ee',16),'hex'),
   now()+interval '10 minutes', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
 FROM public.staynas_product_connections c
-JOIN public.product_service_credentials p ON p.connection_id=c.id
-WHERE c.correlation_id='lb01-test-reauthorization'
-  AND p.credential_prefix='abcdef0123456789abcdef04';
+JOIN lb01_test_credential_ids i ON i.label='pending'
+JOIN public.product_service_credentials p ON p.id=i.credential_id
+WHERE c.correlation_id='lb01-test-reauthorization';
 DO $lb01handoff$
 DECLARE _first integer; _retry integer; _expired integer; _nonce boolean;
 BEGIN
   _nonce := public.lb01_claim_service_nonce(
-    (SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef04'),
+    (SELECT credential_id FROM lb01_test_credential_ids WHERE label='pending'),
     'pending-connection-nonce-00000001', now()+interval '5 minutes'
   );
   IF NOT _nonce THEN
     RAISE EXCEPTION 'Pending connection nonce diagnostic: role=%, uid=%, credential_id=%, credential_status=%, credential_expiry=%, connection_status=%',
       current_user, current_setting('request.test_role', true),
-      (SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef04'),
-      (SELECT status FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef04'),
-      (SELECT expires_at FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef04'),
+      (SELECT credential_id FROM lb01_test_credential_ids WHERE label='pending'),
+      (SELECT status FROM public.product_service_credentials WHERE id=(SELECT credential_id FROM lb01_test_credential_ids WHERE label='pending')),
+      (SELECT expires_at FROM public.product_service_credentials WHERE id=(SELECT credential_id FROM lb01_test_credential_ids WHERE label='pending')),
       (SELECT c.status FROM public.staynas_product_connections c
        JOIN public.product_service_credentials p ON p.connection_id=c.id
-       WHERE p.credential_prefix='abcdef0123456789abcdef04');
+       WHERE p.id=(SELECT credential_id FROM lb01_test_credential_ids WHERE label='pending'));
   END IF;
 
   SELECT count(*) INTO _first FROM public.lb01_consume_credential_handoff(
