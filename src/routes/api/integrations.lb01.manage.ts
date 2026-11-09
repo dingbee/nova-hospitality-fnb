@@ -63,7 +63,7 @@ const actionInput = z.discriminatedUnion("action", [
 
 async function authenticatedClient(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
-  const match = /^Bearer\\s+(.+)$/i.exec(authorization);
+  const match = /^Bearer\s+(.+)$/i.exec(authorization);
   if (!match) throw new Error("unauthorized");
   const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
