@@ -7,7 +7,7 @@ import {
   validateLb01PeerBaseUrl,
 } from "./lb01.handoff.server";
 
-const token = "lb01_v1_0123456789abcdef01234567_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123456789abcdefghi";
+const token = "lb01_v1_0123456789abcdef01234567_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 describe("LB-01 encrypted peer credential handoff", () => {
   afterEach(() => vi.unstubAllEnvs());
