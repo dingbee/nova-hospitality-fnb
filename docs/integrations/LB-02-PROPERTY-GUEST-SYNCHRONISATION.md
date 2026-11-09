@@ -131,3 +131,21 @@ Architecture and schema inspection may proceed while LB-01 deployment checks are
 ## LexiBite implementation responsibility
 
 LexiBite owns outlet data and consumes approved StayNas property/stay projections. It publishes outlet metadata to StayNas and stores only opaque in-house guest references/status. Standalone restaurant customer records remain isolated.
+
+
+## 10. Canonical schema verification — 2026-11-09
+
+Verified against the active LB-02 branch and current LB-01 PR schema:
+
+- LexiBite tenancy authority is `restaurant_tenants` → `restaurant_properties` → `restaurant_locations`.
+- `restaurant_properties.tenant_id` owns each property; `restaurant_locations` is the operational outlet/location identity and carries both `tenant_id` and `property_id`.
+- Outlet mapping must use `restaurant_locations.id`, not an assumed generic outlets table or the legacy parallel tenancy model.
+- LB-01 local mapping authority is `staynas_product_connections`, with local tenant/property, remote native identifiers, canonical integration IDs, status and correlation ID. LB-02 must reuse this authority and LB-01 credentials.
+- Guest-stay projection must not create or merge a restaurant customer record. Any guest reference is an integration-owned opaque identifier, scoped to the approved property mapping.
+
+Open contract checks before LB-02.01 acceptance:
+- Verify database-level enforcement of the local tenant/property pair for privileged write paths, not only the authenticated RPC path.
+- Verify every outlet write path enforces that the location tenant matches its referenced property's tenant.
+- Verify RLS, grants and authorization for LB-01 RPCs and service adapters on the latest branch heads.
+
+No migration or runtime implementation is authorized by this schema note.
