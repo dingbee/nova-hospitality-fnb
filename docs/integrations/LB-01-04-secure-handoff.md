@@ -23,7 +23,7 @@ openssl rand -hex 32
 
 Do not share the encryption keys between products, environments, tenants, or deployments. Store them only as server-side environment variables; never use a `VITE_` prefix. Do not place values in source control, client-side settings, logs, or support tickets.
 
-The peer URL must be the HTTPS origin only (scheme + host, no path, query or fragment). The encryption key is intentionally stable for the life of the stored peer credentials; rotating it requires re-importing/rewrapping all active peer credentials before retiring the old key. If a key is suspected compromised, revoke the affected connections and establish fresh credentials under a new key. The application constructs the fixed LB-01 API paths itself. The URL is trusted deployment configuration, not tenant input.
+The peer URL must be the HTTPS origin only (scheme + host, no path, query or fragment). The encryption key is intentionally stable while stored peer credentials are in use. Changing it makes existing encrypted peer credentials unreadable; planned rotation therefore requires generating fresh handoff codes in both directions and re-importing peer credentials before relying on outbound delivery. If a key is suspected compromised, revoke affected connections and establish fresh credentials under a new key. The application constructs the fixed LB-01 API paths itself. The URL is trusted deployment configuration, not tenant input.
 
 Existing Supabase server configuration remains required: `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and the server-only service-role key used by the existing admin client.
 
