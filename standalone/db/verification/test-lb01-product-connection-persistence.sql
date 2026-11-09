@@ -167,13 +167,16 @@ RESET ROLE;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.test_user_id','cccccccc-cccc-4ccc-8ccc-ccccccccccc3',true);
 DO $lb01issue$
-DECLARE _first uuid; _second uuid;
+DECLARE _first uuid; _second uuid; _connection_id uuid;
 BEGIN
+ SELECT id INTO _connection_id FROM public.staynas_product_connections
+ WHERE correlation_id='lb01-test-auth-active';
+ IF _connection_id IS NULL THEN RAISE EXCEPTION 'Active credential test connection missing'; END IF;
  _first := public.lb01_issue_product_service_credential(
-   :'service_connection_id','abcdef0123456789abcdef01',decode(repeat('aa',32),'hex'),now()+interval '1 day'
+   _connection_id,'abcdef0123456789abcdef01',decode(repeat('aa',32),'hex'),now()+interval '1 day'
  );
  _second := public.lb01_issue_product_service_credential(
-   :'service_connection_id','abcdef0123456789abcdef02',decode(repeat('bb',32),'hex'),now()+interval '1 day'
+   _connection_id,'abcdef0123456789abcdef02',decode(repeat('bb',32),'hex'),now()+interval '1 day'
  );
  IF _first IS NULL OR _second IS NULL THEN
    RAISE EXCEPTION 'Credential issuance returned a null identifier';
