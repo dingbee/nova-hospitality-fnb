@@ -162,7 +162,7 @@ jobs:
           src/routes/api/integrations.lb01.manage.ts
           src/routes/api/integrations.lb01.credential-exchange.ts
           src/modules/api-platform/ui/StayNasIntegrationCentre.tsx
-          src/routes/_authenticated.admin.restaurant.integrations.staynas.tsx
+          src/routes/_authenticated.admin.staynas-integration.tsx
           src/routes/_authenticated.admin.restaurant.integrations.tsx
           --rule 'prettier/prettier: off'
 
