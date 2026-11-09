@@ -41,6 +41,26 @@ describe("LB-01 outbound approval transport", () => {
     expect(JSON.parse(body)).toEqual({ correlationId });
   });
 
+  it("adds the peer deployment protection bypass from the server-only environment", async () => {
+    const previous = process.env.LB01_PEER_VERCEL_BYPASS_SECRET;
+    process.env.LB01_PEER_VERCEL_BYPASS_SECRET = "test-peer-bypass-secret";
+    let capturedHeaders: Headers | undefined;
+    try {
+      await sendLb01Approval(
+        { endpointUrl: "https://staynas.example/api/integrations/lb01/approval", credentialToken: peerToken() },
+        "lb01-correlation-001",
+        async (_input, init) => {
+          capturedHeaders = new Headers(init?.headers);
+          return Response.json({ accepted: true, status: "pending", correlationId: "lb01-correlation-001" });
+        },
+      );
+      expect(capturedHeaders?.get("x-vercel-protection-bypass")).toBe("test-peer-bypass-secret");
+    } finally {
+      if (previous === undefined) delete process.env.LB01_PEER_VERCEL_BYPASS_SECRET;
+      else process.env.LB01_PEER_VERCEL_BYPASS_SECRET = previous;
+    }
+  });
+
   it("rejects insecure endpoints, invalid credentials and unconfirmed responses", async () => {
     const token = peerToken();
     await expect(sendLb01Approval(
