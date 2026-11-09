@@ -236,6 +236,7 @@ export const Route = createFileRoute("/api/integrations/lb01/manage")({
 
           if (body.action === "issue_handoff") {
             if (!["pending", "active"].includes(connection.status)) return Response.json({ error: "connection_not_eligible" }, { status: 409 });
+            await admin.rpc("lb01_purge_expired_handoffs", { _limit: 100 });
             const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
             const issued = await issueLb01ServiceCredential(userDb, connection.id, expiresAt);
             let encrypted: ReturnType<typeof encryptLb01PeerCredential>;
