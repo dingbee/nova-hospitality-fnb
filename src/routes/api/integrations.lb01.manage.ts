@@ -59,8 +59,10 @@ const actionInput = z.discriminatedUnion("action", [
   if (value.action === "create") {
     const supplied = [value.integrationTenantId, value.integrationPropertyId, value.correlationId]
       .filter(Boolean).length;
-    if (supplied !== 0 && supplied !== 3) {
-      ctx.addIssue({ code: "custom", message: "A pairing invitation requires all canonical IDs and its correlation ID." });
+    const valid = supplied === 0 || supplied === 3
+      || (supplied === 1 && Boolean(value.integrationTenantId));
+    if (!valid) {
+      ctx.addIssue({ code: "custom", message: "Supply either no canonical IDs, an existing integration tenant ID, or the complete pairing invitation." });
     }
   }
 });
