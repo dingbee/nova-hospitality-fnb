@@ -37,29 +37,31 @@ type ConnectionRow = {
   local_approved_at: string | null;
 };
 
-const createInput = z.object({
-  localPropertyId: z.string().uuid(),
-  remoteTenantId: z.string().uuid(),
-  remotePropertyId: z.string().uuid(),
-  integrationTenantId: z.string().uuid().optional(),
-  integrationPropertyId: z.string().uuid().optional(),
-  correlationId: z.string().min(8).max(128).optional(),
-}).strict().superRefine((value, ctx) => {
-  const supplied = [value.integrationTenantId, value.integrationPropertyId, value.correlationId]
-    .filter(Boolean).length;
-  if (supplied !== 0 && supplied !== 3) {
-    ctx.addIssue({ code: "custom", message: "A pairing invitation requires all canonical IDs and its correlation ID." });
-  }
-});
 const actionInput = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("create"), ...createInput.shape }).strict(),
+  z.object({
+    action: z.literal("create"),
+    localPropertyId: z.string().uuid(),
+    remoteTenantId: z.string().uuid(),
+    remotePropertyId: z.string().uuid(),
+    integrationTenantId: z.string().uuid().optional(),
+    integrationPropertyId: z.string().uuid().optional(),
+    correlationId: z.string().min(8).max(128).optional(),
+  }).strict(),
   z.object({ action: z.literal("issue_handoff"), connectionId: z.string().uuid() }).strict(),
   z.object({ action: z.literal("import_handoff"), connectionId: z.string().uuid(), code: z.string().min(43).max(43) }).strict(),
   z.object({ action: z.literal("approve"), connectionId: z.string().uuid() }).strict(),
   z.object({ action: z.literal("retry"), connectionId: z.string().uuid() }).strict(),
   z.object({ action: z.literal("revoke"), connectionId: z.string().uuid(), reason: z.string().max(500).optional() }).strict(),
   z.object({ action: z.literal("list") }).strict(),
-]);
+]).superRefine((value, ctx) => {
+  if (value.action === "create") {
+    const supplied = [value.integrationTenantId, value.integrationPropertyId, value.correlationId]
+      .filter(Boolean).length;
+    if (supplied !== 0 && supplied !== 3) {
+      ctx.addIssue({ code: "custom", message: "A pairing invitation requires all canonical IDs and its correlation ID." });
+    }
+  }
+});
 
 async function authenticatedClient(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
