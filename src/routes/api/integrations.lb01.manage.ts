@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import type { Database } from "@/integrations/supabase/types";
 import { issueLb01ServiceCredential } from "@/modules/api-platform/lb01.credentials.server";
-import { sendLb01Approval } from "@/modules/api-platform/lb01.sender.server";
+import { lb01PeerProtectionHeaders, sendLb01Approval } from "@/modules/api-platform/lb01.sender.server";
 import {
   createLb01HandoffCode,
   decryptLb01PeerCredential,
@@ -279,7 +279,7 @@ export const Route = createFileRoute("/api/integrations/lb01/manage")({
             const response = await fetch(exchangeUrl, {
               method: "POST",
               redirect: "manual",
-              headers: { "content-type": "application/json" },
+              headers: { "content-type": "application/json", ...lb01PeerProtectionHeaders() },
               body: JSON.stringify({
                 code: body.code,
                 correlationId: connection.correlation_id,
