@@ -9,6 +9,11 @@ import { signLb01Request } from "./lb01.service-auth";
 
 const APPROVAL_PATH = "/api/integrations/lb01/approval";
 
+export function lb01PeerProtectionHeaders(): Record<string, string> {
+  const secret = process.env.LB01_PEER_VERCEL_BYPASS_SECRET?.trim();
+  return secret ? { "x-vercel-protection-bypass": secret } : {};
+}
+
 export interface Lb01PeerTarget {
   endpointUrl: string;
   credentialToken: string;
@@ -70,6 +75,7 @@ export async function sendLb01Approval(
       "x-lb01-timestamp": timestamp,
       "x-lb01-nonce": nonce,
       "x-lb01-signature": signature,
+      ...lb01PeerProtectionHeaders(),
     },
     body: rawBody,
     signal: AbortSignal.timeout(10_000),
