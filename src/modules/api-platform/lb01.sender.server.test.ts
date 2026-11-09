@@ -4,13 +4,14 @@ import { verifyLb01Request } from "./lb01.service-auth";
 import { sendLb01Approval } from "./lb01.sender.server";
 
 function peerToken() {
-  return `lb01_v1_${randomBytes(12).toString("hex")}_${randomBytes(32).toString("base64url")}`;
+  const secret = randomBytes(32).toString("base64url");
+  const prefix = randomBytes(12).toString("hex");
+  return { token: `lb01_v1_${prefix}_${secret}`, secret };
 }
 
 describe("LB-01 outbound approval transport", () => {
   it("sends a signed request to the fixed approval route and validates the peer response", async () => {
-    const token = peerToken();
-    const secret = token.split("_").at(-1)!;
+    const { token, secret } = peerToken();
     let capturedUrl = "";
     let capturedInit: RequestInit | undefined;
     const correlationId = "lb01-correlation-001";
@@ -47,7 +48,7 @@ describe("LB-01 outbound approval transport", () => {
     let capturedHeaders: Headers | undefined;
     try {
       await sendLb01Approval(
-        { endpointUrl: "https://staynas.example/api/integrations/lb01/approval", credentialToken: peerToken() },
+        { endpointUrl: "https://staynas.example/api/integrations/lb01/approval", credentialToken: peerToken().token },
         "lb01-correlation-001",
         async (_input, init) => {
           capturedHeaders = new Headers(init?.headers);
