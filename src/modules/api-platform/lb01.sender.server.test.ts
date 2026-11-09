@@ -63,7 +63,7 @@ describe("LB-01 outbound approval transport", () => {
   });
 
   it("rejects insecure endpoints, invalid credentials and unconfirmed responses", async () => {
-    const token = peerToken();
+    const { token } = peerToken();
     await expect(sendLb01Approval(
       { endpointUrl: "http://staynas.example/api/integrations/lb01/approval", credentialToken: token },
       "lb01-correlation-001",
@@ -81,7 +81,7 @@ describe("LB-01 outbound approval transport", () => {
 
   it("does not treat a failed HTTP response as an accepted approval", async () => {
     await expect(sendLb01Approval(
-      { endpointUrl: "https://staynas.example/api/integrations/lb01/approval", credentialToken: peerToken() },
+      { endpointUrl: "https://staynas.example/api/integrations/lb01/approval", credentialToken: peerToken().token },
       "lb01-correlation-001",
       async () => new Response(null, { status: 503 }),
     )).rejects.toThrow("HTTP 503");
