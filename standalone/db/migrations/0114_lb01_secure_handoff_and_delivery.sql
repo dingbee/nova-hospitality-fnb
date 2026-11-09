@@ -4,7 +4,7 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS public.lb01_peer_credentials (
   connection_id uuid PRIMARY KEY REFERENCES public.staynas_product_connections(id) ON DELETE RESTRICT,
-  peer_product text NOT NULL CHECK (peer_product = 'staynAs' OR peer_product = 'staynas'),
+  peer_product text NOT NULL CHECK (peer_product = 'staynas'),
   credential_prefix text NOT NULL CHECK (credential_prefix ~ '^[a-f0-9]{24}$'),
   encrypted_token bytea NOT NULL,
   encryption_iv bytea NOT NULL CHECK (octet_length(encryption_iv) = 12),
@@ -93,7 +93,7 @@ BEGIN
     RAISE EXCEPTION 'Service authentication required' USING ERRCODE = '42501';
   END IF;
   IF _code_hash IS NULL OR octet_length(_code_hash) <> 32
-     OR _requester_product NOT IN ('staynAs','staynas')
+     OR _requester_product <> 'staynas'
      OR _correlation_id IS NULL THEN
     RETURN;
   END IF;
@@ -101,15 +101,19 @@ BEGIN
   FROM public.lb01_credential_handoffs h
   JOIN public.staynas_product_connections c ON c.id = h.connection_id
   WHERE h.code_hash = _code_hash
-    AND h.peer_product IN ('staynAs','staynas')
     AND h.peer_product = _requester_product
     AND h.correlation_id = _correlation_id
-    AND h.consumed_at IS NULL
+    AND (h.consumed_at IS NULL OR h.consumed_at > now() - interval '2 minutes')
     AND h.expires_at > now()
     AND c.status IN ('pending','active')
+    AND EXISTS (
+      SELECT 1 FROM public.product_service_credentials pc
+      WHERE pc.id = h.credential_id AND pc.connection_id = h.connection_id
+        AND pc.status = 'active' AND pc.expires_at > now()
+    )
   FOR UPDATE OF h;
   IF NOT FOUND THEN RETURN; END IF;
-  UPDATE public.lb01_credential_handoffs SET consumed_at = now() WHERE id = _handoff.id;
+  UPDATE public.lb01_credential_handoffs SET consumed_at = coalesce(consumed_at, now()) WHERE id = _handoff.id;
   RETURN QUERY SELECT _handoff.connection_id, _handoff.credential_id,
     (SELECT c.credential_prefix FROM public.product_service_credentials c WHERE c.id = _handoff.credential_id),
     _handoff.encrypted_token, _handoff.encryption_iv, _handoff.encryption_tag;
