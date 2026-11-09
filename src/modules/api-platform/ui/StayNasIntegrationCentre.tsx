@@ -152,7 +152,9 @@ export function StayNasIntegrationCentre() {
       const result = await lb01Request({ action: "approve", connectionId });
       await refresh();
       setNotice(result.deliveryStatus === "accepted"
-        ? "Local approval recorded and securely delivered to the peer. The connection activates after both products approve."
+        ? result.connectionStatus === "active"
+          ? "Both products have approved. The connection is active."
+          : "Local approval recorded and securely delivered to the peer. Awaiting the peer's local approval."
         : result.deliveryStatus === "awaiting_peer_credential"
           ? "Local approval recorded. Import the peer handoff code, then retry delivery."
           : "Local approval recorded, but delivery needs a retry. The approval remains pending.");
@@ -163,7 +165,9 @@ export function StayNasIntegrationCentre() {
     await runAction("retry:" + connectionId, async () => {
       const result = await lb01Request({ action: "retry", connectionId });
       await refresh();
-      setNotice(result.deliveryStatus === "accepted" ? "Approval notification delivered." : "Delivery remains pending; check peer configuration and retry.");
+      setNotice(result.deliveryStatus === "accepted"
+        ? result.connectionStatus === "active" ? "Both products have approved. The connection is active." : "Approval notification delivered; awaiting peer approval."
+        : "Delivery remains pending; check peer configuration and retry.");
     });
   };
 
