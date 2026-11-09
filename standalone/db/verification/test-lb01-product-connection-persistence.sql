@@ -340,6 +340,7 @@ BEGIN
     decode(repeat('aa',32),'hex'),'staynas','lb01-test-reauthorization'
   );
   IF _expired <> 0 THEN RAISE EXCEPTION 'Consumed handoff must expire outside recovery window'; END IF;
+  IF public.lb01_purge_expired_handoffs(100) < 1 THEN RAISE EXCEPTION 'Expired LB-01 handoff ciphertext was not purged'; END IF;
 END $lb01handoff$;
 RESET ROLE;
 
