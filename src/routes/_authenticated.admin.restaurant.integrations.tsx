@@ -12,7 +12,7 @@ export const Route = createFileRoute("/_authenticated/admin/restaurant/integrati
   component: () => (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <Link to="/admin/restaurant/integrations/staynas" className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted">
+        <Link to="/admin/staynas-integration" className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted">
           Manage StayNas property connection
         </Link>
       </div>
