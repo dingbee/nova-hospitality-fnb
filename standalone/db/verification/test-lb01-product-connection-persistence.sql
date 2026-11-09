@@ -324,7 +324,7 @@ BEGIN
   );
   IF NOT _nonce THEN
     RAISE EXCEPTION 'Pending connection nonce diagnostic: role=%, uid=%, credential_id=%, credential_status=%, credential_expiry=%, connection_status=%',
-      auth.role(), auth.uid(),
+      current_user, current_setting('request.test_role', true),
       (SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef04'),
       (SELECT status FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef04'),
       (SELECT expires_at FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef04'),
