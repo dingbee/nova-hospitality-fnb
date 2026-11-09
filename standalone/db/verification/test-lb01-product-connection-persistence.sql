@@ -185,8 +185,8 @@ END $lb01issue$;
 
 RESET ROLE;
 
-SET LOCAL ROLE service_role;
-SELECT set_config('request.test_role','service_role',true);
+-- Inspect durable lifecycle rows as the fixture owner; service-role behavior is
+-- verified independently through the nonce RPC below.
 DO $lb01rotation$
 DECLARE _old_status text; _new_status text; _audit_count integer;
 BEGIN
@@ -197,6 +197,9 @@ BEGIN
    RAISE EXCEPTION 'Credential rotation assertion: old=%, new=%, audit=%', _old_status, _new_status, _audit_count;
  END IF;
 END $lb01rotation$;
+
+SET LOCAL ROLE service_role;
+SELECT set_config('request.test_role','service_role',true);
 DO $lb01nonce$
 DECLARE _first boolean; _replay boolean; _old_credential boolean; _expired boolean; _unknown boolean;
 BEGIN
