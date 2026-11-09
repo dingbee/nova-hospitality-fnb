@@ -298,20 +298,23 @@ BEGIN
     _connection,'abcdef0123456789abcdef04',decode(repeat('dd',32),'hex'),now()+interval '1 day'
   );
   IF _credential IS NULL THEN RAISE EXCEPTION 'Pending connection credential issuance failed'; END IF;
-  INSERT INTO public.lb01_credential_handoffs(
-    connection_id, credential_id, peer_product, correlation_id, code_hash,
-    encrypted_token, encryption_iv, encryption_tag, expires_at, created_by
-  ) VALUES (
-    _connection, _credential, 'staynas', 'lb01-test-reauthorization',
-    decode(repeat('aa',32),'hex'), decode(repeat('cc',64),'hex'),
-    decode(repeat('bb',12),'hex'), decode(repeat('ee',16),'hex'),
-    now()+interval '10 minutes', auth.uid()
-  );
 END $lb01pending$;
 RESET ROLE;
 
 SET LOCAL ROLE service_role;
 SELECT set_config('request.test_role','service_role',true);
+INSERT INTO public.lb01_credential_handoffs(
+  connection_id, credential_id, peer_product, correlation_id, code_hash,
+  encrypted_token, encryption_iv, encryption_tag, expires_at, created_by
+)
+SELECT c.id, p.id, 'staynas', c.correlation_id,
+  decode(repeat('aa',32),'hex'), decode(repeat('cc',64),'hex'),
+  decode(repeat('bb',12),'hex'), decode(repeat('ee',16),'hex'),
+  now()+interval '10 minutes', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+FROM public.staynas_product_connections c
+JOIN public.product_service_credentials p ON p.connection_id=c.id
+WHERE c.correlation_id='lb01-test-reauthorization'
+  AND p.credential_prefix='abcdef0123456789abcdef04';
 DO $lb01handoff$
 DECLARE _first integer; _retry integer; _expired integer; _nonce boolean;
 BEGIN
