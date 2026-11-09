@@ -91,7 +91,7 @@ export async function authenticateLb01ServiceRequest(
     .select("id, integration_tenant_id, integration_property_id, local_tenant_id, local_property_id, remote_tenant_id, remote_property_id, remote_product, status, correlation_id")
     .eq("id", credential.connection_id)
     .maybeSingle();
-  if (connectionError || !connection || connection.status !== "active") {
+  if (connectionError || !connection || !["pending", "active"].includes(connection.status)) {
     throw new Error("Unauthorized LB-01 service request.");
   }
 
