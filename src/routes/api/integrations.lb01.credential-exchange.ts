@@ -86,7 +86,10 @@ export const Route = createFileRoute("/api/integrations/lb01/credential-exchange
             },
           });
         } catch (error) {
-          return Response.json({ error: error instanceof z.ZodError ? "invalid_request" : "handoff_unavailable" }, { status: 400 });
+          return Response.json(
+            { error: error instanceof z.ZodError ? "invalid_request" : "handoff_unavailable" },
+            { status: 400 },
+          );
         }
       },
     },
