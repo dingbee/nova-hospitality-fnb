@@ -198,7 +198,10 @@ export const Route = createFileRoute("/api/integrations/lb01/manage")({
                 ? existingMappings.data as Array<Record<string, unknown>>
                 : [];
               if (existingMappings.error || existingRows.some((row) => row.local_tenant_id !== property.local_tenant_id)) {
-                return Response.json({ error: "integration_tenant_mapping_conflict" }, { status: 409 });
+                return Response.json(
+                  { error: "integration_tenant_mapping_conflict" },
+                  { status: 409 },
+                );
               }
             }
             const requestResult = await userDb.rpc("lexibite_request_staynas_connection", {
@@ -362,7 +365,10 @@ export const Route = createFileRoute("/api/integrations/lb01/manage")({
             : error instanceof Error && error.message === "unauthorized" ? "unauthorized"
             : error instanceof Error && error.message === "forbidden" ? "forbidden"
             : "lb01_operation_failed";
-          return Response.json({ error: message }, { status: message === "unauthorized" ? 401 : message === "forbidden" ? 403 : 400 });
+          return Response.json(
+            { error: message },
+            { status: message === "unauthorized" ? 401 : message === "forbidden" ? 403 : 400 },
+          );
         }
       },
     },
