@@ -11,7 +11,8 @@ CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SEL
 CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $$ SELECT coalesce(current_setting('request.test_role', true), current_user) $$;
 DO $$ BEGIN CREATE TYPE public.restaurant_role AS ENUM ('owner','general_manager','restaurant_manager'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE TABLE public.restaurant_tenants(id uuid PRIMARY KEY);
-CREATE TABLE public.restaurant_properties(id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id));
+CREATE TABLE public.restaurant_properties(id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id), UNIQUE (tenant_id,id));
+CREATE TABLE public.restaurant_locations(id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id), property_id uuid NOT NULL REFERENCES public.restaurant_properties(id), slug text NOT NULL, UNIQUE(property_id,slug));
 CREATE TABLE public.restaurant_members(tenant_id uuid NOT NULL, user_id uuid NOT NULL, property_id uuid, role public.restaurant_role NOT NULL, active boolean NOT NULL DEFAULT true);
 CREATE OR REPLACE FUNCTION public.restaurant_can_read_scoped(_tenant uuid, _property uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public AS $$
@@ -32,6 +33,8 @@ INSERT INTO public.restaurant_properties(id,tenant_id) VALUES
  ('20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001'),
  ('20000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001'),
  ('20000000-0000-4000-8000-000000000003','10000000-0000-4000-8000-000000000002');
+INSERT INTO public.restaurant_locations(id,tenant_id,property_id,slug) VALUES
+ ('70000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','outlet-a');
 INSERT INTO public.restaurant_members(tenant_id,user_id,property_id,role) VALUES
  ('10000000-0000-4000-8000-000000000001','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1','20000000-0000-4000-8000-000000000001','owner'),
  ('10000000-0000-4000-8000-000000000001','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2','20000000-0000-4000-8000-000000000002','owner'),
@@ -441,3 +444,31 @@ BEGIN
 END $lb01revocation$;
 RESET ROLE;
 
+
+-- LB-01R: tenant/property and outlet/property pairings are enforced for privileged writes.
+SET ROLE service_role;
+DO $lb01r_tenant_pair$
+BEGIN
+  BEGIN
+    INSERT INTO public.staynas_product_connections(
+      integration_tenant_id,integration_property_id,local_tenant_id,local_property_id,
+      remote_tenant_id,remote_property_id,requested_by,correlation_id
+    ) VALUES (
+      '30000000-0000-4000-8000-000000000099','40000000-0000-4000-8000-000000000099',
+      '10000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000001',
+      '50000000-0000-4000-8000-000000000099','60000000-0000-4000-8000-000000000099',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1','lb01r-tenant-mismatch'
+    );
+    RAISE EXCEPTION 'LB-01R expected mismatched tenant/property mapping to fail';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO public.restaurant_locations(id,tenant_id,property_id,slug)
+    VALUES ('70000000-0000-4000-8000-000000000099',
+      '10000000-0000-4000-8000-000000000002',
+      '20000000-0000-4000-8000-000000000001','outlet-wrong-tenant');
+    RAISE EXCEPTION 'LB-01R expected mismatched outlet tenant/property insert to fail';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+END $lb01r_tenant_pair$;
+RESET ROLE;
