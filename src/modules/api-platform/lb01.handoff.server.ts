@@ -41,7 +41,7 @@ export function decryptLb01PeerCredential(input: {
   peerProduct: string;
 }): string {
   const decodeBytea = (value: unknown): Buffer => {
-    if (typeof value !== "string" || !/^\\\\x[a-f0-9]+$/i.test(value)) {
+    if (typeof value !== "string" || !/^\\x[a-f0-9]+$/i.test(value)) {
       throw new Error("Encrypted LB-01 credential material is invalid.");
     }
     return Buffer.from(value.slice(2), "hex");
