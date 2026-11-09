@@ -176,6 +176,17 @@ export const Route = createFileRoute("/api/integrations/lb01/manage")({
             const integrationTenantId = body.integrationTenantId ?? crypto.randomUUID();
             const integrationPropertyId = body.integrationPropertyId ?? crypto.randomUUID();
             const correlationId = body.correlationId ?? crypto.randomUUID();
+            if (body.integrationTenantId) {
+              const existingMappings = await admin.from("staynas_product_connections")
+                .select("local_tenant_id")
+                .eq("integration_tenant_id", integrationTenantId);
+              const existingRows = Array.isArray(existingMappings.data)
+                ? existingMappings.data as Array<Record<string, unknown>>
+                : [];
+              if (existingMappings.error || existingRows.some((row) => row.local_tenant_id !== property.local_tenant_id)) {
+                return Response.json({ error: "integration_tenant_mapping_conflict" }, { status: 409 });
+              }
+            }
             const requestResult = await userDb.rpc("lexibite_request_staynas_connection", {
               _integration_tenant_id: integrationTenantId,
               _integration_property_id: integrationPropertyId,
