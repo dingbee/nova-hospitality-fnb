@@ -281,4 +281,85 @@ BEGIN
 END $lb01credentialisolation$;
 RESET ROLE;
 
+
+-- LB-01.04: pending-state authentication, property authorization and encrypted handoff consumption.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.test_user_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',true);
+SELECT set_config('request.test_role','authenticated',true);
+DO $lb01pending$
+DECLARE _credential uuid; _connection uuid;
+BEGIN
+  SELECT id INTO _connection FROM public.staynas_product_connections
+    WHERE correlation_id='lb01-test-reauthorization';
+  IF _connection IS NULL OR NOT public.lb01_can_manage_product_connection(_connection) THEN
+    RAISE EXCEPTION 'Authorized property owner must manage pending LB-01 connection';
+  END IF;
+  _credential := public.lb01_issue_product_service_credential(
+    _connection,'abcdef0123456789abcdef04',decode(repeat('dd',32),'hex'),now()+interval '1 day'
+  );
+  IF _credential IS NULL THEN RAISE EXCEPTION 'Pending connection credential issuance failed'; END IF;
+  INSERT INTO public.lb01_credential_handoffs(
+    connection_id, credential_id, peer_product, correlation_id, code_hash,
+    encrypted_token, encryption_iv, encryption_tag, expires_at, created_by
+  ) VALUES (
+    _connection, _credential, 'staynas', 'lb01-test-reauthorization',
+    decode(repeat('aa',32),'hex'), decode(repeat('cc',64),'hex'),
+    decode(repeat('bb',12),'hex'), decode(repeat('ee',16),'hex'),
+    now()+interval '10 minutes', auth.uid()
+  );
+END $lb01pending$;
+RESET ROLE;
+
+SET LOCAL ROLE service_role;
+SELECT set_config('request.test_role','service_role',true);
+DO $lb01handoff$
+DECLARE _first integer; _retry integer; _expired integer; _nonce boolean;
+BEGIN
+  _nonce := public.lb01_claim_service_nonce(
+    (SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef04'),
+    'pending-connection-nonce-00000001', now()+interval '5 minutes'
+  );
+  IF NOT _nonce THEN RAISE EXCEPTION 'Pending connection must accept authenticated nonce'; END IF;
+
+  SELECT count(*) INTO _first FROM public.lb01_consume_credential_handoff(
+    decode(repeat('aa',32),'hex'),'staynas','lb01-test-reauthorization'
+  );
+  SELECT count(*) INTO _retry FROM public.lb01_consume_credential_handoff(
+    decode(repeat('aa',32),'hex'),'staynas','lb01-test-reauthorization'
+  );
+  IF _first <> 1 OR _retry <> 1 THEN
+    RAISE EXCEPTION 'Handoff exchange must be safely repeatable after a lost response';
+  END IF;
+  UPDATE public.lb01_credential_handoffs
+    SET consumed_at = now()-interval '3 minutes'
+    WHERE code_hash=decode(repeat('aa',32),'hex');
+  SELECT count(*) INTO _expired FROM public.lb01_consume_credential_handoff(
+    decode(repeat('aa',32),'hex'),'staynas','lb01-test-reauthorization'
+  );
+  IF _expired <> 0 THEN RAISE EXCEPTION 'Consumed handoff must expire outside recovery window'; END IF;
+END $lb01handoff$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.test_user_id','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',true);
+DO $lb01adminisolation$
+BEGIN
+  IF public.lb01_can_manage_product_connection(
+    (SELECT id FROM public.staynas_product_connections WHERE correlation_id='lb01-test-reauthorization')
+  ) THEN
+    RAISE EXCEPTION 'Other property administrator must not manage this connection';
+  END IF;
+  BEGIN
+    PERFORM 1 FROM public.lb01_credential_handoffs;
+    RAISE EXCEPTION 'Authenticated users must not read credential handoffs';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM 1 FROM public.lb01_peer_credentials;
+    RAISE EXCEPTION 'Authenticated users must not read encrypted peer credentials';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $lb01adminisolation$;
+RESET ROLE;
+
 ROLLBACK;
