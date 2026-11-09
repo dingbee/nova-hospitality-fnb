@@ -49,6 +49,7 @@ export function StayNasIntegrationCentre() {
   const [localPropertyId, setLocalPropertyId] = useState("");
   const [remoteTenantId, setRemoteTenantId] = useState("");
   const [remotePropertyId, setRemotePropertyId] = useState("");
+  const [canonicalTenantId, setCanonicalTenantId] = useState("");
   const [invitationJson, setInvitationJson] = useState("");
   const [invitation, setInvitation] = useState<PairingInvitation | null>(null);
   const [handoffCodes, setHandoffCodes] = useState<Record<string, string>>({});
@@ -116,7 +117,7 @@ export function StayNasIntegrationCentre() {
           integrationTenantId: canonical.integrationTenantId,
           integrationPropertyId: canonical.integrationPropertyId,
           correlationId: canonical.correlationId,
-        } : {}),
+        } : canonicalTenantId.trim() ? { integrationTenantId: canonicalTenantId.trim() } : {}),
       });
       setInvitation(result.pairingInvitation as PairingInvitation);
       setInvitationJson("");
@@ -208,6 +209,9 @@ export function StayNasIntegrationCentre() {
           </label>
           <label className="text-sm">Peer property ID
             <input className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm" value={remotePropertyId} onChange={(event) => setRemotePropertyId(event.target.value)} placeholder="UUID of peer property" disabled={Boolean(invitationJson.trim())} />
+          </label>
+          <label className="text-sm">Existing integration tenant ID (optional)
+            <input className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm" value={canonicalTenantId} onChange={(event) => setCanonicalTenantId(event.target.value)} placeholder="Reuse for another property in the same integration tenant" disabled={Boolean(invitationJson.trim())} />
           </label>
           <label className="text-sm md:col-span-2">Pairing invitation JSON (accept existing mapping)
             <textarea className="mt-1 min-h-24 w-full rounded-md border bg-background px-3 py-2 font-mono text-xs" value={invitationJson} onChange={(event) => setInvitationJson(event.target.value)} placeholder="Paste pairing invitation JSON from the other product" />
