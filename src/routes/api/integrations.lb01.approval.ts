@@ -28,7 +28,10 @@ export const Route = createFileRoute("/api/integrations/lb01/approval")({
         const connection = authenticated.connection;
         if (typeof correlationId !== "string" || correlationId !== connection.correlation_id
           || connection.remote_product !== "staynas") {
-          return Response.json({ error: "Approval does not match the authenticated connection." }, { status: 403 });
+          return Response.json(
+            { error: "Approval does not match the authenticated connection." },
+            { status: 403 },
+          );
         }
 
         try {
@@ -41,11 +44,17 @@ export const Route = createFileRoute("/api/integrations/lb01/approval")({
             _correlation_id: connection.correlation_id,
           });
           if (error || !["pending", "active"].includes(String(data))) {
-            return Response.json({ error: "Connection approval could not be recorded." }, { status: 409 });
+            return Response.json(
+              { error: "Connection approval could not be recorded." },
+              { status: 409 },
+            );
           }
           return Response.json({ accepted: true, status: data, correlationId });
         } catch {
-          return Response.json({ error: "Connection approval could not be recorded." }, { status: 500 });
+          return Response.json(
+            { error: "Connection approval could not be recorded." },
+            { status: 500 },
+          );
         }
       },
     },
