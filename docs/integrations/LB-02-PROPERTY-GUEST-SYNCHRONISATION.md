@@ -149,3 +149,16 @@ Open contract checks before LB-02.01 acceptance:
 - Verify RLS, grants and authorization for LB-01 RPCs and service adapters on the latest branch heads.
 
 No migration or runtime implementation is authorized by this schema note.
+
+
+## 12. LB-02.01R — tenant/property integrity remediation (2026-11-09)
+
+Implementation has been prepared on the LB-01 integration foundation branches; it is not applied to production.
+
+- StayNas: additive migration adds a composite foreign key from (local_organisation_id, local_property_id) to staynas_properties(organisation_id, id). The migration first rejects inconsistent existing connection rows, then validates the constraint.
+- LexiBite: additive migration adds the composite parent key restaurant_properties(tenant_id, id), then enforces (tenant_id, property_id) on restaurant_locations and (local_tenant_id, local_property_id) on staynas_product_connections. Existing inconsistent location or connection rows cause a fail-closed migration error.
+- Both migrations use NOT VALID followed by VALIDATE for the new foreign keys, and are included in isolated verification scripts.
+- Negative privileged-write tests attempt cross-organisation/property, cross-tenant/property and cross-tenant outlet inserts; each must fail with a foreign-key violation.
+- No data correction, tenant/property rewrite, membership change or production migration is performed.
+
+Acceptance remains pending until the isolated database workflows execute successfully on current branch heads and the full CI/security review is green. LexiBite outlet mapping must use restaurant_locations.id; its new composite ownership FK ensures each location's tenant matches the tenant of its property. The outlet mapping table and event runtime are not yet implemented.
