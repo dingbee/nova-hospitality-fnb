@@ -131,7 +131,10 @@ jobs:
             src/modules/restaurant/sales/service-recovery.contracts.test.ts \
             src/modules/restaurant/ui/useRestaurantWorkspace.test.ts \
             src/modules/restaurant/inventory/locations.server.test.ts \
-            src/modules/api-platform/lb01.contracts.test.ts
+            src/modules/api-platform/lb01.contracts.test.ts \
+            src/modules/api-platform/lb01.service-auth.test.ts \
+            src/modules/api-platform/lb01.sender.server.test.ts \
+            src/modules/api-platform/lb01.handoff.server.test.ts
 
       - name: Full test suite (repository baseline)
         id: full_tests
@@ -141,6 +144,24 @@ jobs:
       - name: Report full test baseline
         if: steps.full_tests.outcome == 'failure'
         run: echo "::warning::Full repository test suite remains non-clean outside the scoped functional gate; scoped changed-path tests remain blocking."
+
+
+      - name: LB-01 source lint
+        run: >-
+          bunx eslint
+          src/modules/api-platform/lb01.contracts.ts
+          src/modules/api-platform/lb01.contracts.test.ts
+          src/modules/api-platform/lb01.service-auth.ts
+          src/modules/api-platform/lb01.service-auth.test.ts
+          src/modules/api-platform/lb01.credentials.server.ts
+          src/modules/api-platform/lb01.sender.server.ts
+          src/modules/api-platform/lb01.sender.server.test.ts
+          src/modules/api-platform/lb01.handoff.server.ts
+          src/modules/api-platform/lb01.handoff.server.test.ts
+          src/routes/api/integrations.lb01.approval.ts
+          src/routes/api/integrations.lb01.manage.ts
+          src/routes/api/integrations.lb01.credential-exchange.ts
+          --rule 'prettier/prettier: off'
 
       - name: Verify bundle origin
         run: bun run verify:bundle -- .output
