@@ -211,7 +211,15 @@ export const Route = createFileRoute("/api/integrations/lb01/manage")({
             if (!["pending", "active"].includes(connection.status)) return Response.json({ error: "connection_not_eligible" }, { status: 409 });
             const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
             const issued = await issueLb01ServiceCredential(userDb, connection.id, expiresAt);
-            const encrypted = encryptLb01PeerCredential(issued.token, connection.id, connection.remote_product);
+            let encrypted: ReturnType<typeof encryptLb01PeerCredential>;
+            try {
+              encrypted = encryptLb01PeerCredential(issued.token, connection.id, connection.remote_product);
+            } catch {
+              await userDb.rpc("lb01_revoke_product_service_credential", {
+                _credential_id: issued.credentialId, _reason: "handoff_encryption_failed",
+              });
+              return Response.json({ error: "handoff_encryption_failed" }, { status: 503 });
+            }
             const code = createLb01HandoffCode();
             const handoff = await admin.from("lb01_credential_handoffs").insert({
               connection_id: connection.id,
