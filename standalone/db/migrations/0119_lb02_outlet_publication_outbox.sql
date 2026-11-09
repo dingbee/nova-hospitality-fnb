@@ -53,7 +53,9 @@ RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public
 AS $lb02$
 DECLARE v_event_type text; v_version bigint; v_correlation text;
 BEGIN
- IF NEW.approval_status <> 'approved' OR NEW.approved_at IS NULL THEN RETURN NEW; END IF;
+ IF NEW.approval_status <> 'approved' OR NEW.approved_at IS NULL THEN
+  IF TG_OP='INSERT' OR OLD.approval_status <> 'approved' THEN RETURN NEW; END IF;
+ END IF;
  IF TG_OP='UPDATE' AND
    ROW(NEW.display_name,NEW.outlet_type,NEW.public_description,NEW.guest_visible_status,NEW.published_service_hours,NEW.approval_status)
    IS NOT DISTINCT FROM
@@ -78,7 +80,7 @@ BEGIN
    'displayName',NEW.display_name,
    'outletType',NEW.outlet_type,
    'publicDescription',NEW.public_description,
-   'guestVisibleStatus',NEW.guest_visible_status,
+   'guestVisibleStatus',CASE WHEN NEW.approval_status='approved' THEN NEW.guest_visible_status ELSE 'unpublished' END,
    'serviceHours',NEW.published_service_hours,
    'sourceVersion',v_version
   )
