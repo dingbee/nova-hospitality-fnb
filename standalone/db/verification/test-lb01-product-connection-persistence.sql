@@ -366,4 +366,68 @@ BEGIN
 END $lb01adminisolation$;
 RESET ROLE;
 
+-- Revocation must erase both stored peer-token ciphertext and unused handoff ciphertext.
+SET LOCAL ROLE service_role;
+SELECT set_config('request.test_role','service_role',true);
+INSERT INTO public.lb01_peer_credentials(
+  connection_id, peer_product, credential_prefix, encrypted_token,
+  encryption_iv, encryption_tag, status, imported_by
+)
+SELECT c.id, 'staynas', 'fedcba9876543210fedcba98',
+  decode(repeat('cc',64),'hex'), decode(repeat('bb',12),'hex'),
+  decode(repeat('ee',16),'hex'), 'active',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+FROM public.staynas_product_connections c
+WHERE c.correlation_id='lb01-test-reauthorization';
+INSERT INTO public.lb01_credential_handoffs(
+  connection_id, credential_id, peer_product, correlation_id, code_hash,
+  encrypted_token, encryption_iv, encryption_tag, expires_at, created_by
+)
+SELECT c.id, p.id, 'staynas', c.correlation_id,
+  decode(repeat('bb',32),'hex'), decode(repeat('cc',64),'hex'),
+  decode(repeat('bb',12),'hex'), decode(repeat('ee',16),'hex'),
+  now()+interval '10 minutes', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+FROM public.staynas_product_connections c
+JOIN public.product_service_credentials p ON p.connection_id=c.id
+WHERE c.correlation_id='lb01-test-reauthorization'
+  AND p.credential_prefix='abcdef0123456789abcdef04';
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.test_user_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',true);
+SELECT set_config('request.test_role','authenticated',true);
+SELECT public.lexibite_set_staynas_connection_state(
+  (SELECT id FROM public.staynas_product_connections WHERE correlation_id='lb01-test-reauthorization'),
+  'revoke',
+  'LB-01 isolated revocation test'
+);
+RESET ROLE;
+
+SET LOCAL ROLE service_role;
+SELECT set_config('request.test_role','service_role',true);
+DO $lb01revocation$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.lb01_peer_credentials
+    WHERE credential_prefix='fedcba9876543210fedcba98'
+      AND status='revoked' AND octet_length(encrypted_token)=0
+  ) THEN
+    RAISE EXCEPTION 'Connection revocation must erase encrypted peer credentials';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.lb01_credential_handoffs
+    WHERE code_hash=decode(repeat('bb',32),'hex')
+      AND consumed_at IS NOT NULL AND octet_length(encrypted_token)=0
+  ) THEN
+    RAISE EXCEPTION 'Connection revocation must erase encrypted handoff material';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.product_service_credentials
+    WHERE credential_prefix='abcdef0123456789abcdef04' AND status='active'
+  ) THEN
+    RAISE EXCEPTION 'Connection revocation must invalidate issued service credentials';
+  END IF;
+END $lb01revocation$;
+RESET ROLE;
+
 ROLLBACK;
