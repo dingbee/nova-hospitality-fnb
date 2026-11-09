@@ -23,7 +23,7 @@ openssl rand -hex 32
 
 Do not share the encryption keys between products, environments, tenants, or deployments. Store them only as server-side environment variables; never use a `VITE_` prefix. Do not place values in source control, client-side settings, logs, or support tickets.
 
-The peer URL must be the HTTPS origin only (scheme + host, no path, query or fragment). The application constructs the fixed LB-01 API paths itself. The URL is trusted deployment configuration, not tenant input.
+The peer URL must be the HTTPS origin only (scheme + host, no path, query or fragment). The encryption key is intentionally stable for the life of the stored peer credentials; rotating it requires re-importing/rewrapping all active peer credentials before retiring the old key. If a key is suspected compromised, revoke the affected connections and establish fresh credentials under a new key. The application constructs the fixed LB-01 API paths itself. The URL is trusted deployment configuration, not tenant input.
 
 Existing Supabase server configuration remains required: `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and the server-only service-role key used by the existing admin client.
 
@@ -32,7 +32,7 @@ Existing Supabase server configuration remains required: `SUPABASE_URL`, `SUPABA
 1. An authorized owner/manager opens **LexiBite Connection** in StayNas or **StayNas Connection** in LexiBite.
 2. The initiating administrator creates a mapping using their local property ID and the peer's native tenant/property IDs. The application generates canonical integration IDs and a correlation ID.
 3. Share the returned pairing-invitation JSON with the peer administrator using an approved private channel. It contains identifiers only, not credentials.
-4. The peer administrator pastes the invitation, selects their own local property ID, and creates the reciprocal mapping. The correlation ID and canonical integration IDs must match.
+4. The peer administrator pastes the invitation, selects their own local property ID, and creates the reciprocal mapping. The correlation ID and canonical integration IDs must match. Reuse the same canonical integration tenant ID when adding more property mappings for that same tenant; the API rejects reuse across different local tenants.
 5. Each administrator selects **Issue handoff code** on their own mapping and shares the short-lived code with the peer administrator.
 6. Each administrator imports the code received from the peer. The receiving server exchanges it directly with the peer server over HTTPS. The long-lived bearer credential is never returned to the browser and is encrypted with AES-256-GCM before storage.
 7. Both administrators select **Approve and notify peer**. The signed approval request is delivered using HMAC-SHA256, timestamp and a durable nonce. A mapping becomes active only when both local approval and peer approval evidence exist.
