@@ -169,6 +169,7 @@ CREATE TEMP TABLE lb01_test_credential_ids (
   label text PRIMARY KEY,
   credential_id uuid NOT NULL
 ) ON COMMIT DROP;
+GRANT SELECT, INSERT ON lb01_test_credential_ids TO authenticated, service_role;
 
 -- Only the property administrator may issue or rotate the connection credential.
 SET LOCAL ROLE authenticated;
