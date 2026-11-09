@@ -123,15 +123,15 @@ async function dispatchApproval(admin: DbClient, connection: ConnectionRow, acto
     return { deliveryStatus: "awaiting_peer_credential" as const, connectionStatus: connection.status };
   }
 
-  const base = validateLb01PeerBaseUrl();
-  const credentialToken = decryptLb01PeerCredential({
-    ciphertext: peer.encrypted_token,
-    iv: peer.encryption_iv,
-    tag: peer.encryption_tag,
-    connectionId: connection.id,
-    peerProduct: peer.peer_product,
-  });
   try {
+    const base = validateLb01PeerBaseUrl();
+    const credentialToken = decryptLb01PeerCredential({
+      ciphertext: peer.encrypted_token,
+      iv: peer.encryption_iv,
+      tag: peer.encryption_tag,
+      connectionId: connection.id,
+      peerProduct: peer.peer_product,
+    });
     const result = await sendLb01Approval({
       endpointUrl: new URL("/api/integrations/lb01/approval", base).toString(),
       credentialToken,
@@ -166,8 +166,6 @@ export const Route = createFileRoute("/api/integrations/lb01/manage")({
               .select("id, tenant_id").eq("id", body.localPropertyId).maybeSingle();
             const property = propertyResult.data as Record<string, unknown> | null;
             if (propertyResult.error || !property) return Response.json({ error: "property_not_found" }, { status: 404 });
-            const permission = await userDb.rpc("restaurant_can_write_scoped", { _tenant_id: property.tenant_id, _roles: ["owner", "general_manager"], _property_id: body.localPropertyId });
-            if (permission.error || permission.data !== true) return Response.json({ error: "forbidden" }, { status: 403 });
 
             const integrationTenantId = body.integrationTenantId ?? crypto.randomUUID();
             const integrationPropertyId = body.integrationPropertyId ?? crypto.randomUUID();
