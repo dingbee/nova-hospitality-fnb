@@ -33,14 +33,14 @@ No shared database, cross-project database credentials, direct database reads, g
 - Unpairing, suspension or revocation blocks new delivery and marks remote projections stale; historical evidence is retained.
 
 ### LB-02.02 — F&B outlet mapping
-- LexiBite is authoritative for outlets and outlet operational fields.
+- LexiBite is authoritative for outlets and outlet operational fields. Implementation must use the active restaurant_tenants → restaurant_properties → restaurant_locations tenancy tree; the older tenants/properties/outlets schema is not the live operating model. Treat restaurant_locations as the current operational outlet/location identity and inspect its exact constraints before designing the mapping FK.
 - Each outlet must belong to the mapped LexiBite property; cross-property outlet mapping is rejected.
 - Mapping is explicit and admin-approved. No silent matching by name or code.
 - StayNas receives only approved fields: opaque outlet ID, mapped property ID, display name, outlet type, public description, guest-visible service status and published service hours.
 - Do not replicate POS terminals, menus, prices, recipes, stock, employee data, orders, payments or revenue in LB-02.
 
 ### LB-02.03 — Privacy-preserving guest references
-- StayNas creates a random, non-semantic guest reference scoped to the integration connection and property. It must not be derived from a guest ID, email, phone, name or hash of PII.
+- StayNas creates a random, non-semantic guest reference scoped to the integration connection and property. StayNas's canonical source is the guests record linked to bookings through guest_id; do not use booking snapshots (guest_name/guest_email) as a cross-product identity. It must not be derived from a guest ID, email, phone, name or hash of PII.
 - LexiBite stores that opaque reference with mapped property/outlet scope and the minimum state needed to recognise an eligible in-house guest.
 - No PII in event payloads, logs, retries, dead-letter records or observability labels.
 - LexiBite standalone restaurant customer profiles remain separate. No email/phone matching, automatic linking or profile merge.
