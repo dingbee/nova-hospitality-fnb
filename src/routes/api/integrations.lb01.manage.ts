@@ -142,8 +142,22 @@ async function dispatchApproval(admin: DbClient, connection: ConnectionRow, acto
       endpointUrl: new URL("/api/integrations/lb01/approval", base).toString(),
       credentialToken,
     }, connection.correlation_id);
+    let localStatus = connection.status;
+    if (result.status === "active") {
+      const acknowledgement = await admin.rpc("lexibite_record_staynas_approval", {
+        _integration_tenant_id: connection.integration_tenant_id,
+        _integration_property_id: connection.integration_property_id,
+        _remote_tenant_id: connection.remote_tenant_id,
+        _remote_property_id: connection.remote_property_id,
+        _correlation_id: connection.correlation_id,
+      });
+      if (acknowledgement.error || typeof acknowledgement.data !== "string") {
+        throw new Error("peer_approval_acknowledgement_persistence_failed");
+      }
+      localStatus = acknowledgement.data;
+    }
     await recordDelivery(admin, connection.id, "accepted", actorUserId, 200);
-    return { deliveryStatus: "accepted" as const, peerStatus: result.status, connectionStatus: connection.status };
+    return { deliveryStatus: "accepted" as const, peerStatus: result.status, connectionStatus: localStatus };
   } catch {
     await recordDelivery(admin, connection.id, "failed", actorUserId, null, "peer_delivery_failed");
     return { deliveryStatus: "failed" as const, connectionStatus: connection.status };
