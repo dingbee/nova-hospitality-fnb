@@ -322,7 +322,16 @@ BEGIN
     (SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef04'),
     'pending-connection-nonce-00000001', now()+interval '5 minutes'
   );
-  IF NOT _nonce THEN RAISE EXCEPTION 'Pending connection must accept authenticated nonce'; END IF;
+  IF NOT _nonce THEN
+    RAISE EXCEPTION 'Pending connection nonce diagnostic: role=%, uid=%, credential_id=%, credential_status=%, credential_expiry=%, connection_status=%',
+      auth.role(), auth.uid(),
+      (SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef04'),
+      (SELECT status FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef04'),
+      (SELECT expires_at FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef04'),
+      (SELECT c.status FROM public.staynas_product_connections c
+       JOIN public.product_service_credentials p ON p.connection_id=c.id
+       WHERE p.credential_prefix='abcdef0123456789abcdef04');
+  END IF;
 
   SELECT count(*) INTO _first FROM public.lb01_consume_credential_handoff(
     decode(repeat('aa',32),'hex'),'staynas','lb01-test-reauthorization'
