@@ -209,7 +209,7 @@ BEGIN
  _expired := public.lb01_claim_service_nonce((SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02'),'fedcba9876543210fedcba9876543211',now()-interval '1 second');
  _unknown := public.lb01_claim_service_nonce('70000000-0000-4000-8000-000000000099','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',now()+interval '5 minutes');
  IF NOT _first OR _replay OR _old_credential OR _expired OR _unknown THEN
-   RAISE EXCEPTION 'Nonce ledger did not enforce first-use, replay, revoked/expired and credential binding';
+   RAISE EXCEPTION 'Nonce ledger assertion: first=%, replay=%, revoked=%, expired=%, unknown=%, active_id=%', _first, _replay, _old_credential, _expired, _unknown, (SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02');
  END IF;
  IF (SELECT count(*) FROM public.product_service_nonces WHERE credential_id=(SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02')) <> 1 THEN
    RAISE EXCEPTION 'Expected exactly one accepted nonce';
