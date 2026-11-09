@@ -221,11 +221,18 @@ BEGIN
  IF NOT _first OR _replay OR _old_credential OR _expired OR _unknown THEN
    RAISE EXCEPTION 'Nonce ledger assertion: first=%, replay=%, revoked=%, expired=%, unknown=%, active_id=%', _first, _replay, _old_credential, _expired, _unknown, (SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02');
  END IF;
- IF (SELECT count(*) FROM public.product_service_nonces WHERE credential_id=(SELECT credential_id FROM lb01_test_credential_ids WHERE label='active')) <> 1 THEN
-   RAISE EXCEPTION 'Expected exactly one accepted nonce';
- END IF;
 END $lb01nonce$;
 RESET ROLE;
+
+-- Verify persisted nonce rows as the fixture owner, independently of the
+-- service-role function execution context.
+DO $lb01noncepersisted$
+BEGIN
+ IF (SELECT count(*) FROM public.product_service_nonces
+     WHERE credential_id=(SELECT credential_id FROM lb01_test_credential_ids WHERE label='active')) <> 1 THEN
+   RAISE EXCEPTION 'Expected exactly one persisted accepted nonce';
+ END IF;
+END $lb01noncepersisted$;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.test_user_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',true);
