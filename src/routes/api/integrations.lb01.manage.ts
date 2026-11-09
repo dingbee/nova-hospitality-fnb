@@ -35,6 +35,8 @@ type ConnectionRow = {
   correlation_id: string;
   status: string;
   local_approved_at: string | null;
+  local_property_id: string;
+  local_tenant_id: string;
 };
 
 const actionInput = z.discriminatedUnion("action", [
@@ -81,7 +83,7 @@ async function authenticatedClient(request: Request) {
 
 async function connectionFor(admin: DbClient, connectionId: string): Promise<ConnectionRow> {
   const result = await admin.from("staynas_product_connections")
-    .select("id, remote_product, remote_tenant_id, remote_property_id, integration_tenant_id, integration_property_id, correlation_id, status, local_approved_at")
+    .select("id, remote_product, remote_tenant_id, remote_property_id, integration_tenant_id, integration_property_id, correlation_id, status, local_approved_at, local_property_id, local_tenant_id")
     .eq("id", connectionId).maybeSingle();
   const row = result.data as ConnectionRow | null;
   if (result.error || !row) throw new Error("connection_not_found");
@@ -251,8 +253,29 @@ export const Route = createFileRoute("/api/integrations/lb01/manage")({
             });
             if (!response.ok) return Response.json({ error: "peer_handoff_rejected" }, { status: 409 });
             const payload: unknown = await response.json();
-            const token = (payload as { token?: unknown } | null)?.token;
-            if (typeof token !== "string") return Response.json({ error: "invalid_peer_handoff_response" }, { status: 502 });
+            const peer = payload as {
+              token?: unknown;
+              integrationTenantId?: unknown;
+              integrationPropertyId?: unknown;
+              correlationId?: unknown;
+              issuerTenantId?: unknown;
+              issuerPropertyId?: unknown;
+              targetTenantId?: unknown;
+              targetPropertyId?: unknown;
+              peerProduct?: unknown;
+            } | null;
+            const token = peer?.token;
+            if (typeof token !== "string"
+              || peer?.integrationTenantId !== connection.integration_tenant_id
+              || peer?.integrationPropertyId !== connection.integration_property_id
+              || peer?.correlationId !== connection.correlation_id
+              || peer?.issuerTenantId !== connection.remote_tenant_id
+              || peer?.issuerPropertyId !== connection.remote_property_id
+              || peer?.targetTenantId !== connection.local_tenant_id
+              || peer?.targetPropertyId !== connection.local_property_id
+              || peer?.peerProduct !== connection.remote_product) {
+              return Response.json({ error: "peer_handoff_mapping_mismatch" }, { status: 409 });
+            }
             const encrypted = encryptLb01PeerCredential(token, connection.id, connection.remote_product);
             const stored = await admin.from("lb01_peer_credentials").upsert({
               connection_id: connection.id,
