@@ -39,8 +39,24 @@ async function lb01Request(payload: Record<string, unknown>) {
     cache: "no-store",
     body: JSON.stringify(payload),
   });
-  const result = await response.json() as Record<string, unknown>;
-  if (!response.ok) throw new Error(String(result.error ?? "LB-01 request failed."));
+  const responseText = await response.text();
+  let result: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(responseText);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Invalid JSON response shape.");
+    }
+    result = parsed as Record<string, unknown>;
+  } catch {
+    const status = response.status;
+    if (response.redirected || status === 404 || status === 405) {
+      throw new Error(
+        `LB-01 API route is unavailable on this deployment (HTTP ${status}). Open the current LexiBite UAT deployment and retry after its route build completes.`,
+      );
+    }
+    throw new Error(`LB-01 API returned a non-JSON response (HTTP ${status}). Check the deployment's server route and runtime logs.`);
+  }
+  if (!response.ok) throw new Error(String(result.error ?? `LB-01 request failed (HTTP ${response.status}).`));
   return result;
 }
 
