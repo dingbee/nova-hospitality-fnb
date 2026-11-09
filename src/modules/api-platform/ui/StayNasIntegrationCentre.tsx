@@ -251,6 +251,7 @@ export function StayNasIntegrationCentre() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <div className="font-medium">{connection.remote_product} · {connection.status}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">Local property {connection.local_property_id} · Peer property {connection.remote_property_id}</div>
                     <div className="mt-1 text-xs text-muted-foreground">Connection {connection.id} · Correlation {connection.correlation_id}</div>
                     <div className="mt-1 text-xs text-muted-foreground">Local approval: {connection.local_approved_at ? "recorded" : "pending"} · Peer approval: {connection.remote_approved_at ? "recorded" : "pending"}</div>
                   </div>
