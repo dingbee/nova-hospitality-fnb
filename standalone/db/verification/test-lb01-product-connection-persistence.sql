@@ -166,12 +166,19 @@ RESET ROLE;
 -- Only the property administrator may issue or rotate the connection credential.
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.test_user_id','cccccccc-cccc-4ccc-8ccc-ccccccccccc3',true);
-SELECT public.lb01_issue_product_service_credential(
- :'service_connection_id','abcdef0123456789abcdef01',decode(repeat('aa',32),'hex'),now()+interval '1 day'
-) AS first_credential_id \gset
-SELECT public.lb01_issue_product_service_credential(
- :'service_connection_id','abcdef0123456789abcdef02',decode(repeat('bb',32),'hex'),now()+interval '1 day'
-) AS active_credential_id \gset
+DO $lb01issue$
+DECLARE _first uuid; _second uuid;
+BEGIN
+ _first := public.lb01_issue_product_service_credential(
+   :'service_connection_id','abcdef0123456789abcdef01',decode(repeat('aa',32),'hex'),now()+interval '1 day'
+ );
+ _second := public.lb01_issue_product_service_credential(
+   :'service_connection_id','abcdef0123456789abcdef02',decode(repeat('bb',32),'hex'),now()+interval '1 day'
+ );
+ IF _first IS NULL OR _second IS NULL THEN
+   RAISE EXCEPTION 'Credential issuance returned a null identifier';
+ END IF;
+END $lb01issue$;
 
 RESET ROLE;
 
@@ -221,7 +228,7 @@ RESET ROLE;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.test_user_id','cccccccc-cccc-4ccc-8ccc-ccccccccccc3',true);
-SELECT public.lb01_revoke_product_service_credential(:'active_credential_id','test revocation');
+SELECT public.lb01_revoke_product_service_credential((SELECT id FROM public.product_service_credentials WHERE credential_prefix='abcdef0123456789abcdef02'),'test revocation');
 RESET ROLE;
 
 SET LOCAL ROLE service_role;
