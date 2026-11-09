@@ -186,6 +186,8 @@ BEGIN
  _second := public.lb01_issue_product_service_credential(
    _connection_id,'abcdef0123456789abcdef02',decode(repeat('bb',32),'hex'),now()+interval '1 day'
  );
+ INSERT INTO lb01_test_credential_ids(label, credential_id)
+ VALUES ('rotated', _first), ('active', _second);
  IF _first IS NULL OR _second IS NULL THEN
    RAISE EXCEPTION 'Credential issuance returned a null identifier';
  END IF;
