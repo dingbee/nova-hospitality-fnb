@@ -44,7 +44,7 @@ INSERT INTO public.restaurant_members(tenant_id,user_id,property_id,role) VALUES
 \i standalone/db/migrations/0113_lb01_service_auth_nonce_ledger.sql
 \i standalone/db/migrations/0114_lb01_secure_handoff_and_delivery.sql
 
-\\i standalone/db/migrations/0115_lb01r_tenant_property_location_integrity.sql
+\i standalone/db/migrations/0115_lb01r_tenant_property_location_integrity.sql
 
 SET ROLE authenticated;
 SELECT set_config('request.test_user_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',false);
