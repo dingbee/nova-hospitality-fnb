@@ -198,3 +198,42 @@ export async function postStayNasRoomCharge(sb:Db,input:RoomChargeInput):Promise
   return {status:"unknown",duplicate:false,failureCode:"unknown",failureMessage:"StayNas delivery remains uncertain. The POS request is retained; do not take another tender until authoritative status is recovered."};
  }
 }
+
+export async function requestStayNasRoomChargeReversal(input:{
+ tenantId:string;orderId:string;amount:number;reasonCode:"pos_void"|"incorrect_amount"|"duplicate_charge"|"guest_dispute"|"service_recovery"|"other";
+ reason:string;idempotencyKey:string;
+}):Promise<{status:string;requestId?:string;duplicate?:boolean}>{
+ const {supabaseAdmin}=await import("@/integrations/supabase/client.server");
+ const admin=supabaseAdmin as unknown as Db;
+ const {data:operation,error}=await admin.from("lb03_pos_room_charge_operations")
+  .select("id,integration_connection_id,state,staynas_posting_reference,amount,currency")
+  .eq("tenant_id",input.tenantId).eq("order_id",input.orderId).maybeSingle();
+ if(error||!operation||!operation.staynas_posting_reference||!["POSTED","RECONCILIATION_REQUIRED"].includes(operation.state))
+  throw new Error("The POS transaction has no confirmed StayNas posting eligible for reversal.");
+ if(input.amount<=0||input.amount>Number(operation.amount))
+  throw new Error("The requested reversal exceeds the original room charge.");
+ const {data:connection,error:connectionError}=await admin.from("staynas_product_connections")
+  .select("id,status,local_approved_at,remote_approved_at,correlation_id")
+  .eq("id",operation.integration_connection_id).maybeSingle();
+ if(connectionError||!connection||connection.status!=="active"||!connection.local_approved_at||!connection.remote_approved_at)
+  throw new Error("The StayNas connection is not active.");
+ const {data:peer,error:peerError}=await admin.from("lb01_peer_credentials")
+  .select("peer_product,encrypted_token,encryption_iv,encryption_tag,status")
+  .eq("connection_id",connection.id).maybeSingle();
+ if(peerError||!peer||peer.status!=="active")throw new Error("StayNas service credential unavailable.");
+ const token=decryptLb01PeerCredential({ciphertext:peer.encrypted_token,iv:peer.encryption_iv,
+  tag:peer.encryption_tag,connectionId:connection.id,peerProduct:"staynas"});
+ const base=validateLb01PeerBaseUrl();
+ const response=await signedPost(new URL("/api/integrations/lb03/reversal-request",base),token,{
+  postingReference:operation.staynas_posting_reference,idempotencyKey:input.idempotencyKey,
+  amount:input.amount,reasonCode:input.reasonCode,reason:input.reason
+ });
+ if(!response.ok)throw new Error("StayNas did not accept the reversal request.");
+ const result=await response.json() as {status:string;requestId?:string;duplicate?:boolean};
+ if(result.status!=="PENDING_APPROVAL"&&result.status!=="POSTED")
+  throw new Error("StayNas returned an unexpected reversal state.");
+ await admin.from("lb03_pos_room_charge_operations").update({
+  state:"REVERSAL_PENDING",updated_at:new Date().toISOString()
+ }).eq("id",operation.id);
+ return result;
+}
