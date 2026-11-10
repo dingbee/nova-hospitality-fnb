@@ -132,7 +132,7 @@ export async function validateRoomCharge(sb: Sb, userId: string, input: FolioVal
  */
 export async function postRoomCharge(sb: Sb, userId: string, input: FolioPostInput): Promise<FolioPostingResult> {
   await assertFolioWrite(sb, userId);
-  return postStayNasRoomCharge(sb, userId, input);
+  return postStayNasRoomCharge(sb, input);
 }
 
 /** Truth after an interrupted posting: what does the folio actually hold? */
