@@ -33,7 +33,7 @@ async function loadOrder(sb: Sb, tenantId: string, orderId: string) {
 export async function searchRoomChargeTargets(sb: Sb, userId: string, input: RoomChargeSearchInput) {
   await assertCapability(sb, userId, input.tenantId, "sales.room_charge");
   const { findChargeableStays } = await loadPmsFolioPort();
-  return findChargeableStays(sb, userId, { query: input.query, limit: 20 });
+  return findChargeableStays(sb, userId, { tenantId: input.tenantId, query: input.query, limit: 20 });
 }
 
 /** Pre-flight: can this exact amount go to this exact folio, right now? */
@@ -46,6 +46,7 @@ export async function quoteRoomCharge(sb: Sb, userId: string, input: RoomChargeQ
   }
   const { validateRoomCharge } = await loadPmsFolioPort();
   return validateRoomCharge(sb, userId, {
+    tenantId: input.tenantId,
     bookingId: input.bookingId,
     amount: input.amount,
     currency: String(order.currency ?? "TZS"),
