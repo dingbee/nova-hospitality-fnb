@@ -24,13 +24,15 @@ CREATE TABLE IF NOT EXISTS public.lb03_pos_room_charge_operations (
  correlation_id text NOT NULL,
  state text NOT NULL DEFAULT 'INITIATED' CHECK(state IN (
   'INITIATED','AUTHORIZATION_PENDING','AUTHORIZED','REJECTED','POSTING_PENDING',
-  'POSTED','POSTING_FAILED','REVERSAL_PENDING','REVERSED','RECONCILIATION_REQUIRED',
+  'POSTED','POSTING_FAILED','REVERSAL_PENDING','PARTIALLY_REVERSED','REVERSED','RECONCILIATION_REQUIRED',
   'RECONCILED','EXPIRED'
  )),
  authorization_reference text,
  authorization_expires_at timestamptz,
  staynas_posting_id uuid,
  staynas_posting_reference text,
+ reversed_amount numeric(14,2) NOT NULL DEFAULT 0 CHECK(reversed_amount>=0 AND reversed_amount<=amount),
+ reversal_reference text,
  reversed_at timestamptz,
  reversal_reference text,
  last_error_code text,
