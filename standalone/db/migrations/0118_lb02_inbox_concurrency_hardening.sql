@@ -56,6 +56,7 @@ BEGIN
     RAISE EXCEPTION 'Invalid LB-02 stay projection payload' USING ERRCODE = '22023';
   END;
   IF v_guest_reference IS NULL OR v_stay_reference IS DISTINCT FROM _aggregate_id
+     OR v_status IS NULL
      OR v_status NOT IN ('expected','checked_in','checked_out','cancelled','no_show')
      OR v_occurred_at IS NULL OR v_effective_at IS NULL
      OR (_payload->>'statusVersion')::bigint IS DISTINCT FROM _aggregate_version THEN
