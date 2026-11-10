@@ -27,7 +27,7 @@ async function signedPost(url:URL,token:string,body:Record<string,unknown>){
  },body:rawBody,signal:AbortSignal.timeout(10000)});
 }
 
-export async function postStayNasRoomCharge(sb:Db,userId:string,input:RoomChargeInput):Promise<Result>{
+export async function postStayNasRoomCharge(sb:Db,input:RoomChargeInput):Promise<Result>{
  const source=input.source??{};
  if(!source.tenantId||!source.propertyId||!source.locationId||!source.orderId)
   return {status:"failed",duplicate:false,failureCode:"invalid_amount",failureMessage:"The POS transaction is missing its property or outlet mapping."};
@@ -121,7 +121,14 @@ export async function postStayNasRoomCharge(sb:Db,userId:string,input:RoomCharge
    await admin.from("lb03_pos_room_charge_operations").update({state:"REJECTED",last_error_code:"authorization_rejected",updated_at:new Date().toISOString()}).eq("id",operationId);
    return {status:"failed",duplicate:false,failureCode:"posting_rejected",failureMessage:"StayNas rejected the room-charge authorization."};
   }
-  const authorization=await authResponse.json() as {status:string;authorizationReference:string;expiresAt?:string};
+  const authorization=await authResponse.json() as {status:string;authorizationReference:string;expiresAt?:string;postingId?:string;postingReference?:string;folioReference?:string;amount?:number;currency?:string;duplicate?:boolean};
+  if(authorization.status==="POSTED"&&authorization.postingReference){
+   await admin.from("lb03_pos_room_charge_operations").update({state:"POSTED",staynas_posting_id:authorization.postingId??null,
+    staynas_posting_reference:authorization.postingReference,updated_at:new Date().toISOString()}).eq("id",operationId);
+   return {status:"posted",duplicate:true,postingId:authorization.postingId??null,
+    postingReference:authorization.postingReference,folioReference:authorization.folioReference??null,
+    amount:Number(authorization.amount??amount),currency:String(authorization.currency??currency)};
+  }
   if(authorization.status!=="AUTHORIZED"||!authorization.authorizationReference)
    return {status:"unknown",duplicate:false,failureCode:"unknown",failureMessage:"StayNas did not return a confirmed authorization decision."};
   await admin.from("lb03_pos_room_charge_operations").update({
