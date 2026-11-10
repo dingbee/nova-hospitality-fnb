@@ -15,7 +15,8 @@ import { folioIdempotencyKey, folioFailureMessage } from "@/domains/hospitality/
 import { loadPmsFolioPort } from "../core/ports/pms-folio.port";
 import type { RoomChargeCommitInput, RoomChargeQuoteInput, RoomChargeSearchInput } from "./roomcharge.contracts";
 import { takePosPayment } from "./pos.server";
-import { requestStayNasRoomChargeReversal } from "@/modules/restaurant/folio/lb03-client.server";
+import { getStayNasRoomChargeStatus, requestStayNasRoomChargeReversal } from "@/modules/restaurant/folio/lb03-client.server";
+import { refundPayment } from "./bill.server";
 
 type Sb = any;
 
@@ -181,7 +182,7 @@ export async function commitRoomCharge(sb: Sb, userId: string, input: RoomCharge
 }
 
 export async function requestRoomChargeReversal(sb:Sb,userId:string,input:import("./roomcharge.contracts").RoomChargeReversalInput){
- await assertCapability(sb,userId,input.tenantId,"sales.room_charge");
+ await assertCapability(sb,userId,input.tenantId,"sales.void");
  await loadOrder(sb,input.tenantId,input.orderId);
  const idempotencyKey=`roomcharge-reversal:${input.tenantId}:${input.orderId}:${input.clientRequestId}`;
  const result=await requestStayNasRoomChargeReversal({
@@ -195,4 +196,32 @@ export async function requestRoomChargeReversal(sb:Sb,userId:string,input:import
   dedupeKey:`roomcharge:reversal:${idempotencyKey}`
  });
  return result;
+}
+
+/** Finalize the POS-side compensating refund only after StayNas confirms its hotel-approved folio adjustment. */
+export async function finalizeRoomChargeReversal(sb:Sb,userId:string,input:import("./roomcharge.contracts").RoomChargeReversalFinalizeInput){
+ await assertCapability(sb,userId,input.tenantId,"sales.void");
+ const truth=await getStayNasRoomChargeStatus({tenantId:input.tenantId,orderId:input.orderId});
+ if(!truth.authoritative||!truth.operations.length)throw new Error("StayNas reversal status is not authoritatively available.");
+ const operation=truth.operations[0] as any;
+ if(!["PARTIALLY_REVERSED","REVERSED"].includes(operation.state))
+  throw new Error("Hotel approval and folio adjustment are not complete.");
+ const {data:payment}=await sb.from("restaurant_payments")
+  .select("id,amount").eq("tenant_id",input.tenantId).eq("order_id",input.orderId)
+  .eq("method","room_charge").is("refund_of",null).maybeSingle();
+ if(!payment)throw new Error("The originating room-charge POS payment cannot be located.");
+ const {data:refundRows}=await sb.from("restaurant_payments")
+  .select("amount").eq("tenant_id",input.tenantId).eq("refund_of",payment.id).eq("state","refunded");
+ const alreadyRefunded=((refundRows??[]) as Array<{amount:number}>).reduce((sum,row)=>sum+Math.abs(Number(row.amount)),0);
+ const authorizedReversed=Number(operation.reversed_amount??0);
+ const delta=Math.round((authorizedReversed-alreadyRefunded)*100)/100;
+ if(delta<=0.001)return {refunded:false,duplicate:true,amount:alreadyRefunded,state:operation.state};
+ if(delta>Math.abs(Number(payment.amount))-alreadyRefunded+0.001)
+  throw new Error("StayNas reversal exceeds the remaining POS payment amount.");
+ const refund=await refundPayment(sb,userId,{
+  tenantId:input.tenantId,orderId:input.orderId,paymentId:payment.id,amount:delta,
+  reason:`Hotel-approved StayNas folio adjustment ${operation.reversal_reference??""}`.trim(),
+  clientRequestId:`lb03-refund:${input.orderId}:${Math.round(authorizedReversed*100)}`
+ });
+ return {refunded:true,duplicate:Boolean(refund.duplicate),amount:delta,state:operation.state,order:refund.order};
 }
