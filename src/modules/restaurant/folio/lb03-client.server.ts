@@ -237,3 +237,37 @@ export async function requestStayNasRoomChargeReversal(input:{
  }).eq("id",operation.id);
  return result;
 }
+
+export async function getStayNasRoomChargeStatus(input:{tenantId:string;orderId?:string;idempotencyKey?:string}){
+ const {supabaseAdmin}=await import("@/integrations/supabase/client.server");
+ const admin=supabaseAdmin as unknown as Db;
+ let query=admin.from("lb03_pos_room_charge_operations").select("*").eq("tenant_id",input.tenantId);
+ if(input.orderId)query=query.eq("order_id",input.orderId);
+ if(input.idempotencyKey)query=query.eq("idempotency_key",input.idempotencyKey);
+ const {data:operation,error}=await query.maybeSingle();
+ if(error||!operation)return {operations:[],authoritative:false};
+ const {data:peer}=await admin.from("lb01_peer_credentials")
+  .select("peer_product,encrypted_token,encryption_iv,encryption_tag,status")
+  .eq("connection_id",operation.integration_connection_id).maybeSingle();
+ if(!peer||peer.status!=="active")return {operations:[operation],authoritative:false};
+ try{
+  const token=decryptLb01PeerCredential({ciphertext:peer.encrypted_token,iv:peer.encryption_iv,
+   tag:peer.encryption_tag,connectionId:operation.integration_connection_id,peerProduct:"staynas"});
+  const base=validateLb01PeerBaseUrl();
+  const response=await signedPost(new URL("/api/integrations/lb03/status",base),token,{
+   idempotencyKey:operation.idempotency_key,posTransactionId:operation.order_id
+  });
+  if(!response.ok)return {operations:[operation],authoritative:false};
+  const truth=await response.json() as {status:string;authorizationReference?:string;posting?:{id:string;posting_reference:string;folio_reference:string;amount:number;currency:string}|null;reversedAmount?:number;reversalReference?:string};
+  const state=truth.status;
+  const allowed=["AUTHORIZED","EXPIRED","POSTING_PENDING","POSTED","POSTING_FAILED","REVERSAL_PENDING","PARTIALLY_REVERSED","REVERSED","RECONCILIATION_REQUIRED","RECONCILED"];
+  if(!allowed.includes(state))return {operations:[operation],authoritative:false};
+  const patch:Record<string,unknown>={state,updated_at:new Date().toISOString()};
+  if(truth.posting?.id)patch.staynas_posting_id=truth.posting.id;
+  if(truth.posting?.posting_reference)patch.staynas_posting_reference=truth.posting.posting_reference;
+  if(truth.reversedAmount!=null)patch.reversed_amount=truth.reversedAmount;
+  if(truth.reversalReference)patch.reversal_reference=truth.reversalReference;
+  await admin.from("lb03_pos_room_charge_operations").update(patch).eq("id",operation.id);
+  return {operations:[{...operation,...patch,authoritativePosting:truth.posting??null}],authoritative:true};
+ }catch{return {operations:[operation],authoritative:false};}
+}
