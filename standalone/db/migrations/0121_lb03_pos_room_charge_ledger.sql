@@ -82,6 +82,12 @@ CREATE TABLE IF NOT EXISTS public.lb03_pos_room_charge_audit (
 );
 CREATE INDEX IF NOT EXISTS lb03_pos_room_charge_audit_operation_idx
  ON public.lb03_pos_room_charge_audit(operation_id,occurred_at,id);
+CREATE OR REPLACE FUNCTION public.lb03_reject_pos_room_charge_audit_mutation()
+RETURNS trigger LANGUAGE plpgsql SET search_path=public
+AS $lb03$ BEGIN RAISE EXCEPTION 'LB-03 POS audit evidence is immutable' USING ERRCODE='55000'; END; $lb03$;
+DROP TRIGGER IF EXISTS lb03_pos_room_charge_audit_immutable ON public.lb03_pos_room_charge_audit;
+CREATE TRIGGER lb03_pos_room_charge_audit_immutable BEFORE UPDATE OR DELETE ON public.lb03_pos_room_charge_audit
+ FOR EACH ROW EXECUTE FUNCTION public.lb03_reject_pos_room_charge_audit_mutation();
 
 CREATE TABLE IF NOT EXISTS public.lb03_pos_room_charge_reconciliation (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
