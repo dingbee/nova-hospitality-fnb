@@ -133,11 +133,23 @@ export async function commitRoomCharge(sb: Sb, userId: string, input: RoomCharge
     closeWhenSettled: input.closeWhenSettled,
   });
 
-  await sb
-    .from("pms_folio_postings")
-    .update({ metadata: { settled_order_id: input.orderId } })
-    .eq("idempotency_key", idempotencyKey)
-    .is("source_payment_id", null);
+  // Link the local POS payment to the integration operation. StayNas folio
+  // records are never updated from the LexiBite database.
+  const { data: posPayment } = await sb
+    .from("restaurant_payments")
+    .select("id")
+    .eq("tenant_id", input.tenantId)
+    .eq("order_id", input.orderId)
+    .eq("client_request_id", input.clientRequestId)
+    .maybeSingle();
+  if (posPayment?.id) {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await supabaseAdmin
+      .from("lb03_pos_room_charge_operations")
+      .update({ pos_payment_id: posPayment.id, updated_at: new Date().toISOString() })
+      .eq("tenant_id", input.tenantId)
+      .eq("order_id", input.orderId);
+  }
 
   await emitRestaurantEvent(sb, userId, {
     ...eventBase,
