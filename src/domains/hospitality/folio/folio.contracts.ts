@@ -5,12 +5,14 @@ const uuid = z.string().uuid();
 export const folioStayLookupSchema = z.object({
   /** Room number, reservation reference or guest surname as typed at the till. */
   query: z.string().max(80).optional(),
+  tenantId: uuid.optional(),
   bookingId: uuid.optional(),
   limit: z.number().int().min(1).max(50).default(20),
 });
 export type FolioStayLookupInput = z.infer<typeof folioStayLookupSchema>;
 
 export const folioValidateSchema = z.object({
+  tenantId: uuid.optional(),
   bookingId: uuid,
   amount: z.number(),
   currency: z.string().min(3).max(3),
