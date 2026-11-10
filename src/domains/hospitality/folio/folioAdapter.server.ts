@@ -15,7 +15,7 @@ import {
   type FolioStay,
 } from "./folio.rules";
 import type { FolioPostInput, FolioPostingStatusInput, FolioStayLookupInput, FolioValidateInput } from "./folio.contracts";
-import { postStayNasRoomCharge } from "@/modules/restaurant/folio/lb03-client.server";
+import { getStayNasRoomChargeStatus, postStayNasRoomCharge } from "@/modules/restaurant/folio/lb03-client.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 type Sb = any;
@@ -126,14 +126,11 @@ export async function postRoomCharge(sb: Sb, userId: string, input: FolioPostInp
 /** Truth after an interrupted posting: what does the folio actually hold? */
 export async function getFolioPostingStatus(sb: Sb, userId: string, input: FolioPostingStatusInput) {
   await assertFolioRead(sb, userId);
-  const admin = supabaseAdmin as unknown as Sb;
-  let q = admin.from("lb03_pos_room_charge_operations")
-    .select("id,tenant_id,order_id,amount,currency,state,idempotency_key,authorization_reference,staynas_posting_id,staynas_posting_reference,last_error_code,attempt_count,updated_at")
-    .order("updated_at", { ascending: false }).limit(20);
-  if (input.tenantId) q = q.eq("tenant_id", input.tenantId);
-  if (input.idempotencyKey) q = q.eq("idempotency_key", input.idempotencyKey);
-  if (input.orderId) q = q.eq("order_id", input.orderId);
-  if (input.postingId) q = q.eq("staynas_posting_id", input.postingId);
-  const { data } = await q;
-  return { operations: (data ?? []) as any[] };
+  if (!input.tenantId) return { operations: [], authoritative: false };
+  return getStayNasRoomChargeStatus({
+    tenantId: input.tenantId,
+    orderId: input.orderId,
+    idempotencyKey: input.idempotencyKey,
+    postingId: input.postingId,
+  });
 }
