@@ -110,6 +110,11 @@ jobs:
         run: |
           psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-tenant-central-store-migration.sql
 
+      - name: Apply and verify the complete LexiBite LB-02 migration chain
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-lb02-event-inbox.sql
+
       - name: Scoped GTM and changed-path functional tests
         run: |
           bunx vitest run \
