@@ -280,7 +280,7 @@ export async function getStayNasRoomChargeStatus(input:{tenantId:string;orderId?
   else if(posting&&Number(truth.reversedAmount??0)>0){
    const {data:refundRows}=await admin.from("restaurant_payments").select("amount")
     .eq("tenant_id",operation.tenant_id).eq("order_id",operation.order_id)
-    .eq("state","refunded").not("refund_of","is",null);
+    .eq("refund_of",operation.pos_payment_id).eq("state","refunded");
    const posRefunded=((refundRows??[]) as Array<{amount:number}>).reduce((sum,row)=>sum+Math.abs(Number(row.amount)),0);
    if(Math.abs(posRefunded-Number(truth.reversedAmount))>0.001)outcome="REVERSAL_MISMATCH";
    else outcome="MATCHED";
