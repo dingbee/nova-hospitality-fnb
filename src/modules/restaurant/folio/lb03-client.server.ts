@@ -238,12 +238,13 @@ export async function requestStayNasRoomChargeReversal(input:{
  return result;
 }
 
-export async function getStayNasRoomChargeStatus(input:{tenantId:string;orderId?:string;idempotencyKey?:string}){
+export async function getStayNasRoomChargeStatus(input:{tenantId:string;orderId?:string;idempotencyKey?:string;postingId?:string}){
  const {supabaseAdmin}=await import("@/integrations/supabase/client.server");
  const admin=supabaseAdmin as unknown as Db;
  let query=admin.from("lb03_pos_room_charge_operations").select("*").eq("tenant_id",input.tenantId);
  if(input.orderId)query=query.eq("order_id",input.orderId);
  if(input.idempotencyKey)query=query.eq("idempotency_key",input.idempotencyKey);
+ if(input.postingId)query=query.eq("staynas_posting_id",input.postingId);
  const {data:operation,error}=await query.maybeSingle();
  if(error||!operation)return {operations:[],authoritative:false};
  const {data:peer}=await admin.from("lb01_peer_credentials")
