@@ -128,12 +128,12 @@ export async function getFolioPostingStatus(sb: Sb, userId: string, input: Folio
   await assertFolioRead(sb, userId);
   const admin = supabaseAdmin as unknown as Sb;
   let q = admin.from("lb03_pos_room_charge_operations")
-    .select("id,tenant_id,order_id,amount,currency,state,idempotency_key,authorization_reference,staynAS_posting_id,staynAS_posting_reference,last_error_code,attempt_count,updated_at")
+    .select("id,tenant_id,order_id,amount,currency,state,idempotency_key,authorization_reference,staynas_posting_id,staynas_posting_reference,last_error_code,attempt_count,updated_at")
     .order("updated_at", { ascending: false }).limit(20);
   if (input.tenantId) q = q.eq("tenant_id", input.tenantId);
   if (input.idempotencyKey) q = q.eq("idempotency_key", input.idempotencyKey);
   if (input.orderId) q = q.eq("order_id", input.orderId);
-  if (input.postingId) q = q.eq("staynAS_posting_id", input.postingId);
+  if (input.postingId) q = q.eq("staynas_posting_id", input.postingId);
   const { data } = await q;
   return { operations: (data ?? []) as any[] };
 }
