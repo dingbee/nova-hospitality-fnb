@@ -206,7 +206,7 @@ export async function finalizeRoomChargeReversal(sb:Sb,userId:string,input:impor
  const truth=await getStayNasRoomChargeStatus({tenantId:input.tenantId,orderId:input.orderId});
  if(!truth.authoritative||!truth.operations.length)throw new Error("StayNas reversal status is not authoritatively available.");
  const operation=truth.operations[0] as any;
- if(!["PARTIALLY_REVERSED","REVERSED"].includes(operation.state))
+ if(!["PARTIALLY_REVERSED","REVERSED","RECONCILED"].includes(operation.state)||Number(operation.reversed_amount??0)<=0)
   throw new Error("Hotel approval and folio adjustment are not complete.");
  const {data:payment}=await sb.from("restaurant_payments")
   .select("id,amount").eq("tenant_id",input.tenantId).eq("order_id",input.orderId)
