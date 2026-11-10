@@ -153,6 +153,8 @@ export async function commitRoomCharge(sb: Sb, userId: string, input: RoomCharge
       .eq("tenant_id", input.tenantId)
       .eq("order_id", input.orderId);
   }
+  // Run reconciliation only after the originating POS payment row exists.
+  await getStayNasRoomChargeStatus({ tenantId: input.tenantId, orderId: input.orderId });
 
   await emitRestaurantEvent(sb, userId, {
     ...eventBase,
@@ -223,5 +225,6 @@ export async function finalizeRoomChargeReversal(sb:Sb,userId:string,input:impor
   reason:`Hotel-approved StayNas folio adjustment ${operation.reversal_reference??""}`.trim(),
   clientRequestId:`lb03-refund:${input.orderId}:${Math.round(authorizedReversed*100)}`
  });
+ await getStayNasRoomChargeStatus({tenantId:input.tenantId,orderId:input.orderId});
  return {refunded:true,duplicate:Boolean(refund.duplicate),amount:delta,state:operation.state,order:refund.order};
 }
