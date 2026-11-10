@@ -121,6 +121,8 @@ export async function postStayNasRoomCharge(sb:Db,input:RoomChargeInput):Promise
    await admin.from("lb03_pos_room_charge_operations").update({state:"REJECTED",last_error_code:"authorization_rejected",updated_at:new Date().toISOString()}).eq("id",operationId);
    return {status:"failed",duplicate:false,failureCode:"posting_rejected",failureMessage:"StayNas rejected the room-charge authorization."};
   }
+  await admin.from("lb03_pos_room_charge_outbox").update({state:"delivered",delivered_at:new Date().toISOString()})
+   .eq("operation_id",operationId).eq("event_type","authorize").eq("idempotency_key",input.idempotencyKey);
   const authorization=await authResponse.json() as {status:string;authorizationReference:string;expiresAt?:string;postingId?:string;postingReference?:string;folioReference?:string;amount?:number;currency?:string;duplicate?:boolean};
   if(authorization.status==="POSTED"&&authorization.postingReference){
    await admin.from("lb03_pos_room_charge_operations").update({state:"POSTED",staynas_posting_id:authorization.postingId??null,
@@ -140,6 +142,9 @@ export async function postStayNasRoomCharge(sb:Db,input:RoomChargeInput):Promise
    authorization_expires_at:authorization.expiresAt??null,updated_at:new Date().toISOString()
   }).eq("id",operationId);
 
+  await admin.from("lb03_pos_room_charge_outbox").insert({operation_id:operationId,event_type:"post",
+   idempotency_key:input.idempotencyKey,payload:{authorizationReference:authorization.authorizationReference,
+    posTransactionId:order.id,amount,currency},state:"pending",available_at:new Date().toISOString()});
   const postUrl=new URL("/api/integrations/lb03/post",base);
   const postResponse=await signedPost(postUrl,token,{
    authorizationReference:authorization.authorizationReference,idempotencyKey:input.idempotencyKey,
@@ -154,6 +159,8 @@ export async function postStayNasRoomCharge(sb:Db,input:RoomChargeInput):Promise
   }
   if(posted.status!=="POSTED"||!posted.postingReference)
    return {status:"unknown",duplicate:false,failureCode:"unknown",failureMessage:"StayNas did not confirm a durable folio posting."};
+  await admin.from("lb03_pos_room_charge_outbox").update({state:"delivered",delivered_at:new Date().toISOString()})
+   .eq("operation_id",operationId).eq("event_type","post").eq("idempotency_key",input.idempotencyKey);
   await admin.from("lb03_pos_room_charge_operations").update({
    state:"POSTED",staynas_posting_id:posted.postingId,staynas_posting_reference:posted.postingReference,
    updated_at:new Date().toISOString()
