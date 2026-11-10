@@ -34,3 +34,6 @@ export const roomChargeReversalSchema=z.object({
  reason:z.string().min(3).max(500),clientRequestId:z.string().min(8).max(80)
 }).strict();
 export type RoomChargeReversalInput=z.infer<typeof roomChargeReversalSchema>;
+
+export const roomChargeReversalFinalizeSchema=z.object({tenantId:uuid,orderId:uuid}).strict();
+export type RoomChargeReversalFinalizeInput=z.infer<typeof roomChargeReversalFinalizeSchema>;
