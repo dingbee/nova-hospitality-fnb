@@ -154,11 +154,47 @@ export async function postStayNasRoomCharge(sb:Db,input:RoomChargeInput):Promise
    postingReference:posted.postingReference,folioReference:posted.folioReference,
    amount:Number(posted.amount),currency:String(posted.currency)};
  }catch{
+  // Resolve uncertain delivery against StayNas' durable operation and actual folio posting.
+  try{
+   const base=validateLb01PeerBaseUrl();
+   const statusResponse=await signedPost(new URL("/api/integrations/lb03/status",base),token,{
+    idempotencyKey:input.idempotencyKey,posTransactionId:order.id
+   });
+   if(statusResponse.ok){
+    const truth=await statusResponse.json() as {status:string;authorizationReference?:string;posting?:{id:string;status:string;posting_reference:string;folio_reference:string;amount:number;currency:string}|null};
+    if(truth.status==="POSTED"&&truth.posting?.status==="posted"){
+     await admin.from("lb03_pos_room_charge_operations").update({
+      state:"POSTED",staynas_posting_id:truth.posting.id,staynas_posting_reference:truth.posting.posting_reference,
+      updated_at:new Date().toISOString()
+     }).eq("id",operationId);
+     return {status:"posted",duplicate:true,postingId:truth.posting.id,
+      postingReference:truth.posting.posting_reference,folioReference:truth.posting.folio_reference,
+      amount:Number(truth.posting.amount),currency:truth.posting.currency};
+    }
+    if(truth.status==="AUTHORIZED"&&truth.authorizationReference){
+     const retry=await signedPost(new URL("/api/integrations/lb03/post",base),token,{
+      authorizationReference:truth.authorizationReference,idempotencyKey:input.idempotencyKey,description:input.description
+     });
+     if(retry.ok){
+      const posted=await retry.json() as {status:string;postingId:string;postingReference:string;folioReference:string;amount:number;currency:string};
+      if(posted.status==="POSTED"&&posted.postingReference){
+       await admin.from("lb03_pos_room_charge_operations").update({
+        state:"POSTED",staynas_posting_id:posted.postingId,staynas_posting_reference:posted.postingReference,
+        updated_at:new Date().toISOString()
+       }).eq("id",operationId);
+       return {status:"posted",duplicate:true,postingId:posted.postingId,
+        postingReference:posted.postingReference,folioReference:posted.folioReference,
+        amount:Number(posted.amount),currency:posted.currency};
+      }
+     }
+    }
+   }
+  }catch{/* Preserve unknown; never infer success from a failed recovery request. */}
   await admin.from("lb03_pos_room_charge_operations").update({
    state:"RECONCILIATION_REQUIRED",last_error_code:"peer_delivery_unknown",
    attempt_count:Number(existing?.attempt_count??0)+1,next_attempt_at:new Date(Date.now()+30000).toISOString(),
    updated_at:new Date().toISOString()
   }).eq("id",operationId);
-  return {status:"unknown",duplicate:false,failureCode:"unknown",failureMessage:"StayNas delivery was interrupted. The POS request is retained for idempotent recovery."};
+  return {status:"unknown",duplicate:false,failureCode:"unknown",failureMessage:"StayNas delivery remains uncertain. The POS request is retained; do not take another tender until authoritative status is recovered."};
  }
 }
