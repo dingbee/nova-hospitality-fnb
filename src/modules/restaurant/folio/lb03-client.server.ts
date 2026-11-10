@@ -86,11 +86,12 @@ export async function postStayNasRoomCharge(sb:Db,userId:string,input:RoomCharge
  }
 
  const operationId=existing?.id??uuid();
+ const requestId=existing?.request_id??uuid();
  if(!existing){
   const {error}=await admin.from("lb03_pos_room_charge_operations").insert({
    id:operationId,tenant_id:source.tenantId,property_id:source.propertyId,outlet_id:source.locationId,
    order_id:order.id,integration_connection_id:connection.id,integration_property_id:connection.integration_property_id,
-   guest_reference:stay.guest_reference,stay_reference:stay.stay_reference,request_id:uuid(),
+   guest_reference:stay.guest_reference,stay_reference:stay.stay_reference,request_id:requestId,
    idempotency_key:input.idempotencyKey,request_fingerprint:fingerprint,amount,currency,
    tax_breakdown:taxBreakdown,service_charge:Number(order.service_charge??0),
    discount_amount:Number(order.discount_total??0),correlation_id:connection.correlation_id,
@@ -114,7 +115,7 @@ export async function postStayNasRoomCharge(sb:Db,userId:string,input:RoomCharge
   const base=validateLb01PeerBaseUrl();
   const authUrl=new URL("/api/integrations/lb03/authorize",base);
   const authResponse=await signedPost(authUrl,token,{
-   requestId:existing?.request_id??uuid(),idempotencyKey:input.idempotencyKey,...payload
+   requestId,idempotencyKey:input.idempotencyKey,...payload
   });
   if(!authResponse.ok){
    await admin.from("lb03_pos_room_charge_operations").update({state:"REJECTED",last_error_code:"authorization_rejected",updated_at:new Date().toISOString()}).eq("id",operationId);
@@ -139,7 +140,7 @@ export async function postStayNasRoomCharge(sb:Db,userId:string,input:RoomCharge
   if(posted.status!=="POSTED"||!posted.postingReference)
    return {status:"unknown",duplicate:false,failureCode:"unknown",failureMessage:"StayNas did not confirm a durable folio posting."};
   await admin.from("lb03_pos_room_charge_operations").update({
-   state:"POSTED",staynAS_posting_id:posted.postingId,staynAS_posting_reference:posted.postingReference,
+   state:"POSTED",staynas_posting_id:posted.postingId,staynas_posting_reference:posted.postingReference,
    updated_at:new Date().toISOString()
   }).eq("id",operationId);
   return {status:"posted",duplicate:Boolean(posted.duplicate),postingId:posted.postingId,
