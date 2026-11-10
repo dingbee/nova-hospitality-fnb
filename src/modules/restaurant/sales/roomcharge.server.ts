@@ -15,6 +15,7 @@ import { folioIdempotencyKey, folioFailureMessage } from "@/domains/hospitality/
 import { loadPmsFolioPort } from "../core/ports/pms-folio.port";
 import type { RoomChargeCommitInput, RoomChargeQuoteInput, RoomChargeSearchInput } from "./roomcharge.contracts";
 import { takePosPayment } from "./pos.server";
+import { requestStayNasRoomChargeReversal } from "@/modules/restaurant/folio/lb03-client.server";
 
 type Sb = any;
 
@@ -177,4 +178,21 @@ export async function commitRoomCharge(sb: Sb, userId: string, input: RoomCharge
     settled: result.settled,
     receipt: result.receipt,
   };
+}
+
+export async function requestRoomChargeReversal(sb:Sb,userId:string,input:import("./roomcharge.contracts").RoomChargeReversalInput){
+ await assertCapability(sb,userId,input.tenantId,"sales.room_charge");
+ await loadOrder(sb,input.tenantId,input.orderId);
+ const idempotencyKey=`roomcharge-reversal:${input.tenantId}:${input.orderId}:${input.clientRequestId}`;
+ const result=await requestStayNasRoomChargeReversal({
+  tenantId:input.tenantId,orderId:input.orderId,amount:input.amount,
+  reasonCode:input.reasonCode,reason:input.reason,idempotencyKey
+ });
+ await emitRestaurantEvent(sb,userId,{
+  tenantId:input.tenantId,entityType:"restaurant_order",entityId:input.orderId,
+  source:"restaurant-pos",type:"restaurant.payment.room_charge_reversal_requested",
+  payload:{amount:input.amount,reasonCode:input.reasonCode,status:result.status,requestId:result.requestId??null},
+  dedupeKey:`roomcharge:reversal:${idempotencyKey}`
+ });
+ return result;
 }
