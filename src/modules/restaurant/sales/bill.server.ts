@@ -483,9 +483,13 @@ export async function refundPayment(sb: Sb, userId: string, input: RefundPayment
       throw new Error(insertError.message);
     }
   } else {
+    const fullyRefunded = alreadyRefunded + input.amount >= Math.abs(num(original.amount)) - 0.001;
     await sb
       .from("restaurant_payments")
-      .update({ state: "refunded", refund_reason: input.reason })
+      .update({
+        state: fullyRefunded ? "refunded" : original.state,
+        refund_reason: input.reason,
+      })
       .eq("tenant_id", input.tenantId)
       .eq("id", original.id);
   }
