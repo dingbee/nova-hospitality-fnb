@@ -259,16 +259,45 @@ export async function getStayNasRoomChargeStatus(input:{tenantId:string;orderId?
    idempotencyKey:operation.idempotency_key,posTransactionId:operation.order_id
   });
   if(!response.ok)return {operations:[operation],authoritative:false};
-  const truth=await response.json() as {status:string;authorizationReference?:string;posting?:{id:string;posting_reference:string;folio_reference:string;amount:number;currency:string}|null;reversedAmount?:number;reversalReference?:string};
+  const truth=await response.json() as {status:string;authorizationReference?:string;posting?:{id:string;status?:string;posting_reference:string;folio_reference:string;amount:number;currency:string}|null;postings?:Array<{id:string;status:string;amount:number;currency:string}>;reversedAmount?:number;reversalReference?:string};
   const state=truth.status;
-  const allowed=["AUTHORIZED","EXPIRED","POSTING_PENDING","POSTED","POSTING_FAILED","REVERSAL_PENDING","PARTIALLY_REVERSED","REVERSED","RECONCILIATION_REQUIRED","RECONCILED"];
+  const allowed=["AUTHORIZED","EXPIRED","POSTING_PENDING","POSTED","POSTING_FAILED","REVERSAL_PENDING","PARTIALLY_REVERSED","REVERSED","RECONCILIATION_REQUIRED","RECONCILED","DUPLICATE_POSTING","NOT_FOUND"];
   if(!allowed.includes(state))return {operations:[operation],authoritative:false};
   const patch:Record<string,unknown>={state,updated_at:new Date().toISOString()};
   if(truth.posting?.id)patch.staynas_posting_id=truth.posting.id;
   if(truth.posting?.posting_reference)patch.staynas_posting_reference=truth.posting.posting_reference;
   if(truth.reversedAmount!=null)patch.reversed_amount=truth.reversedAmount;
   if(truth.reversalReference)patch.reversal_reference=truth.reversalReference;
+
+  let outcome:"MATCHED"|"MISSING_IN_STAYNAS"|"MISSING_IN_LEXIBITE"|"AMOUNT_MISMATCH"|"CURRENCY_MISMATCH"|"DUPLICATE_POSTING"|"STATUS_MISMATCH"|"REVERSAL_MISMATCH"|"PENDING_REVIEW"="PENDING_REVIEW";
+  const posting=truth.posting??null;
+  if(state==="DUPLICATE_POSTING")outcome="DUPLICATE_POSTING";
+  else if(state==="NOT_FOUND"||(state==="RECONCILIATION_REQUIRED"&&!posting))outcome="MISSING_IN_STAYNAS";
+  else if(posting&&Number(posting.amount)!==Number(operation.amount))outcome="AMOUNT_MISMATCH";
+  else if(posting&&String(posting.currency).toUpperCase()!==String(operation.currency).toUpperCase())outcome="CURRENCY_MISMATCH";
+  else if(posting&&posting.status!=="posted")outcome="STATUS_MISMATCH";
+  else if(posting&&!operation.pos_payment_id)outcome="MISSING_IN_LEXIBITE";
+  else if(posting&&Number(truth.reversedAmount??0)>0){
+   const {data:refundRows}=await admin.from("restaurant_payments").select("amount")
+    .eq("tenant_id",operation.tenant_id).eq("order_id",operation.order_id)
+    .eq("state","refunded").not("refund_of","is",null);
+   const posRefunded=((refundRows??[]) as Array<{amount:number}>).reduce((sum,row)=>sum+Math.abs(Number(row.amount)),0);
+   if(Math.abs(posRefunded-Number(truth.reversedAmount))>0.001)outcome="REVERSAL_MISMATCH";
+   else outcome="MATCHED";
+  }else if(posting&&["POSTED","PARTIALLY_REVERSED","REVERSED"].includes(state))outcome="MATCHED";
+  else if(["AUTHORIZED","POSTING_PENDING","REVERSAL_PENDING"].includes(state))outcome="PENDING_REVIEW";
+  else outcome="STATUS_MISMATCH";
+
+  const {error:reconcileError}=await admin.from("lb03_pos_room_charge_reconciliation").insert({
+   operation_id:operation.id,outcome,pos_amount:operation.amount,staynas_amount:posting?.amount??null,
+   pos_currency:operation.currency,staynas_currency:posting?.currency??null,
+   evidence:{stayNasState:state,posting:posting??null,postings:truth.postings??null,
+    reversedAmount:truth.reversedAmount??0,reversalReference:truth.reversalReference??null}
+  });
+  if(reconcileError)return {operations:[operation],authoritative:false,reconciliationError:true};
+  if(outcome==="MATCHED")patch.state="RECONCILED";
   await admin.from("lb03_pos_room_charge_operations").update(patch).eq("id",operation.id);
-  return {operations:[{...operation,...patch,authoritativePosting:truth.posting??null}],authoritative:true};
+  return {operations:[{...operation,...patch,authoritativePosting:posting}],authoritative:true,reconciliation:{outcome}};
+
  }catch{return {operations:[operation],authoritative:false};}
 }
