@@ -15,6 +15,7 @@ import {
   type FolioStay,
 } from "./folio.rules";
 import type { FolioPostInput, FolioPostingStatusInput, FolioStayLookupInput, FolioValidateInput } from "./folio.contracts";
+import { postStayNasRoomCharge } from "@/modules/restaurant/folio/lb03-client.server";
 
 type Sb = any;
 
@@ -131,52 +132,7 @@ export async function validateRoomCharge(sb: Sb, userId: string, input: FolioVal
  */
 export async function postRoomCharge(sb: Sb, userId: string, input: FolioPostInput): Promise<FolioPostingResult> {
   await assertFolioWrite(sb, userId);
-  const src = input.source ?? { sourceSystem: "restaurant_pos" };
-  const { data, error } = await sb.rpc("pms_post_folio_charge", {
-    _idempotency_key: input.idempotencyKey,
-    _booking_id: input.bookingId,
-    _amount: input.amount,
-    _currency: input.currency.toUpperCase(),
-    _description: input.description,
-    _source: {
-      source_system: src.sourceSystem ?? "restaurant_pos",
-      tenant_id: src.tenantId ?? null,
-      property_id: src.propertyId ?? null,
-      location_id: src.locationId ?? null,
-      order_id: src.orderId ?? null,
-      payment_id: src.paymentId ?? null,
-      correlation_id: src.correlationId ?? null,
-    },
-  });
-
-  if (error) {
-    // An unanswered PMS is *not* a failed charge: the till must not assume.
-    return {
-      status: "unknown",
-      duplicate: false,
-      failureCode: "pms_unavailable",
-      failureMessage: folioFailureMessage("pms_unavailable"),
-    };
-  }
-  const row = (data ?? {}) as any;
-  if (row.status === "posted") {
-    return {
-      status: "posted",
-      duplicate: Boolean(row.duplicate),
-      postingId: row.posting_id ?? null,
-      postingReference: row.posting_reference ?? null,
-      folioReference: row.folio_reference ?? null,
-      amount: Number(row.amount ?? input.amount),
-      currency: String(row.currency ?? input.currency),
-    };
-  }
-  const code = (row.failure_code ?? "posting_rejected") as FolioFailureCode;
-  return {
-    status: "failed",
-    duplicate: false,
-    failureCode: code,
-    failureMessage: row.failure_message ?? folioFailureMessage(code),
-  };
+  return postStayNasRoomCharge(sb, userId, input);
 }
 
 /** Truth after an interrupted posting: what does the folio actually hold? */
