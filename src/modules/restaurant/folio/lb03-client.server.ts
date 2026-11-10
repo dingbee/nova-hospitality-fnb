@@ -206,11 +206,11 @@ export async function requestStayNasRoomChargeReversal(input:{
  const {supabaseAdmin}=await import("@/integrations/supabase/client.server");
  const admin=supabaseAdmin as unknown as Db;
  const {data:operation,error}=await admin.from("lb03_pos_room_charge_operations")
-  .select("id,integration_connection_id,state,staynas_posting_reference,amount,currency")
+  .select("id,integration_connection_id,state,staynas_posting_reference,amount,currency,reversed_amount")
   .eq("tenant_id",input.tenantId).eq("order_id",input.orderId).maybeSingle();
- if(error||!operation||!operation.staynas_posting_reference||!["POSTED","RECONCILIATION_REQUIRED"].includes(operation.state))
+ if(error||!operation||!operation.staynas_posting_reference||!["POSTED","PARTIALLY_REVERSED","RECONCILED","RECONCILIATION_REQUIRED"].includes(operation.state))
   throw new Error("The POS transaction has no confirmed StayNas posting eligible for reversal.");
- if(input.amount<=0||input.amount>Number(operation.amount))
+ if(input.amount<=0||input.amount>Number(operation.amount)-Number(operation.reversed_amount??0))
   throw new Error("The requested reversal exceeds the original room charge.");
  const {data:connection,error:connectionError}=await admin.from("staynas_product_connections")
   .select("id,status,local_approved_at,remote_approved_at,correlation_id")
