@@ -40,6 +40,7 @@ export const folioPostSchema = z.object({
 export type FolioPostInput = z.infer<typeof folioPostSchema>;
 
 export const folioPostingStatusSchema = z.object({
+  tenantId: uuid.optional(),
   idempotencyKey: z.string().min(6).max(160).optional(),
   postingId: uuid.optional(),
   orderId: uuid.optional(),
