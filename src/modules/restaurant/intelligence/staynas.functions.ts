@@ -6,6 +6,6 @@ export const getStayNasIntegrationIntelligenceFn = createServerFn({ method: "POS
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => p05WindowSchema.parse(d))
   .handler(async ({ data, context }) => {
-    const mod = await import("./stayn​​as.server".replace("​​", ""));
+    const mod = await import("./staynas.server");
     return mod.getStayNasIntegrationIntelligence(context.supabase, context.userId, data);
   });
