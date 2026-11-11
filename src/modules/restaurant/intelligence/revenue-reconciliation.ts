@@ -63,9 +63,11 @@ export function aggregateReconciledRevenue(events: RevenueEvent[]): RevenueAggre
     }
   }
 
+  // Economic event keys are global across categories: a source event cannot
+  // contribute once as accommodation and again as F&B.
   const byEconomicKey = new Map<string, RevenueEvent[]>();
   for (const event of candidates) {
-    const key = [event.propertyId, event.currency, event.category, event.economicEventKey].join("|");
+    const key = [event.propertyId, event.currency, event.economicEventKey].join("|");
     const group = byEconomicKey.get(key) ?? [];
     group.push(event);
     byEconomicKey.set(key, group);
@@ -103,7 +105,11 @@ export function aggregateReconciledRevenue(events: RevenueEvent[]): RevenueAggre
   return {
     totals: [...totals.values()].sort((a, b) => a.propertyId.localeCompare(b.propertyId) || a.currency.localeCompare(b.currency)),
     exclusions,
-    reconciliationRequired: duplicateFound || exclusions.some((item) =>
-      item.reason === "not_reconciled" || item.reason === "duplicate_economic_event" || item.reason === "reversed"),
+    reconciliationRequired: exclusions.some((item) =>
+      item.reason === "invalid_amount_or_currency" ||
+      item.reason === "not_posted" ||
+      item.reason === "not_reconciled" ||
+      item.reason === "reversed" ||
+      item.reason === "duplicate_economic_event"),
   };
 }
