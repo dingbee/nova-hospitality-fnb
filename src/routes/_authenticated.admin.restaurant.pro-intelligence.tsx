@@ -226,7 +226,7 @@ function ProIntelligencePage() {
     enabled: enabled && multiLocationEnt.entitled,
   });
   const stayNasIntegration = useQuery({
-    queryKey: ["restaurant", "lb04", "stayn​​as", tenantId, propertyId],
+    queryKey: ["restaurant", "lb04", "staynas", tenantId, propertyId],
     queryFn: () => stayNasFn({ data: { tenantId: tenantId as string, windowDays, propertyId } }),
     enabled: enabled && analyticsEnt.entitled,
   });
