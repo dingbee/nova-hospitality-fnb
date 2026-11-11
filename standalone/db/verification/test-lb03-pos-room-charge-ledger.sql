@@ -1,5 +1,4 @@
 \set ON_ERROR_STOP on
-\i standalone/db/verification/test-lb02-event-inbox.sql
 
 ALTER TABLE public.staynas_product_connections ADD COLUMN IF NOT EXISTS remote_tenant_id uuid;
 
