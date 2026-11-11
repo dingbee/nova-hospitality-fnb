@@ -8,10 +8,16 @@ describe("LB-04 recipe-driven inventory demand", () => {
       [{ menuItemId: "breakfast", inventoryItemId: "eggs", quantityPerMenuUnit: 2, unit: "piece", verified: true }],
       [{ inventoryItemId: "eggs", onHand: 100, reserved: 20, onOrder: 10, unit: "piece", reorderLevel: 15, supplierLeadTimeDays: 2 }],
     );
-    expect(result[0]?.forecastRequirement).toBe(160);
-    expect(result[0]?.availableAfterCommitments).toBe(90);
-    expect(result[0]?.deficit).toBe(70);
-    expect(result[0]?.reorderQuantity).toBe(85);
+    expect(result.requirements[0]?.forecastRequirement).toBe(160);
+    expect(result.requirements[0]?.availableAfterCommitments).toBe(90);
+    expect(result.requirements[0]?.deficit).toBe(70);
+    expect(result.requirements[0]?.reorderQuantity).toBe(85);
+  });
+
+  it("reports menu items with no recipe instead of silently assuming zero consumption", () => {
+    const result = forecastIngredientRequirements([{ menuItemId: "unmapped", expectedUnits: 12 }], [], []);
+    expect(result.uncoveredMenuItems).toEqual(["unmapped"]);
+    expect(result.requirements).toEqual([]);
   });
 
   it("withholds calculations when recipe completeness or units are uncertain", () => {
@@ -20,8 +26,8 @@ describe("LB-04 recipe-driven inventory demand", () => {
       [{ menuItemId: "dish", inventoryItemId: "oil", quantityPerMenuUnit: 0.1, unit: "litre", verified: false }],
       [{ inventoryItemId: "oil", onHand: 5, reserved: 0, onOrder: 0, unit: "litre", reorderLevel: 1, supplierLeadTimeDays: 3 }],
     );
-    expect(result[0]?.reliability).toBe("incomplete_recipe");
-    expect(result[0]?.deficit).toBeNull();
+    expect(result.requirements[0]?.reliability).toBe("incomplete_recipe");
+    expect(result.requirements[0]?.deficit).toBeNull();
   });
 
   it("does not issue stock or procurement mutations", () => {
