@@ -62,7 +62,7 @@ BEGIN
  BEGIN
   PERFORM public.lb03_pos_transition_room_charge(v.id,'POSTED','AUTHORIZED','{}'::jsonb);
   RAISE EXCEPTION 'Illegal backward transition was accepted';
- EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+ EXCEPTION WHEN SQLSTATE '22023' THEN NULL;
  END;
 END $lb03pos$;
 RESET ROLE;
