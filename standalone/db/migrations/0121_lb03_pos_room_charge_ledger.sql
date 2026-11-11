@@ -34,7 +34,6 @@ CREATE TABLE IF NOT EXISTS public.lb03_pos_room_charge_operations (
  reversed_amount numeric(14,2) NOT NULL DEFAULT 0 CHECK(reversed_amount>=0 AND reversed_amount<=amount),
  reversal_reference text,
  reversed_at timestamptz,
- reversal_reference text,
  last_error_code text,
  attempt_count integer NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
  next_attempt_at timestamptz,
