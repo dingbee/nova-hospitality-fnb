@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS public.staynas_product_connections(
  local_approved_at timestamptz, remote_approved_at timestamptz,
  correlation_id text NOT NULL
 );
+\i standalone/db/migrations/0115_lb01r_tenant_property_location_integrity.sql
 \i standalone/db/migrations/0116_lb02_outlet_guest_inbox.sql
 \i standalone/db/migrations/0117_lb02_strict_event_payload_allowlist.sql
 \i standalone/db/migrations/0118_lb02_inbox_concurrency_hardening.sql
