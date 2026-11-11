@@ -114,6 +114,12 @@ export async function postStayNasRoomCharge(sb:Db,input:RoomChargeInput):Promise
  try{
   const base=validateLb01PeerBaseUrl();
   const authUrl=new URL("/api/integrations/lb03/authorize",base);
+  const {error:authOutboxError}=await admin.from("lb03_pos_room_charge_outbox").insert({
+   operation_id:operationId,event_type:"authorize",idempotency_key:input.idempotencyKey,
+   payload:{requestId,idempotencyKey:input.idempotencyKey,...payload},state:"pending",available_at:new Date().toISOString()
+  });
+  if(authOutboxError&&authOutboxError.code!=="23505")
+   return {status:"unknown",duplicate:false,failureCode:"unknown",failureMessage:"Authorization intent could not be durably queued."};
   const authResponse=await signedPost(authUrl,token,{
    requestId,idempotencyKey:input.idempotencyKey,...payload
   });
