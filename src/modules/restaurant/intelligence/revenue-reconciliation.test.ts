@@ -64,4 +64,14 @@ describe("LB-04 combined revenue reconciliation", () => {
     expect(result.totals[0]?.eventCount).toBe(1);
     expect(result.exclusions[0]?.reason).toBe("non_canonical_source");
   });
+
+  it("flags the same economic event presented in two revenue categories", () => {
+    const result = aggregateReconciledRevenue([
+      event({ id: "room-event", economicEventKey: "event-9", amount: 100 }),
+      event({ id: "pos-event", economicEventKey: "event-9", source: "lexibite", category: "food_beverage", amount: 100 }),
+    ]);
+    expect(result.totals).toEqual([]);
+    expect(result.exclusions.filter((item) => item.reason === "duplicate_economic_event")).toHaveLength(2);
+    expect(result.reconciliationRequired).toBe(true);
+  });
 });
