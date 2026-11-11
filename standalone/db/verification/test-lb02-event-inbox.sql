@@ -4,12 +4,12 @@ DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL;
 DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE ROLE service_role NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE SCHEMA IF NOT EXISTS auth;
-CREATE TABLE auth.users(id uuid PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS auth.users(id uuid PRIMARY KEY);
 CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $$ SELECT coalesce(current_setting('request.test_role',true),current_user) $$;
-CREATE TABLE public.restaurant_tenants(id uuid PRIMARY KEY);
-CREATE TABLE public.restaurant_properties(id uuid PRIMARY KEY,tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id));
-CREATE TABLE public.restaurant_locations(id uuid PRIMARY KEY,tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id),property_id uuid NOT NULL REFERENCES public.restaurant_properties(id),slug text NOT NULL);
-CREATE TABLE public.staynas_product_connections(
+CREATE TABLE IF NOT EXISTS public.restaurant_tenants(id uuid PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS public.restaurant_properties(id uuid PRIMARY KEY,tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id));
+CREATE TABLE IF NOT EXISTS public.restaurant_locations(id uuid PRIMARY KEY,tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id),property_id uuid NOT NULL REFERENCES public.restaurant_properties(id),slug text NOT NULL);
+CREATE TABLE IF NOT EXISTS public.staynas_product_connections(
  id uuid PRIMARY KEY, local_tenant_id uuid NOT NULL, local_property_id uuid NOT NULL,
  integration_property_id uuid NOT NULL, remote_property_id uuid NOT NULL,
  remote_product text NOT NULL, status text NOT NULL,
