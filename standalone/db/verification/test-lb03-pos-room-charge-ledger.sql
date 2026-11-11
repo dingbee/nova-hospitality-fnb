@@ -25,11 +25,11 @@ INSERT INTO public.restaurant_payments(id,tenant_id,order_id,amount,state) VALUE
 \i standalone/db/migrations/0121_lb03_pos_room_charge_ledger.sql
 
 INSERT INTO public.lb03_pos_room_charge_operations(
- tenant_id,property_id,outlet_id,order_id,pos_payment_id,integration_connection_id,
+ id,tenant_id,property_id,outlet_id,order_id,pos_payment_id,integration_connection_id,
  integration_property_id,guest_reference,stay_reference,request_id,idempotency_key,
  request_fingerprint,amount,currency,correlation_id,state
 ) VALUES(
- '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',
+ 'd0000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',
  '30000000-0000-4000-8000-000000000001','a0000000-0000-4000-8000-000000000001',
  'b0000000-0000-4000-8000-000000000001','40000000-0000-4000-8000-000000000001',
  '50000000-0000-4000-8000-000000000001','80000000-0000-4000-8000-000000000001',
@@ -43,7 +43,7 @@ DO $lb03pos$
 DECLARE v public.lb03_pos_room_charge_operations%ROWTYPE;
 BEGIN
  SELECT * INTO v FROM public.lb03_pos_transition_room_charge(
-  (SELECT id FROM public.lb03_pos_room_charge_operations WHERE idempotency_key='lb03-pos-uat-001'),
+  'd0000000-0000-4000-8000-000000000001',
   'INITIATED','AUTHORIZATION_PENDING','{"request":"created"}'::jsonb
  );
  IF v.state<>'AUTHORIZATION_PENDING' THEN RAISE EXCEPTION 'POS operation did not enter authorization pending'; END IF;
