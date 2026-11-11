@@ -46,6 +46,19 @@ describe("LB-04 combined revenue reconciliation", () => {
     expect(result.reconciliationRequired).toBe(true);
   });
 
+  it("treats a linked reversal as resolved but flags a reversal without its original", () => {
+    const matched = aggregateReconciledRevenue([
+      event({ id: "original", economicEventKey: "stay-1" }),
+      event({ id: "reversal", economicEventKey: "reversal-1", state: "reversed", reversesEventId: "original" }),
+    ]);
+    const unmatched = aggregateReconciledRevenue([
+      event({ id: "orphan-reversal", economicEventKey: "reversal-2", state: "reversed" }),
+    ]);
+    expect(matched.totals).toEqual([]);
+    expect(matched.reconciliationRequired).toBe(false);
+    expect(unmatched.reconciliationRequired).toBe(true);
+  });
+
   it("keeps currencies separate and never applies FX", () => {
     const result = aggregateReconciledRevenue([
       event({ id: "tzs", economicEventKey: "stay-1", amount: 100, currency: "TZS" }),
