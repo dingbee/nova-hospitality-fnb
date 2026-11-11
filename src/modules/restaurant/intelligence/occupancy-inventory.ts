@@ -45,7 +45,7 @@ export function forecastIngredientRequirements(
   menuDemand: MenuDemand[],
   recipeLines: RecipeIngredient[],
   positions: InventoryPosition[],
-): IngredientRequirement[] {
+): { requirements: IngredientRequirement[]; uncoveredMenuItems: string[] } {
   const demandByMenu = new Map<string, number>();
   for (const row of menuDemand) {
     if (!validQty(row.expectedUnits)) throw new RangeError("expectedUnits must be non-negative");
@@ -60,11 +60,12 @@ export function forecastIngredientRequirements(
   }
 
   const positionByItem = new Map(positions.map((p) => [p.inventoryItemId, p]));
+  const uncoveredMenuItems: string[] = [];
   const required = new Map<string, { qty: number; unit: string; complete: boolean }>();
 
   for (const [menuItemId, units] of demandByMenu) {
     const lines = linesByMenu.get(menuItemId) ?? [];
-    if (lines.length === 0) continue;
+    if (lines.length === 0) { uncoveredMenuItems.push(menuItemId); continue; }
     for (const line of lines) {
       const current = required.get(line.inventoryItemId) ?? {
         qty: 0,
@@ -137,5 +138,5 @@ export function forecastIngredientRequirements(
           : "Available stock covers forecast ingredient demand.",
     });
   }
-  return output;
+  return { requirements: output, uncoveredMenuItems };
 }
