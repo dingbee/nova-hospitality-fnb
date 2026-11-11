@@ -30,6 +30,7 @@ import {
   getRestaurantMultiLocationIntelligenceFn,
   getRestaurantRevenueIntelligenceFn,
 } from "@/modules/restaurant/intelligence/p05.functions";
+import { getStayNasIntegrationIntelligenceFn } from "@/modules/restaurant/intelligence/staynas.functions";
 import {
   DATA_SUFFICIENCY_LABEL,
   type DataSufficiency,
@@ -187,6 +188,7 @@ function ProIntelligencePage() {
   const analyticsFn = useServerFn(getRestaurantAdvancedAnalyticsFn);
   const executiveFn = useServerFn(getRestaurantExecutiveIntelligenceFn);
   const multiLocationFn = useServerFn(getRestaurantMultiLocationIntelligenceFn);
+  const stayNasFn = useServerFn(getStayNasIntegrationIntelligenceFn);
 
   const inventory = useQuery({
     queryKey: ["restaurant", "p05", "inventory", tenantId, windowDays],
@@ -223,6 +225,11 @@ function ProIntelligencePage() {
     queryFn: () => multiLocationFn({ data: { tenantId: tenantId as string, windowDays } }),
     enabled: enabled && multiLocationEnt.entitled,
   });
+  const stayNasIntegration = useQuery({
+    queryKey: ["restaurant", "lb04", "stayn​​as", tenantId, propertyId],
+    queryFn: () => stayNasFn({ data: { tenantId: tenantId as string, windowDays, propertyId } }),
+    enabled: enabled && analyticsEnt.entitled,
+  });
 
   const inv = inventory.data as any;
   const dem = demand.data as any;
@@ -231,6 +238,7 @@ function ProIntelligencePage() {
   const an = analytics.data as any;
   const ex = executive.data as any;
   const ml = multiLocation.data as any;
+  const sn = stayNasIntegration.data as any;
   const money = (n: number, c = rev?.currency ?? "TZS") =>
     `${c} ${Number(n ?? 0).toLocaleString()}`;
 
@@ -744,6 +752,119 @@ function ProIntelligencePage() {
         </CapabilityGate>
       </IntelligenceModule>
 
+      <IntelligenceModule
+        icon={<Building2 className="size-4" />}
+        title="StayNas × LexiBite operational intelligence"
+        headline={
+          sn?.status === "active"
+            ? "Verified cross-product metrics and operational signals"
+            : sn?.status === "data_pending"
+              ? "Property mapping verified; waiting for source projections"
+              : sn?.status === "attention_required"
+                ? "Cross-product data needs reconciliation"
+                : sn?.status === "currency_mismatch"
+                  ? "Property currency mismatch blocks cross-product reporting"
+                  : sn?.status === "foundation_not_installed"
+                    ? "LB-04 analytical foundation is not installed"
+                    : "Verified StayNas property mapping required"
+        }
+        meta={sn ? String(sn.status).replace(/_/g, " ") : "Integration status"}
+      >
+        <CapabilityGate
+          entitled={analyticsEnt.entitled}
+          loading={analyticsEnt.loading}
+          label="Cross-Product Operational Intelligence"
+        >
+          {sn ? (
+            <div className="space-y-4">
+              {sn.status === "foundation_not_installed" ? (
+                <EmptyState
+                  title="LB-04 foundation not installed"
+                  description="The analytical schema is not installed in this tenant database. No cross-product metrics are available."
+                />
+              ) : sn.status === "mapping_required" || sn.status === "currency_mismatch" ? (
+                <EmptyState
+                  title={sn.status === "currency_mismatch" ? "Currency mismatch" : "No verified property link"}
+                  description={sn.limitations?.join(" ") ?? "Cross-product analytics remain blocked until the property link is active, verified and currency-aligned."}
+                />
+              ) : (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <StatCard label="Verified property links" value={String(sn.linkSummary.active)} />
+                    <StatCard label="Analytical metrics" value={String(sn.metrics.length)} />
+                    <StatCard label="Forecasts" value={String(sn.forecasts.length)} />
+                    <StatCard label="Open anomalies" value={String(sn.anomalies.length)} />
+                  </div>
+                  {sn.links?.length > 0 ? (
+                    <div>
+                      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Verified property links</p>
+                      <ul className="divide-y text-sm">
+                        {sn.links.map((link: any) => (
+                          <li key={link.propertyName} className="flex items-center justify-between gap-2 py-2">
+                            <span>{link.propertyName}</span>
+                            <span className="text-xs text-muted-foreground">{link.currency} · verified</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {sn.metrics?.length > 0 ? (
+                    <div>
+                      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Latest analytical metrics</p>
+                      <ul className="divide-y text-sm">
+                        {sn.metrics.slice(0, 12).map((metric: any, index: number) => (
+                          <li key={`${metric.metric_code}-${metric.period_end}-${index}`} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                            <span>{String(metric.metric_code).replace(/_/g, " ")}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {metric.currency ? `${metric.currency} ` : ""}{Number(metric.value).toLocaleString()} · {metric.source_system} · {metric.freshness} · {metric.reconciliation_status}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {sn.anomalies?.length > 0 ? (
+                    <div>
+                      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Operational anomalies</p>
+                      <ul className="space-y-2 text-sm">
+                        {sn.anomalies.slice(0, 8).map((anomaly: any, index: number) => (
+                          <li key={`${anomaly.anomaly_code}-${index}`} className="rounded-lg border p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium">{String(anomaly.anomaly_code).replace(/_/g, " ")}</span>
+                              <StatusChip tone={anomaly.severity === "critical" ? "danger" : anomaly.severity === "warning" ? "warning" : "neutral"}>{anomaly.severity}</StatusChip>
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">{anomaly.recommended_investigation}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {sn.forecasts?.length > 0 ? (
+                    <div>
+                      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Forecasts</p>
+                      <ul className="divide-y text-sm">
+                        {sn.forecasts.slice(0, 8).map((forecast: any, index: number) => (
+                          <li key={`${forecast.metric_code}-${index}`} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                            <span>{String(forecast.metric_code).replace(/_/g, " ")}</span>
+                            <span className="text-xs text-muted-foreground">{forecast.currency ? `${forecast.currency} ` : ""}{Number(forecast.projected_value).toLocaleString()} · {forecast.reliability} · {forecast.method}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </>
+              )}
+              {sn.limitations?.length > 0 ? (
+                <ul className="space-y-1 text-xs text-muted-foreground">
+                  {sn.limitations.map((limitation: string, index: number) => <li key={index}>• {limitation}</li>)}
+                </ul>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">Loading StayNas integration status…</p>
+          )}
+        </CapabilityGate>
+      </IntelligenceModule>
 
     </div>
   );
