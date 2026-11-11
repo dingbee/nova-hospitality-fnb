@@ -155,7 +155,10 @@ export async function getStayNasIntegrationIntelligence(
   const anomalies = (anomaliesResult.data ?? []) as any[];
   const recommendations = (recommendationsResult.data ?? []) as any[];
   const status: LinkStatus = currencyMismatch.length > 0 || anomalies.length > 0 ||
-    metrics.some((metric) => metric.freshness === "stale" || metric.reconciliation_status === "disputed")
+    metrics.some((metric) =>
+      metric.freshness === "stale" || metric.freshness === "unknown" ||
+      metric.reconciliation_status === "pending" || metric.reconciliation_status === "disputed",
+    )
     ? "attention_required"
     : metrics.length === 0 && forecasts.length === 0
       ? "data_pending"
