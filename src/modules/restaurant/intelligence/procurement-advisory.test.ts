@@ -48,9 +48,17 @@ describe("LB-04 procurement advisory", () => {
     expect(base.openPurchaseOrderQuantity).toBe(5);
   });
 
-  it("withholds cost when supplier price is unavailable", () => {
-    const result = adviseProcurement({ ...base, supplierUnitPrice: null });
-    expect(result.suggestedQuantity).toBe(20);
-    expect(result.estimatedCost).toBeNull();
+  it("withholds cost when supplier price or currency is unavailable", () => {
+    const noPrice = adviseProcurement({ ...base, supplierUnitPrice: null });
+    const noCurrency = adviseProcurement({ ...base, supplierCurrency: null });
+    expect(noPrice.suggestedQuantity).toBe(20);
+    expect(noPrice.estimatedCost).toBeNull();
+    expect(noCurrency.suggestedQuantity).toBe(20);
+    expect(noCurrency.estimatedCost).toBeNull();
+  });
+
+  it("rejects fractional lead times and invalid supplier terms", () => {
+    expect(adviseProcurement({ ...base, supplierLeadTimeDays: 1.5 }).status).toBe("insufficient_data");
+    expect(adviseProcurement({ ...base, supplierUnitPrice: -1 }).status).toBe("insufficient_data");
   });
 });
