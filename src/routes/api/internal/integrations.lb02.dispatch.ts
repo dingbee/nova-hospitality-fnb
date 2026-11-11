@@ -56,7 +56,9 @@ async function dispatch(admin: Db, connection: Connection, peerBase: URL) {
       const url = new URL("/api/integrations/lb02/events", peerBase);
       const timestamp = String(Math.floor(Date.now() / 1000));
       const nonce = randomBytes(24).toString("base64url");
-      const secret = token.slice(token.lastIndexOf("_") + 1);
+      const credentialMatch = /^lb01_v1_[a-f0-9]{24}_([A-Za-z0-9_-]{43})$/.exec(token);
+      if (!credentialMatch) throw new Error("peer_credential_invalid");
+      const secret = credentialMatch[1];
       const signature = await signLb01Request(secret, {
         method: "POST", pathname: url.pathname + url.search, rawBody: body, timestamp, nonce,
       });
