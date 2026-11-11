@@ -41,14 +41,19 @@ export interface RevenueAggregation {
 
 export function aggregateReconciledRevenue(events: RevenueEvent[]): RevenueAggregation {
   const exclusions: RevenueExclusion[] = [];
+  const eventIds = new Set(events.map((event) => event.id));
   const reversedIds = new Set(events.map((event) => event.reversesEventId).filter((id): id is string => Boolean(id)));
+  let unmatchedReversal = false;
   const candidates: RevenueEvent[] = [];
 
   for (const event of events) {
-    if (!/^[A-Z]{3}$/.test(event.currency) || !Number.isFinite(event.amount) || event.amount < 0) {
+    if (event.state === "reversed") {
+      if (!event.reversesEventId || !eventIds.has(event.reversesEventId)) unmatchedReversal = true;
+      exclusions.push({ eventId: event.id, reason: "reversed" });
+    } else if (!/^[A-Z]{3}$/.test(event.currency) || !Number.isFinite(event.amount) || event.amount < 0) {
       exclusions.push({ eventId: event.id, reason: "invalid_amount_or_currency" });
     } else if (event.state !== "posted") {
-      exclusions.push({ eventId: event.id, reason: event.state === "reversed" ? "reversed" : "not_posted" });
+      exclusions.push({ eventId: event.id, reason: "not_posted" });
     } else if (event.reconciliation !== "reconciled") {
       exclusions.push({ eventId: event.id, reason: "not_reconciled" });
     } else if (reversedIds.has(event.id)) {
@@ -79,7 +84,7 @@ export function aggregateReconciledRevenue(events: RevenueEvent[]): RevenueAggre
     if (group.length > 1) {
       duplicateFound = true;
       for (const event of group) exclusions.push({ eventId: event.id, reason: "duplicate_economic_event" });
-    } else {
+    } else if (group[0]) {
       accepted.push(group[0]);
     }
   }
@@ -105,11 +110,7 @@ export function aggregateReconciledRevenue(events: RevenueEvent[]): RevenueAggre
   return {
     totals: [...totals.values()].sort((a, b) => a.propertyId.localeCompare(b.propertyId) || a.currency.localeCompare(b.currency)),
     exclusions,
-    reconciliationRequired: exclusions.some((item) =>
-      item.reason === "invalid_amount_or_currency" ||
-      item.reason === "not_posted" ||
-      item.reason === "not_reconciled" ||
-      item.reason === "reversed" ||
-      item.reason === "duplicate_economic_event"),
+    reconciliationRequired: unmatchedReversal || duplicateFound || exclusions.some((item) =>
+      item.reason === "invalid_amount_or_currency" || item.reason === "not_posted" || item.reason === "not_reconciled"),
   };
 }
