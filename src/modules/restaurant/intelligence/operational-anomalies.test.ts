@@ -23,7 +23,28 @@ describe("LB-04 operational anomaly rules", () => {
     ]);
   });
 
-  it("does not report expected negative stock or balanced payments", () => {
+  it("detects stock movement sign conflicts instead of silently normalising them", () => {
+    const positiveConsumption = detectOperationalAnomalies({
+      propertyId: "p1",
+      source: "lexibite",
+      observedAt: null,
+      now: "2026-11-10T12:00:00Z",
+      movementType: "consumption",
+      movementQuantity: 0.05,
+    });
+    const negativeReceipt = detectOperationalAnomalies({
+      propertyId: "p1",
+      source: "lexibite",
+      observedAt: null,
+      now: "2026-11-10T12:00:00Z",
+      movementType: "purchase_receipt",
+      movementQuantity: -5,
+    });
+    expect(positiveConsumption[0]?.code).toBe("stock_movement_direction_mismatch");
+    expect(negativeReceipt[0]?.code).toBe("stock_movement_direction_mismatch");
+  });
+
+  it("does not report expected negative stock, outbound movements or balanced payments", () => {
     const result = detectOperationalAnomalies({
       propertyId: "p1",
       source: "lexibite",
@@ -32,6 +53,8 @@ describe("LB-04 operational anomaly rules", () => {
       freshnessSlaMinutes: 30,
       stockOnHand: -2,
       allowNegativeStock: true,
+      movementType: "consumption",
+      movementQuantity: -0.05,
       orderTotal: 100,
       capturedPaymentTotal: 100.005,
       paymentTolerance: 0.01,
