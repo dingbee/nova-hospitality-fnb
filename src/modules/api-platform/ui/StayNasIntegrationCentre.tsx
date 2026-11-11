@@ -15,6 +15,8 @@ type Connection = {
   remote_approved_at: string | null;
 };
 
+type OutletMapping = { id: string; local_outlet_id: string; display_name: string; outlet_type: string; public_description: string | null; guest_visible_status: string; approval_status: string; source_version: number };
+
 type PairingInvitation = {
   contractVersion: string;
   integrationTenantId: string;
@@ -74,6 +76,14 @@ export function StayNasIntegrationCentre() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [mappingConnectionId, setMappingConnectionId] = useState("");
+  const [mappings, setMappings] = useState<OutletMapping[]>([]);
+  const [outletId, setOutletId] = useState("");
+  const [outletName, setOutletName] = useState("");
+  const [outletType, setOutletType] = useState("restaurant");
+  const [outletDescription, setOutletDescription] = useState("");
+  const [outletStatus, setOutletStatus] = useState("unpublished");
+  const [serviceHours, setServiceHours] = useState("{}");
 
   const refresh = useCallback(async () => {
     const result = await lb01Request({ action: "list" });
@@ -141,6 +151,58 @@ export function StayNasIntegrationCentre() {
       setRemotePropertyId("");
       await refresh();
       setNotice("Connection mapping created. Share the pairing invitation with the peer product administrator.");
+    });
+  };
+
+  const lb02Request = async (payload: Record<string, unknown>) => {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) throw new Error("Sign in again before managing outlet mappings.");
+    const response = await fetch("/api/integrations/lb02/outlets", {
+      method: "POST", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      cache: "no-store", body: JSON.stringify(payload),
+    });
+    const result = await response.json() as Record<string, unknown>;
+    if (!response.ok) throw new Error(String(result.error ?? "Outlet mapping request failed."));
+    return result;
+  };
+
+  const loadOutletMappings = async (connectionId: string) => {
+    await runAction("outlets:list", async () => {
+      const result = await lb02Request({ action: "list", connectionId });
+      setMappings(Array.isArray(result.mappings) ? result.mappings as OutletMapping[] : []);
+      setMappingConnectionId(connectionId);
+    });
+  };
+
+  const saveOutletMapping = async () => {
+    await runAction("outlets:save", async () => {
+      if (!mappingConnectionId || !outletId.trim() || !outletName.trim() || !outletType.trim()) {
+        throw new Error("Select an active connection and enter the local outlet UUID, display name and outlet type.");
+      }
+      let hours: Record<string, unknown>;
+      try {
+        const parsed: unknown = JSON.parse(serviceHours);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid");
+        hours = parsed as Record<string, unknown>;
+      } catch { throw new Error("Service hours must be valid JSON in object form."); }
+      await lb02Request({
+        action: "save", connectionId: mappingConnectionId, outletId: outletId.trim(),
+        displayName: outletName.trim(), outletType: outletType.trim(),
+        publicDescription: outletDescription.trim() || null, guestVisibleStatus: outletStatus, serviceHours: hours,
+      });
+      setNotice("Outlet mapping saved. It must be approved before publication.");
+      const result = await lb02Request({ action: "list", connectionId: mappingConnectionId });
+      setMappings(Array.isArray(result.mappings) ? result.mappings as OutletMapping[] : []);
+    });
+  };
+
+  const updateOutletApproval = async (mappingId: string, action: "approve" | "revoke") => {
+    await runAction("outlets:" + action, async () => {
+      await lb02Request({ action, connectionId: mappingConnectionId, mappingId });
+      const result = await lb02Request({ action: "list", connectionId: mappingConnectionId });
+      setMappings(Array.isArray(result.mappings) ? result.mappings as OutletMapping[] : []);
+      setNotice(action === "approve" ? "Outlet approved; publication has been queued." : "Outlet revoked and unpublished.");
     });
   };
 
@@ -301,6 +363,43 @@ export function StayNasIntegrationCentre() {
             ))}
           </div>
         )}
+      </section>
+      <section className="rounded-xl border p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><h2 className="font-semibold">LexiBite outlet publication</h2>
+            <p className="text-xs text-muted-foreground">Map local outlets to the connected StayNas property. Approval queues a privacy-safe publication event.</p></div>
+          <select className="rounded-md border bg-background px-3 py-2 text-sm" value={mappingConnectionId}
+            onChange={(event) => { setMappingConnectionId(event.target.value); setMappings([]); }}>
+            <option value="">Select an active StayNas connection</option>
+            {connections.filter((item) => item.remote_product === "staynas" && item.status === "active" && item.local_approved_at && item.remote_approved_at)
+              .map((item) => <option key={item.id} value={item.id}>{item.local_property_id} · {item.id.slice(0, 8)}</option>)}
+          </select>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className="text-sm">Local outlet UUID<input className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm" value={outletId} onChange={(event) => setOutletId(event.target.value)} placeholder="UUID from this property’s outlets" /></label>
+          <label className="text-sm">Public display name<input className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm" value={outletName} onChange={(event) => setOutletName(event.target.value)} placeholder="e.g. Rooftop Restaurant" /></label>
+          <label className="text-sm">Outlet type<input className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm" value={outletType} onChange={(event) => setOutletType(event.target.value)} /></label>
+          <label className="text-sm">Guest-visible status<select className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm" value={outletStatus} onChange={(event) => setOutletStatus(event.target.value)}>
+            <option value="unpublished">Unpublished</option><option value="open">Open</option><option value="closed">Closed</option><option value="temporarily_unavailable">Temporarily unavailable</option>
+          </select></label>
+          <label className="text-sm md:col-span-2">Public description<textarea className="mt-1 min-h-16 w-full rounded-md border bg-background px-3 py-2 text-sm" maxLength={1000} value={outletDescription} onChange={(event) => setOutletDescription(event.target.value)} /></label>
+          <label className="text-sm md:col-span-2">Published service hours (JSON object)<textarea className="mt-1 min-h-20 w-full rounded-md border bg-background px-3 py-2 font-mono text-xs" value={serviceHours} onChange={(event) => setServiceHours(event.target.value)} /></label>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" className="rounded-md bg-primary px-3 py-2 text-xs text-primary-foreground disabled:opacity-50" disabled={!mappingConnectionId || busy !== null} onClick={() => void saveOutletMapping()}>Save outlet mapping</button>
+          <button type="button" className="rounded-md border px-3 py-2 text-xs disabled:opacity-50" disabled={!mappingConnectionId || busy !== null} onClick={() => void loadOutletMappings(mappingConnectionId)}>Load mappings</button>
+        </div>
+        {mappings.length > 0 ? <div className="mt-4 space-y-2">
+          {mappings.map((mapping) => <article key={mapping.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3">
+            <div><div className="text-sm font-medium">{mapping.display_name} · {mapping.guest_visible_status}</div>
+              <div className="text-xs text-muted-foreground">{mapping.outlet_type} · outlet {mapping.local_outlet_id} · {mapping.approval_status} · v{mapping.source_version}</div>
+              {mapping.public_description ? <p className="mt-1 text-xs text-muted-foreground">{mapping.public_description}</p> : null}</div>
+            <div className="flex gap-2">
+              {mapping.approval_status !== "approved" ? <button type="button" className="rounded-md border px-3 py-2 text-xs" disabled={busy !== null} onClick={() => void updateOutletApproval(mapping.id, "approve")}>Approve & publish</button> : null}
+              {mapping.approval_status === "approved" ? <button type="button" className="rounded-md border border-destructive/40 px-3 py-2 text-xs text-destructive" disabled={busy !== null} onClick={() => void updateOutletApproval(mapping.id, "revoke")}>Revoke & unpublish</button> : null}
+            </div>
+          </article>)}
+        </div> : mappingConnectionId ? <p className="mt-3 text-xs text-muted-foreground">No mappings loaded. Select “Load mappings”.</p> : null}
       </section>
     </div>
   );
