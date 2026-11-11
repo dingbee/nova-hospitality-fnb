@@ -5,6 +5,7 @@
 export type OperationalAnomalyCode =
   | "source_stale"
   | "negative_stock"
+  | "stock_movement_direction_mismatch"
   | "payment_total_mismatch"
   | "property_mapping_missing"
   | "currency_mismatch";
@@ -17,6 +18,8 @@ export interface OperationalEvidence {
   freshnessSlaMinutes?: number;
   stockOnHand?: number;
   allowNegativeStock?: boolean;
+  movementType?: string;
+  movementQuantity?: number;
   orderTotal?: number;
   capturedPaymentTotal?: number;
   paymentTolerance?: number;
@@ -57,6 +60,21 @@ export function detectOperationalAnomalies(input: OperationalEvidence): Operatio
   }
   if (input.stockOnHand !== undefined && input.stockOnHand < 0 && input.allowNegativeStock !== true) {
     add("negative_stock", "critical", input.stockOnHand, 0, "Negative stock is recorded while negative inventory is not permitted.");
+  }
+  if (input.movementType !== undefined && input.movementQuantity !== undefined) {
+    const outbound = new Set(["consumption", "wastage", "transfer_out", "return_to_supplier", "adjustment_out"]);
+    const inbound = new Set(["purchase_receipt", "transfer_in", "adjustment_in"]);
+    const expectedSign = outbound.has(input.movementType) ? -1 : inbound.has(input.movementType) ? 1 : 0;
+    if ((expectedSign < 0 && input.movementQuantity > 0) ||
+        (expectedSign > 0 && input.movementQuantity < 0)) {
+      add(
+        "stock_movement_direction_mismatch",
+        "critical",
+        input.movementQuantity,
+        expectedSign < 0 ? "negative" : "positive",
+        "Stock movement quantity sign conflicts with its movement type; usage and replenishment calculations must not normalise it silently.",
+      );
+    }
   }
   if (input.orderTotal !== undefined && input.capturedPaymentTotal !== undefined) {
     const tolerance = input.paymentTolerance ?? 0.01;
