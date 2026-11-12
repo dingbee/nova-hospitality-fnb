@@ -5,6 +5,8 @@ import {
   executeApprovedInventoryAgentActions,
   runInventoryAgent,
   verifyExecutedInventoryAgentActions,
+  type InventoryAgentRunInput,
+  type InventoryAgentActionSweepInput,
 } from "./inventory-agent.server";
 
 const baseSchema = z.object({
@@ -26,7 +28,7 @@ export const runInventoryAgentFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => runSchema.parse(d))
   .handler(async ({ data, context }) =>
-    runInventoryAgent(context.supabase, context.userId, data),
+    runInventoryAgent(context.supabase as any, context.userId as string, data as InventoryAgentRunInput),
   );
 
 /** Execute only already-approved Inventory Agent actions. Never approves. */
@@ -34,7 +36,7 @@ export const executeApprovedInventoryAgentActionsFn = createServerFn({ method: "
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => sweepSchema.parse(d))
   .handler(async ({ data, context }) =>
-    executeApprovedInventoryAgentActions(context.supabase, context.userId, data),
+    executeApprovedInventoryAgentActions(context.supabase as any, context.userId as string, data as InventoryAgentActionSweepInput),
   );
 
 /** Independently verify executed Inventory Agent actions. */
@@ -42,5 +44,5 @@ export const verifyExecutedInventoryAgentActionsFn = createServerFn({ method: "P
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => sweepSchema.parse(d))
   .handler(async ({ data, context }) =>
-    verifyExecutedInventoryAgentActions(context.supabase, context.userId, data),
+    verifyExecutedInventoryAgentActions(context.supabase as any, context.userId as string, data as InventoryAgentActionSweepInput),
   );
