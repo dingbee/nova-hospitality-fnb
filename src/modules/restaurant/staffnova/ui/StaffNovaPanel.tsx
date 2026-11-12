@@ -1510,7 +1510,7 @@ export function StaffNovaPanel({
                 {t.preparation && t.understanding && (
                   <ActionWorkspace
                     stage={t.preparation.readiness === "ready" || t.preparation.readiness === "ready_with_warnings" ? "preview" : "review"}
-                    title={WORKFLOW_LABEL[t.preparation.workflow] ?? "Operational action"}
+                    title={t.preparation.workflow ? WORKFLOW_LABEL[t.preparation.workflow] : "Operational action"}
                     summary="LexiBite has translated the instruction into a governed operational preparation."
                   >
                     <PreparationActions
