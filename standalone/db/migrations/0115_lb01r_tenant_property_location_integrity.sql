@@ -29,7 +29,7 @@ DO $$ BEGIN
   ALTER TABLE public.staynas_product_connections ADD CONSTRAINT staynas_product_connections_local_tenant_property_fk FOREIGN KEY(local_tenant_id,local_property_id) REFERENCES public.restaurant_properties(tenant_id,id) ON UPDATE RESTRICT ON DELETE RESTRICT NOT VALID;
  END IF;
 END $$;
-DO $ BEGIN
+DO $$ BEGIN
  IF EXISTS (
   SELECT 1 FROM pg_constraint
   WHERE conrelid='public.restaurant_locations'::regclass
@@ -46,5 +46,5 @@ DO $ BEGIN
  ) THEN
   ALTER TABLE public.staynas_product_connections VALIDATE CONSTRAINT staynas_product_connections_local_tenant_property_fk;
  END IF;
-END $;
+END $$;
 COMMIT;
