@@ -53,6 +53,7 @@ describe("api_service role — never human-assignable", () => {
     for (const role of ASSIGNABLE_RESTAURANT_ROLES) {
       const attempt = upsertMemberSchema.safeParse({
         tenantId: "11111111-1111-1111-1111-111111111111",
+        propertyId: null,
         userId: "22222222-2222-2222-2222-222222222222",
         role,
       });
