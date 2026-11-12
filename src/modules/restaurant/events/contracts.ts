@@ -38,6 +38,7 @@ export const RESTAURANT_EVENT_TYPES = [
   "restaurant.payment.room_charge_posted",
   "restaurant.payment.room_charge_failed",
   "restaurant.payment.room_charge_unknown",
+  "restaurant.payment.room_charge_reversal_requested",
   "restaurant.kitchen.ticket.fired",
   "restaurant.kitchen.ticket.ready",
   "restaurant.kitchen.ticket.delayed",
