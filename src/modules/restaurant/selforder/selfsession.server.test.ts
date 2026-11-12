@@ -128,6 +128,10 @@ function makeFakeSupabase(initial: Record<string, any[]>) {
         filters.push((r) => r[col] != null && r[col] < val);
         return api;
       },
+      lte(col: string, val: string) {
+        filters.push((r) => r[col] != null && r[col] <= val);
+        return api;
+      },
       not(col: string, _kind: string, val: unknown) {
         if (val === null) filters.push((r) => r[col] != null);
         return api;
