@@ -486,7 +486,7 @@ export async function receiveAskLexiBitePurchaseOrder(
     throw new Error("The purchase order spans multiple properties; receive it through the Procurement Centre.");
   }
 
-  const result = await createGoodsReceipt(sb, userId, {
+  const result: { documentNumber: string; orderStatus: string } = await createGoodsReceipt(sb, userId, {
     tenantId,
     purchaseOrderId,
     propertyId: propertyIds[0] ?? order.property_id ?? undefined,
