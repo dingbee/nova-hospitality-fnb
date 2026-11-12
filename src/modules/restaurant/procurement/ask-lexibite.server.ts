@@ -509,11 +509,17 @@ export async function receiveAskLexiBitePurchaseOrder(
     })),
   });
 
+  // post:true must produce a posted receipt and the resulting PO lifecycle
+  // state. Do not silently report "unknown" while claiming the receipt posted.
+  if (!result.posted || !("orderStatus" in result)) {
+    throw new Error("Goods receipt was created but was not posted; verify it in the Procurement Centre.");
+  }
+  const orderStatus = result.orderStatus ?? "unknown";
   return {
     preview: false,
     lines: previewLines,
-    orderStatus: result.orderStatus,
+    orderStatus,
     receiptDocumentNumber: result.documentNumber,
-    message: "Goods receipt " + result.documentNumber + " posted. Purchase order status: " + result.orderStatus + ".",
+    message: "Goods receipt " + result.documentNumber + " posted. Purchase order status: " + orderStatus + ".",
   };
 }

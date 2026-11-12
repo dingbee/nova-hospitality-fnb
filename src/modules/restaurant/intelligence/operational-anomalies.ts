@@ -83,7 +83,7 @@ export function detectOperationalAnomalies(input: OperationalEvidence): Operatio
     }
   }
   if (input.mappingVerified === false) {
-    add("property_mapping_missing", "critical", false, true, "Cross-product analytics are blocked until the property mapping is verified.");
+    add("property_mapping_missing", "critical", "unverified", "verified", "Cross-product analytics are blocked until the property mapping is verified.");
   }
   if (input.sourceCurrency !== undefined && input.propertyCurrency !== undefined &&
       input.sourceCurrency !== input.propertyCurrency) {

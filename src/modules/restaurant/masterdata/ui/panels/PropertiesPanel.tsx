@@ -20,7 +20,7 @@ export function PropertiesPanel({ tenantId, data }: { tenantId: string; data: Ma
   const [search, setSearch] = React.useState("");
   const [open, setOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Property | null>(null);
-  const [form, setForm] = React.useState(EMPTY);
+  const [form, setForm] = React.useState<{ name: string; slug: string; timezone: string; currency: string; status: "pending_activation" | "active" | "inactive" }>(EMPTY);
 
   const qc = useQueryClient();
   const fn = useServerFn(upsertRestaurantPropertyFn);

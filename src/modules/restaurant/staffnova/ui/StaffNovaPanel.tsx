@@ -411,6 +411,7 @@ type StaffNovaTurn =
       understanding?: NovaIntentContract;
       preparation?: NovaPreparation;
       managerBrief?: boolean;
+      intelligentPurchaseOrder?: IntelligentPurchaseOrderPlan;
     };
 
 /** I12: the existing route + tab each preparable workflow's draft is reviewed in — never a new NOVA-specific page. */
@@ -566,7 +567,7 @@ function PreparationActions({
 
   if (!preparation.workflow) return null;
   const label = WORKFLOW_LABEL[preparation.workflow];
-  const route = WORKFLOW_ROUTE[preparation.workflow];
+  const route = preparation.workflow ? WORKFLOW_ROUTE[preparation.workflow] : null;
 
   if (preparation.action === "prepare_purchase_order") {
     if (preparation.readiness !== "ready" && preparation.readiness !== "ready_with_warnings") {
@@ -636,7 +637,7 @@ function PreparationActions({
   if (committed) {
     return (
       <div className="space-y-2">
-        <Button type="button" size="sm" variant="outline" onClick={() => navigate({ to: route.to, search: route.search })}>
+        <Button type="button" size="sm" variant="outline" onClick={() => route && navigate({ to: route.to as never, search: route.search as never })}>
           Open {label}{committed.documentNumber ? ` (${committed.documentNumber})` : ""}
         </Button>
         {preparation.workflow === "purchase_request" && (
@@ -731,7 +732,7 @@ function RequisitionLifecycleActions({ tenantId, requisitionId }: { tenantId: st
       data: {
         tenantId,
         requisitionId,
-        lines: (requisition.data?.lines ?? []).map((line) => ({
+        lines: (requisition.data?.lines ?? []).map((line: { id: string; approved_quantity?: number | null; requested_quantity?: number | null; issued_quantity?: number | null }) => ({
           lineId: line.id,
           approvedQuantity: Number(line.approved_quantity ?? line.requested_quantity ?? 0),
         })),
@@ -1362,6 +1363,7 @@ export function StaffNovaPanel({
   tenantId: string;
 }) {
   const askFn = useServerFn(askStaffNovaFn);
+  const navigate = useNavigate();
   const [turns, setTurns] = useState<StaffNovaTurn[]>([]);
   const [input, setInput] = useState("");
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -1476,7 +1478,7 @@ export function StaffNovaPanel({
                       type="button"
                       size="sm"
                       variant="outline"
-                      onClick={() => navigate({ to: "/admin/restaurant/inventory-control", search: { tab: "waste" } })}
+                      onClick={() => navigate({ to: "/admin/restaurant/inventory-control" as never, search: { tab: "waste" } as never })}
                     >
                       Open stock adjustments
                     </Button>
@@ -1509,7 +1511,7 @@ export function StaffNovaPanel({
                 {t.preparation && t.understanding && (
                   <ActionWorkspace
                     stage={t.preparation.readiness === "ready" || t.preparation.readiness === "ready_with_warnings" ? "preview" : "review"}
-                    title={WORKFLOW_LABEL[t.preparation.workflow] ?? "Operational action"}
+                    title={t.preparation.workflow ? WORKFLOW_LABEL[t.preparation.workflow] : "Operational action"}
                     summary="LexiBite has translated the instruction into a governed operational preparation."
                   >
                     <PreparationActions

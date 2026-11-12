@@ -39,6 +39,19 @@ function slugify(input: string): string {
  * for every later property/outlet a tenant adds — the underlying hierarchy
  * is unchanged, only the first-run UX collapses it.
  */
+/** Accepts only the invitation bound to the authenticated user by the commercial invitation RPC. */
+export async function activateInvitedOwner(sb: Sb, userId: string, invitationId: string) {
+  const { data, error } = await sb.rpc("restaurant_activate_invited_owner", {
+    _invitation_id: invitationId,
+  });
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.tenant_id || !row?.member_id) {
+    throw new Error("The owner invitation could not be activated.");
+  }
+  return { tenantId: String(row.tenant_id), memberId: String(row.member_id), userId };
+}
+
 export async function createFirstOutlet(
   sb: Sb,
   userId: string,
@@ -59,6 +72,7 @@ export async function createFirstOutlet(
     name: input.outletName,
     slug: slugify(input.outletName),
     locationType: "restaurant",
+    scope: "property",
     isStorage: false,
     active: true,
   });

@@ -15,7 +15,7 @@ import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWor
 import { CHANNEL_PROVIDERS } from "../channel-catalog";
 import { listChannelDefinitionsFn } from "../channel-catalog.functions";
 import type { StoredChannelDefinition } from "../channel-catalog.server";
-import type { ChannelConnection, ChannelConnectionConfig, ChannelProviderDefinition } from "../channel-contracts";
+import type { ChannelConnection, ChannelConnectionConfig, ChannelProviderDefinition, CreateChannelConnectionInput, TestChannelConnectionInput, UpdateChannelConnectionInput } from "../channel-contracts";
 import {
   createChannelConnectionFn,
   listChannelConnectionsFn,
@@ -175,12 +175,12 @@ function ConnectionRow({
   const [config, setConfig] = useState<ChannelConnectionConfig>(connection.config);
 
   const testMutation = useAdminMutation({
-    mutationFn: (data: Parameters<typeof testChannelConnectionFn>[0]["data"]) => test({ data }),
+    mutationFn: (data: TestChannelConnectionInput) => test({ data }),
     successMessage: "Connection test completed",
     onSuccess: onRefresh,
   });
   const updateMutation = useAdminMutation({
-    mutationFn: (data: Parameters<typeof updateChannelConnectionFn>[0]["data"]) => update({ data }),
+    mutationFn: (data: UpdateChannelConnectionInput) => update({ data }),
     successMessage: "Channel connection updated",
     onSuccess: () => { setEditing(false); setCredential(""); onRefresh(); },
   });
@@ -301,7 +301,7 @@ function NewConnection({
   }, [channelKey]);
 
   const mutation = useAdminMutation({
-    mutationFn: (data: Parameters<typeof createChannelConnectionFn>[0]["data"]) => create({ data }),
+    mutationFn: (data: CreateChannelConnectionInput) => create({ data }),
     successMessage: "Channel connection created",
     onSuccess: () => {
       setLabel("");
@@ -354,14 +354,17 @@ function NewConnection({
             <p className="text-xs text-muted-foreground">Connection credentials are stored securely and are not shown again after saving.</p>
             <Button
               disabled={mutation.isPending || !label.trim() || !requiredFieldsComplete || (provider.setup.credential.required && credential.length < 8)}
-              onClick={() => mutation.mutate({
+              onClick={() => {
+                if (!channel) return;
+                mutation.mutate({
                 tenantId,
                 propertyId: propertyId === "tenant" ? null : propertyId,
                 channelKey: channel.key,
                 label,
                 config,
                 credential,
-              })}
+              });
+              }}
             >
               {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}Connect channel
             </Button>
