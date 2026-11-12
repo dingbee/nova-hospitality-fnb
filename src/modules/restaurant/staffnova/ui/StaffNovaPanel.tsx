@@ -410,7 +410,8 @@ type StaffNovaTurn =
       sourceMessage?: string;
       understanding?: NovaIntentContract;
       preparation?: NovaPreparation;
-      managerBrief?: boolean;\n      intelligentPurchaseOrder?: IntelligentPurchaseOrderPlan;
+      managerBrief?: boolean;
+      intelligentPurchaseOrder?: IntelligentPurchaseOrderPlan;
     };
 
 /** I12: the existing route + tab each preparable workflow's draft is reviewed in — never a new NOVA-specific page. */
@@ -566,7 +567,7 @@ function PreparationActions({
 
   if (!preparation.workflow) return null;
   const label = WORKFLOW_LABEL[preparation.workflow];
-  const route = WORKFLOW_ROUTE[preparation.workflow];
+  const route = preparation.workflow ? WORKFLOW_ROUTE[preparation.workflow] : null;
 
   if (preparation.action === "prepare_purchase_order") {
     if (preparation.readiness !== "ready" && preparation.readiness !== "ready_with_warnings") {
@@ -636,7 +637,7 @@ function PreparationActions({
   if (committed) {
     return (
       <div className="space-y-2">
-        <Button type="button" size="sm" variant="outline" onClick={() => navigate({ to: route.to as never, search: route.search as never })}>
+        <Button type="button" size="sm" variant="outline" onClick={() => route && navigate({ to: route.to as never, search: route.search as never })}>
           Open {label}{committed.documentNumber ? ` (${committed.documentNumber})` : ""}
         </Button>
         {preparation.workflow === "purchase_request" && (
