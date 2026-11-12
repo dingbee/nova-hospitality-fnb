@@ -17,7 +17,12 @@ DO $$ BEGIN
  END IF;
 END $$;
 DO $$ BEGIN
- IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.restaurant_locations'::regclass AND conname='restaurant_locations_tenant_property_fk') THEN
+ IF NOT EXISTS (
+  SELECT 1 FROM pg_constraint
+  WHERE conrelid='public.restaurant_locations'::regclass
+    AND contype='f'
+    AND pg_get_constraintdef(oid) LIKE 'FOREIGN KEY (tenant_id, property_id) REFERENCES restaurant_properties(tenant_id, id)%'
+ ) THEN
   ALTER TABLE public.restaurant_locations ADD CONSTRAINT restaurant_locations_tenant_property_fk FOREIGN KEY(tenant_id,property_id) REFERENCES public.restaurant_properties(tenant_id,id) ON UPDATE RESTRICT ON DELETE RESTRICT NOT VALID;
  END IF;
  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.staynas_product_connections'::regclass AND conname='staynas_product_connections_local_tenant_property_fk') THEN
