@@ -427,7 +427,7 @@ function fakeSessionsSb(initialRows: any[] = []) {
         eq: () => api,
         in: () => api,
         limit: () => api,
-        then: (resolve: any) => resolve({ data: [], error: null }),
+        then: (resolve: any) => resolve({ data: [{ id: "staff-order" }], error: null }),
       };
       return api;
     }
@@ -560,11 +560,11 @@ describe("resolveOrStartGuestSession", () => {
     ); // rolling expiry moved forward
   });
 
-  it("refuses a new order when another session is already active on the table and no valid token is presented — table occupied", async () => {
-    const { sb } = fakeSessionsSb([activeSessionRow()]);
-    await expect(resolveOrStartGuestSession(sb, TABLE_1, undefined)).rejects.toThrow(
-      /already has a dining session/,
-    );
+  it("a guest scan without a token adopts the existing session when an open staff order already occupies the table", async () => {
+    const { sb, rows } = fakeSessionsSb([activeSessionRow()]);
+    const result = await resolveOrStartGuestSession(sb, TABLE_1, undefined);
+    expect(result).toEqual({ token: "", sessionId: "session-existing", created: false });
+    expect(rows).toHaveLength(1);
   });
 
   it("treats an expired token as absent — lazily expires the stale row and starts a fresh session (QR reuse: old session != new session)", async () => {
