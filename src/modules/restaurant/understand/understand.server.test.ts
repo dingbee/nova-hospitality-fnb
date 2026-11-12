@@ -53,6 +53,11 @@ function makeFakeSupabase(fixtures: Fixtures) {
         return api;
       },
       order: () => api,
+      maybeSingle: async () => {
+        let rows = tables[table] ?? [];
+        for (const [col, val] of filters) rows = rows.filter((r) => r[col] === val);
+        return { data: rows[0] ?? null, error: null };
+      },
       insert: fail("insert"),
       update: fail("update"),
       upsert: fail("upsert"),
