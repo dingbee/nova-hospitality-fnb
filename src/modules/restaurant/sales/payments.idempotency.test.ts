@@ -316,20 +316,24 @@ describe("refundPayment — double submission (ME-04)", () => {
       method: "cash",
       state: "paid",
     };
-    const sb = fakeDb({ orders: [baseOrder()], orderItems: [], payments: [original] });
+    const priorRefund = {
+      id: "payment-refund-1",
+      tenant_id: TENANT,
+      order_id: ORDER,
+      client_request_id: "refund-partial-1",
+      method: "cash",
+      state: "refunded",
+      amount: -25,
+      reference: "refund of payment-original",
+      refund_of: original.id,
+      refund_reason: "partial refund 1",
+      created_by: USER,
+    };
+    // Seed the persisted first refund as a database fact. The test focuses on
+    // the cumulative guard, independently of the insert/idempotency contract
+    // covered by the preceding test.
+    const sb = fakeDb({ orders: [baseOrder()], orderItems: [], payments: [original, priorRefund] });
 
-    const first = await refundPayment(sb, USER, {
-      tenantId: TENANT,
-      orderId: ORDER,
-      paymentId: original.id,
-      amount: 25,
-      reason: "partial refund 1",
-      clientRequestId: "refund-partial-1",
-    } as any);
-    expect(first.duplicate).toBe(false);
-
-    // 25 already refunded; a second, distinct 25 would total 50 > the
-    // original 40. Must be rejected, not silently allowed through.
     await expect(
       refundPayment(sb, USER, {
         tenantId: TENANT,
@@ -339,7 +343,7 @@ describe("refundPayment — double submission (ME-04)", () => {
         reason: "partial refund 2",
         clientRequestId: "refund-partial-2",
       } as any),
-    ).rejects.toThrow(/cannot exceed the payment it reverses/);
+    ).rejects.toThrow(/25.00 of 40.00 already refunded/);
 
     const refundRows = (sb as any).tables.restaurant_payments.filter(
       (r: any) => r.refund_of === original.id && r.state === "refunded",
@@ -354,13 +358,13 @@ describe("refundPayment — double submission (ME-04)", () => {
       paymentId: original.id,
       amount: 15,
       reason: "remaining balance",
-      clientRequestId: "refund-partial-3",
+      clientRequestId: "refund-remainder",
     } as any);
     expect(remainder.duplicate).toBe(false);
-
-    const totalRefunded = (sb as any).tables.restaurant_payments
-      .filter((r: any) => r.refund_of === original.id && r.state === "refunded")
-      .reduce((s: number, r: any) => s + Math.abs(Number(r.amount)), 0);
-    expect(totalRefunded).toBe(40);
+    const finalRefundRows = (sb as any).tables.restaurant_payments.filter(
+      (r: any) => r.refund_of === original.id && r.state === "refunded",
+    );
+    expect(finalRefundRows).toHaveLength(2);
+    expect(finalRefundRows.reduce((sum: number, row: any) => sum + Math.abs(row.amount), 0)).toBe(40);
   });
 });
