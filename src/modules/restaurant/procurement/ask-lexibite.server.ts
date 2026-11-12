@@ -486,7 +486,7 @@ export async function receiveAskLexiBitePurchaseOrder(
     throw new Error("The purchase order spans multiple properties; receive it through the Procurement Centre.");
   }
 
-  const result: { documentNumber: string; orderStatus: string } = await createGoodsReceipt(sb, userId, {
+  const result = await createGoodsReceipt(sb, userId, {
     tenantId,
     purchaseOrderId,
     propertyId: propertyIds[0] ?? order.property_id ?? undefined,
@@ -509,7 +509,12 @@ export async function receiveAskLexiBitePurchaseOrder(
     })),
   });
 
-  const orderStatus = "orderStatus" in result ? result.orderStatus : "unknown";
+  // post:true must produce a posted receipt and the resulting PO lifecycle
+  // state. Do not silently report "unknown" while claiming the receipt posted.
+  if (!result.posted || !("orderStatus" in result)) {
+    throw new Error("Goods receipt was created but was not posted; verify it in the Procurement Centre.");
+  }
+  const orderStatus = result.orderStatus ?? "unknown";
   return {
     preview: false,
     lines: previewLines,
