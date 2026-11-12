@@ -120,8 +120,24 @@ export async function guestSessionProjection(
   input: { tableId: string },
 ): Promise<GuestSessionProjection> {
   const table = await resolveGuestTableContext(sb, input.tableId);
-  // Projection is strictly read-only: do not lazily create a session merely because a guest refreshed the tracking view.
-  const session = await loadActiveSession(sb, table.tenantId, table.tableId);
+  // A projection must not recreate a closed session for orders already attached to it.
+  // The one exception is an unassigned staff-side order: the first guest scan adopts it.
+  let session = await loadActiveSession(sb, table.tenantId, table.tableId);
+  if (!session) {
+    const { data: unassignedStaffOrder } = await sb
+      .from("restaurant_orders")
+      .select("id")
+      .eq("tenant_id", table.tenantId)
+      .eq("table_id", table.tableId)
+      .in("status", ["open", "sent", "served"])
+      .is("guest_session_id", null)
+      .limit(1)
+      .maybeSingle();
+    if (unassignedStaffOrder) {
+      await ensureGuestTableSession(sb, input.tableId);
+      session = await loadActiveSession(sb, table.tenantId, table.tableId);
+    }
+  }
 
   if (!session) {
     return { session: null, orders: [], totals: emptyTotals(table.currency) };
