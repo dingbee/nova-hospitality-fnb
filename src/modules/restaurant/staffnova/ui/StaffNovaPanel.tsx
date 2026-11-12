@@ -410,7 +410,7 @@ type StaffNovaTurn =
       sourceMessage?: string;
       understanding?: NovaIntentContract;
       preparation?: NovaPreparation;
-      managerBrief?: boolean;
+      managerBrief?: boolean;\n      intelligentPurchaseOrder?: IntelligentPurchaseOrderPlan;
     };
 
 /** I12: the existing route + tab each preparable workflow's draft is reviewed in — never a new NOVA-specific page. */
