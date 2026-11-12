@@ -509,11 +509,12 @@ export async function receiveAskLexiBitePurchaseOrder(
     })),
   });
 
+  const orderStatus = "orderStatus" in result ? result.orderStatus : "unknown";
   return {
     preview: false,
     lines: previewLines,
-    orderStatus: result.orderStatus,
+    orderStatus,
     receiptDocumentNumber: result.documentNumber,
-    message: "Goods receipt " + result.documentNumber + " posted. Purchase order status: " + result.orderStatus + ".",
+    message: "Goods receipt " + result.documentNumber + " posted. Purchase order status: " + orderStatus + ".",
   };
 }
