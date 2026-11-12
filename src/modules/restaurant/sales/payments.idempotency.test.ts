@@ -130,7 +130,13 @@ function fakeDb(seed: { orders: any[]; orderItems: any[]; payments: any[] }) {
         const stored = { id: `payment-${++seq}`, ...row };
         rows.push(stored);
         filtered = [stored];
-        return { select: () => ({ single: async () => ({ data: stored, error: null }) }) };
+        const inserted = { data: stored, error: null };
+        return {
+          // Supabase insert builders are thenable when awaited directly and
+          // also support a follow-up select().single() projection.
+          then: (resolve: (value: typeof inserted) => unknown) => resolve(inserted),
+          select: () => ({ single: async () => inserted }),
+        };
       },
       update: (patch: any) => {
         let lastMatched: any[] = rows;
