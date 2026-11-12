@@ -120,7 +120,7 @@ export async function guestSessionProjection(
   input: { tableId: string },
 ): Promise<GuestSessionProjection> {
   const table = await resolveGuestTableContext(sb, input.tableId);
-  await ensureGuestTableSession(sb, input.tableId);
+  // Projection is strictly read-only: do not lazily create a session merely because a guest refreshed the tracking view.
   const session = await loadActiveSession(sb, table.tenantId, table.tableId);
 
   if (!session) {
