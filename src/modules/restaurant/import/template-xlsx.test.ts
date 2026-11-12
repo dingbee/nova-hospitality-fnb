@@ -43,9 +43,10 @@ describe("LexiBite template workbook generation", () => {
 
   it("carries the version marker somewhere in the workbook text", () => {
     const wb = buildLexibiteTemplateWorkbook();
-    const startHere = wb.Sheets["START HERE"]!;
-    const rows: string[][] = XLSX.utils.sheet_to_json(startHere, { header: 1, raw: false });
-    const flat = rows.flat().join(" | ");
+    const flat = wb.SheetNames
+      .flatMap((name) => XLSX.utils.sheet_to_json(wb.Sheets[name]!, { header: 1, raw: false }) as unknown[][])
+      .flat()
+      .join(" | ");
     expect(flat).toContain("LexiBite Template");
     expect(flat).toContain(`Template Version: ${LEXIBITE_TEMPLATE_VERSION}`);
   });
