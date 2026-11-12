@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "NODE_OPTIONS=--max-old-space-size=8192 vite build",
+    "build": "rm -f src/routeTree.gen.ts && NODE_OPTIONS=--max-old-space-size=8192 vite build",
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
