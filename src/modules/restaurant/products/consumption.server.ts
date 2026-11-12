@@ -168,6 +168,12 @@ export async function consumeForRecipeSale(
   if (args.locationId && !orderLocation) {
     throw new Error("Recipe consumption blocked: the order location does not belong to this tenant.");
   }
+  if (
+    orderLocation &&
+    (orderLocation.status !== "active" || orderLocation.scope === "tenant" || !orderLocation.property_id)
+  ) {
+    throw new Error("Recipe consumption blocked: POS location must be active and scoped to this property.");
+  }
   const orderPropertyId = args.propertyId ?? orderLocation?.property_id ?? null;
   if (!orderPropertyId) {
     throw new Error("Recipe consumption blocked: a property-scoped order location is required.");
