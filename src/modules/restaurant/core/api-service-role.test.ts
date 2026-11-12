@@ -42,6 +42,7 @@ describe("api_service role — never human-assignable", () => {
   it("upsertMemberSchema — the server-side validator behind the staff management server function — REJECTS assigning it to a human, not just the UI", () => {
     const attempt = upsertMemberSchema.safeParse({
       tenantId: "11111111-1111-1111-1111-111111111111",
+      propertyId: null,
       userId: "22222222-2222-2222-2222-222222222222",
       role: "api_service",
     });
