@@ -636,7 +636,7 @@ function PreparationActions({
   if (committed) {
     return (
       <div className="space-y-2">
-        <Button type="button" size="sm" variant="outline" onClick={() => navigate({ to: route.to, search: route.search })}>
+        <Button type="button" size="sm" variant="outline" onClick={() => navigate({ to: route.to as never, search: route.search as never })}>
           Open {label}{committed.documentNumber ? ` (${committed.documentNumber})` : ""}
         </Button>
         {preparation.workflow === "purchase_request" && (
@@ -1362,6 +1362,7 @@ export function StaffNovaPanel({
   tenantId: string;
 }) {
   const askFn = useServerFn(askStaffNovaFn);
+  const navigate = useNavigate();
   const [turns, setTurns] = useState<StaffNovaTurn[]>([]);
   const [input, setInput] = useState("");
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -1476,7 +1477,7 @@ export function StaffNovaPanel({
                       type="button"
                       size="sm"
                       variant="outline"
-                      onClick={() => navigate({ to: "/admin/restaurant/inventory-control", search: { tab: "waste" } })}
+                      onClick={() => navigate({ to: "/admin/restaurant/inventory-control" as never, search: { tab: "waste" } as never })}
                     >
                       Open stock adjustments
                     </Button>
