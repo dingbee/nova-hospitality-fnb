@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   runRestaurantDecisionPass: vi.fn(),
@@ -51,6 +51,7 @@ function sbFor(tableResults: Record<string, unknown>) {
 
 describe("LexiBite Inventory Agent V1", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     mocks.assertEntitled.mockResolvedValue(undefined);
   });
   it("runs the canonical decision pass and returns only inventory replenishment findings", async () => {
@@ -194,7 +195,12 @@ describe("LexiBite Inventory Agent V1", () => {
         data: [
           { id: ACTION, decision_id: DECISION, action_type: "restaurant.inventory.replenish_review", status: "approved" },
           { id: "ignored", decision_id: DECISION, action_type: "restaurant.menu.reprice_review", status: "approved" },
-          { id: "ignored-failed", decision_id: DECISION, action_type: "restaurant.inventory.replenish_review", status: "executed" },
+          {
+            id: "ignored-failed",
+            decision_id: DECISION,
+            action_type: "restaurant.inventory.replenish_review",
+            status: "executed",
+          },
         ],
         error: null,
       },

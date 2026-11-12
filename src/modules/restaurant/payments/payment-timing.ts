@@ -39,6 +39,9 @@ export function resolveGuestPaymentTiming(settings: unknown): GuestPaymentTiming
   if (serviceMode === "counter_service" || serviceMode === "takeaway" || serviceMode === "self_service") {
     return "pay_first";
   }
+  if (serviceMode === "table_service" || serviceMode === "room_service") {
+    return "pay_after_service";
+  }
   return defaultGuestPaymentTimingForOperatingMode(root.onboarding?.operatingMode);
 }
 

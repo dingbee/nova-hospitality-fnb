@@ -113,7 +113,7 @@ describe("Ask LexiBite PO lifecycle action contracts", () => {
   it("accepts only governed transition targets", () => {
     const base = {
       tenantId: "11111111-1111-1111-1111-111111111111",
-      purchaseOrderId: "22222222-2222-2222-2222-222222222222",
+      id: "22222222-2222-2222-2222-222222222222",
     };
     expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "submitted" }).success).toBe(true);
     expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "approved" }).success).toBe(true);

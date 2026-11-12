@@ -178,22 +178,30 @@ export async function listTickets(
     if (stationError) throw new Error(stationError.message);
 
     const barTypes = new Set(BAR_STATION_TYPES.map((t) => t.trim().toLowerCase()));
-    let kitchenStationIds = ((scopedStations ?? []) as any[])
-      .filter(
-        (s) =>
-          !barTypes.has(
-            String(s.station_type ?? "")
-              .trim()
-              .toLowerCase(),
-          ),
+    const requestedStations = (scopedStations ?? []) as any[];
+    const barStationIds = requestedStations
+      .filter((s) =>
+        barTypes.has(String(s.station_type ?? "").trim().toLowerCase()),
+      )
+      .map((s) => s.id);
+    let kitchenStationIds = requestedStations
+      .filter((s) =>
+        !barTypes.has(String(s.station_type ?? "").trim().toLowerCase()),
       )
       .map((s) => s.id);
 
     if (assignedStationIds !== null) {
       kitchenStationIds = kitchenStationIds.filter((id: string) => assignedStationIds.includes(id));
     }
-    if (kitchenStationIds.length === 0) return [];
-    q = q.in("station_id", kitchenStationIds);
+    // A homogeneous bar-station scope is the Bar board's explicit request.
+    // Mixed scopes are treated as Kitchen scopes, preventing bar tickets from
+    // leaking into the Kitchen board when a stale client sends both station types.
+    const scopedStationIds =
+      kitchenStationIds.length === 0 && barStationIds.length > 0
+        ? barStationIds
+        : kitchenStationIds;
+    if (scopedStationIds.length === 0) return [];
+    q = q.in("station_id", scopedStationIds);
   }
 
   if (input.status) q = q.eq("status", input.status);

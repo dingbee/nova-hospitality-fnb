@@ -41,7 +41,7 @@ describe("LB-04 combined revenue reconciliation", () => {
       event({ id: "dup-a", economicEventKey: "duplicate", amount: 30 }),
       event({ id: "dup-b", economicEventKey: "duplicate", amount: 30 }),
     ]);
-    expect(result.totals[0]?.accommodationRevenue).toBe(0);
+    expect(result.totals).toEqual([]);
     expect(result.exclusions.filter((item) => item.reason === "duplicate_economic_event")).toHaveLength(2);
     expect(result.reconciliationRequired).toBe(true);
   });

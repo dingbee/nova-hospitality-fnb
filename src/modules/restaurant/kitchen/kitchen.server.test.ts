@@ -384,7 +384,11 @@ function fakeListTicketsDb(rows: Record<string, any[]>) {
 
 function ticketsBaseRows(overrides: Partial<Record<string, any[]>> = {}) {
   return {
-    restaurant_members: [{ tenant_id: TENANT, user_id: USER, role: "manager" }],
+    restaurant_members: [{ tenant_id: TENANT, user_id: USER, role: "restaurant_manager" }],
+    restaurant_stations: [
+      { id: KITCHEN_STATION, tenant_id: TENANT, station_type: "kitchen" },
+      { id: BAR_STATION, tenant_id: TENANT, station_type: "bar" },
+    ],
     restaurant_kitchen_ticket_items: [],
     restaurant_orders: [],
     restaurant_tables: [],

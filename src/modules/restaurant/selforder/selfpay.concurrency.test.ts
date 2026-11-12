@@ -50,7 +50,7 @@ function fakeDb(order: Record<string, any>, opts: { onFirstClaimAttempt?: () => 
       active: true,
     },
   ];
-  const tenants = [{ id: TENANT, name: "Demo", status: "active" }];
+  const tenants = [{ id: TENANT, name: "Demo", status: "active", settings: { payment: { guestTiming: "pay_first" } } }];
   const orders = [order];
   const currencies: any[] = [];
   let claimAttempts = 0;

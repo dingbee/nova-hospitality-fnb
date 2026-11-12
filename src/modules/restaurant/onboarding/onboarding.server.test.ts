@@ -2,15 +2,10 @@
 /**
  * P12 First-Run Experience — server module tests.
  *
- * bootstrapTenant is the one genuinely new authoritative write in this
- * codebase (see onboarding.server.ts's doc comment for why it must be a
- * SECURITY DEFINER RPC, not an ordinary insert); these tests exercise the
- * TypeScript wrapper's own logic (slug generation/retry, error surfacing)
- * against a fake `sb.rpc`. createFirstOutlet/setOperatingModel/
- * getOnboardingStatus are tested against fakes that mirror exactly what
- * upsertProperty/upsertLocation/assertCapability/assertTenantRead already
- * assume, since those are the real, already-tested authoritative functions
- * this module hands off to — not reimplemented here.
+ * Tenant creation is deliberately invitation-driven by the Commercial
+ * Centre; this module does not expose a self-service bootstrap path.
+ * createFirstOutlet/setOperatingModel/getOnboardingStatus/recordOnboardingEvent
+ * are tested against the authoritative functions this module delegates to.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -37,7 +32,6 @@ vi.mock("../events/emit.server", () => ({
 }));
 
 const {
-  bootstrapTenant,
   createFirstOutlet,
   setOperatingModel,
   getOnboardingStatus,
@@ -58,100 +52,12 @@ beforeEach(() => {
   emitRestaurantEventMock.mockResolvedValue({ delivered: true, duplicate: false });
 });
 
-describe("bootstrapTenant", () => {
-  it("derives a slug from the business name and returns the RPC's tenant/member ids", async () => {
-    const rpc = vi.fn().mockResolvedValue({
-      data: [{ tenant_id: TENANT, member_id: "member-1" }],
-      error: null,
-    });
-    const sb = { rpc };
-    const result = await bootstrapTenant(sb, OWNER, {
-      name: "Kilimanjaro Grill",
-      businessType: "restaurant",
-      currency: "TZS",
-      timezone: "Africa/Dar_es_Salaam",
-    });
-    expect(result).toEqual({ tenantId: TENANT, memberId: "member-1", slug: "kilimanjaro-grill" });
-    expect(rpc).toHaveBeenCalledWith(
-      "restaurant_bootstrap_tenant",
-      expect.objectContaining({
-        _name: "Kilimanjaro Grill",
-        _slug: "kilimanjaro-grill",
-        _business_type: "restaurant",
-      }),
-    );
-  });
-
-  it("retries with a suffixed slug when the name collides, never surfacing the collision to the caller", async () => {
-    const rpc = vi
-      .fn()
-      .mockResolvedValueOnce({
-        data: null,
-        error: { message: "that business name is already taken" },
-      })
-      .mockResolvedValueOnce({ data: [{ tenant_id: TENANT, member_id: "member-2" }], error: null });
-    const sb = { rpc };
-    const result = await bootstrapTenant(sb, OWNER, {
-      name: "The Grill",
-      businessType: "restaurant",
-      currency: "TZS",
-      timezone: "Africa/Dar_es_Salaam",
-    });
-    expect(result.tenantId).toBe(TENANT);
-    expect(rpc).toHaveBeenCalledTimes(2);
-    const secondCallSlug = rpc.mock.calls[1]![1]._slug as string;
-    expect(secondCallSlug).not.toBe("the-grill");
-    expect(secondCallSlug.startsWith("the-grill-")).toBe(true);
-  });
-
-  it("surfaces a genuine RPC error (not a slug collision) verbatim rather than retrying forever", async () => {
-    const rpc = vi
-      .fn()
-      .mockResolvedValue({ data: null, error: { message: "business name is required" } });
-    const sb = { rpc };
-    await expect(
-      bootstrapTenant(sb, OWNER, {
-        name: "AB",
-        businessType: "restaurant",
-        currency: "TZS",
-        timezone: "Africa/Dar_es_Salaam",
-      }),
-    ).rejects.toThrow(/business name is required/);
-    expect(rpc).toHaveBeenCalledTimes(1);
-  });
-
-  it("passes the country through to the RPC so P13's fiscalisation gate (which matches on the full country name) can see it (§3/§13 closure)", async () => {
-    const rpc = vi
-      .fn()
-      .mockResolvedValue({ data: [{ tenant_id: TENANT, member_id: "m" }], error: null });
-    const sb = { rpc };
-    await bootstrapTenant(sb, OWNER, {
-      name: "Kilimanjaro Grill",
-      businessType: "restaurant",
-      country: "Tanzania",
-      currency: "TZS",
-      timezone: "Africa/Dar_es_Salaam",
-    });
-    expect(rpc).toHaveBeenCalledWith(
-      "restaurant_bootstrap_tenant",
-      expect.objectContaining({ _country: "Tanzania" }),
-    );
-  });
-
-  it("never derives the owner from anything but the server-side session — no ownerId/userId field is ever sent to the RPC", async () => {
-    const rpc = vi
-      .fn()
-      .mockResolvedValue({ data: [{ tenant_id: TENANT, member_id: "m" }], error: null });
-    const sb = { rpc };
-    await bootstrapTenant(sb, OWNER, {
-      name: "Test Diner",
-      businessType: "restaurant",
-      currency: "TZS",
-      timezone: "Africa/Dar_es_Salaam",
-    });
-    const sentParams = rpc.mock.calls[0]![1] as Record<string, unknown>;
-    expect(Object.keys(sentParams)).not.toContain("_user_id");
-    expect(Object.keys(sentParams)).not.toContain("_owner_id");
+describe("tenant provisioning boundary", () => {
+  it("does not expose self-service tenant creation; onboarding begins after an invitation-created membership", async () => {
+    const module = await import("./onboarding.server");
+    expect("bootstrapTenant" in module).toBe(false);
+    expect(module.createFirstOutlet).toBeTypeOf("function");
+    expect(module.getOnboardingStatus).toBeTypeOf("function");
   });
 });
 

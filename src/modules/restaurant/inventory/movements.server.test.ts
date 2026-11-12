@@ -23,6 +23,11 @@ const PC = { id: "unit-pc", code: "PC", name: "Piece", dimension: "count", facto
 
 function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[] }) {
   const movements: any[] = [];
+  const inventoryItems = opts.items.map((item) =>
+    Object.prototype.hasOwnProperty.call(item, "property_id")
+      ? item
+      : { ...item, property_id: "property-1" },
+  );
   let seq = 0;
 
   function builder(table: string) {
@@ -56,13 +61,21 @@ function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[] 
       if (table === "restaurant_inventory_items") {
         if ((api as any)._insertRow) return { data: null, error: null }; // not used
         if (inFilters.id) {
-          return { data: opts.items.filter((i) => inFilters.id!.includes(i.id)), error: null };
+          return { data: inventoryItems.filter((i) => inFilters.id!.includes(i.id)), error: null };
         }
-        const row = opts.items.find((i) => i.id === filters.id) ?? null;
+        const row = inventoryItems.find((i) => i.id === filters.id) ?? null;
         return { data: row, error: null };
       }
       if (table === "restaurant_inventory_units") {
         return { data: opts.units.filter((u) => inFilters.id?.includes(u.id)), error: null };
+      }
+      if (table === "restaurant_locations") {
+        return {
+          data: filters.id === "location-1"
+            ? { id: "location-1", property_id: "property-1", scope: "property", is_storage: false, status: "active" }
+            : null,
+          error: null,
+        };
       }
       if (table === "restaurant_stock_movements") {
         const row = (api as any)._insertRow;
@@ -115,6 +128,8 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
 
     const cost = await consumeForOrderItem(fake.supabase, USER, {
       tenantId: TENANT,
+      locationId: "location-1",
+      propertyId: "property-1",
       orderId: "order-1",
       orderItemId: "item-1",
       menuItemId: "menu-burger",
@@ -157,6 +172,8 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
 
     const cost = await consumeForOrderItem(fake.supabase, USER, {
       tenantId: TENANT,
+      locationId: "location-1",
+      propertyId: "property-1",
       orderId: "order-1",
       orderItemId: "item-1",
       menuItemId: "menu-burger",
@@ -195,6 +212,8 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
 
     const cost = await consumeForOrderItem(fake.supabase, USER, {
       tenantId: TENANT,
+      locationId: "location-1",
+      propertyId: "property-1",
       orderId: "order-1",
       orderItemId: "item-1",
       menuItemId: "menu-burger",
@@ -237,6 +256,8 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
 
     const args = {
       tenantId: TENANT,
+      locationId: "location-1",
+      propertyId: "property-1",
       orderId: "order-1",
       orderItemId: "item-1",
       menuItemId: "menu-glass-of-wine",
@@ -288,6 +309,8 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
 
     const cost = await consumeForOrderItem(fake.supabase, USER, {
       tenantId: TENANT,
+      locationId: "location-1",
+      propertyId: "property-1",
       orderId: "order-1",
       orderItemId: "item-1",
       menuItemId: "menu-glass-of-wine",
@@ -327,6 +350,8 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
     await expect(
       consumeForOrderItem(fake.supabase, USER, {
         tenantId: TENANT,
+        locationId: "location-1",
+        propertyId: "property-1",
         orderId: "order-1",
         orderItemId: "item-1",
         menuItemId: "menu-burger",

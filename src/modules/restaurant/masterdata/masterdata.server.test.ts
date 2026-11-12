@@ -190,8 +190,8 @@ describe("upsertProperty — P01 commercial classification wiring", () => {
   beforeEach(() => {
     classifyPropertyMock.mockReset();
     classifyPropertyMock.mockImplementation(
-      async (_sb: unknown, _userId: string, _tenantId: string, propertyId: string) =>
-        propertyId.endsWith("-1")
+      async (rawSb: unknown, _userId: string, _tenantId: string, propertyId: string) => {
+        const result = propertyId.endsWith("-1")
           ? {
               classification: "base",
               chargeable: false,
@@ -209,7 +209,19 @@ describe("upsertProperty — P01 commercial classification wiring", () => {
               propertySequence: 2,
               requiresApproval: false,
               notes: "test",
-            },
+            };
+        // The real classifier persists both records; this mock must mirror
+        // those side effects because upsertProperty delegates persistence to it.
+        const tables = (rawSb as any).tables;
+        tables.commercial_property_classifications.push({
+          tenant_id: TENANT,
+          property_id: propertyId,
+          classification: result.classification,
+          chargeable: result.chargeable,
+        });
+        tables.commercial_audit_log.push({ tenant_id: TENANT, property_id: propertyId });
+        return result;
+      },
     );
   });
   it("classifies a brand-new property as 'base', non-chargeable, and writes an audit entry", async () => {

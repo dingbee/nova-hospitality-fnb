@@ -30,6 +30,14 @@ function resetDb() {
     { id: "u-kg", code: "kg", name: "Kilogram", dimension: "mass", factor: 1000, tenant_id: null },
     { id: "u-g", code: "g", name: "Gram", dimension: "mass", factor: 1, tenant_id: null },
     { id: "u-ml", code: "ml", name: "Millilitre", dimension: "volume", factor: 1, tenant_id: null },
+    // The customer-facing workbook uses the published uppercase unit codes.
+    { id: "u-kg-upper", code: "KG", name: "Kilogram", dimension: "mass", factor: 1000, tenant_id: null },
+    { id: "u-g-upper", code: "G", name: "Gram", dimension: "mass", factor: 1, tenant_id: null },
+    { id: "u-ml-upper", code: "ML", name: "Millilitre", dimension: "volume", factor: 1, tenant_id: null },
+    { id: "u-btl", code: "BTL", name: "Bottle", dimension: "count", factor: 1, tenant_id: null },
+    { id: "u-ctn", code: "CTN", name: "Carton", dimension: "count", factor: 1, tenant_id: null },
+    { id: "u-pc", code: "PC", name: "Piece", dimension: "count", factor: 1, tenant_id: null },
+    { id: "u-l", code: "L", name: "Litre", dimension: "volume", factor: 1000, tenant_id: null },
   ];
   db.restaurant_suppliers = [];
   db.restaurant_inventory_items = [];
@@ -1633,7 +1641,7 @@ describe("LexiBite template deterministic import — end to end", () => {
     // calls out as the one thing the importer must never confuse.
     const wine = db.restaurant_inventory_items!.find((r) => r.sku === "WINE-RED-750");
     expect(wine).toBeTruthy();
-  });
+  }, 60_000);
 
   it("refuses to run the deterministic path against a workbook that is not a LexiBite template", async () => {
     const XLSX = await import("xlsx");

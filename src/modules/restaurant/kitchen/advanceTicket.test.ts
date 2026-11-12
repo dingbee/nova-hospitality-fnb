@@ -104,6 +104,10 @@ function fakeDb(
     from: (table: string) => {
       if (table === "restaurant_kitchen_tickets") return ticketsTable();
       if (table === "restaurant_kitchen_ticket_items") return ticketItemsTable();
+      if (table === "restaurant_stations") {
+        const api: any = { select: () => api, eq: () => api, maybeSingle: async () => ({ data: { station_type: "kitchen" }, error: null }) };
+        return api;
+      }
       throw new Error(`unexpected table ${table}`);
     },
   };
