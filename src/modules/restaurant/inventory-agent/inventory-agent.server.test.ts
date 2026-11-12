@@ -195,7 +195,12 @@ describe("LexiBite Inventory Agent V1", () => {
         data: [
           { id: ACTION, decision_id: DECISION, action_type: "restaurant.inventory.replenish_review", status: "approved" },
           { id: "ignored", decision_id: DECISION, action_type: "restaurant.menu.reprice_review", status: "approved" },
-          { id: "ignored-failed", decision_id: DECISION, action_type: "restaurant.inventory.replenish_review", status: "executed" },
+          {
+            id: "ignored-failed",
+            decision_id: DECISION,
+            action_type: "restaurant.inventory.replenish_review",
+            status: "executed",
+          },
         ],
         error: null,
       },
