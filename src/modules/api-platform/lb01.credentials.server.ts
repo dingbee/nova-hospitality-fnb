@@ -115,7 +115,7 @@ export async function authenticateLb01ServiceRequest(
     throw new Error("Unauthorized LB-01 service request.");
   }
 
-  const { data: connection, error: connectionError } = await supabaseAdmin
+  const { data: connection, error: connectionError } = await client
     .from("staynas_product_connections")
     .select("id, integration_tenant_id, integration_property_id, local_tenant_id, local_property_id, remote_tenant_id, remote_property_id, remote_product, status, correlation_id")
     .eq("id", credentialRow.connection_id)
@@ -148,7 +148,7 @@ export async function authenticateLb01ServiceRequest(
   if (nonceError || claimed !== true) throw new Error("Replay or invalid LB-01 service nonce.");
 
   void client.from("product_service_credentials")
-    .update({ last_used_at: new Date().toISOString() }).eq("id", credential.id);
+    .update({ last_used_at: new Date().toISOString() }).eq("id", credentialRow.id);
 
-  return { credentialId: credential.id, connection };
+  return { credentialId: credentialRow.id, connection: connectionRow };
 }
