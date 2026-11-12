@@ -42,20 +42,21 @@ function recoverFromStaleDynamicImport(error: Error): boolean {
   }
 }
 
-function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
+function DefaultErrorComponent({ error, reset }: { error: unknown; reset: () => void }) {
   const router = useRouter();
+  const safeError = error instanceof Error ? error : new Error(String(error));
 
   // Recover automatically from the stale application-shell/chunk mismatch
   // that can occur immediately after a new production deployment.
   useEffect(() => {
-    recoverFromStaleDynamicImport(error);
-  }, [error]);
+    recoverFromStaleDynamicImport(safeError);
+  }, [safeError]);
 
   // ME-16 remediation (ME16-03): a correlation reference is shown even in
   // production, without ever showing the raw message/stack there — the
   // DEV-only panel below still carries the full detail for local debugging.
   const presented = presentUserFacingError(
-    error,
+    safeError,
     "An unexpected error occurred. Please try again.",
   );
 
