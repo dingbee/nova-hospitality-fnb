@@ -18,6 +18,7 @@ import {
   upsertChannelDefinitionFn,
 } from "../channel-catalog.functions";
 import type { StoredChannelDefinition } from "../channel-catalog.server";
+import type { UpsertChannelDefinitionInput } from "../channel-catalog.functions";
 
 export function ChannelCatalogueAdmin() {
   const queryClient = useQueryClient();
@@ -145,7 +146,7 @@ function ChannelEditor({
   }, [channel, providerKey, providers]);
 
   const mutation = useAdminMutation({
-    mutationFn: (data: Parameters<typeof upsertChannelDefinitionFn>[0]["data"]) => upsertChannelDefinitionFn({ data }),
+    mutationFn: (data: UpsertChannelDefinitionInput) => upsertChannelDefinitionFn({ data }),
     successMessage: channel ? "Channel definition updated" : "Channel definition added",
     onSuccess: onSaved,
   });
