@@ -84,11 +84,20 @@ function fakeSb(rows: Record<string, any[]>) {
           filtered = filtered.filter((r) => r[col] === val);
           return builder;
         },
+        in(col: string, vals: unknown[]) {
+          const accepted = new Set(vals);
+          filtered = filtered.filter((r) => accepted.has(r[col]));
+          return builder;
+        },
+        order() {
+          return builder;
+        },
         limit() {
           return builder;
         },
         maybeSingle: async () => ({ data: filtered[0] ?? null }),
-        then: (resolve: (v: { data: any[] }) => unknown) => resolve({ data: filtered }),
+        then: (resolve: (v: { data: any[]; error: null }) => unknown, reject: (reason: unknown) => unknown) =>
+          Promise.resolve({ data: filtered, error: null }).then(resolve, reject),
       };
       return builder;
     },
