@@ -15,6 +15,8 @@ import {
   type FolioStay,
 } from "./folio.rules";
 import type { FolioPostInput, FolioPostingStatusInput, FolioStayLookupInput, FolioValidateInput } from "./folio.contracts";
+import { getStayNasRoomChargeStatus, postStayNasRoomCharge } from "@/modules/restaurant/folio/lb03-client.server";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 type Sb = any;
 
@@ -58,69 +60,56 @@ async function assertFolioWrite(sb: Sb, userId: string) {
   if (error || data !== true) throw new Error(folioFailureMessage("unauthorised"));
 }
 
-function toStay(b: any, unitLabel: string | null, roomName: string | null): FolioStay {
-  return {
-    bookingId: b.id,
-    guestName: b.guest_name ?? "Guest",
-    unitLabel,
-    roomName,
-    arrival: b.check_in,
-    departure: b.check_out,
-    currency: String(b.currency ?? "TZS").toUpperCase(),
-    status: b.status,
-  };
-}
-
-/** In-house stays a till may charge, resolved by room number, reference or name. */
+/** In-house stays are read from privacy-safe LB-02 projections, never a local PMS mirror. */
 export async function findChargeableStays(sb: Sb, userId: string, input: FolioStayLookupInput) {
   await assertFolioRead(sb, userId);
-  let q = sb
-    .from("bookings")
-    .select("id, reference, guest_name, check_in, check_out, currency, status, room_id, balance_due")
-    .eq("status", "checked_in")
-    .order("check_in", { ascending: true })
-    .limit(input.bookingId ? 1 : input.limit);
-  if (input.bookingId) q = q.eq("id", input.bookingId);
-  const { data: bookings } = await q;
-  const rows = (bookings ?? []) as any[];
-  if (rows.length === 0) return { stays: [] as Array<FolioStay & { balanceDue: number }> };
-
-  const bookingIds = rows.map((r) => r.id);
-  const roomIds = [...new Set(rows.map((r) => r.room_id).filter(Boolean))];
-  const [{ data: states }, { data: rooms }] = await Promise.all([
-    sb.from("room_states").select("booking_id, unit_label, updated_at").in("booking_id", bookingIds),
-    roomIds.length
-      ? sb.from("rooms").select("id, name").in("id", roomIds)
-      : Promise.resolve({ data: [] as any[] }),
-  ]);
-  const unitByBooking = new Map<string, string>();
-  for (const s of (states ?? []) as any[]) {
-    if (s.unit_label) unitByBooking.set(s.booking_id, s.unit_label);
+  if (!input.tenantId) return { stays: [] as Array<FolioStay & { balanceDue: number }> };
+  const admin = supabaseAdmin as unknown as Sb;
+  const { data: connections, error } = await admin.from("staynas_product_connections")
+    .select("id,integration_property_id")
+    .eq("local_tenant_id", input.tenantId)
+    .eq("remote_product", "staynas")
+    .eq("status", "active");
+  if (error || !Array.isArray(connections)) return { stays: [] as Array<FolioStay & { balanceDue: number }> };
+  const projections: any[] = [];
+  for (const connection of connections as Array<{id:string;integration_property_id:string}>) {
+    let query = admin.from("lb02_guest_stay_projections")
+      .select("guest_reference,stay_reference,stay_status,effective_at,integration_property_id")
+      .eq("connection_id", connection.id)
+      .eq("integration_property_id", connection.integration_property_id)
+      .eq("stay_status", "checked_in")
+      .is("revoked_at", null)
+      .order("effective_at", { ascending: false })
+      .limit(input.limit);
+    if (input.bookingId) query = query.eq("stay_reference", input.bookingId);
+    const { data } = await query;
+    for (const row of (data ?? []) as any[]) projections.push(row);
   }
-  const roomById = new Map(((rooms ?? []) as any[]).map((r) => [r.id, r.name]));
-
   const term = (input.query ?? "").trim().toLowerCase();
-  const stays = rows
-    .map((b) => ({
-      ...toStay(b, unitByBooking.get(b.id) ?? null, roomById.get(b.room_id) ?? null),
-      balanceDue: Number(b.balance_due ?? 0),
-      reference: b.reference as string | null,
-    }))
-    .filter((s) =>
-      !term
-        ? true
-        : [s.unitLabel, s.roomName, s.guestName, s.reference]
-            .filter(Boolean)
-            .some((v) => String(v).toLowerCase().includes(term)),
-    );
+  const stays = projections
+    .filter((row) => !term || String(row.guest_reference).toLowerCase().includes(term)
+      || String(row.stay_reference).toLowerCase().includes(term))
+    .slice(0, input.limit)
+    .map((row) => ({
+      bookingId: row.stay_reference,
+      guestName: "In-house guest",
+      unitLabel: null,
+      roomName: `Stay ${String(row.stay_reference).slice(-6)}`,
+      arrival: String(row.effective_at ?? "").slice(0, 10),
+      departure: "",
+      currency: "",
+      status: row.stay_status,
+      balanceDue: 0,
+    }));
   return { stays };
 }
 
 /** Eligibility only — this never moves money and is safe to call on keystroke. */
 export async function validateRoomCharge(sb: Sb, userId: string, input: FolioValidateInput) {
   await assertFolioRead(sb, userId);
-  const { stays } = await findChargeableStays(sb, userId, { bookingId: input.bookingId, limit: 1 });
-  const stay = stays[0] ?? null;
+  const { stays } = await findChargeableStays(sb, userId, { tenantId: input.tenantId, bookingId: input.bookingId, limit: 1 });
+  const selected = stays[0] ?? null;
+  const stay = selected ? { ...selected, currency: input.currency.toUpperCase() } : null;
   const verdict = evaluateRoomChargeEligibility(stay, { amount: input.amount, currency: input.currency });
   return { ...verdict, stay: stay ? stayConfirmationView(stay) : null };
 }
@@ -131,67 +120,17 @@ export async function validateRoomCharge(sb: Sb, userId: string, input: FolioVal
  */
 export async function postRoomCharge(sb: Sb, userId: string, input: FolioPostInput): Promise<FolioPostingResult> {
   await assertFolioWrite(sb, userId);
-  const src = input.source ?? { sourceSystem: "restaurant_pos" };
-  const { data, error } = await sb.rpc("pms_post_folio_charge", {
-    _idempotency_key: input.idempotencyKey,
-    _booking_id: input.bookingId,
-    _amount: input.amount,
-    _currency: input.currency.toUpperCase(),
-    _description: input.description,
-    _source: {
-      source_system: src.sourceSystem ?? "restaurant_pos",
-      tenant_id: src.tenantId ?? null,
-      property_id: src.propertyId ?? null,
-      location_id: src.locationId ?? null,
-      order_id: src.orderId ?? null,
-      payment_id: src.paymentId ?? null,
-      correlation_id: src.correlationId ?? null,
-    },
-  });
-
-  if (error) {
-    // An unanswered PMS is *not* a failed charge: the till must not assume.
-    return {
-      status: "unknown",
-      duplicate: false,
-      failureCode: "pms_unavailable",
-      failureMessage: folioFailureMessage("pms_unavailable"),
-    };
-  }
-  const row = (data ?? {}) as any;
-  if (row.status === "posted") {
-    return {
-      status: "posted",
-      duplicate: Boolean(row.duplicate),
-      postingId: row.posting_id ?? null,
-      postingReference: row.posting_reference ?? null,
-      folioReference: row.folio_reference ?? null,
-      amount: Number(row.amount ?? input.amount),
-      currency: String(row.currency ?? input.currency),
-    };
-  }
-  const code = (row.failure_code ?? "posting_rejected") as FolioFailureCode;
-  return {
-    status: "failed",
-    duplicate: false,
-    failureCode: code,
-    failureMessage: row.failure_message ?? folioFailureMessage(code),
-  };
+  return postStayNasRoomCharge(sb, input);
 }
 
 /** Truth after an interrupted posting: what does the folio actually hold? */
 export async function getFolioPostingStatus(sb: Sb, userId: string, input: FolioPostingStatusInput) {
   await assertFolioRead(sb, userId);
-  let q = sb
-    .from("pms_folio_postings")
-    .select(
-      "id, booking_id, amount, currency, status, folio_reference, posting_reference, failure_code, failure_message, idempotency_key, source_order_id, posted_at, requested_at",
-    )
-    .order("requested_at", { ascending: false })
-    .limit(20);
-  if (input.idempotencyKey) q = q.eq("idempotency_key", input.idempotencyKey);
-  if (input.postingId) q = q.eq("id", input.postingId);
-  if (input.orderId) q = q.eq("source_order_id", input.orderId);
-  const { data } = await q;
-  return { postings: (data ?? []) as any[] };
+  if (!input.tenantId) return { operations: [], authoritative: false };
+  return getStayNasRoomChargeStatus({
+    tenantId: input.tenantId,
+    orderId: input.orderId,
+    idempotencyKey: input.idempotencyKey,
+    postingId: input.postingId,
+  });
 }

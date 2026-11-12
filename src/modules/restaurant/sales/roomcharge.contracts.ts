@@ -27,3 +27,13 @@ export const roomChargeCommitSchema = z.object({
   closeWhenSettled: z.boolean().default(true),
 });
 export type RoomChargeCommitInput = z.infer<typeof roomChargeCommitSchema>;
+
+export const roomChargeReversalSchema=z.object({
+ tenantId:uuid,orderId:uuid,amount:z.number().positive(),
+ reasonCode:z.enum(["pos_void","incorrect_amount","duplicate_charge","guest_dispute","service_recovery","other"]),
+ reason:z.string().min(3).max(500),clientRequestId:z.string().min(8).max(80)
+}).strict();
+export type RoomChargeReversalInput=z.infer<typeof roomChargeReversalSchema>;
+
+export const roomChargeReversalFinalizeSchema=z.object({tenantId:uuid,orderId:uuid}).strict();
+export type RoomChargeReversalFinalizeInput=z.infer<typeof roomChargeReversalFinalizeSchema>;
