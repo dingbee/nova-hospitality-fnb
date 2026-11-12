@@ -42,6 +42,8 @@ export interface InventoryAgentRunInput {
   locationId?: string;
 }
 
+export interface InventoryAgentActionSweepInput { tenantId: string; limit?: number; propertyId?: string; locationId?: string; }
+
 export interface InventoryAgentRecommendation {
   decisionId: string;
   decisionKey: string;
@@ -185,7 +187,7 @@ export interface InventoryAgentActionSweepResult {
 export async function executeApprovedInventoryAgentActions(
   sb: Sb,
   userId: string,
-  input: { tenantId: string; limit?: number; propertyId?: string; locationId?: string },
+  input: InventoryAgentActionSweepInput,
 ): Promise<InventoryAgentActionSweepResult> {
   await assertEntitled(sb, input.tenantId, "inventory_agent", {
     propertyId: input.propertyId ?? null,
