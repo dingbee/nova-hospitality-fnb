@@ -47,6 +47,8 @@ export const testChannelConnectionSchema = z.object({
 });
 
 export type CreateChannelConnectionInput = z.infer<typeof createChannelConnectionSchema>;
+export type ListChannelConnectionsInput = z.infer<typeof listChannelConnectionsSchema>;
+export type TestChannelConnectionInput = z.infer<typeof testChannelConnectionSchema>;
 export type UpdateChannelConnectionInput = z.infer<typeof updateChannelConnectionSchema>;
 
 export type ChannelCapability =
