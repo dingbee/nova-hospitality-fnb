@@ -23,6 +23,11 @@ const PC = { id: "unit-pc", code: "PC", name: "Piece", dimension: "count", facto
 
 function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[] }) {
   const movements: any[] = [];
+  const inventoryItems = opts.items.map((item) =>
+    Object.prototype.hasOwnProperty.call(item, "property_id")
+      ? item
+      : { ...item, property_id: "property-1" },
+  );
   let seq = 0;
 
   function builder(table: string) {
@@ -56,9 +61,9 @@ function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[] 
       if (table === "restaurant_inventory_items") {
         if ((api as any)._insertRow) return { data: null, error: null }; // not used
         if (inFilters.id) {
-          return { data: opts.items.filter((i) => inFilters.id!.includes(i.id)), error: null };
+          return { data: inventoryItems.filter((i) => inFilters.id!.includes(i.id)), error: null };
         }
-        const row = opts.items.find((i) => i.id === filters.id) ?? null;
+        const row = inventoryItems.find((i) => i.id === filters.id) ?? null;
         return { data: row, error: null };
       }
       if (table === "restaurant_inventory_units") {
