@@ -14,6 +14,7 @@ import {
   PO_MANUAL_STATUSES,
 } from "../purchasing/state-machine";
 import { createPurchaseOrderSchema, transitionPurchaseOrderSchema } from "../core/contracts";
+import { askLexiBitePurchaseOrderTransitionSchema } from "./ask-lexibite.server";
 import { createReceiptSchema } from "./contracts";
 
 describe("purchase order state machine", () => {
@@ -52,12 +53,18 @@ describe("no generic status escape hatch", () => {
       tenantId: "11111111-1111-1111-1111-111111111111",
       id: "22222222-2222-2222-2222-222222222222",
     };
-    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "received" }).success).toBe(false);
-    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "partially_received" }).success).toBe(
+    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "received" }).success).toBe(
       false,
     );
-    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "draft" }).success).toBe(false);
-    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "approved" }).success).toBe(true);
+    expect(
+      transitionPurchaseOrderSchema.safeParse({ ...base, status: "partially_received" }).success,
+    ).toBe(false);
+    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "draft" }).success).toBe(
+      false,
+    );
+    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "approved" }).success).toBe(
+      true,
+    );
   });
 });
 
@@ -71,7 +78,9 @@ describe("direct purchase order governance", () => {
 
   it("refuses a direct order with no reason for bypassing requisition", () => {
     expect(createPurchaseOrderSchema.safeParse(base).success).toBe(false);
-    expect(createPurchaseOrderSchema.safeParse({ ...base, directReason: "urgent" }).success).toBe(false);
+    expect(createPurchaseOrderSchema.safeParse({ ...base, directReason: "urgent" }).success).toBe(
+      false,
+    );
   });
 
   it("accepts a direct order with an explicit authorised reason", () => {
@@ -98,7 +107,9 @@ describe("over-receipt authorisation", () => {
       ],
     };
     expect(createReceiptSchema.safeParse(base).success).toBe(true);
-    expect(createReceiptSchema.safeParse({ ...base, overReceiptReason: "short" }).success).toBe(false);
+    expect(createReceiptSchema.safeParse({ ...base, overReceiptReason: "short" }).success).toBe(
+      false,
+    );
     expect(
       createReceiptSchema.safeParse({
         ...base,
@@ -108,16 +119,21 @@ describe("over-receipt authorisation", () => {
   });
 });
 
-
 describe("Ask LexiBite PO lifecycle action contracts", () => {
   it("accepts only governed transition targets", () => {
     const base = {
       tenantId: "11111111-1111-1111-1111-111111111111",
       purchaseOrderId: "22222222-2222-2222-2222-222222222222",
     };
-    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "submitted" }).success).toBe(true);
-    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "approved" }).success).toBe(true);
-    expect(transitionPurchaseOrderSchema.safeParse({ ...base, status: "received" }).success).toBe(false);
+    expect(
+      askLexiBitePurchaseOrderTransitionSchema.safeParse({ ...base, status: "submitted" }).success,
+    ).toBe(true);
+    expect(
+      askLexiBitePurchaseOrderTransitionSchema.safeParse({ ...base, status: "approved" }).success,
+    ).toBe(true);
+    expect(
+      askLexiBitePurchaseOrderTransitionSchema.safeParse({ ...base, status: "received" }).success,
+    ).toBe(false);
   });
 
   it("requires explicit confirmation for receiving", async () => {
@@ -126,8 +142,12 @@ describe("Ask LexiBite PO lifecycle action contracts", () => {
       tenantId: "11111111-1111-1111-1111-111111111111",
       purchaseOrderId: "22222222-2222-2222-2222-222222222222",
     };
-    expect(receiveAskLexiBitePurchaseOrderSchema.safeParse({ ...base, confirm: false }).success).toBe(true);
-    expect(receiveAskLexiBitePurchaseOrderSchema.safeParse({ ...base, confirm: true }).success).toBe(true);
+    expect(
+      receiveAskLexiBitePurchaseOrderSchema.safeParse({ ...base, confirm: false }).success,
+    ).toBe(true);
+    expect(
+      receiveAskLexiBitePurchaseOrderSchema.safeParse({ ...base, confirm: true }).success,
+    ).toBe(true);
     expect(receiveAskLexiBitePurchaseOrderSchema.safeParse(base).success).toBe(false);
   });
 

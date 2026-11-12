@@ -124,8 +124,16 @@ function makeFakeSupabase(initial: Record<string, any[]>) {
         filters.push((r) => set.has(r[col]));
         return api;
       },
+      is(col: string, val: unknown) {
+        filters.push((r) => (val == null ? r[col] == null : r[col] === val));
+        return api;
+      },
       lt(col: string, val: string) {
         filters.push((r) => r[col] != null && r[col] < val);
+        return api;
+      },
+      lte(col: string, val: string) {
+        filters.push((r) => r[col] != null && r[col] <= val);
         return api;
       },
       not(col: string, _kind: string, val: unknown) {
@@ -682,10 +690,7 @@ describe("guest dining session — the continuous-session defect (tests 13-30)",
     });
 
     expect(continued.session.session?.status).toBe("active");
-    expect(continued.session.orders.map((o: any) => o.id)).toEqual([
-      "staff-order",
-      continued.id,
-    ]);
+    expect(continued.session.orders.map((o: any) => o.id)).toEqual(["staff-order", continued.id]);
     expect(sb.store.restaurant_guest_sessions).toHaveLength(1);
   });
 

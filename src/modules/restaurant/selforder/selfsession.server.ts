@@ -120,6 +120,9 @@ export async function guestSessionProjection(
   input: { tableId: string },
 ): Promise<GuestSessionProjection> {
   const table = await resolveGuestTableContext(sb, input.tableId);
+  // Lazily attach only unlinked staff-side orders to a guest session.
+  // Existing guest orders remain attached to their original session after
+  // release and must never resurrect that closed session.
   await ensureGuestTableSession(sb, input.tableId);
   const session = await loadActiveSession(sb, table.tenantId, table.tableId);
 

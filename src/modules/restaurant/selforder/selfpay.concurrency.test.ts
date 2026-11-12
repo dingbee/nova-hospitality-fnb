@@ -50,7 +50,17 @@ function fakeDb(order: Record<string, any>, opts: { onFirstClaimAttempt?: () => 
       active: true,
     },
   ];
-  const tenants = [{ id: TENANT, name: "Demo", status: "active" }];
+  // This suite isolates claim/concurrency behavior, not the separate
+  // table-service bill-request policy. Configure pay-first explicitly so
+  // an open order is eligible to reach the compare-and-swap claim.
+  const tenants = [
+    {
+      id: TENANT,
+      name: "Demo",
+      status: "active",
+      settings: { payment: { guestTiming: "pay_first" } },
+    },
+  ];
   const orders = [order];
   const currencies: any[] = [];
   let claimAttempts = 0;

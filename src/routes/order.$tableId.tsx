@@ -547,6 +547,7 @@ function GuestOrderPage() {
       <TableSessionScreen
         tableId={tableId}
         justPlacedOrderId={null}
+        paymentTiming={menu.data?.table.guestPaymentTiming ?? "pay_after_service"}
         onOrderMore={() => {
           setContinueOrdering(true);
         }}
@@ -1402,7 +1403,11 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
       lastNotifiedStageRef.current = current;
       return;
     }
-    if (current !== lastNotifiedStageRef.current && current === "ready" && progress.data?.readyAlert !== false) {
+    if (
+      current !== lastNotifiedStageRef.current &&
+      current === "ready" &&
+      progress.data?.readyAlert !== false
+    ) {
       playGuestAttention([120, 60, 120]);
       setReadyAcknowledged(false);
 
@@ -1412,11 +1417,12 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
       if (typeof Notification !== "undefined" && Notification.permission === "granted") {
         try {
           new Notification("Your order is ready", {
-            body: progress.data?.collectionMethod === "room_delivery"
-              ? "Your order is ready for delivery to your room."
-              : progress.data?.collectionMethod === "staff_serves"
-                ? "Your order is ready and will be served shortly."
-                : "Please collect your order from the service counter.",
+            body:
+              progress.data?.collectionMethod === "room_delivery"
+                ? "Your order is ready for delivery to your room."
+                : progress.data?.collectionMethod === "staff_serves"
+                  ? "Your order is ready and will be served shortly."
+                  : "Please collect your order from the service counter.",
             tag: `lexibite-order-ready-${orderId}`,
           });
         } catch {
@@ -1425,7 +1431,13 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
       }
     }
     lastNotifiedStageRef.current = current;
-  }, [progress.data?.overallStage, progress.data?.readyAlert, progress.data?.collectionMethod, orderId, playGuestAttention]);
+  }, [
+    progress.data?.overallStage,
+    progress.data?.readyAlert,
+    progress.data?.collectionMethod,
+    orderId,
+    playGuestAttention,
+  ]);
 
   // Keep a self-service/food-court phone awake while the order is ready.
   // Wake Lock is progressive enhancement and is intentionally best-effort.
@@ -1438,15 +1450,18 @@ function OrderProgressPanel({ tableId, orderId }: { tableId: string; orderId: st
 
     let lock: { release: () => Promise<void> } | null = null;
     let cancelled = false;
-    void nav.wakeLock.request("screen").then((next) => {
-      if (cancelled) {
-        void next.release();
-        return;
-      }
-      lock = next;
-    }).catch(() => {
-      // Unsupported/denied Wake Lock is not an error for order tracking.
-    });
+    void nav.wakeLock
+      .request("screen")
+      .then((next) => {
+        if (cancelled) {
+          void next.release();
+          return;
+        }
+        lock = next;
+      })
+      .catch(() => {
+        // Unsupported/denied Wake Lock is not an error for order tracking.
+      });
 
     return () => {
       cancelled = true;
@@ -1792,7 +1807,9 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
   const receiptLink = useQuery({
     queryKey: ["selforder.guestReceiptLink", tableId, orderId],
     queryFn: () => receiptLinkFn({ data: { tableId, orderId } }),
-    enabled: Boolean(status.data && (status.data.paymentState === "paid" || status.data.amountDue <= 0)),
+    enabled: Boolean(
+      status.data && (status.data.paymentState === "paid" || status.data.amountDue <= 0),
+    ),
     retry: false,
     refetchInterval: (q) => (q.state.data?.ok ? false : 2_000),
     networkMode: "always",
@@ -1833,16 +1850,13 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
   const s = status.data;
   const currency = s.currency;
 
-  if (
-    s.paymentTiming === "pay_after_service" &&
-    s.status !== "served" &&
-    !s.billRequested
-  ) {
+  if (s.paymentTiming === "pay_after_service" && s.status !== "served" && !s.billRequested) {
     return (
       <div className="mt-2 w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
         <p className="text-sm font-semibold">Payment after service</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Your order is still being prepared. Payment will become available after service, or after you request the bill.
+          Your order is still being prepared. Payment will become available after service, or after
+          you request the bill.
         </p>
       </div>
     );
@@ -1875,9 +1889,7 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
             </a>
           </div>
         ) : (
-          <p className="mt-3 text-xs text-muted-foreground">
-            Preparing your receipt…
-          </p>
+          <p className="mt-3 text-xs text-muted-foreground">Preparing your receipt…</p>
         )}
       </div>
     );
@@ -1892,7 +1904,8 @@ function GuestPaymentPanel({ tableId, orderId }: { tableId: string; orderId: str
   // checkout for an unrelated "mobile money" concept. Connected mode (or no
   // account configured at all) keeps the existing Pesapal flow unchanged.
   const useMerchantNumberFlow = method === "mobile_money" && mmAccount.data?.mode === "lipa_namba";
-  const useConnectedMobileMoneyFlow = method === "mobile_money" && mmAccount.data?.mode === "connected";
+  const useConnectedMobileMoneyFlow =
+    method === "mobile_money" && mmAccount.data?.mode === "connected";
 
   return (
     <div className="mt-2 w-full max-w-sm rounded-2xl border bg-card p-4 text-left">
@@ -2065,7 +2078,7 @@ function GuestConnectedMobileMoneyPayment({
   const normalizedPhone = phone.replace(/\D/g, "");
   const phoneValid =
     (normalizedPhone.startsWith("0") && normalizedPhone.length === 10) ||
-    normalizedPhone.startsWith("255") && normalizedPhone.length === 12 ||
+    (normalizedPhone.startsWith("255") && normalizedPhone.length === 12) ||
     normalizedPhone.length === 9;
 
   if (view?.state === "paid") {
@@ -2108,9 +2121,12 @@ function GuestConnectedMobileMoneyPayment({
       <div className="mt-3 rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm">
         <p className="font-medium">Payment prompt sent</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Check {network === "mpesa" ? "M-Pesa" : MM_NETWORK_LABELS[network as keyof typeof MM_NETWORK_LABELS] ?? network}
-          {" "}on <span className="font-medium">{phone}</span> and enter your mobile-money PIN on your phone.
-          LexiBite never sees or stores your PIN.
+          Check{" "}
+          {network === "mpesa"
+            ? "M-Pesa"
+            : (MM_NETWORK_LABELS[network as keyof typeof MM_NETWORK_LABELS] ?? network)}{" "}
+          on <span className="font-medium">{phone}</span> and enter your mobile-money PIN on your
+          phone. LexiBite never sees or stores your PIN.
         </p>
         <p className="mt-2 text-xs text-muted-foreground">Waiting for confirmation…</p>
       </div>
@@ -2123,9 +2139,7 @@ function GuestConnectedMobileMoneyPayment({
         <p className="font-medium">
           Pay with {MM_NETWORK_LABELS[network as keyof typeof MM_NETWORK_LABELS] ?? network}
         </p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Amount: {money(amountDue, currency)}
-        </p>
+        <p className="mt-1 text-xs text-muted-foreground">Amount: {money(amountDue, currency)}</p>
         <p className="mt-1 text-xs text-muted-foreground">
           Enter your mobile number. A payment prompt will be sent to your phone.
         </p>
@@ -2140,7 +2154,9 @@ function GuestConnectedMobileMoneyPayment({
       />
       {request.isError && (
         <p className="text-xs text-destructive">
-          {request.error instanceof Error ? request.error.message : "Couldn't start the payment. Please try again."}
+          {request.error instanceof Error
+            ? request.error.message
+            : "Couldn't start the payment. Please try again."}
         </p>
       )}
       <Button
@@ -2551,111 +2567,112 @@ function AskNovaDrawer({
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-2">
           <div className="space-y-3">
-          {turns.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              Tell me what you're in the mood for, or tap a suggestion below.
-            </p>
-          )}
-          {turns.map((t) => {
-            if (t.role === "user") {
-              return (
-                <div
-                  key={t.id}
-                  className="ml-auto max-w-[85%] rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-sm text-primary-foreground"
-                >
-                  {t.content}
-                </div>
-              );
-            }
-            if (t.role === "assistant") {
-              return (
-                <div key={t.id} className="mr-auto max-w-[90%] space-y-2">
-                  <div className="rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm">
+            {turns.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                Tell me what you're in the mood for, or tap a suggestion below.
+              </p>
+            )}
+            {turns.map((t) => {
+              if (t.role === "user") {
+                return (
+                  <div
+                    key={t.id}
+                    className="ml-auto max-w-[85%] rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-sm text-primary-foreground"
+                  >
                     {t.content}
                   </div>
-                  {t.recommendedItems.map((r) => {
-                    const full = findItem(r.id);
-                    return (
-                      <div
-                        key={r.id}
-                        className="flex items-center gap-2 rounded-xl border bg-card px-3 py-2"
-                      >
-                        <button
-                          type="button"
-                          disabled={!full}
-                          onClick={() => full && onPickItem(full)}
-                          className="flex min-h-9 min-w-0 flex-1 flex-col items-start text-left disabled:opacity-50"
+                );
+              }
+              if (t.role === "assistant") {
+                return (
+                  <div key={t.id} className="mr-auto max-w-[90%] space-y-2">
+                    <div className="rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm">
+                      {t.content}
+                    </div>
+                    {t.recommendedItems.map((r) => {
+                      const full = findItem(r.id);
+                      return (
+                        <div
+                          key={r.id}
+                          className="flex items-center gap-2 rounded-xl border bg-card px-3 py-2"
                         >
-                          <span className="truncate text-sm font-medium">{r.name}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {money(r.price, r.currency)}
-                          </span>
-                        </button>
-                        {full && (
-                          <Button
+                          <button
                             type="button"
-                            size="sm"
-                            variant="outline"
-                            className="min-h-9 shrink-0 rounded-full text-xs"
-                            onClick={() => quickAdd(full)}
+                            disabled={!full}
+                            onClick={() => full && onPickItem(full)}
+                            className="flex min-h-9 min-w-0 flex-1 flex-col items-start text-left disabled:opacity-50"
                           >
-                            Add to my order
-                          </Button>
+                            <span className="truncate text-sm font-medium">{r.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {money(r.price, r.currency)}
+                            </span>
+                          </button>
+                          {full && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="min-h-9 shrink-0 rounded-full text-xs"
+                              onClick={() => quickAdd(full)}
+                            >
+                              Add to my order
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {/* GEP2 — the ground truth for this turn's basket changes, computed from what the server actually resolved, never from the reply text alone. */}
+                    {t.operations.length > 0 && (
+                      <div className="space-y-1 pl-1">
+                        {t.operations.map((op, i) =>
+                          op.status === "applied" ? (
+                            <p key={i} className="text-xs font-medium text-primary">
+                              ✓ {describeAppliedOperation(op)}
+                            </p>
+                          ) : (
+                            <div key={i} className="flex items-center gap-2">
+                              <p className="text-xs text-muted-foreground">
+                                {describeUnresolvedOperation(op)}
+                              </p>
+                              {op.status === "needs_modifier" && findItem(op.itemId) && (
+                                <button
+                                  type="button"
+                                  className="text-xs font-medium text-primary underline underline-offset-2"
+                                  onClick={() => onPickItem(findItem(op.itemId)!)}
+                                >
+                                  Choose
+                                </button>
+                              )}
+                            </div>
+                          ),
                         )}
                       </div>
-                    );
-                  })}
-                  {/* GEP2 — the ground truth for this turn's basket changes, computed from what the server actually resolved, never from the reply text alone. */}
-                  {t.operations.length > 0 && (
-                    <div className="space-y-1 pl-1">
-                      {t.operations.map((op, i) =>
-                        op.status === "applied" ? (
-                          <p key={i} className="text-xs font-medium text-primary">
-                            ✓ {describeAppliedOperation(op)}
-                          </p>
-                        ) : (
-                          <div key={i} className="flex items-center gap-2">
-                            <p className="text-xs text-muted-foreground">
-                              {describeUnresolvedOperation(op)}
-                            </p>
-                            {op.status === "needs_modifier" && findItem(op.itemId) && (
-                              <button
-                                type="button"
-                                className="text-xs font-medium text-primary underline underline-offset-2"
-                                onClick={() => onPickItem(findItem(op.itemId)!)}
-                              >
-                                Choose
-                              </button>
-                            )}
-                          </div>
-                        ),
-                      )}
-                    </div>
-                  )}
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <div key={t.id} className="mr-auto max-w-[90%] space-y-2">
+                  <div className="rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
+                    {PRODUCT.aiName} isn't available right now — here's the menu by category
+                    instead.
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {t.categories.map((c) => (
+                      <Badge key={c.id} variant="outline" className="rounded-full">
+                        {c.name}
+                      </Badge>
+                    ))}
+                  </div>
                 </div>
               );
-            }
-            return (
-              <div key={t.id} className="mr-auto max-w-[90%] space-y-2">
-                <div className="rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
-                  {PRODUCT.aiName} isn't available right now — here's the menu by category instead.
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {t.categories.map((c) => (
-                    <Badge key={c.id} variant="outline" className="rounded-full">
-                      {c.name}
-                    </Badge>
-                  ))}
-                </div>
+            })}
+            {ask.isPending && (
+              <div className="mr-auto max-w-[90%] rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
+                Thinking…
               </div>
-            );
-          })}
-          {ask.isPending && (
-            <div className="mr-auto max-w-[90%] rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
-              Thinking…
-            </div>
-          )}
-          <div ref={messagesEndRef} aria-hidden="true" className="h-px" />
+            )}
+            <div ref={messagesEndRef} aria-hidden="true" className="h-px" />
           </div>
         </div>
 

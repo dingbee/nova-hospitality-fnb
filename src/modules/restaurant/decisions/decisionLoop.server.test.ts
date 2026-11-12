@@ -48,6 +48,7 @@ function makeFakeSupabase() {
       average_cost: 1200,
       currency: "TZS",
       status: "active",
+      unit_id: "unit-kg",
     },
   ];
   const stockMovements = [
@@ -78,6 +79,8 @@ function makeFakeSupabase() {
       supplier_id: SUPPLIER_ID,
       inventory_item_id: ITEM_ID,
       name: "UAT reorder ingredient",
+      unit_id: "unit-kg",
+      pack_size: 1,
       unit_price: 1300,
       lead_time_days: 3,
       active: true,

@@ -174,7 +174,10 @@ function makeFakeSupabaseForProperty() {
         if (wantCount) result.count = matches.length;
         return result;
       }
-      return { data: matches[0] ?? null, error: mode === "single" && !matches[0] ? { message: "not found" } : null };
+      return {
+        data: matches[0] ?? null,
+        error: mode === "single" && !matches[0] ? { message: "not found" } : null,
+      };
     }
     return api;
   }
@@ -222,10 +225,14 @@ describe("upsertProperty — P01 commercial classification wiring", () => {
       currency: "TZS",
       status: "active",
     } as any);
-    expect((result as any).commercial).toMatchObject({ classification: "base", chargeable: false, activationState: "active" });
+    expect((result as any).commercial).toMatchObject({
+      classification: "base",
+      chargeable: false,
+      activationState: "active",
+    });
     expect((result as any).status).toBe("active");
-    expect(sb.tables.commercial_property_classifications).toHaveLength(1);
-    expect(sb.tables.commercial_audit_log).toHaveLength(1);
+    expect(classifyPropertyMock).toHaveBeenCalledTimes(1);
+    expect(classifyPropertyMock).toHaveBeenCalledWith(sb, OWNER, TENANT, (result as any).id);
   });
 
   it("never fabricates a charge when no property policy is configured for the plan", async () => {
@@ -299,6 +306,6 @@ describe("upsertProperty — P01 commercial classification wiring", () => {
       status: "active",
     } as any);
     expect((updated as any).commercial).toBeNull();
-    expect(sb.tables.commercial_property_classifications).toHaveLength(1);
+    expect(classifyPropertyMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -15,9 +15,7 @@ function recoverFromStaleDynamicImport(error: Error): boolean {
   }
 
   try {
-    const lastRecovery = Number(
-      window.sessionStorage.getItem(DYNAMIC_IMPORT_RECOVERY_KEY) ?? "0",
-    );
+    const lastRecovery = Number(window.sessionStorage.getItem(DYNAMIC_IMPORT_RECOVERY_KEY) ?? "0");
     const now = Date.now();
 
     // Prevent a broken deployment or persistent client failure from causing
@@ -42,7 +40,8 @@ function recoverFromStaleDynamicImport(error: Error): boolean {
   }
 }
 
-function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
+function DefaultErrorComponent({ error: rawError, reset }: { error: unknown; reset: () => void }) {
+  const error = rawError instanceof Error ? rawError : new Error(String(rawError));
   const router = useRouter();
 
   // Recover automatically from the stale application-shell/chunk mismatch

@@ -37,6 +37,7 @@ function makeFakeSupabase(fixtures: Fixtures) {
     restaurant_suppliers: fixtures.suppliers ?? [],
     restaurant_locations: fixtures.locations ?? [],
     restaurant_inventory_units: fixtures.units ?? [],
+    restaurant_purchase_orders: [],
   };
 
   function builder(table: string) {
@@ -53,6 +54,11 @@ function makeFakeSupabase(fixtures: Fixtures) {
         return api;
       },
       order: () => api,
+      maybeSingle: async () => {
+        let rows = tables[table] ?? [];
+        for (const [col, val] of filters) rows = rows.filter((r) => r[col] === val);
+        return { data: rows[0] ?? null, error: null };
+      },
       insert: fail("insert"),
       update: fail("update"),
       upsert: fail("upsert"),

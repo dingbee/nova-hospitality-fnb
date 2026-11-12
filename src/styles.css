@@ -634,7 +634,7 @@
   --os-danger: #C65D5D;       /* solid role (e.g. destructive button bg w/ white text); unchanged */
   --os-danger-soft: rgba(198,93,93,0.14);
   --os-danger-strong: #E87F7F; /* badge text-on-soft role; AA-corrected (was var(--os-danger), 3.28:1 on its own soft bg) */
-  --os-success: #2A7C13;      /* AA-corrected (was #5EA56D, 4.25:1 on its own soft bg) */
+  --os-success: #78D995;      /* bright badge foreground; WCAG AA on the dark success-soft surface */
   --os-success-soft: rgba(42,124,19,0.14);
 
   --os-shadow-card:

@@ -75,36 +75,163 @@ const KNOWN_SHEET_IDENTITIES: Array<{
   domain?: ImportDomain;
   reason: string;
 }> = [
-  { pattern: /^(?:\d+_)?(?:READ ?ME|DEMO_SCENARIOS)$/, kind: "unsupported", label: "Documentation / demo scenarios", reason: "This sheet is documentation or demonstration material, not operational restaurant data." },
-  { pattern: /^(?:\d+_)?BUSINESS$/, kind: "unsupported", label: "Business settings", reason: "Business/tenant configuration is not an importable restaurant data domain yet." },
-  { pattern: /^(?:\d+_)?LOCATIONS$/, kind: "unsupported", label: "Locations", reason: "Location master data is not an importable domain yet." },
-  { pattern: /^(?:\d+_)?SERVICE_PERIODS$/, kind: "unsupported", label: "Service periods", reason: "Service-period configuration is not an importable domain yet." },
-  { pattern: /^(?:\d+_)?STATIONS$/, kind: "unsupported", label: "Production stations", reason: "Station master data is not an importable domain yet." },
-  { pattern: /^(?:\d+_)?TABLES$/, kind: "unsupported", label: "Restaurant tables", reason: "Table configuration is not an importable domain yet." },
-  { pattern: /^(?:\d+_)?MENU_CATEGORIES$/, kind: "supported", label: "Menu categories", domain: "category", reason: "The sheet name is an exact supported LexiBite category identity." },
-  { pattern: /^(?:\d+_)?MENU_ITEMS$/, kind: "supported", label: "Menu items", domain: "menu_item", reason: "The sheet name is an exact supported LexiBite menu-item identity." },
-  { pattern: /^(?:\d+_)?PRODUCTS$/, kind: "supported", label: "Products / station links", domain: "product_station", reason: "The product export maps to LexiBite's existing menu-item ↔ station product bridge." },
-  { pattern: /^(?:\d+_)?INVENTORY_CATEGORIES$/, kind: "unsupported", label: "Inventory categories", reason: "Inventory-category master data is not an importable domain yet." },
-  { pattern: /^(?:\d+_)?INVENTORY_ITEMS$/, kind: "supported", label: "Inventory items", domain: "inventory_item", reason: "The sheet name is an exact supported LexiBite inventory identity." },
-  { pattern: /^(?:\d+_)?RECIPES$/, kind: "unsupported", label: "Recipes", reason: "The current importer writes recipe components; this source recipe header/version table is not the same import contract." },
-  { pattern: /^(?:\d+_)?RECIPE_LINES$/, kind: "supported", label: "Recipe ingredients", domain: "recipe_component", reason: "The sheet name is an exact supported LexiBite recipe-component identity." },
-  { pattern: /^(?:\d+_)?SUPPLIERS$/, kind: "supported", label: "Suppliers", domain: "supplier", reason: "The sheet name is an exact supported LexiBite supplier identity." },
-  { pattern: /^(?:\d+_)?SUPPLIER_PRODUCTS$/, kind: "supported", label: "Supplier products", domain: "supplier_product", reason: "The sheet name is an exact supported LexiBite supplier-product identity." },
-  { pattern: /^(?:\d+_)?TAX_SERVICE$/, kind: "unsupported", label: "Tax service", reason: "Tax-service configuration is not an importable domain yet." },
-  { pattern: /^(?:\d+_)?OPENING_STOCK$/, kind: "supported", label: "Opening stock", domain: "opening_stock", reason: "The sheet name is an exact supported LexiBite opening-stock identity." },
-  { pattern: /^(?:\d+_)?PRICING$/, kind: "unsupported", label: "Pricing configuration", reason: "Pricing exports are preserved but pricing configuration is managed by the Pricing Centre, not the current Import Studio write contract." },
-  { pattern: /^(?:\d+_)?MENUS$/, kind: "supported", label: "Menus", domain: "menu", reason: "The sheet name is an exact supported LexiBite menu identity." },
-  { pattern: /^(?:\d+_)?CATEGORIES$/, kind: "supported", label: "Categories", domain: "category", reason: "The sheet name is an exact supported LexiBite category identity." },
+  {
+    pattern: /^(?:\d+_)?(?:READ ?ME|DEMO_SCENARIOS)$/,
+    kind: "unsupported",
+    label: "Documentation / demo scenarios",
+    reason:
+      "This sheet is documentation or demonstration material, not operational restaurant data.",
+  },
+  {
+    pattern: /^(?:\d+_)?BUSINESS$/,
+    kind: "unsupported",
+    label: "Business settings",
+    reason: "Business/tenant configuration is not an importable restaurant data domain yet.",
+  },
+  {
+    pattern: /^(?:\d+_)?LOCATIONS$/,
+    kind: "unsupported",
+    label: "Locations",
+    reason: "Location master data is not an importable domain yet.",
+  },
+  {
+    pattern: /^(?:\d+_)?SERVICE_PERIODS$/,
+    kind: "unsupported",
+    label: "Service periods",
+    reason: "Service-period configuration is not an importable domain yet.",
+  },
+  {
+    pattern: /^(?:\d+_)?STATIONS$/,
+    kind: "unsupported",
+    label: "Production stations",
+    reason: "Station master data is not an importable domain yet.",
+  },
+  {
+    pattern: /^(?:\d+_)?TABLES$/,
+    kind: "unsupported",
+    label: "Restaurant tables",
+    reason: "Table configuration is not an importable domain yet.",
+  },
+  {
+    pattern: /^(?:\d+_)?MENU_CATEGORIES$/,
+    kind: "supported",
+    label: "Menu categories",
+    domain: "category",
+    reason: "The sheet name is an exact supported LexiBite category identity.",
+  },
+  {
+    pattern: /^(?:\d+_)?MENU_ITEMS$/,
+    kind: "supported",
+    label: "Menu items",
+    domain: "menu_item",
+    reason: "The sheet name is an exact supported LexiBite menu-item identity.",
+  },
+  {
+    pattern: /^(?:\d+_)?PRODUCTS$/,
+    kind: "supported",
+    label: "Products / station links",
+    domain: "product_station",
+    reason: "The product export maps to LexiBite's existing menu-item ↔ station product bridge.",
+  },
+  {
+    pattern: /^(?:\d+_)?INVENTORY_CATEGORIES$/,
+    kind: "unsupported",
+    label: "Inventory categories",
+    reason: "Inventory-category master data is not an importable domain yet.",
+  },
+  {
+    pattern: /^(?:\d+_)?INVENTORY$/,
+    kind: "supported",
+    label: "Inventory items",
+    domain: "inventory_item",
+    reason:
+      "The customer-facing template's INVENTORY sheet is the supported inventory-item identity.",
+  },
+  {
+    pattern: /^(?:\d+_)?INVENTORY_ITEMS$/,
+    kind: "supported",
+    label: "Inventory items",
+    domain: "inventory_item",
+    reason: "The sheet name is an exact supported LexiBite inventory identity.",
+  },
+  {
+    pattern: /^(?:\d+_)?RECIPES$/,
+    kind: "unsupported",
+    label: "Recipes",
+    reason:
+      "The current importer writes recipe components; this source recipe header/version table is not the same import contract.",
+  },
+  {
+    pattern: /^(?:\d+_)?RECIPE_LINES$/,
+    kind: "supported",
+    label: "Recipe ingredients",
+    domain: "recipe_component",
+    reason: "The sheet name is an exact supported LexiBite recipe-component identity.",
+  },
+  {
+    pattern: /^(?:\d+_)?SUPPLIERS$/,
+    kind: "supported",
+    label: "Suppliers",
+    domain: "supplier",
+    reason: "The sheet name is an exact supported LexiBite supplier identity.",
+  },
+  {
+    pattern: /^(?:\d+_)?SUPPLIER_PRODUCTS$/,
+    kind: "supported",
+    label: "Supplier products",
+    domain: "supplier_product",
+    reason: "The sheet name is an exact supported LexiBite supplier-product identity.",
+  },
+  {
+    pattern: /^(?:\d+_)?TAX_SERVICE$/,
+    kind: "unsupported",
+    label: "Tax service",
+    reason: "Tax-service configuration is not an importable domain yet.",
+  },
+  {
+    pattern: /^(?:\d+_)?OPENING_STOCK$/,
+    kind: "supported",
+    label: "Opening stock",
+    domain: "opening_stock",
+    reason: "The sheet name is an exact supported LexiBite opening-stock identity.",
+  },
+  {
+    pattern: /^(?:\d+_)?PRICING$/,
+    kind: "unsupported",
+    label: "Pricing configuration",
+    reason:
+      "Pricing exports are preserved but pricing configuration is managed by the Pricing Centre, not the current Import Studio write contract.",
+  },
+  {
+    pattern: /^(?:\d+_)?MENUS$/,
+    kind: "supported",
+    label: "Menus",
+    domain: "menu",
+    reason: "The sheet name is an exact supported LexiBite menu identity.",
+  },
+  {
+    pattern: /^(?:\d+_)?CATEGORIES$/,
+    kind: "supported",
+    label: "Categories",
+    domain: "category",
+    reason: "The sheet name is an exact supported LexiBite category identity.",
+  },
 ];
 
 export function classifySheetIdentity(sheetName: string): SheetIdentity {
-  const normalized = sheetName.trim().toUpperCase().replace(/\.XLSX?$/i, "").replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const normalized = sheetName
+    .trim()
+    .toUpperCase()
+    .replace(/\.XLSX?$/i, "")
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
   const hit = KNOWN_SHEET_IDENTITIES.find((entry) => entry.pattern.test(normalized));
   if (!hit) {
     return {
       kind: "unknown",
       label: "Unclassified sheet",
-      reason: "The sheet name does not identify a known LexiBite domain; headers and sample rows must establish the meaning.",
+      reason:
+        "The sheet name does not identify a known LexiBite domain; headers and sample rows must establish the meaning.",
     };
   }
   return { kind: hit.kind, label: hit.label, domain: hit.domain, reason: hit.reason };
@@ -240,13 +367,22 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "categoryName",
       label: "Category",
       required: false,
-      aliases: alias("Category", "Item Category", "Group"),
+      aliases: alias("Category", "Item Category", "Group", "inventory_category", "categoryName"),
     },
     {
       field: "unitCode",
       label: "Stock unit",
       required: false,
-      aliases: alias("Unit", "UOM", "Stock Unit", "Uom", "Unit Of Measure", "Measure", "Purchase Unit", "purchase_unit"),
+      aliases: alias(
+        "Unit",
+        "UOM",
+        "Stock Unit",
+        "Uom",
+        "Unit Of Measure",
+        "Measure",
+        "Purchase Unit",
+        "purchase_unit",
+      ),
     },
     {
       field: "packSize",
@@ -395,7 +531,14 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "itemSku",
       label: "Item SKU (to match)",
       required: false,
-      aliases: alias("SKU", "Item Code", "Item SKU", "Inventory SKU", "Inventory Item ID", "inventory_item_id"),
+      aliases: alias(
+        "SKU",
+        "Item Code",
+        "Item SKU",
+        "Inventory SKU",
+        "Inventory Item ID",
+        "inventory_item_id",
+      ),
     },
     {
       field: "itemBarcode",
@@ -614,13 +757,28 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "menuItemName",
       label: "Dish/drink (to match)",
       required: true,
-      aliases: alias("Menu Item", "Item Name", "Dish", "Name", "Product", "Menu Item ID", "menu_item_id"),
+      aliases: alias(
+        "Menu Item",
+        "Item Name",
+        "Dish",
+        "Name",
+        "Product",
+        "Menu Item ID",
+        "menu_item_id",
+      ),
     },
     {
       field: "stationCode",
       label: "Station (to match)",
       required: true,
-      aliases: alias("Station", "Station Code", "Production Station", "Destination", "Station ID", "station_id"),
+      aliases: alias(
+        "Station",
+        "Station Code",
+        "Production Station",
+        "Destination",
+        "Station ID",
+        "station_id",
+      ),
     },
     {
       field: "sku",
@@ -857,7 +1015,16 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       field: "menuItemName",
       label: "Dish/drink (to match)",
       required: false,
-      aliases: alias("Recipe", "Dish", "Menu Item", "Menu Item Name", "Item Name", "Product", "Recipe Name", "recipe_name"),
+      aliases: alias(
+        "Recipe",
+        "Dish",
+        "Menu Item",
+        "Menu Item Name",
+        "Item Name",
+        "Product",
+        "Recipe Name",
+        "recipe_name",
+      ),
     },
     {
       field: "ingredientName",
@@ -866,7 +1033,13 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
       // name, SKU or barcode — see the "Ingredient to link is missing" check)
       // so a SKU-only recipe sheet is a legitimate, matchable source.
       required: false,
-      aliases: alias("Ingredient", "Ingredient Name", "Component", "Inventory Item", "inventory_item"),
+      aliases: alias(
+        "Ingredient",
+        "Ingredient Name",
+        "Component",
+        "Inventory Item",
+        "inventory_item",
+      ),
     },
     {
       field: "ingredientSku",
@@ -934,7 +1107,8 @@ export const CANONICAL_FIELDS: Record<ImportDomain, readonly CanonicalFieldDef[]
         "Opening Qty",
         "Opening Quantity",
         "Opening Balance",
-        "Qty On Hand", "opening_quantity",
+        "Qty On Hand",
+        "opening_quantity",
       ),
     },
     { field: "unitCode", label: "Unit", required: false, aliases: alias("Unit", "UOM", "Uom") },
