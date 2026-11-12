@@ -65,7 +65,6 @@ export async function commitRoomCharge(sb: Sb, userId: string, input: RoomCharge
   const idempotencyKey = folioIdempotencyKey({
     tenantId: input.tenantId,
     orderId: input.orderId,
-    splitBillId: input.splitBillId,
     clientRequestId: input.clientRequestId,
   });
 
