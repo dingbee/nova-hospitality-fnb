@@ -268,8 +268,9 @@ export function stageInventoryItemRow(
     const cat = ref.categories.find(
       (c) => c.name.toLowerCase() === mapped.categoryName!.toLowerCase(),
     );
+    // Inventory category is optional enrichment. A missing free-text category
+    // must not block an otherwise valid stock item; it is intentionally left uncategorised.
     if (cat) categoryId = cat.id;
-    else errors.push(`Category "${mapped.categoryName}" not found — will be left uncategorised.`);
   }
 
   const unitRes = resolveUnit(mapped.unitCode, ref.units);
