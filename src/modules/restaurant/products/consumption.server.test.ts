@@ -129,8 +129,26 @@ function makeFakeSupabase(options: { itemProperty?: string | null; locationScope
         }
         return { data: [tomatoItem], error: null };
       }
+      if (table === "restaurant_orders" && op === "select") {
+        return {
+          data: filters.id ? { id: filters.id, property_id: PROPERTY, location_id: LOCATION } : null,
+          error: null,
+        };
+      }
       if (table === "restaurant_locations" && op === "select") {
-        return { data: filters.id === LOCATION ? { id: LOCATION, property_id: options.locationProperty === undefined ? PROPERTY : options.locationProperty, scope: options.locationScope ?? "property", is_storage: true, status: options.locationStatus ?? "active" } : null, error: null };
+        return {
+          data: filters.id === LOCATION
+            ? {
+                id: LOCATION,
+                property_id: options.locationProperty === undefined ? PROPERTY : options.locationProperty,
+                scope: options.locationScope ?? "property",
+                is_storage: true,
+                status: options.locationStatus ?? "active",
+                is_active: (options.locationStatus ?? "active") === "active",
+              }
+            : null,
+          error: null,
+        };
       }
       if (table === "restaurant_inventory_units" && op === "select") {
         return { data: [], error: null };
