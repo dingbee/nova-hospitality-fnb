@@ -51,6 +51,7 @@ function sbFor(tableResults: Record<string, unknown>) {
 
 describe("LexiBite Inventory Agent V1", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     mocks.assertEntitled.mockResolvedValue(undefined);
   });
   it("runs the canonical decision pass and returns only inventory replenishment findings", async () => {
