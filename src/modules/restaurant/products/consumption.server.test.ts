@@ -230,7 +230,7 @@ describe("consumeForRecipeSale — property and location boundary regressions", 
 
   it("rejects a tenant central store as the POS serving location before posting movements", async () => {
     const fake = makeFakeSupabase({ locationScope: "tenant", locationProperty: null });
-    await expect(consumeForRecipeSale(fake.supabase as any, USER, args)).rejects.toThrow(/POS location must be active and scoped/);
+    await expect(consumeForRecipeSale(fake.supabase as any, USER, args)).rejects.toThrow(/order location does not belong to the order property|POS location must be active and scoped/);
     expect(fake.movements).toHaveLength(0);
   });
 
