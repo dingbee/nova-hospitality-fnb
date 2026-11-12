@@ -57,15 +57,8 @@ jobs:
       - name: Generate production artifacts
         run: bun run build
 
-      - name: Typecheck (repository baseline)
-        id: typecheck
-        continue-on-error: true
+      - name: Typecheck (strict repository gate)
         run: bun run typecheck
-
-      - name: Report typecheck baseline
-        if: steps.typecheck.outcome == 'failure'
-        run: |
-          echo "::warning::Repository-wide TypeScript baseline is currently non-clean. Build and scoped functional gates remain blocking."
 
       - name: Lint changed source
         id: lint
