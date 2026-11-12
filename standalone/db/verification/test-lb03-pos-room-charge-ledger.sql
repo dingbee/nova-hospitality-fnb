@@ -22,7 +22,7 @@ INSERT INTO public.restaurant_payments(id,tenant_id,order_id,amount,state) VALUE
  'b0000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001',
  'a0000000-0000-4000-8000-000000000001',120,'room_charged'
 );
-\i standalone/db/migrations/0121_lb03_pos_room_charge_ledger.sql
+\i standalone/db/migrations/0122_lb03_pos_room_charge_ledger.sql
 
 INSERT INTO public.lb03_pos_room_charge_operations(
  id,tenant_id,property_id,outlet_id,order_id,pos_payment_id,integration_connection_id,
