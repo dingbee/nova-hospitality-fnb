@@ -59,6 +59,7 @@ export async function createFirstOutlet(
     name: input.outletName,
     slug: slugify(input.outletName),
     locationType: "restaurant",
+    scope: "property",
     isStorage: false,
     active: true,
   });
