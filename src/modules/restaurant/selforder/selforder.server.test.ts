@@ -421,6 +421,16 @@ function fakeSessionsSb(initialRows: any[] = []) {
   let seq = rows.length;
 
   function from(table: string) {
+    if (table === "restaurant_orders") {
+      const api: any = {
+        select: () => api,
+        eq: () => api,
+        in: () => api,
+        limit: () => api,
+        then: (resolve: any) => resolve({ data: [], error: null }),
+      };
+      return api;
+    }
     if (table !== "restaurant_guest_sessions") throw new Error(`unexpected table ${table}`);
     const eqFilters: Array<[string, unknown]> = [];
     const ltFilters: Array<[string, unknown]> = [];
