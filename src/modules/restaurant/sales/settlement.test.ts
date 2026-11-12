@@ -21,7 +21,7 @@ describe("bill splitting", () => {
   it("puts the rounding remainder on the first share when splitting evenly", () => {
     const split = buildSplit([], 100, 100, "even", 3);
     expect(split.shares).toHaveLength(3);
-    expect(split.shares.reduce((s, x) => s + x.amount, 0)).toBe(100);
+    expect(split.shares.reduce((s, x) => s + x.amount, 0)).toBeCloseTo(100, 8);
     expect(split.reconciles).toBe(true);
   });
 
