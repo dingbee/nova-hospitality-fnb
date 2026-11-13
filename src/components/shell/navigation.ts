@@ -359,17 +359,10 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         to: "/admin/restaurant/integrations",
-        label: "Channel integrations",
+        label: "Integrations",
         icon: Link2,
         permission: "SETTINGS:READ",
         hint: "Connect external ordering and delivery channels",
-      },
-      {
-        to: "/admin/staynas-integration",
-        label: "StayNas × LexiBite",
-        icon: Link2,
-        permission: "SETTINGS:READ",
-        hint: "Connect StayNas accommodation properties with LexiBite outlets",
       },
     ],
   },
