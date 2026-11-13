@@ -3,7 +3,6 @@ import { PageHeader } from "@/components/os/PageHeader";
 import { SectionCard } from "@/components/os/SectionCard";
 import { EmptyState } from "@/components/os/EmptyState";
 import { RESTAURANT_ROLE_LABELS } from "@/modules/restaurant/core/permissions";
-import { TeamPanel } from "@/modules/restaurant/core/ui/TeamPanel";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/settings")({
@@ -77,11 +76,6 @@ function SettingsPage() {
           ))}
         </ul>
       </SectionCard>
-
-      <TeamPanel
-        tenantId={d.tenant.id}
-        canManage={d.platformAdmin || d.roles.some((r) => r === "owner" || r === "general_manager")}
-      />
 
       <SectionCard title="Your access">
         <p className="text-sm text-muted-foreground">
