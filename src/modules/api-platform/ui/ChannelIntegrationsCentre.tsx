@@ -58,6 +58,15 @@ export function ChannelIntegrationsCentre() {
         description="Connect external ordering and delivery channels to this restaurant. Your operational workflows remain in LexiBite."
       />
 
+      <SectionCard title="StayNas × LexiBite" description="Connect accommodation properties and F&B outlets through a separately approved, property-scoped integration.">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">Manage reciprocal property mapping, secure handoff, two-sided approval and outlet publication.</p>
+          <a href="/admin/staynas-integration" className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
+            Open StayNas connection
+          </a>
+        </div>
+      </SectionCard>
+
       <ConnectionList
         tenantId={tenant.id}
         properties={ws.data?.properties ?? []}
