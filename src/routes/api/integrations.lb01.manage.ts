@@ -164,10 +164,215 @@ async function dispatchApproval(admin: DbClient, connection: ConnectionRow, acto
   }
 }
 
+export const handleLb01ManagePost = async ({ request }: { request: Request }): Promise<Response> => {
+        try {
+          const { user, client: userDb } = await authenticatedClient(request);
+          const body = actionInput.parse(await request.json());
+          const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+          const admin = supabaseAdmin as unknown as DbClient;
+
+          if (body.action === "list") {
+            const result = await userDb.from("staynas_product_connections")
+              .select("id, integration_tenant_id, integration_property_id, local_property_id, remote_tenant_id, remote_property_id, remote_product, status, correlation_id, local_approved_at, remote_approved_at, created_at, updated_at");
+            if (result.error) return Response.json({ error: "connection_list_failed" }, { status: 500 });
+            return Response.json({ connections: result.data ?? [] }, { headers: { "Cache-Control": "no-store" } });
+          }
+
+          if (body.action === "create") {
+            const propertyResult = await userDb.from("restaurant_properties")
+              .select("id, tenant_id").eq("id", body.localPropertyId).maybeSingle();
+            const property = propertyResult.data as Record<string, unknown> | null;
+            if (propertyResult.error || !property) return Response.json({ error: "property_not_found" }, { status: 404 });
+
+            const integrationTenantId = body.integrationTenantId ?? crypto.randomUUID();
+            const integrationPropertyId = body.integrationPropertyId ?? crypto.randomUUID();
+            const correlationId = body.correlationId ?? crypto.randomUUID();
+            if (body.integrationTenantId) {
+              const existingMappings = await admin.from("staynas_product_connections")
+                .select("local_tenant_id")
+                .eq("integration_tenant_id", integrationTenantId);
+              const existingRows = Array.isArray(existingMappings.data)
+                ? existingMappings.data as Array<Record<string, unknown>>
+                : [];
+              if (existingMappings.error || existingRows.some((row) => row.local_tenant_id !== property.tenant_id)) {
+                return Response.json(
+                  { error: "integration_tenant_mapping_conflict" },
+                  { status: 409 },
+                );
+              }
+            }
+            const requestResult = await userDb.rpc("lexibite_request_staynas_connection", {
+              _integration_tenant_id: integrationTenantId,
+              _integration_property_id: integrationPropertyId,
+              _local_tenant_id: String(property.tenant_id),
+              _local_property_id: body.localPropertyId,
+              _remote_tenant_id: body.remoteTenantId,
+              _remote_property_id: body.remotePropertyId,
+              _correlation_id: correlationId,
+            });
+            if (requestResult.error || typeof requestResult.data !== "string") {
+              return Response.json({ error: "connection_request_failed" }, { status: 409 });
+            }
+            return Response.json({
+              connectionId: requestResult.data,
+              pairingInvitation: {
+                contractVersion: "1.0.0",
+                integrationTenantId,
+                integrationPropertyId,
+                correlationId,
+                sourceProduct: "lexibite",
+                sourceTenantId: String(property["tenant_id"]),
+                sourcePropertyId: body.localPropertyId,
+                targetProduct: "staynas",
+              },
+            }, { headers: { "Cache-Control": "no-store" } });
+          }
+
+          await requireConnectionAdmin(userDb, body.connectionId);
+          const connection = await connectionFor(admin, body.connectionId);
+          if (connection.remote_product !== "staynas") {
+            return Response.json({ error: "wrong_peer_product" }, { status: 409 });
+          }
+
+          if (body.action === "issue_handoff") {
+            if (!["pending", "active"].includes(connection.status)) return Response.json({ error: "connection_not_eligible" }, { status: 409 });
+            await admin.rpc("lb01_purge_expired_handoffs", { _limit: 100 });
+            const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+            const issued = await issueLb01ServiceCredential(userDb, connection.id, expiresAt);
+            let encrypted: ReturnType<typeof encryptLb01PeerCredential>;
+            try {
+              encrypted = encryptLb01PeerCredential(issued.token, connection.id, connection.remote_product);
+            } catch {
+              await userDb.rpc("lb01_revoke_product_service_credential", {
+                _credential_id: issued.credentialId, _reason: "handoff_encryption_failed",
+              });
+              return Response.json({ error: "handoff_encryption_failed" }, { status: 503 });
+            }
+            const code = createLb01HandoffCode();
+            const handoff = await admin.from("lb01_credential_handoffs").insert({
+              connection_id: connection.id,
+              credential_id: issued.credentialId,
+              peer_product: connection.remote_product,
+              correlation_id: connection.correlation_id,
+              code_hash: hashLb01HandoffCode(code),
+              encrypted_token: encrypted.ciphertext,
+              encryption_iv: encrypted.iv,
+              encryption_tag: encrypted.tag,
+              expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+              created_by: user.id,
+            });
+            if (handoff.error) {
+              await userDb.rpc("lb01_revoke_product_service_credential", {
+                _credential_id: issued.credentialId, _reason: "handoff_persistence_failed",
+              });
+              return Response.json({ error: "handoff_creation_failed" }, { status: 500 });
+            }
+            return Response.json({ handoffCode: code, expiresInSeconds: 900 }, {
+              headers: { "Cache-Control": "no-store, private", Pragma: "no-cache" },
+            });
+          }
+
+          if (body.action === "import_handoff") {
+            if (!["pending", "active"].includes(connection.status)) return Response.json({ error: "connection_not_eligible" }, { status: 409 });
+            const peerBase = validateLb01PeerBaseUrl();
+            const exchangeUrl = new URL("/api/integrations/lb01/credential-exchange", peerBase);
+            const response = await fetch(exchangeUrl, {
+              method: "POST",
+              redirect: "manual",
+              headers: { "content-type": "application/json", ...lb01PeerProtectionHeaders() },
+              body: JSON.stringify({
+                code: body.code,
+                correlationId: connection.correlation_id,
+                requesterProduct: "lexibite",
+              }),
+              signal: AbortSignal.timeout(10_000),
+            });
+            if (!response.ok) return Response.json({ error: "peer_handoff_rejected" }, { status: 409 });
+            const payload: unknown = await response.json();
+            const peer = payload as {
+              token?: unknown;
+              integrationTenantId?: unknown;
+              integrationPropertyId?: unknown;
+              correlationId?: unknown;
+              issuerTenantId?: unknown;
+              issuerPropertyId?: unknown;
+              targetTenantId?: unknown;
+              targetPropertyId?: unknown;
+              peerProduct?: unknown;
+            } | null;
+            const token = peer?.token;
+            if (typeof token !== "string"
+              || peer?.integrationTenantId !== connection.integration_tenant_id
+              || peer?.integrationPropertyId !== connection.integration_property_id
+              || peer?.correlationId !== connection.correlation_id
+              || peer?.issuerTenantId !== connection.remote_tenant_id
+              || peer?.issuerPropertyId !== connection.remote_property_id
+              || peer?.targetTenantId !== connection.local_tenant_id
+              || peer?.targetPropertyId !== connection.local_property_id
+              || peer?.peerProduct !== connection.remote_product) {
+              return Response.json({ error: "peer_handoff_mapping_mismatch" }, { status: 409 });
+            }
+            const encrypted = encryptLb01PeerCredential(token, connection.id, connection.remote_product);
+            const stored = await admin.from("lb01_peer_credentials").upsert({
+              connection_id: connection.id,
+              peer_product: connection.remote_product,
+              credential_prefix: encrypted.prefix,
+              encrypted_token: encrypted.ciphertext,
+              encryption_iv: encrypted.iv,
+              encryption_tag: encrypted.tag,
+              status: "active",
+              imported_at: new Date().toISOString(),
+              imported_by: user.id,
+              revoked_at: null,
+            }, { onConflict: "connection_id" });
+            if (stored.error) return Response.json({ error: "peer_credential_storage_failed" }, { status: 500 });
+            if (connection.local_approved_at) {
+              const delivery = await dispatchApproval(admin, connection, user.id);
+              return Response.json({ imported: true, ...delivery }, { headers: { "Cache-Control": "no-store" } });
+            }
+            return Response.json({ imported: true }, { headers: { "Cache-Control": "no-store" } });
+          }
+
+          if (body.action === "approve") {
+            if (!["pending", "active"].includes(connection.status)) return Response.json({ error: "connection_not_eligible" }, { status: 409 });
+            const approval = await userDb.rpc("lexibite_approve_staynas_connection", { _connection_id: connection.id });
+            if (approval.error || typeof approval.data !== "string") return Response.json({ error: "local_approval_failed" }, { status: 409 });
+            const refreshed = await connectionFor(admin, connection.id);
+            const delivery = await dispatchApproval(admin, refreshed, user.id);
+            return Response.json({ localApprovalStatus: approval.data, ...delivery }, { headers: { "Cache-Control": "no-store" } });
+          }
+
+          if (body.action === "retry") {
+            if (!connection.local_approved_at) return Response.json({ error: "local_approval_required" }, { status: 409 });
+            if (!["pending", "active"].includes(connection.status)) return Response.json({ error: "connection_not_eligible" }, { status: 409 });
+            return Response.json(await dispatchApproval(admin, connection, user.id), { headers: { "Cache-Control": "no-store" } });
+          }
+
+          if (body.action === "revoke") {
+            const revoked = await userDb.rpc("lexibite_set_staynas_connection_state", {
+              _connection_id: connection.id, _action: "revoke", _reason: body.reason ?? "Revoked by authorized administrator",
+            });
+            if (revoked.error) return Response.json({ error: "connection_revocation_failed" }, { status: 409 });
+            return Response.json({ status: revoked.data }, { headers: { "Cache-Control": "no-store" } });
+          }
+
+          return Response.json({ error: "unsupported_action" }, { status: 400 });
+        } catch (error) {
+          const message = error instanceof z.ZodError ? "invalid_request"
+            : error instanceof Error && error.message === "unauthorized" ? "unauthorized"
+            : error instanceof Error && error.message === "forbidden" ? "forbidden"
+            : "lb01_operation_failed";
+          return Response.json(
+            { error: message },
+            { status: message === "unauthorized" ? 401 : message === "forbidden" ? 403 : 400 },
+          );
+        }
+      };
+
 export const Route = createFileRoute("/api/integrations/lb01/manage")({
   server: {
     handlers: {
-      POST: async ({ request }) => {
+      POST: handleLb01ManagePost,
         try {
           const { user, client: userDb } = await authenticatedClient(request);
           const body = actionInput.parse(await request.json());
