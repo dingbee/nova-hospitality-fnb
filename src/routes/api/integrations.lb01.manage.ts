@@ -164,10 +164,7 @@ async function dispatchApproval(admin: DbClient, connection: ConnectionRow, acto
   }
 }
 
-export const Route = createFileRoute("/api/integrations/lb01/manage")({
-  server: {
-    handlers: {
-      POST: async ({ request }) => {
+export async function handleLb01ManagePost({ request }: { request: Request }): Promise<Response> {
         try {
           const { user, client: userDb } = await authenticatedClient(request);
           const body = actionInput.parse(await request.json());
@@ -370,7 +367,12 @@ export const Route = createFileRoute("/api/integrations/lb01/manage")({
             { status: message === "unauthorized" ? 401 : message === "forbidden" ? 403 : 400 },
           );
         }
-      },
+}
+
+export const Route = createFileRoute("/api/integrations/lb01/manage")({
+  server: {
+    handlers: {
+      POST: handleLb01ManagePost,
     },
   },
 });

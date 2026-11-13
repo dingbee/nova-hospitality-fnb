@@ -68,6 +68,20 @@ export default {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
+    // Explicit server-entry dispatch keeps the LB-01 management endpoint
+    // available in the custom Vercel/Nitro entry even if route-manifest
+    // generation omits a file-based server route.
+    if (url.pathname === "/api/integrations/lb01/manage") {
+      if (request.method !== "POST") {
+        return Response.json(
+          { error: "method_not_allowed" },
+          { status: 405, headers: { Allow: "POST", "Cache-Control": "no-store" } },
+        );
+      }
+      const { handleLb01ManagePost } = await import("./routes/api/integrations.lb01.manage");
+      return handleLb01ManagePost({ request });
+    }
+
     if (url.pathname === "/api/v1/health") {
       if (request.method !== "GET") {
         return new Response(JSON.stringify({ ok: false, error: "method_not_allowed" }), {
