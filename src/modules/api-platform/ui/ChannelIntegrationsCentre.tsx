@@ -54,7 +54,7 @@ export function ChannelIntegrationsCentre() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Channel Integrations"
+        title="Integrations"
         description="Connect external ordering and delivery channels to this restaurant. Your operational workflows remain in LexiBite."
       />
 
