@@ -78,17 +78,8 @@ export default {
           { status: 405, headers: { Allow: "POST", "Cache-Control": "no-store" } },
         );
       }
-      const { Route } = await import("./routes/api/integrations.lb01.manage");
-      const route = Route as unknown as {
-        options: {
-          server: {
-            handlers: {
-              POST: (context: { request: Request }) => Promise<Response>;
-            };
-          };
-        };
-      };
-      return route.options.server.handlers.POST({ request });
+      const { handleLb01ManagePost } = await import("./routes/api/integrations.lb01.manage");
+      return handleLb01ManagePost({ request });
     }
 
     if (url.pathname === "/api/v1/health") {
