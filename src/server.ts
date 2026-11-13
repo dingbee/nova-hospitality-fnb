@@ -26,6 +26,7 @@
  */
 import { createStartHandler, defaultStreamHandler } from "@tanstack/react-start/server";
 import { resolveBuildIdentity } from "./modules/runtime/build-info";
+import { handleLb01ManagePost } from "./routes/api/integrations.lb01.manage";
 
 const startHandler = createStartHandler(defaultStreamHandler);
 
@@ -67,6 +68,19 @@ async function readyResponse(): Promise<Response> {
 export default {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+
+    // Explicit server-entry dispatch keeps the LB-01 management endpoint
+    // available in the custom Vercel/Nitro entry even if route-manifest
+    // generation omits a file-based server route.
+    if (url.pathname === "/api/integrations/lb01/manage") {
+      if (request.method !== "POST") {
+        return Response.json(
+          { error: "method_not_allowed" },
+          { status: 405, headers: { Allow: "POST", "Cache-Control": "no-store" } },
+        );
+      }
+      return handleLb01ManagePost({ request });
+    }
 
     if (url.pathname === "/api/v1/health") {
       if (request.method !== "GET") {
