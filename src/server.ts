@@ -26,7 +26,6 @@
  */
 import { createStartHandler, defaultStreamHandler } from "@tanstack/react-start/server";
 import { resolveBuildIdentity } from "./modules/runtime/build-info";
-import { handleLb01ManagePost } from "./routes/api/integrations.lb01.manage";
 
 const startHandler = createStartHandler(defaultStreamHandler);
 
@@ -79,7 +78,17 @@ export default {
           { status: 405, headers: { Allow: "POST", "Cache-Control": "no-store" } },
         );
       }
-      return handleLb01ManagePost({ request });
+      const { Route } = await import("./routes/api/integrations.lb01.manage");
+      const route = Route as unknown as {
+        options: {
+          server: {
+            handlers: {
+              POST: (context: { request: Request }) => Promise<Response>;
+            };
+          };
+        };
+      };
+      return route.options.server.handlers.POST({ request });
     }
 
     if (url.pathname === "/api/v1/health") {
