@@ -35,7 +35,7 @@ function CostingPage() {
   const properties = ws.data?.properties ?? [];
   const [propertyId, setPropertyId] = useState("");
   const [driverKey, setDriverKey] = useState("covers");
-  const [periodStart, setPeriodStart] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10));
+  const [periodStart, setPeriodStart] = useState(() => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`; });
   const [units, setUnits] = useState("1");
   const effectivePropertyId = propertyId || properties[0]?.id || "";
   const driverListFn = useServerFn(listRestaurantCostActivityDriversFn);
