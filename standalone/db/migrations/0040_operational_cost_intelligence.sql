@@ -52,8 +52,22 @@ begin
  if a<0 or u<0 then raise exception 'Allocation exceeds source amount'; end if;
  if u>0 and nullif(trim(p_unallocated_reason),'') is null then raise exception 'Unallocated remainder requires reason'; end if;
  for r in select value from jsonb_array_elements(p_allocations) loop
-  if (r->>'amount')::numeric<=0 or r->>'currency'<>e.currency then raise exception 'Invalid allocation amount or currency'; end if;
+  if (r->>'amount')::numeric<=0 or round((r->>'amount')::numeric,2)<>(r->>'amount')::numeric or r->>'currency'<>e.currency then raise exception 'Invalid allocation amount or currency'; end if;
+  if coalesce(r->>'allocation_method','') not in ('direct','approved_rule','activity_driver','manual') then raise exception 'Invalid allocation method'; end if;
+  if not exists(select 1 from public.restaurant_properties p where p.id=(r->>'property_id')::uuid and p.tenant_id=e.tenant_id) then raise exception 'Allocation target property is outside expense tenant'; end if;
+  if nullif(r->>'location_id','') is not null and not exists(select 1 from public.restaurant_locations l where l.id=(r->>'location_id')::uuid and l.tenant_id=e.tenant_id and l.property_id=(r->>'property_id')::uuid) then raise exception 'Allocation target location does not belong to target property'; end if;
   if not public.restaurant_can_write_scoped(e.tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],(r->>'property_id')::uuid) then raise exception 'Not authorized for target property'; end if;
+  if r->>'allocation_method'='approved_rule' and not exists(
+    select 1 from public.restaurant_cost_allocation_rules ar
+    where ar.id=(r->>'rule_id')::uuid and ar.tenant_id=e.tenant_id and ar.status='approved'
+      and ar.currency=e.currency and ar.effective_from<=e.incurred_on
+      and (ar.effective_to is null or ar.effective_to>=e.incurred_on)
+      and ar.version=(r->>'rule_version')::integer
+      and exists(select 1 from jsonb_array_elements(ar.targets) t
+        where t->>'property_id'=r->>'property_id'
+          and coalesce(t->>'location_id','')=coalesce(r->>'location_id',''))
+  ) then raise exception 'Allocation rule is not approved, effective or applicable to target'; end if;
+  if r->>'allocation_method'='manual' and nullif(r->>'approved_by','')::uuid is distinct from auth.uid() then raise exception 'Manual allocation must be approved by the acting user'; end if;
   insert into public.restaurant_cost_allocations(tenant_id,source_type,source_id,property_id,location_id,currency,period_start,amount,allocation_method,rule_id,rule_version,approved_by)
   values(e.tenant_id,'operational_expense',p_expense_id,(r->>'property_id')::uuid,nullif(r->>'location_id','')::uuid,e.currency,date_trunc('month',e.incurred_on)::date,
    (r->>'amount')::numeric,r->>'allocation_method',nullif(r->>'rule_id','')::uuid,nullif(r->>'rule_version','')::integer,nullif(r->>'approved_by','')::uuid);
