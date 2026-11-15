@@ -19,7 +19,26 @@ create table if not exists public.restaurant_cost_activity_drivers(
  tenant_id uuid not null references public.restaurant_tenants(id) on delete cascade,
  property_id uuid not null references public.restaurant_properties(id),
  location_id uuid references public.restaurant_locations(id),
- driver_key text not null check(driver_key ~ '^[a-z][a-z0-9_]{1,63}(id uuid primary key default gen_random_uuid(),tenant_id uuid not null references public.restaurant_tenants(id) on delete cascade,source_type text not null check(source_type in('operational_expense','operational_consumption')),source_id uuid not null,currency text not null check(currency ~ '^[A-Z]{3}$'),period_start date not null,source_amount numeric(14,2) not null check(source_amount>=0),reason text not null,resolved_at timestamptz,created_by uuid not null default auth.uid(),unique(tenant_id,source_type,source_id));
+ driver_key text not null check(driver_key ~ '^[a-z][a-z0-9_]{1,63}$'),
+ period_start date not null,
+ units numeric(18,4) not null check(units>0),
+ captured_at timestamptz not null default now(),
+ created_by uuid not null default auth.uid(),
+ unique nulls not distinct(tenant_id,property_id,location_id,driver_key,period_start)
+);
+create table if not exists public.restaurant_cost_allocation_exceptions(
+ id uuid primary key default gen_random_uuid(),
+ tenant_id uuid not null references public.restaurant_tenants(id) on delete cascade,
+ source_type text not null check(source_type in('operational_expense','operational_consumption')),
+ source_id uuid not null,
+ currency text not null check(currency ~ '^[A-Z]{3}$'),
+ period_start date not null,
+ source_amount numeric(14,2) not null check(source_amount>=0),
+ reason text not null,
+ resolved_at timestamptz,
+ created_by uuid not null default auth.uid(),
+ unique(tenant_id,source_type,source_id)
+);
 create index if not exists restaurant_operational_expenses_scope_date_idx on public.restaurant_operational_expenses(tenant_id,property_id,location_id,incurred_on);
 create index if not exists restaurant_cost_allocations_scope_period_idx on public.restaurant_cost_allocations(tenant_id,property_id,location_id,period_start);
 create or replace function public.restaurant_sync_operational_expense_payment() returns trigger language plpgsql security invoker set search_path=public as $$
