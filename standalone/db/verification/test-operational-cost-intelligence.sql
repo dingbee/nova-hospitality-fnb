@@ -29,6 +29,14 @@ insert into public.restaurant_properties values
  ('20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002');
 insert into public.restaurant_members values
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','owner',null);
+-- Seed tenant B through service role so the authenticated tenant-A check proves isolation.
+set local role service_role;
+insert into public.restaurant_operational_expense_categories(tenant_id,name,category_key)
+ values('10000000-0000-0000-0000-000000000002','Utilities B','utilities-b');
+insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
+ select '10000000-0000-0000-0000-000000000002','20000000-0000-0000-0000-000000000002',id,'Tenant B electricity',50000,'TZS','2026-11-01'
+ from public.restaurant_operational_expense_categories where category_key='utilities-b';
+reset role;
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
 insert into public.restaurant_operational_expense_categories(tenant_id,name,category_key)
  values('10000000-0000-0000-0000-000000000001','Utilities','utilities');
