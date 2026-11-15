@@ -34,3 +34,35 @@ create policy restaurant_cost_allocations_write_scoped on public.restaurant_cost
 create policy restaurant_cost_allocation_exceptions_write_scoped on public.restaurant_cost_allocation_exceptions for all to authenticated using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],null)) with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],null));
 grant select,insert,update,delete on public.restaurant_operational_expense_categories,public.restaurant_operational_expenses,public.restaurant_operational_expense_payments,public.restaurant_operational_expense_schedules,public.restaurant_cost_allocation_rules,public.restaurant_cost_allocations,public.restaurant_cost_allocation_exceptions to authenticated;
 grant all on public.restaurant_operational_expense_categories,public.restaurant_operational_expenses,public.restaurant_operational_expense_payments,public.restaurant_operational_expense_schedules,public.restaurant_cost_allocation_rules,public.restaurant_cost_allocations,public.restaurant_cost_allocation_exceptions to service_role;
+
+create or replace function public.restaurant_commit_expense_allocations(p_expense_id uuid,p_allocations jsonb,p_unallocated_reason text default null)
+returns jsonb language plpgsql security invoker set search_path=public as $$
+declare e public.restaurant_operational_expenses%rowtype; a numeric(14,2); u numeric(14,2); r jsonb; n integer:=0;
+begin
+ if jsonb_typeof(p_allocations)<>'array' then raise exception 'Allocations must be an array'; end if;
+ select * into e from public.restaurant_operational_expenses where id=p_expense_id for update;
+ if not found then raise exception 'Expense not found'; end if;
+ if e.approval_status<>'approved' then raise exception 'Only approved expenses can be allocated'; end if;
+ if not public.restaurant_can_write_scoped(e.tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],e.property_id) then raise exception 'Not authorized'; end if;
+ perform pg_advisory_xact_lock(hashtextextended(e.tenant_id::text||':expense:'||p_expense_id::text,0));
+ if exists(select 1 from public.restaurant_cost_allocations where tenant_id=e.tenant_id and source_type='operational_expense' and source_id=p_expense_id)
+ or exists(select 1 from public.restaurant_cost_allocation_exceptions where tenant_id=e.tenant_id and source_type='operational_expense' and source_id=p_expense_id) then raise exception 'Expense already allocated'; end if;
+ select coalesce(sum((x->>'amount')::numeric),0) into a from jsonb_array_elements(p_allocations) x;
+ u:=e.amount-a;
+ if a<0 or u<0 then raise exception 'Allocation exceeds source amount'; end if;
+ if u>0 and nullif(trim(p_unallocated_reason),'') is null then raise exception 'Unallocated remainder requires reason'; end if;
+ for r in select value from jsonb_array_elements(p_allocations) loop
+  if (r->>'amount')::numeric<=0 or r->>'currency'<>e.currency then raise exception 'Invalid allocation amount or currency'; end if;
+  if not public.restaurant_can_write_scoped(e.tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],(r->>'property_id')::uuid) then raise exception 'Not authorized for target property'; end if;
+  insert into public.restaurant_cost_allocations(tenant_id,source_type,source_id,property_id,location_id,currency,period_start,amount,allocation_method,rule_id,rule_version,approved_by)
+  values(e.tenant_id,'operational_expense',p_expense_id,(r->>'property_id')::uuid,nullif(r->>'location_id','')::uuid,e.currency,date_trunc('month',e.incurred_on)::date,
+   (r->>'amount')::numeric,r->>'allocation_method',nullif(r->>'rule_id','')::uuid,nullif(r->>'rule_version','')::integer,nullif(r->>'approved_by','')::uuid);
+  n:=n+1;
+ end loop;
+ if u>0 then insert into public.restaurant_cost_allocation_exceptions(tenant_id,source_type,source_id,currency,period_start,source_amount,reason)
+ values(e.tenant_id,'operational_expense',p_expense_id,e.currency,date_trunc('month',e.incurred_on)::date,u,p_unallocated_reason); end if;
+ if round(a+u,2)<>e.amount then raise exception 'Allocation reconciliation failed'; end if;
+ return jsonb_build_object('source_amount',e.amount,'allocated_amount',a,'unallocated_amount',u,'balanced',true,'allocation_count',n);
+end $$;
+revoke all on function public.restaurant_commit_expense_allocations(uuid,jsonb,text) from public,anon;
+grant execute on function public.restaurant_commit_expense_allocations(uuid,jsonb,text) to authenticated,service_role;
