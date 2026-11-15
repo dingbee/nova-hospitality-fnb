@@ -190,3 +190,7 @@ export const listOperationalExpenseAttachmentsFn = createServerFn({method:"POST"
 export const removeOperationalExpenseAttachmentFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
  .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),attachmentId:z.string().uuid()}).parse(d))
  .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.removeOperationalExpenseAttachment(context.supabase,context.userId,data);});
+
+export const listOperationalExpenseScheduleAuditEventsFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),scheduleId:z.string().uuid()}).parse(d))
+ .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.listOperationalExpenseScheduleAuditEvents(context.supabase,context.userId,data.tenantId,data.scheduleId);});
