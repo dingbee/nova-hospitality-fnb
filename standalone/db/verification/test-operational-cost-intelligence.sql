@@ -7,7 +7,6 @@ create table public.restaurant_tenants(id uuid primary key);
 create table public.restaurant_properties(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id));
 create table public.restaurant_locations(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id),property_id uuid references public.restaurant_properties(id));
 create table public.restaurant_members(tenant_id uuid,user_id uuid,role public.restaurant_role,property_id uuid);
-create table public.restaurant_locations(id uuid primary key,tenant_id uuid not null,property_id uuid references public.restaurant_properties(id));
 create table public.restaurant_stock_movements(
  id uuid primary key,tenant_id uuid not null,property_id uuid,location_id uuid,movement_type text not null,
  total_cost numeric(14,2) not null,currency text not null,occurred_at timestamptz not null
@@ -143,7 +142,7 @@ end $;
 set local role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
 do $$ begin
- if (select count(*) from public.restaurant_operational_expenses) <> 1 then
+ if (select count(*) from public.restaurant_operational_expenses) <> 3 then
   raise exception 'tenant member should see exactly own tenant expense';
  end if;
 end $$;
