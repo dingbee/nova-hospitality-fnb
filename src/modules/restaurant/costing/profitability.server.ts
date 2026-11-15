@@ -66,20 +66,37 @@ export async function computeProfitability(
 
   const orderIds = ((orders ?? []) as any[]).map((o) => o.id);
   const currency = ((orders ?? []) as any[])[0]?.currency ?? "TZS";
+  const periodFrom = `${input.from.slice(0, 7)}-01`;
+  const periodTo = `${input.to.slice(0, 7)}-01`;
+  let expenseAllocationQuery = sb
+    .from("restaurant_cost_allocations")
+    .select("amount, currency")
+    .eq("tenant_id", input.tenantId)
+    .eq("source_type", "operational_expense")
+    .gte("period_start", periodFrom)
+    .lte("period_start", periodTo);
+  if (input.propertyId) expenseAllocationQuery = expenseAllocationQuery.eq("property_id", input.propertyId);
+  if (input.locationId) expenseAllocationQuery = expenseAllocationQuery.eq("location_id", input.locationId);
+  const { data: expenseAllocations, error: expenseAllocationError } = await expenseAllocationQuery;
+  if (expenseAllocationError) throw new Error(expenseAllocationError.message);
+  const currencies = new Set(((expenseAllocations ?? []) as any[]).map((r) => r.currency));
+  if (currencies.size > 1 || (currencies.size === 1 && !currencies.has(currency))) {
+    throw new Error("Profitability cannot combine operating costs across currencies.");
+  }
+  const allocatedOperatingExpenses = Number(
+    ((expenseAllocations ?? []) as any[]).reduce((sum, row) => sum + Number(row.amount ?? 0), 0).toFixed(2),
+  );
   if (orderIds.length === 0) {
     return {
       periodStart: input.from,
       periodEnd: input.to,
       rows: [],
       totals: {
-        quantity_sold: 0,
-        revenue: 0,
-        theoretical_cost: 0,
-        actual_cost: 0,
-        variance: 0,
-        gross_profit: 0,
-        margin_percent: null,
-        food_cost_percent: null,
+        quantity_sold: 0, revenue: 0, theoretical_cost: 0, actual_cost: 0, variance: 0,
+        gross_profit: 0, margin_percent: null, food_cost_percent: null,
+        allocated_operating_expenses: allocatedOperatingExpenses,
+        contribution_profit: Number((-allocatedOperatingExpenses).toFixed(2)),
+        contribution_margin_percent: null,
         currency,
       },
     };
@@ -168,6 +185,11 @@ export async function computeProfitability(
     gross_profit: Number((revenue - actual).toFixed(4)),
     margin_percent: revenue > 0 ? Number((((revenue - actual) / revenue) * 100).toFixed(2)) : null,
     food_cost_percent: revenue > 0 ? Number(((actual / revenue) * 100).toFixed(2)) : null,
+    allocated_operating_expenses: allocatedOperatingExpenses,
+    contribution_profit: Number((revenue - actual - allocatedOperatingExpenses).toFixed(2)),
+    contribution_margin_percent: revenue > 0
+      ? Number((((revenue - actual - allocatedOperatingExpenses) / revenue) * 100).toFixed(2))
+      : null,
     currency,
   };
 
