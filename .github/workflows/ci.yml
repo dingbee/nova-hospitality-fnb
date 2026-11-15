@@ -119,7 +119,8 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: |
-          psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-operational-cost-intelligence.sql
+          createdb -h localhost -U postgres lexibite_phase3_test
+          psql -h localhost -U postgres -d lexibite_phase3_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-operational-cost-intelligence.sql
           bunx vitest run src/modules/restaurant/costing/hybrid-allocation.test.ts src/modules/restaurant/costing/profitability.server.test.ts
 
       - name: Scoped GTM and changed-path functional tests
