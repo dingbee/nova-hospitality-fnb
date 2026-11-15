@@ -110,11 +110,15 @@ begin
  end if;
  if nullif(trim(p_driver_key),'') is not null then
   if not public.restaurant_can_write_scoped(m.tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],null) then raise exception 'Not authorized'; end if;
-  select sum(units) into v_total_units from public.restaurant_cost_activity_drivers
-   where tenant_id=m.tenant_id and driver_key=p_driver_key and period_start=v_period;
+  select sum(d.units) into v_total_units
+   from public.restaurant_cost_activity_drivers d
+   join public.restaurant_properties p on p.id=d.property_id and p.tenant_id=m.tenant_id
+   left join public.restaurant_locations l on l.id=d.location_id and l.property_id=d.property_id and l.tenant_id=m.tenant_id
+   where d.tenant_id=m.tenant_id and d.driver_key=p_driver_key and d.period_start=v_period
+     and (d.location_id is null or l.id is not null);
   if coalesce(v_total_units,0)>0 then
    for v_row in
-    select d.property_id,d.location_id,d.units,row_number() over(order by d.property_id,d.location_id nulls first,d.id) as rn,
+    select d.property_id,d.location_id,d.units,row_number() over(order by (m.total_cost*100*d.units/v_total_units-floor(m.total_cost*100*d.units/v_total_units)) desc,d.property_id,d.location_id nulls first,d.id) as rn,
            count(*) over() as cnt,
            floor((m.total_cost*100*d.units/v_total_units))::bigint as minor_units
     from public.restaurant_cost_activity_drivers d
@@ -122,7 +126,7 @@ begin
     left join public.restaurant_locations l on l.id=d.location_id and l.property_id=d.property_id and l.tenant_id=m.tenant_id
     where d.tenant_id=m.tenant_id and d.driver_key=p_driver_key and d.period_start=v_period
       and (d.location_id is null or l.id is not null)
-    order by d.property_id,d.location_id nulls first,d.id
+    order by (m.total_cost*100*d.units/v_total_units-floor(m.total_cost*100*d.units/v_total_units)) desc,d.property_id,d.location_id nulls first,d.id
    loop
     v_index:=v_index+1;
     if v_index=v_row.cnt then
