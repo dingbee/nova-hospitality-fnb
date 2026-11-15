@@ -344,17 +344,6 @@ export async function createOperationalExpense(sb:Sb,userId:string,raw:unknown) 
     .select("id").eq("tenant_id",x.tenantId).eq("id",x.categoryId).eq("active",true).maybeSingle();
   if(categoryError||!category) throw new Error("Expense category is not available in this tenant.");
   if(x.locationId && !x.propertyId) throw new Error("A location requires a property.");
-  if (x.propertyId) {
-    const { data: property, error: propertyError } = await sb.from("restaurant_properties")
-      .select("currency")
-      .eq("id", x.propertyId)
-      .eq("tenant_id", x.tenantId)
-      .maybeSingle();
-    if (propertyError || !property) throw new Error("Expense property is not available in this tenant.");
-    if (property.currency !== x.currency) {
-      throw new Error(`Expense currency must match the selected property's currency (${property.currency}).`);
-    }
-  }
   if(x.locationId) {
     const {data:loc}=await sb.from("restaurant_locations").select("id").eq("id",x.locationId).eq("tenant_id",x.tenantId).eq("property_id",x.propertyId).maybeSingle();
     if(!loc) throw new Error("Location does not belong to the selected property.");
