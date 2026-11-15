@@ -63,6 +63,7 @@ grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0124_operational_expense_read_property_scope_integrity.sql
 \ir ../migrations/0125_operational_expense_complete_workflows.sql
 \ir ../migrations/0126_operational_expense_attachment_and_schedule_hardening.sql
+\ir ../migrations/0127_operational_expense_service_schedule_generation.sql
 \ir ../migrations/0125_operational_expense_complete_workflows.sql
 
 insert into public.restaurant_tenants values
@@ -380,6 +381,22 @@ do $phase2$ begin
  end if;
  if (select count(*) from public.restaurant_operational_expense_audit_events where event_type in ('schedule_created','schedule_paused','schedule_resumed') and schedule_id=(select id from public.restaurant_operational_expense_schedules where description='Facilities quarterly service'))<3 then
   raise exception 'Recurring schedule audit trail is incomplete';
+ end if;
+end $phase2$;
+-- Trusted service-role generation preserves the schedule creator identity when no JWT user exists.
+insert into public.restaurant_operational_expense_schedules(tenant_id,property_id,category_id,description,amount,currency,cadence,next_occurrence,created_by)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,
+ 'Service generated rent',12000,'TZS','monthly',date '2026-11-17','30000000-0000-0000-0000-000000000001'
+from public.restaurant_operational_expense_categories where category_key='utilities';
+select set_config('request.jwt.claim.sub','',true);
+set local role service_role;
+select public.restaurant_generate_scheduled_expense(
+ (select id from public.restaurant_operational_expense_schedules where description='Service generated rent'),date '2026-11-17');
+reset role;
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
+do $phase2$ begin
+ if not exists(select 1 from public.restaurant_operational_expenses where description='Service generated rent' and created_by='30000000-0000-0000-0000-000000000001') then
+  raise exception 'Service-role schedule generation did not preserve creator identity';
  end if;
 end $phase2$;
 ROLLBACK TO SAVEPOINT phase2_complete_workflows;
