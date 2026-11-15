@@ -77,3 +77,31 @@ export const commitRestaurantConsumptionAllocationFn = createServerFn({ method: 
     const mod = await import("./costing.server");
     return mod.commitConsumptionAllocation(context.supabase, context.userId, data);
   });
+
+
+const expenseBase = z.object({ tenantId:z.string().uuid() });
+export const listOperationalExpensesFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>expenseBase.parse(d)).handler(async({data,context})=>{
+  const mod=await import("./costing.server"); return mod.listOperationalExpenses(context.supabase,context.userId,data.tenantId);
+ });
+export const listOperationalExpenseCategoriesFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>expenseBase.parse(d)).handler(async({data,context})=>{
+  const mod=await import("./costing.server"); return mod.listOperationalExpenseCategories(context.supabase,context.userId,data.tenantId);
+ });
+export const createOperationalExpenseFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>z.object({
+  tenantId:z.string().uuid(),propertyId:z.string().uuid().nullable().optional(),locationId:z.string().uuid().nullable().optional(),
+  categoryId:z.string().uuid(),description:z.string().trim().min(2).max(240),amount:z.number().positive().finite(),
+  currency:z.string().regex(/^[A-Z]{3}$/),incurredOn:z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+ }).parse(d)).handler(async({data,context})=>{
+  const mod=await import("./costing.server"); return mod.createOperationalExpense(context.supabase,context.userId,data);
+ });
+export const approveOperationalExpenseFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),expenseId:z.string().uuid()}).parse(d))
+ .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.approveOperationalExpense(context.supabase,context.userId,data.tenantId,data.expenseId);});
+export const recordOperationalExpensePaymentFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),expenseId:z.string().uuid(),amount:z.number().positive().finite(),currency:z.string().regex(/^[A-Z]{3}$/),reference:z.string().trim().max(120).optional()}).parse(d))
+ .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.recordOperationalExpensePayment(context.supabase,context.userId,data);});
+export const allocateOperationalExpenseDirectFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),expenseId:z.string().uuid()}).parse(d))
+ .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.allocateOperationalExpenseDirect(context.supabase,context.userId,data);});
