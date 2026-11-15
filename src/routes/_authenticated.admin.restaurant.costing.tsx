@@ -125,7 +125,7 @@ function CostingPage() {
           <td>{e.currency} {Number(e.amount).toLocaleString()}<div className="text-xs text-muted-foreground">Paid {Number(e.paid_amount).toLocaleString()}</div></td>
           <td><span className="capitalize">{e.approval_status}</span></td><td><span className="capitalize">{e.payment_status}</span></td>
           <td><div className="flex flex-wrap gap-1">
-            {e.approval_status==="pending"&&e.created_by!==ws.data?.user?.id&&<Button size="sm" variant="outline" disabled={approveExpense.isPending} onClick={()=>approveExpense.mutate(e.id)}>Approve</Button>}
+            {e.approval_status==="pending"&&<Button size="sm" variant="outline" disabled={approveExpense.isPending} onClick={()=>approveExpense.mutate(e.id)}>Approve</Button>}
             {e.approval_status==="approved"&&e.payment_status!=="paid"&&<><Input className="h-8 w-24" type="number" min="0.01" placeholder="Payment" value={paymentAmounts[e.id]??""} onChange={ev=>setPaymentAmounts(v=>({...v,[e.id]:ev.target.value}))}/><Button size="sm" variant="outline" disabled={recordPayment.isPending||Number(paymentAmounts[e.id])<=0} onClick={()=>recordPayment.mutate({expenseId:e.id,amount:Number(paymentAmounts[e.id]),currency:e.currency})}>Pay</Button></>}
             {e.approval_status==="approved"&&e.property_id&&<Button size="sm" variant="outline" disabled={allocateExpense.isPending} onClick={()=>allocateExpense.mutate(e.id)}>Allocate</Button>}
           </div></td></tr>)}</tbody></table>
