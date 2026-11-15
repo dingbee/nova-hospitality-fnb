@@ -64,6 +64,7 @@ grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0125_operational_expense_complete_workflows.sql
 \ir ../migrations/0126_operational_expense_attachment_and_schedule_hardening.sql
 \ir ../migrations/0127_operational_expense_service_schedule_generation.sql
+\ir ../migrations/0128_operational_expense_automatic_recurring_generation.sql
 \ir ../migrations/0125_operational_expense_complete_workflows.sql
 
 insert into public.restaurant_tenants values
@@ -397,6 +398,17 @@ select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001'
 do $phase2$ begin
  if not exists(select 1 from public.restaurant_operational_expenses where description='Service generated rent' and created_by='30000000-0000-0000-0000-000000000001') then
   raise exception 'Service-role schedule generation did not preserve creator identity';
+ end if;
+end $phase2$;
+-- Daily scheduler catches due schedules and records generated expenses without duplicate occurrences.
+insert into public.restaurant_operational_expense_schedules(tenant_id,property_id,category_id,description,amount,currency,cadence,next_occurrence,created_by)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,
+ 'Auto generated rent',18000,'TZS','monthly',date '2026-11-18','30000000-0000-0000-0000-000000000001'
+from public.restaurant_operational_expense_categories where category_key='utilities';
+select public.restaurant_generate_due_operational_expenses(date '2026-11-18');
+do $phase2$ begin
+ if not exists(select 1 from public.restaurant_operational_expenses where description='Auto generated rent' and incurred_on=date '2026-11-18' and created_by='30000000-0000-0000-0000-000000000001') then
+  raise exception 'Automatic recurring scheduler did not create the due expense';
  end if;
 end $phase2$;
 ROLLBACK TO SAVEPOINT phase2_complete_workflows;
