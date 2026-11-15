@@ -406,3 +406,109 @@ export async function createOperationalExpenseCategory(sb:Sb,userId:string,input
   .select("id,name,category_key").single();
  if(error) throw new Error(error.message); return data;
 }
+
+
+// Shared-expense allocation rule lifecycle.
+const allocationRuleInputSchema = z.object({
+  tenantId: z.string().uuid(),
+  name: z.string().trim().min(2).max(100),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  targets: z.array(z.object({
+    propertyId: z.string().uuid(),
+    locationId: z.string().uuid().nullable().optional(),
+    weight: z.number().positive().finite(),
+  })).min(2).max(50),
+});
+export async function listCostAllocationRules(sb: Sb, userId: string, tenantId: string) {
+  await assertTenantRead(sb, userId, tenantId);
+  const { data, error } = await sb.from("restaurant_cost_allocation_rules")
+    .select("id,name,currency,effective_from,effective_to,version,targets,status,created_by,approved_by")
+    .eq("tenant_id", tenantId).order("name").order("version", { ascending: false });
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+export async function createCostAllocationRule(sb: Sb, userId: string, raw: unknown) {
+  const x = allocationRuleInputSchema.parse(raw);
+  await assertCapability(sb, userId, x.tenantId, "costing.manage");
+  if (x.effectiveTo && x.effectiveTo < x.effectiveFrom) throw new Error("Rule end date cannot precede its start date.");
+  const seen = new Set<string>();
+  const targets = [];
+  for (const target of x.targets) {
+    const key = target.propertyId + ":" + (target.locationId ?? "");
+    if (seen.has(key)) throw new Error("Allocation rule targets must be unique.");
+    seen.add(key);
+    await assertCapability(sb, userId, x.tenantId, "costing.manage", { propertyId: target.propertyId, locationId: target.locationId ?? null });
+    if (target.locationId) {
+      const { data: location } = await sb.from("restaurant_locations").select("id")
+        .eq("id", target.locationId).eq("tenant_id", x.tenantId).eq("property_id", target.propertyId).maybeSingle();
+      if (!location) throw new Error("A rule location must belong to its selected property.");
+    }
+    targets.push({ property_id: target.propertyId, location_id: target.locationId ?? null, weight: target.weight });
+  }
+  const { data: prior, error: priorError } = await sb.from("restaurant_cost_allocation_rules")
+    .select("version").eq("tenant_id", x.tenantId).eq("name", x.name).order("version", { ascending: false }).limit(1);
+  if (priorError) throw new Error(priorError.message);
+  const version = (prior?.[0]?.version ?? 0) + 1;
+  const { data, error } = await sb.from("restaurant_cost_allocation_rules").insert({
+    tenant_id: x.tenantId, name: x.name, currency: x.currency, effective_from: x.effectiveFrom,
+    effective_to: x.effectiveTo ?? null, version, targets, status: "draft", created_by: userId,
+  }).select("id,name,currency,effective_from,effective_to,version,targets,status,created_by").single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+export async function approveCostAllocationRule(sb: Sb, userId: string, tenantId: string, ruleId: string) {
+  await assertCapability(sb, userId, tenantId, "costing.manage");
+  const { data: rule, error: readError } = await sb.from("restaurant_cost_allocation_rules")
+    .select("id,created_by,status,targets").eq("tenant_id", tenantId).eq("id", ruleId).single();
+  if (readError || !rule) throw new Error("Allocation rule not found.");
+  if (rule.created_by === userId) throw new Error("Rule approval requires a different authorized user from its creator.");
+  if (rule.status !== "draft") throw new Error("Only draft allocation rules can be approved.");
+  for (const target of rule.targets as Array<{property_id:string;location_id?:string|null}>) {
+    await assertCapability(sb, userId, tenantId, "costing.manage", { propertyId: target.property_id, locationId: target.location_id ?? null });
+  }
+  const { data, error } = await sb.from("restaurant_cost_allocation_rules")
+    .update({ status: "approved", approved_by: userId, approved_at: new Date().toISOString() })
+    .eq("tenant_id", tenantId).eq("id", ruleId).eq("status", "draft")
+    .select("id,status,approved_by").maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Rule approval was concurrently changed; refresh and retry.");
+  return data;
+}
+export async function allocateOperationalExpenseByRule(sb: Sb, userId: string, input: {tenantId:string;expenseId:string;ruleId:string}) {
+  const x = z.object({tenantId:z.string().uuid(),expenseId:z.string().uuid(),ruleId:z.string().uuid()}).parse(input);
+  await assertCapability(sb, userId, x.tenantId, "costing.manage");
+  const [{data:expense,error:expenseError},{data:rule,error:ruleError}] = await Promise.all([
+    sb.from("restaurant_operational_expenses").select("id,amount,currency,incurred_on,approval_status,property_id")
+      .eq("tenant_id",x.tenantId).eq("id",x.expenseId).single(),
+    sb.from("restaurant_cost_allocation_rules").select("id,currency,effective_from,effective_to,version,targets,status")
+      .eq("tenant_id",x.tenantId).eq("id",x.ruleId).single(),
+  ]);
+  if (expenseError || !expense) throw new Error("Expense not found.");
+  if (ruleError || !rule) throw new Error("Allocation rule not found.");
+  if (expense.approval_status !== "approved") throw new Error("Only approved expenses can be allocated.");
+  if (rule.status !== "approved" || rule.currency !== expense.currency || rule.effective_from > expense.incurred_on ||
+      (rule.effective_to && rule.effective_to < expense.incurred_on)) throw new Error("Rule is not approved, currency-matched and effective for this expense.");
+  const targets = rule.targets as Array<{property_id:string;location_id:string|null;weight:number}>;
+  const totalWeight = targets.reduce((sum,t)=>sum+Number(t.weight),0);
+  if (!Number.isFinite(totalWeight) || totalWeight <= 0) throw new Error("Allocation rule weights are invalid.");
+  for (const target of targets) await assertCapability(sb,userId,x.tenantId,"costing.manage",{propertyId:target.property_id,locationId:target.location_id??null});
+  const cents = Math.round(Number(expense.amount) * 100);
+  const shares = targets.map((t,index) => {
+    const raw = cents * Number(t.weight) / totalWeight;
+    return { ...t, index, cents: Math.floor(raw), remainder: raw - Math.floor(raw) };
+  });
+  let remaining = cents - shares.reduce((sum,t)=>sum+t.cents,0);
+  [...shares].sort((a,b)=>b.remainder-a.remainder || a.property_id.localeCompare(b.property_id) || (a.location_id??"").localeCompare(b.location_id??""))
+    .slice(0,remaining).forEach(t=>{ shares[t.index].cents += 1; });
+  const allocations = shares.map(t=>({
+    property_id:t.property_id, location_id:t.location_id, amount:t.cents/100, currency:expense.currency,
+    allocation_method:"approved_rule", rule_id:rule.id, rule_version:rule.version,
+  }));
+  const {data,error}=await sb.rpc("restaurant_commit_expense_allocations",{
+    p_expense_id:expense.id,p_allocations:allocations,p_unallocated_reason:null,
+  });
+  if(error) throw new Error(error.message);
+  return data;
+}
