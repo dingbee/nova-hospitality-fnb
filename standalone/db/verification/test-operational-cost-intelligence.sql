@@ -53,6 +53,15 @@ insert into public.restaurant_properties values
  ('20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001'),
  ('20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002'),
  ('20000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000001');
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
+do $ begin
+ if public.restaurant_can_write_scoped('10000000-0000-0000-0000-000000000001',ARRAY['owner']::restaurant_role[],'20000000-0000-0000-0000-000000000002') then
+  raise exception 'Cross-tenant property authorization unexpectedly passed';
+ end if;
+ if not public.restaurant_can_write_scoped('10000000-0000-0000-0000-000000000001',ARRAY['owner']::restaurant_role[],'20000000-0000-0000-0000-000000000001') then
+  raise exception 'Valid same-tenant property authorization failed';
+ end if;
+end $;
 insert into public.restaurant_members values
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','owner',null),
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000003','accountant','20000000-0000-0000-0000-000000000001');
@@ -83,6 +92,15 @@ set local role authenticated;
 update public.restaurant_operational_expenses set approval_status='approved',approved_by='30000000-0000-0000-0000-000000000003',approved_at=now() where description='Electricity';
 reset role;
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
+-- Direct payment writes against pending expenses must fail.
+do $ begin
+ begin
+  insert into public.restaurant_operational_expense_payments(tenant_id,expense_id,amount,currency)
+  select tenant_id,id,1,'TZS' from public.restaurant_operational_expenses where description='Electricity';
+  raise exception 'Pending expense payment unexpectedly succeeded';
+ exception when insufficient_privilege then null;
+ end;
+end $;
 -- Payment trigger derives paid state, requires approval, and rejects overpayment.
 insert into public.restaurant_operational_expense_payments(tenant_id,expense_id,amount,currency)
  select tenant_id,id,40000,'TZS' from public.restaurant_operational_expenses where description='Electricity';
@@ -178,6 +196,10 @@ do $$ begin
  if (select amount from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002' and property_id='20000000-0000-0000-0000-000000000001')<>750 then raise exception 'Activity driver weight 3/5 was not applied'; end if;
 end $$;
 -- Property-scoped membership cannot read or write another property in the same tenant.
+insert into public.restaurant_operational_expense_schedules(tenant_id,property_id,category_id,description,amount,currency,cadence,next_occurrence)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003',id,'Other property rent',50000,'TZS','monthly',date '2026-11-15'
+from public.restaurant_operational_expense_categories where category_key='utilities';
+select public.restaurant_generate_scheduled_expense((select id from public.restaurant_operational_expense_schedules where description='Other property rent'),date '2026-11-15');
 insert into public.restaurant_members values
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','restaurant_manager','20000000-0000-0000-0000-000000000001');
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000002',true);
@@ -185,6 +207,9 @@ set local role authenticated;
 do $phase3$ begin
  if exists(select 1 from public.restaurant_operational_expenses where property_id='20000000-0000-0000-0000-000000000003') then
   raise exception 'Property-scoped member can read another property expense';
+ end if;
+ if exists(select 1 from public.restaurant_operational_expense_schedule_occurrences o join public.restaurant_operational_expense_schedules s on s.id=o.schedule_id where s.property_id='20000000-0000-0000-0000-000000000003') then
+  raise exception 'Property-scoped member can read another property schedule occurrence';
  end if;
  begin
   insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
