@@ -44,7 +44,7 @@ export function PropertiesPanel({ tenantId, data }: { tenantId: string; data: Ma
     const p = data.properties.find((x) => x.id === id);
     if (!p) return;
     setEditing(p);
-    setForm({ name: p.name, slug: p.slug, timezone: p.timezone, currency: p.currency, status: p.status });
+    setForm({ name: p.name, slug: p.slug, timezone: p.timezone, currency: p.currency, status: p.status === "active" || p.status === "inactive" ? p.status : "pending_activation" });
     setOpen(true);
   }
 

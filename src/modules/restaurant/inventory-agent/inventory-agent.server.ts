@@ -44,6 +44,17 @@ export interface InventoryAgentRunInput {
 
 export interface InventoryAgentActionSweepInput { tenantId: string; limit?: number; propertyId?: string; locationId?: string; }
 
+type InventoryAgentFactValue = string | number | boolean | null;
+
+function serializableFacts(value: Record<string, unknown>): Record<string, InventoryAgentFactValue> {
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    item === null || typeof item === "string" || typeof item === "number" || typeof item === "boolean"
+      ? item
+      : JSON.stringify(item),
+  ]));
+}
+
 export interface InventoryAgentRecommendation {
   decisionId: string;
   decisionKey: string;
@@ -53,7 +64,7 @@ export interface InventoryAgentRecommendation {
   severity: string;
   confidence: number;
   headline: string;
-  facts: Record<string, unknown>;
+  facts: Record<string, InventoryAgentFactValue>;
   recommendedOptionKey: string | null;
   recommendedActionType: string | null;
   actionId: string | null;
@@ -150,7 +161,7 @@ export async function runInventoryAgent(
       severity: String(finding.severity ?? "unknown"),
       confidence: Number(row.confidence ?? 0),
       headline: String(finding.headline ?? row.decision_key),
-      facts: (finding.facts ?? {}) as Record<string, unknown>,
+      facts: serializableFacts((finding.facts ?? {}) as Record<string, unknown>),
       recommendedOptionKey: row.recommended_option_key ?? null,
       recommendedActionType: selected?.option?.actionType ?? null,
       actionId: row.action_id ?? null,

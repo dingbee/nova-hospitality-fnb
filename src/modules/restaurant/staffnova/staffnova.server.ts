@@ -661,7 +661,7 @@ export async function askStaffNova(
             const { previewIntelligentPurchaseOrders } = await import("../procurement/ask-lexibite.server");
             intelligentPurchaseOrder = await previewIntelligentPurchaseOrders(sb, userId, {
               tenantId: input.tenantId,
-              idempotencyKey: `nova-po-preview:${input.tenantId}:${input.userId}`,
+              idempotencyKey: `nova-po-preview:${input.tenantId}:${userId}`,
               lineOverrides: [],
               inventoryItemIds: contract.entities
                 .filter((entity) =>
