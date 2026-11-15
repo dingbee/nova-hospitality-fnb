@@ -397,3 +397,12 @@ export async function allocateOperationalExpenseDirect(sb:Sb,userId:string,input
   });
   if(error) throw new Error(error.message); return data;
 }
+
+export async function createOperationalExpenseCategory(sb:Sb,userId:string,input:{tenantId:string;name:string;categoryKey:string}) {
+ const x=z.object({tenantId:z.string().uuid(),name:z.string().trim().min(2).max(80),categoryKey:z.string().regex(/^[a-z][a-z0-9_]{1,63}$/)}).parse(input);
+ await assertCapability(sb,userId,x.tenantId,"costing.manage");
+ const {data,error}=await sb.from("restaurant_operational_expense_categories")
+  .insert({tenant_id:x.tenantId,name:x.name,category_key:x.categoryKey,active:true})
+  .select("id,name,category_key").single();
+ if(error) throw new Error(error.message); return data;
+}
