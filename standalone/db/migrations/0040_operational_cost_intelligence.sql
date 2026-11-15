@@ -52,10 +52,10 @@ begin
  select * into s from public.restaurant_operational_expense_schedules where id=p_schedule_id for update;
  if not found or not s.active then raise exception 'Active expense schedule not found'; end if;
  if not public.restaurant_can_write_scoped(s.tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],s.property_id) then raise exception 'Not authorized'; end if;
- if p_occurrence_date<>s.next_occurrence then raise exception 'Occurrence date must match the schedule next_occurrence'; end if;
  select expense_id into v_expense_id from public.restaurant_operational_expense_schedule_occurrences
  where schedule_id=s.id and occurrence_date=p_occurrence_date;
  if v_expense_id is not null then return v_expense_id; end if;
+ if p_occurrence_date<>s.next_occurrence then raise exception 'Occurrence date must match the schedule next_occurrence'; end if;
  insert into public.restaurant_operational_expenses(tenant_id,property_id,location_id,category_id,description,amount,currency,incurred_on)
  values(s.tenant_id,s.property_id,s.location_id,s.category_id,s.description,s.amount,s.currency,p_occurrence_date)
  returning id into v_expense_id;
