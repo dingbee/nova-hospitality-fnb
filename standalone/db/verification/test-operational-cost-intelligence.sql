@@ -137,20 +137,20 @@ do $$ begin
 end $$;
 -- Existing stock movement remains the source ledger; allocation is a scoped cost projection.
 select public.restaurant_commit_consumption_allocation('50000000-0000-0000-0000-000000000001',null);
-do $ begin
+do $$ begin
  if (select sum(amount) from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000001')<>1250 then raise exception 'Consumption allocation did not reconcile'; end if;
-end $;
+end $$;
 -- Shared consumption with no property attribution is distributed by persisted activity units.
 insert into public.restaurant_cost_activity_drivers(tenant_id,property_id,driver_key,period_start,units)
 values
  ('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','covers','2026-11-01',3),
  ('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','covers','2026-11-01',2);
 select public.restaurant_commit_consumption_allocation('50000000-0000-0000-0000-000000000002',null,'covers');
-do $ begin
+do $$ begin
  if (select count(*) from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002' and allocation_method='activity_driver')<>2 then raise exception 'Activity driver split did not create two target allocations'; end if;
  if (select sum(amount) from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002')<>1250 then raise exception 'Activity driver allocation did not reconcile'; end if;
  if (select amount from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002' and property_id='20000000-0000-0000-0000-000000000001')<>750 then raise exception 'Activity driver weight 3/5 was not applied'; end if;
-end $;
+end $$;
 -- Tenant/property-scoped RLS: user from tenant A cannot read tenant B.
 set local role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
