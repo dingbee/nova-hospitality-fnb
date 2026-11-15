@@ -4,6 +4,15 @@ create extension if not exists pgcrypto;
 create schema if not exists auth;
 do $$ begin create type public.restaurant_role as enum('owner','general_manager','restaurant_manager','accountant'); exception when duplicate_object then null; end $$;
 create table public.restaurant_tenants(id uuid primary key);
+create table public.restaurant_suppliers(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id),name text not null);
+create schema if not exists storage;
+create table storage.buckets(id text primary key,name text not null,public boolean not null default false,file_size_limit bigint,allowed_mime_types text[]);
+create table storage.objects(bucket_id text not null,name text not null);
+create or replace function storage.foldername(_name text) returns text[] language sql immutable as $folder$
+ select case when array_length(string_to_array(_name,'/'),1)>1
+   then (string_to_array(_name,'/'))[1:array_length(string_to_array(_name,'/'),1)-1]
+   else array[]::text[] end
+$folder$;
 create table public.restaurant_properties(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id),currency text not null default 'TZS');
 create table public.restaurant_locations(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id),property_id uuid references public.restaurant_properties(id));
 create table public.restaurant_members(tenant_id uuid,user_id uuid,role public.restaurant_role,property_id uuid);
@@ -49,6 +58,7 @@ grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0122_operational_expense_property_currency_integrity.sql
 \ir ../migrations/0123_operational_expense_creator_identity_integrity.sql
 \ir ../migrations/0124_operational_expense_read_property_scope_integrity.sql
+\ir ../migrations/0125_operational_expense_complete_workflows.sql
 
 insert into public.restaurant_tenants values
  ('10000000-0000-0000-0000-000000000001'),('10000000-0000-0000-0000-000000000002');
