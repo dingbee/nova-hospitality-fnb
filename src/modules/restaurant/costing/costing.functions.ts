@@ -109,3 +109,24 @@ export const allocateOperationalExpenseDirectFn = createServerFn({method:"POST"}
 export const createOperationalExpenseCategoryFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
  .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),name:z.string().trim().min(2).max(80),categoryKey:z.string().regex(/^[a-z][a-z0-9_]{1,63}$/)}).parse(d))
  .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.createOperationalExpenseCategory(context.supabase,context.userId,data);});
+
+
+const allocationRuleValidator = z.object({
+  tenantId:z.string().uuid(), name:z.string().trim().min(2).max(100), currency:z.string().regex(/^[A-Z]{3}$/),
+  effectiveFrom:z.string().regex(/^\d{4}-\d{2}-\d{2}$/), effectiveTo:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  targets:z.array(z.object({propertyId:z.string().uuid(),locationId:z.string().uuid().nullable().optional(),weight:z.number().positive().finite()})).min(2).max(50),
+});
+export const listCostAllocationRulesFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>expenseBase.parse(d)).handler(async({data,context})=>{
+  const mod=await import("./costing.server");return mod.listCostAllocationRules(context.supabase,context.userId,data.tenantId);
+ });
+export const createCostAllocationRuleFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>allocationRuleValidator.parse(d)).handler(async({data,context})=>{
+  const mod=await import("./costing.server");return mod.createCostAllocationRule(context.supabase,context.userId,data);
+ });
+export const approveCostAllocationRuleFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),ruleId:z.string().uuid()}).parse(d))
+ .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.approveCostAllocationRule(context.supabase,context.userId,data.tenantId,data.ruleId);});
+export const allocateOperationalExpenseByRuleFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),expenseId:z.string().uuid(),ruleId:z.string().uuid()}).parse(d))
+ .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.allocateOperationalExpenseByRule(context.supabase,context.userId,data);});
