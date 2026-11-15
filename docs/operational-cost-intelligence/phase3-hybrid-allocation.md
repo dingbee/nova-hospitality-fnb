@@ -4,7 +4,7 @@
 
 Phase 3 adds deterministic hybrid allocation for operational expenses and operational consumption while preserving the existing restaurant stock-movement ledger as the authoritative consumption source. It does not introduce a second stock, recipe-cost, or accounting ledger.
 
-The implementation is staged on `feat/operational-cost-intelligence-phase3-workaround`. It is not merged or deployed.
+**Implementation status: merged to `main` and repository CI certified. Production rollout remains separate and has not been performed.**
 
 ## Allocation precedence
 
@@ -16,10 +16,11 @@ The implementation is staged on `feat/operational-cost-intelligence-phase3-worka
 
 Draft, expired, cross-tenant, wrong-currency, or inapplicable rules must not be applied. Monetary allocation uses integer minor units and deterministic largest-remainder apportionment. Allocations plus any unallocated exception must reconcile exactly to the source amount. Rule-derived allocations retain rule ID and version. Duplicate source recognition is guarded by tenant, source type, and source ID.
 
-## Implemented in this branch
+## Implemented
 
 - Pure allocation kernel and focused unit tests.
 - Migration `0040_operational_cost_intelligence.sql` defining tenant-scoped operational expense categories, expenses, payments, recurring schedules/occurrences, allocation rules, allocations, exceptions, and activity drivers.
+- Migration `0041_operational_cost_intelligence_privilege_hardening.sql` hardening database privileges.
 - Database functions for expense allocation, recurring expense generation, and stock-consumption allocation.
 - Payment-status trigger and database-side checks for overpayment, approval, tenant/property scope, allocation method, rule validity, and reconciliation.
 - Activity-driver server functions and capture/list UI in the restaurant costing route.
@@ -27,30 +28,26 @@ Draft, expired, cross-tenant, wrong-currency, or inapplicable rules must not be 
 - Shared-expense allocation-rule lifecycle: versioned draft creation, tenant/property validation, independent approval, effective-date/currency checks, deterministic minor-unit apportionment, and rule-backed allocation from the costing workspace.
 - Consumption-allocation server function.
 - Profitability aggregation includes allocated operating expenses, contribution profit, and contribution margin while retaining food-cost metrics separately.
-- Isolated PostgreSQL verification fixture covering payment lifecycle, allocation, recurring idempotency, approved-rule allocation, consumption attribution, activity-driver distribution, RLS isolation, and rollback.
-- Focused CI workflow covering allocation unit tests and the isolated PostgreSQL fixture.
 
-## Verified evidence
+## Verification and acceptance evidence
 
-On commit `8ba004960caa68b842b8c4e047589939c53944a8`:
-- Production build completed successfully, including the new shared-rule UI and server functions.
-- The dedicated Phase 3 workflow completed successfully, including allocation unit tests and the isolated PostgreSQL migration/expense lifecycle/RLS fixture.
-- The full repository typecheck reports pre-existing errors in events, inventory-agent, inventory UI, masterdata, staffnova, router, and order-table modules. The latest typecheck reports no errors in Phase 3 costing server/functions or the costing route. Repository-wide lint and full-suite steps remain gated by those unrelated typecheck errors.
+- Dedicated Phase 3 Hybrid Allocation workflow run #138: **PASS**, including allocation tests and isolated PostgreSQL migration, expense lifecycle, payment trigger, RLS, tenant isolation, and property-scoped read/write isolation.
+- Full LexiBite CI run #1256: **PASS** across strict repository typecheck, changed-source lint, migration verification, complete migration chain, Phase 3 isolated PostgreSQL verification, scoped functional tests, full test suite, and bundle-origin verification.
+- Vercel commit preview: **Ready**. This is a preview deployment, not a production promotion.
+- Phase 3 implementation PR #181 merged.
+- Property-scoped isolation acceptance PR #182 merged.
+- Final acceptance merge commit: `471cf384c76ff7ebbeb9d3d50d6dd40b7238f6fe`.
 
-The UAT Tenant A transaction checks previously exercised expense payment state transitions, direct allocation, approved 60/40 allocation, recurring generation idempotency, direct consumption attribution, and activity-driver allocation. Those checks were rolled back; no permanent UAT business data or production migration was applied.
+## Release boundary
 
-## Acceptance disposition
+- Phase 3 implementation and repository acceptance are closed on `main`.
+- The production database migration has **not** been applied.
+- No production business data has been written or modified.
+- No production deployment or promotion has been performed.
+- Production rollout requires a separately authorized release, production migration preflight, and post-migration verification. The preview deployment must not be treated as production.
 
-- Expense capture, categories, independent approval, payment recording, and direct property allocation are wired into the costing workspace.
-- Shared expense rules support draft/version creation, two-or-more weighted targets, independent approval, effective dates, currency matching, deterministic largest-remainder allocation, and rule-version traceability.
-- Rule/expense writes are tenant-scoped and require costing capability; target properties and locations are independently authorized.
-- Migration verification and focused allocation tests pass in isolated PostgreSQL/CI.
-- Production build passes.
-- No production migration, business data write, merge, or deployment was performed.
+## Final disposition
 
-## Remaining release boundary
+**Phase 3: IMPLEMENTATION CLOSED — MERGED — CI CERTIFIED.**
 
-The implementation branch is ready for review, but repository-wide release certification remains blocked by pre-existing TypeScript errors outside Phase 3. Those errors must be resolved in their owning workstreams before the repository-wide CI gate can be green. Phase 3 must not bypass that gate or be represented as fully repository-certified.
-## Current disposition
-
-Phase 3 implementation scope is complete on the isolated branch. Focused Phase 3 verification and production build pass. Repository-wide CI certification is pending unrelated baseline type errors; the branch remains unmerged and undeployed.
+**Production rollout: NOT PERFORMED.**
