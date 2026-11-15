@@ -14,7 +14,7 @@ import {
   listRestaurantCostActivityDriversFn,
   upsertRestaurantCostActivityDriverFn,
   listOperationalExpensesFn, listOperationalExpenseCategoriesFn, createOperationalExpenseFn,
-  approveOperationalExpenseFn, recordOperationalExpensePaymentFn, allocateOperationalExpenseDirectFn, createOperationalExpenseCategoryFn,
+  approveOperationalExpenseFn, recordOperationalExpensePaymentFn, allocateOperationalExpenseDirectFn, createOperationalExpenseCategoryFn,\n  listCostAllocationRulesFn, createCostAllocationRuleFn, approveCostAllocationRuleFn, allocateOperationalExpenseByRuleFn,
 } from "@/modules/restaurant/costing/costing.functions";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 
@@ -135,6 +135,33 @@ function CostingPage() {
           </div></td></tr>)}</tbody></table>
           {expenses.isLoading&&<p className="py-3 text-sm text-muted-foreground">Loading expenses…</p>}
           {!expenses.isLoading&&(expenses.data??[]).length===0&&<p className="py-3 text-sm text-muted-foreground">No operational expenses recorded.</p>}
+        </div>
+      </SectionCard>
+      <SectionCard title="Shared expense allocation rules" description="Create weighted, versioned property splits. A second authorized user must approve each draft before it can be applied to an approved expense.">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <Input value={ruleName} onChange={e=>setRuleName(e.target.value)} placeholder="Rule name (e.g. Head office)" aria-label="Allocation rule name"/>
+          <Input value={ruleCurrency} maxLength={3} onChange={e=>setRuleCurrency(e.target.value.toUpperCase())} aria-label="Rule currency"/>
+          <Input type="date" value={ruleEffectiveFrom} onChange={e=>setRuleEffectiveFrom(e.target.value)} aria-label="Rule effective from"/>
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={rulePropertyA} onChange={e=>setRulePropertyA(e.target.value)} aria-label="First allocation property"><option value="">First property</option>{properties.map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+          <Input type="number" min="0.01" step="0.01" value={ruleWeightA} onChange={e=>setRuleWeightA(e.target.value)} aria-label="First property weight"/>
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={rulePropertyB} onChange={e=>setRulePropertyB(e.target.value)} aria-label="Second allocation property"><option value="">Second property</option>{properties.filter((p:any)=>p.id!==rulePropertyA).map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+          <Input type="number" min="0.01" step="0.01" value={ruleWeightB} onChange={e=>setRuleWeightB(e.target.value)} aria-label="Second property weight"/>
+          <Button size="sm" disabled={!tenantId||ruleName.trim().length<2||!rulePropertyA||!rulePropertyB||rulePropertyA===rulePropertyB||Number(ruleWeightA)<=0||Number(ruleWeightB)<=0||! /^[A-Z]{3}$/.test(ruleCurrency)||createRule.isPending} onClick={()=>createRule.mutate()}>Create draft rule</Button>
+        </div>
+        <ul className="mt-3 divide-y text-sm">
+          {(rules.data??[]).map((rule:any)=><li key={rule.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+            <div><div className="font-medium">{rule.name} · v{rule.version} · {rule.currency}</div><div className="text-xs text-muted-foreground">{rule.targets.map((t:any)=>`${properties.find((p:any)=>p.id===t.property_id)?.name??"Property"} ${Math.round(Number(t.weight)*100)/100}`).join(" / ")} · from {rule.effective_from} · {rule.status}</div></div>
+            {rule.status==="draft"&&<Button size="sm" variant="outline" disabled={approveRule.isPending} onClick={()=>approveRule.mutate(rule.id)}>Approve</Button>}
+          </li>)}
+        </ul>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={Object.keys(expenseRuleSelections)[0]??""} onChange={e=>setExpenseRuleSelections(e.target.value?{[e.target.value]:expenseRuleSelections[e.target.value]??""}:{})} aria-label="Select shared expense">
+            <option value="">Select shared approved expense</option>{(expenses.data??[]).filter((e:any)=>!e.property_id&&e.approval_status==="approved").map((e:any)=><option key={e.id} value={e.id}>{e.description} · {e.currency} {Number(e.amount).toLocaleString()}</option>)}
+          </select>
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={Object.values(expenseRuleSelections)[0]??""} onChange={e=>{const id=Object.keys(expenseRuleSelections)[0];if(id)setExpenseRuleSelections({[id]:e.target.value});}} aria-label="Select approved allocation rule">
+            <option value="">Select approved rule</option>{(rules.data??[]).filter((x:any)=>x.status==="approved").map((x:any)=><option key={x.id} value={x.id}>{x.name} · v{x.version}</option>)}
+          </select>
+          <Button size="sm" disabled={!Object.keys(expenseRuleSelections)[0]||!Object.values(expenseRuleSelections)[0]||allocateByRule.isPending} onClick={()=>{const expenseId=Object.keys(expenseRuleSelections)[0];const ruleId=expenseRuleSelections[expenseId];allocateByRule.mutate({expenseId,ruleId});}}>Allocate shared expense</Button>
         </div>
       </SectionCard>
       <SectionCard title="Hybrid allocation activity drivers" description="Record auditable operating activity by property and period. Shared consumption can use these weighted units when no direct property attribution exists.">
