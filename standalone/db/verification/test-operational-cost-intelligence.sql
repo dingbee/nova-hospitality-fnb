@@ -56,6 +56,8 @@ do $$ begin
   if sqlerrm='overpayment unexpectedly accepted' then raise; end if;
  end;
 end $$;
+-- Authenticate the owner for the allocation RPC's authorization check.
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
 -- Approve and atomically allocate the complete expense to its property.
 update public.restaurant_operational_expenses set approval_status='approved',
  approved_by='30000000-0000-0000-0000-000000000001',approved_at=now() where description='Electricity';
