@@ -315,3 +315,85 @@ export async function commitConsumptionAllocation(
   if (error) throw new Error(error.message);
   return data;
 }
+
+
+// Operational expense lifecycle. Every write is capability-checked and tenant-scoped.
+const expenseInputSchema = z.object({
+  tenantId: z.string().uuid(), propertyId: z.string().uuid().nullable().optional(),
+  locationId: z.string().uuid().nullable().optional(), categoryId: z.string().uuid(),
+  description: z.string().trim().min(2).max(240), amount: z.number().positive().finite(),
+  currency: z.string().regex(/^[A-Z]{3}$/), incurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+export async function listOperationalExpenses(sb: Sb, userId: string, tenantId: string) {
+  await assertTenantRead(sb,userId,tenantId);
+  const {data,error}=await sb.from("restaurant_operational_expenses")
+    .select("id,property_id,location_id,category_id,description,amount,currency,incurred_on,approval_status,approved_by,payment_status,paid_amount,created_by,created_at")
+    .eq("tenant_id",tenantId).order("incurred_on",{ascending:false}).limit(200);
+  if(error) throw new Error(error.message); return data??[];
+}
+export async function listOperationalExpenseCategories(sb: Sb,userId:string,tenantId:string) {
+  await assertTenantRead(sb,userId,tenantId);
+  const {data,error}=await sb.from("restaurant_operational_expense_categories")
+    .select("id,name,category_key").eq("tenant_id",tenantId).eq("active",true).order("name");
+  if(error) throw new Error(error.message); return data??[];
+}
+export async function createOperationalExpense(sb:Sb,userId:string,raw:unknown) {
+  const x=expenseInputSchema.parse(raw);
+  await assertCapability(sb,userId,x.tenantId,"costing.manage",{propertyId:x.propertyId??null,locationId:x.locationId??null});
+  const {data:category,error:categoryError}=await sb.from("restaurant_operational_expense_categories")
+    .select("id").eq("tenant_id",x.tenantId).eq("id",x.categoryId).eq("active",true).maybeSingle();
+  if(categoryError||!category) throw new Error("Expense category is not available in this tenant.");
+  if(x.locationId && !x.propertyId) throw new Error("A location requires a property.");
+  if(x.locationId) {
+    const {data:loc}=await sb.from("restaurant_locations").select("id").eq("id",x.locationId).eq("tenant_id",x.tenantId).eq("property_id",x.propertyId).maybeSingle();
+    if(!loc) throw new Error("Location does not belong to the selected property.");
+  }
+  const {data,error}=await sb.from("restaurant_operational_expenses").insert({
+    tenant_id:x.tenantId,property_id:x.propertyId??null,location_id:x.locationId??null,
+    category_id:x.categoryId,description:x.description,amount:x.amount,currency:x.currency,
+    incurred_on:x.incurredOn,created_by:userId,
+  }).select("id").single();
+  if(error) throw new Error(error.message); return data;
+}
+export async function approveOperationalExpense(sb:Sb,userId:string,tenantId:string,expenseId:string) {
+  await assertCapability(sb,userId,tenantId,"costing.manage");
+  const {data:expense,error:readError}=await sb.from("restaurant_operational_expenses")
+    .select("id,created_by,approval_status,property_id").eq("tenant_id",tenantId).eq("id",expenseId).single();
+  if(readError||!expense) throw new Error("Expense not found.");
+  if(expense.created_by===userId) throw new Error("Expense approval requires a different authorized user from its creator.");
+  if(expense.approval_status!=="pending") throw new Error("Only pending expenses can be approved.");
+  await assertCapability(sb,userId,tenantId,"costing.manage",{propertyId:expense.property_id??null});
+  const {error}=await sb.from("restaurant_operational_expenses").update({approval_status:"approved",approved_by:userId,approved_at:new Date().toISOString()})
+    .eq("tenant_id",tenantId).eq("id",expenseId).eq("approval_status","pending");
+  if(error) throw new Error(error.message); return {approved:true};
+}
+export async function recordOperationalExpensePayment(sb:Sb,userId:string,input:{tenantId:string;expenseId:string;amount:number;currency:string;reference?:string}) {
+  const x=z.object({tenantId:z.string().uuid(),expenseId:z.string().uuid(),amount:z.number().positive().finite(),currency:z.string().regex(/^[A-Z]{3}$/),reference:z.string().trim().max(120).optional()}).parse(input);
+  await assertCapability(sb,userId,x.tenantId,"costing.manage");
+  const {data:expense,error:readError}=await sb.from("restaurant_operational_expenses").select("id,approval_status,currency,property_id")
+    .eq("tenant_id",x.tenantId).eq("id",x.expenseId).single();
+  if(readError||!expense) throw new Error("Expense not found.");
+  if(expense.approval_status!=="approved") throw new Error("Only approved expenses can be paid.");
+  if(expense.currency!==x.currency) throw new Error("Payment currency must match expense currency.");
+  await assertCapability(sb,userId,x.tenantId,"costing.manage",{propertyId:expense.property_id??null});
+  const {data,error}=await sb.from("restaurant_operational_expense_payments").insert({
+    tenant_id:x.tenantId,expense_id:x.expenseId,amount:x.amount,currency:x.currency,reference:x.reference??null,recorded_by:userId,
+  }).select("id").single();
+  if(error) throw new Error(error.message); return data;
+}
+export async function allocateOperationalExpenseDirect(sb:Sb,userId:string,input:{tenantId:string;expenseId:string}) {
+  const x=z.object({tenantId:z.string().uuid(),expenseId:z.string().uuid()}).parse(input);
+  await assertCapability(sb,userId,x.tenantId,"costing.manage");
+  const {data:e,error:readError}=await sb.from("restaurant_operational_expenses")
+    .select("id,property_id,location_id,amount,currency,incurred_on,approval_status")
+    .eq("tenant_id",x.tenantId).eq("id",x.expenseId).single();
+  if(readError||!e) throw new Error("Expense not found.");
+  if(e.approval_status!=="approved") throw new Error("Only approved expenses can be allocated.");
+  if(!e.property_id) throw new Error("Shared expenses require an approved allocation rule or activity-driver allocation.");
+  await assertCapability(sb,userId,x.tenantId,"costing.manage",{propertyId:e.property_id,locationId:e.location_id??null});
+  const {data,error}=await sb.rpc("restaurant_commit_expense_allocations",{
+    p_expense_id:e.id,p_unallocated_reason:null,
+    p_allocations:[{property_id:e.property_id,location_id:e.location_id,amount:Number(e.amount),currency:e.currency,allocation_method:"direct"}],
+  });
+  if(error) throw new Error(error.message); return data;
+}
