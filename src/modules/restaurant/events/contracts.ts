@@ -222,6 +222,7 @@ export const RESTAURANT_EVENT_SEVERITY: Record<
   "restaurant.payment.room_charge_posted": "info",
   "restaurant.payment.room_charge_failed": "high",
   "restaurant.payment.room_charge_unknown": "high",
+  "restaurant.payment.room_charge_reversal_requested": "high",
   "restaurant.kitchen.ticket.fired": "info",
   "restaurant.kitchen.ticket.ready": "info",
   "restaurant.kitchen.ticket.delayed": "high",

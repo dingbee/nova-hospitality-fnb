@@ -227,7 +227,7 @@ export async function ensureGuestTableSession(sb: Sb, tableId: string) {
         .eq("id", staleSession.id)
         .eq("status", "active");
     }
-    return { hasOpenOrders: false, activeOrderId: null as string | null };
+    return { hasOpenOrders: false, activeOrderId: null as string | null, paymentTiming: table.guestPaymentTiming };
   }
 
   let session: { id: string } | null = null;
@@ -290,6 +290,7 @@ export async function ensureGuestTableSession(sb: Sb, tableId: string) {
   return {
     hasOpenOrders: true,
     activeOrderId: orders[0]?.id ?? null,
+    paymentTiming: table.guestPaymentTiming,
   };
 }
 

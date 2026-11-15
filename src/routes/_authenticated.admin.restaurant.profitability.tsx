@@ -165,6 +165,19 @@ function ProfitabilityPage() {
             tone={result.totals.variance > 0 ? "danger" : "green"}
             hint="Actual minus theoretical"
           />
+          <StatCard
+            label="Allocated operating expenses"
+            value={money(result.totals.allocated_operating_expenses)}
+            icon={Calculator}
+            hint="Approved and recognised operating costs"
+          />
+          <StatCard
+            label="Contribution profit"
+            value={money(result.totals.contribution_profit)}
+            icon={PiggyBank}
+            tone={result.totals.contribution_profit < 0 ? "danger" : "green"}
+            hint={result.totals.contribution_margin_percent != null ? `${result.totals.contribution_margin_percent}% contribution margin` : "No sales in period"}
+          />
         </div>
       )}
 

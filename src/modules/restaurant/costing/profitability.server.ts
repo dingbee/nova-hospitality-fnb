@@ -37,6 +37,12 @@ export interface ProfitabilityRow {
   currency: string;
 }
 
+export interface ProfitabilityTotals extends Omit<ProfitabilityRow, "menu_item_id" | "menu_item_name"> {
+  allocated_operating_expenses: number;
+  contribution_profit: number;
+  contribution_margin_percent: number | null;
+}
+
 export async function computeProfitability(
   sb: Sb,
   userId: string,
@@ -45,7 +51,7 @@ export async function computeProfitability(
   periodStart: string;
   periodEnd: string;
   rows: ProfitabilityRow[];
-  totals: Omit<ProfitabilityRow, "menu_item_id" | "menu_item_name">;
+  totals: ProfitabilityTotals;
 }> {
   await assertCapability(sb, userId, input.tenantId, "profitability.manage", {
     propertyId: input.propertyId ?? null,
@@ -65,21 +71,39 @@ export async function computeProfitability(
   if (orderErr) throw new Error(orderErr.message);
 
   const orderIds = ((orders ?? []) as any[]).map((o) => o.id);
-  const currency = ((orders ?? []) as any[])[0]?.currency ?? "TZS";
+  const orderCurrencies = new Set(((orders ?? []) as any[]).map((o) => o.currency).filter(Boolean));
+  if (orderCurrencies.size > 1) throw new Error("Profitability cannot combine sales across currencies.");
+  const periodFrom = input.from.slice(0, 10);
+  const periodTo = input.to.slice(0, 10);
+  let expenseAllocationQuery = sb
+    .from("restaurant_cost_allocations")
+    .select("amount, currency")
+    .eq("tenant_id", input.tenantId)
+    .eq("source_type", "operational_expense")
+    .gte("period_start", periodFrom)
+    .lte("period_start", periodTo);
+  if (input.propertyId) expenseAllocationQuery = expenseAllocationQuery.eq("property_id", input.propertyId);
+  if (input.locationId) expenseAllocationQuery = expenseAllocationQuery.eq("location_id", input.locationId);
+  const { data: expenseAllocations, error: expenseAllocationError } = await expenseAllocationQuery;
+  if (expenseAllocationError) throw new Error(expenseAllocationError.message);
+  const currencies = new Set(((expenseAllocations ?? []) as any[]).map((r) => r.currency).filter(Boolean));
+  const currencySet = new Set([...orderCurrencies, ...currencies]);
+  if (currencySet.size > 1) throw new Error("Profitability cannot combine sales and operating costs across currencies.");
+  const currency = [...currencySet][0] ?? "TZS";
+  const allocatedOperatingExpenses = Number(
+    ((expenseAllocations ?? []) as any[]).reduce((sum, row) => sum + Number(row.amount ?? 0), 0).toFixed(2),
+  );
   if (orderIds.length === 0) {
     return {
       periodStart: input.from,
       periodEnd: input.to,
       rows: [],
       totals: {
-        quantity_sold: 0,
-        revenue: 0,
-        theoretical_cost: 0,
-        actual_cost: 0,
-        variance: 0,
-        gross_profit: 0,
-        margin_percent: null,
-        food_cost_percent: null,
+        quantity_sold: 0, revenue: 0, theoretical_cost: 0, actual_cost: 0, variance: 0,
+        gross_profit: 0, margin_percent: null, food_cost_percent: null,
+        allocated_operating_expenses: allocatedOperatingExpenses,
+        contribution_profit: Number((-allocatedOperatingExpenses).toFixed(2)),
+        contribution_margin_percent: null,
         currency,
       },
     };
@@ -135,7 +159,7 @@ export async function computeProfitability(
     agg.set(key, row);
   }
 
-  const rows = [...agg.values()]
+  const allRows = [...agg.values()]
     .map((r) => {
       const revenue = Number(r.revenue.toFixed(2));
       const actual = Number(r.actual_cost.toFixed(4));
@@ -153,14 +177,14 @@ export async function computeProfitability(
         quantity_sold: Number(r.quantity_sold.toFixed(3)),
       };
     })
-    .sort((a, b) => b.gross_profit - a.gross_profit)
-    .slice(0, input.limit);
+    .sort((a, b) => b.gross_profit - a.gross_profit);
+  const rows = allRows.slice(0, input.limit);
 
-  const revenue = Number(rows.reduce((s, r) => s + r.revenue, 0).toFixed(2));
-  const actual = Number(rows.reduce((s, r) => s + r.actual_cost, 0).toFixed(4));
-  const theoretical = Number(rows.reduce((s, r) => s + r.theoretical_cost, 0).toFixed(4));
+  const revenue = Number(allRows.reduce((s, r) => s + r.revenue, 0).toFixed(2));
+  const actual = Number(allRows.reduce((s, r) => s + r.actual_cost, 0).toFixed(4));
+  const theoretical = Number(allRows.reduce((s, r) => s + r.theoretical_cost, 0).toFixed(4));
   const totals = {
-    quantity_sold: Number(rows.reduce((s, r) => s + r.quantity_sold, 0).toFixed(3)),
+    quantity_sold: Number(allRows.reduce((s, r) => s + r.quantity_sold, 0).toFixed(3)),
     revenue,
     theoretical_cost: theoretical,
     actual_cost: actual,
@@ -168,12 +192,17 @@ export async function computeProfitability(
     gross_profit: Number((revenue - actual).toFixed(4)),
     margin_percent: revenue > 0 ? Number((((revenue - actual) / revenue) * 100).toFixed(2)) : null,
     food_cost_percent: revenue > 0 ? Number(((actual / revenue) * 100).toFixed(2)) : null,
+    allocated_operating_expenses: allocatedOperatingExpenses,
+    contribution_profit: Number((revenue - actual - allocatedOperatingExpenses).toFixed(2)),
+    contribution_margin_percent: revenue > 0
+      ? Number((((revenue - actual - allocatedOperatingExpenses) / revenue) * 100).toFixed(2))
+      : null,
     currency,
   };
 
-  if (input.persist && rows.length > 0) {
+  if (input.persist && allRows.length > 0) {
     const { error } = await sb.from("restaurant_profitability_snapshots").insert(
-      rows.map((r) => ({
+      allRows.map((r) => ({
         tenant_id: input.tenantId,
         property_id: input.propertyId ?? null,
         location_id: input.locationId ?? null,

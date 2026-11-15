@@ -1,10 +1,12 @@
 name: LexiBite CI
+# Phase 3 cost-intelligence acceptance is additionally enforced by phase3-hybrid-allocation.yml.
 
 on:
   push:
     branches:
       - main
       - "release/**"
+      - "feat/operational-cost-intelligence-phase3-workaround"
   pull_request:
     branches:
       - main
