@@ -67,14 +67,14 @@ select public.restaurant_commit_expense_allocations(
  '[{"property_id":"20000000-0000-0000-0000-000000000001","location_id":null,"amount":100000,"currency":"TZS","allocation_method":"direct"}]'::jsonb,
  null
 );
-do $ begin
+do $$ begin
  if (select sum(amount) from public.restaurant_cost_allocations where source_type='operational_expense') <> 100000 then
   raise exception 'expense-to-allocation reconciliation failed'; end if;
  if exists(select 1 from public.restaurant_cost_allocation_exceptions) then
   raise exception 'fully allocated expense incorrectly left an exception'; end if;
-end $;
+end $$;
 -- Idempotency: a second allocation attempt must fail rather than double count.
-do $ begin
+do $$ begin
  begin
   perform public.restaurant_commit_expense_allocations(
    (select id from public.restaurant_operational_expenses where description='Electricity'),
@@ -83,7 +83,7 @@ do $ begin
  exception when others then
   if sqlerrm='duplicate allocation unexpectedly accepted' then raise; end if;
  end;
-end $;
+end $$;
 -- Tenant/property-scoped RLS: user from tenant A cannot read tenant B.
 set local role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
