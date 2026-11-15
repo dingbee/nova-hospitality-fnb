@@ -45,6 +45,28 @@ create policy restaurant_cost_allocation_exceptions_write_scoped on public.resta
 grant select,insert,update,delete on public.restaurant_operational_expense_categories,public.restaurant_operational_expenses,public.restaurant_operational_expense_payments,public.restaurant_operational_expense_schedules,public.restaurant_operational_expense_schedule_occurrences,public.restaurant_cost_allocation_rules,public.restaurant_cost_allocations,public.restaurant_cost_allocation_exceptions to authenticated;
 grant all on public.restaurant_operational_expense_categories,public.restaurant_operational_expenses,public.restaurant_operational_expense_payments,public.restaurant_operational_expense_schedules,public.restaurant_cost_allocation_rules,public.restaurant_cost_allocations,public.restaurant_cost_allocation_exceptions to service_role;
 
+create or replace function public.restaurant_generate_scheduled_expense(p_schedule_id uuid,p_occurrence_date date)
+returns uuid language plpgsql security invoker set search_path=public as $$
+declare s public.restaurant_operational_expense_schedules%rowtype; v_expense_id uuid; v_next date;
+begin
+ select * into s from public.restaurant_operational_expense_schedules where id=p_schedule_id for update;
+ if not found or not s.active then raise exception 'Active expense schedule not found'; end if;
+ if not public.restaurant_can_write_scoped(s.tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],s.property_id) then raise exception 'Not authorized'; end if;
+ if p_occurrence_date<>s.next_occurrence then raise exception 'Occurrence date must match the schedule next_occurrence'; end if;
+ insert into public.restaurant_operational_expenses(tenant_id,property_id,location_id,category_id,description,amount,currency,incurred_on)
+ values(s.tenant_id,s.property_id,s.location_id,s.category_id,s.description,s.amount,s.currency,p_occurrence_date)
+ returning id into v_expense_id;
+ insert into public.restaurant_operational_expense_schedule_occurrences(tenant_id,schedule_id,occurrence_date,expense_id)
+ values(s.tenant_id,s.id,p_occurrence_date,v_expense_id)
+ on conflict(schedule_id,occurrence_date) do update set schedule_id=excluded.schedule_id
+ returning expense_id into v_expense_id;
+ v_next:=case s.cadence when 'weekly' then (p_occurrence_date+7) when 'monthly' then (p_occurrence_date+interval '1 month')::date when 'quarterly' then (p_occurrence_date+interval '3 months')::date when 'annually' then (p_occurrence_date+interval '1 year')::date end;
+ update public.restaurant_operational_expense_schedules set next_occurrence=v_next where id=s.id;
+ return v_expense_id;
+end $$;
+revoke all on function public.restaurant_generate_scheduled_expense(uuid,date) from public,anon;
+grant execute on function public.restaurant_generate_scheduled_expense(uuid,date) to authenticated,service_role;
+
 create or replace function public.restaurant_commit_expense_allocations(p_expense_id uuid,p_allocations jsonb,p_unallocated_reason text default null)
 returns jsonb language plpgsql security invoker set search_path=public as $$
 declare e public.restaurant_operational_expenses%rowtype; a numeric(14,2); u numeric(14,2); r jsonb; n integer:=0;
