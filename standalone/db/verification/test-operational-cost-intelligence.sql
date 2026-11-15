@@ -4,7 +4,7 @@ create extension if not exists pgcrypto;
 create schema if not exists auth;
 do $$ begin create type public.restaurant_role as enum('owner','general_manager','restaurant_manager','accountant'); exception when duplicate_object then null; end $$;
 create table public.restaurant_tenants(id uuid primary key);
-create table public.restaurant_properties(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id));
+create table public.restaurant_properties(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id),currency text not null default 'TZS');
 create table public.restaurant_locations(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id),property_id uuid references public.restaurant_properties(id));
 create table public.restaurant_members(tenant_id uuid,user_id uuid,role public.restaurant_role,property_id uuid);
 create table public.restaurant_stock_movements(
@@ -46,10 +46,11 @@ grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0040_operational_cost_intelligence.sql
 \ir ../migrations/0120_operational_expense_security_closure.sql
 \ir ../migrations/0121_operational_expense_payment_and_schedule_scope_closure.sql
+\ir ../migrations/0122_operational_expense_property_currency_integrity.sql
 
 insert into public.restaurant_tenants values
  ('10000000-0000-0000-0000-000000000001'),('10000000-0000-0000-0000-000000000002');
-insert into public.restaurant_properties values
+insert into public.restaurant_properties(id,tenant_id) values
  ('20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001'),
  ('20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002'),
  ('20000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000001');
@@ -92,6 +93,21 @@ insert into public.restaurant_operational_expenses(tenant_id,property_id,categor
 insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
  select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Pending payment rejection',1000,'TZS','2026-11-01'
  from public.restaurant_operational_expense_categories where category_key='utilities';
+do $phase2$ begin
+ begin
+  insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
+  select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Wrong currency rejection',1000,'USD','2026-11-01'
+  from public.restaurant_operational_expense_categories where category_key='utilities';
+  raise exception 'Property currency mismatch unexpectedly accepted';
+ exception when check_violation then null;
+ end;
+end $phase2$;
+do $phase2$ begin
+ if has_table_privilege('authenticated','public.restaurant_operational_expense_payments','UPDATE')
+    or has_table_privilege('authenticated','public.restaurant_operational_expense_payments','DELETE') then
+  raise exception 'Authenticated payment mutation privileges unexpectedly remain';
+ end if;
+end $phase2$;
 do $phase2$ begin
  begin
   update public.restaurant_operational_expenses
