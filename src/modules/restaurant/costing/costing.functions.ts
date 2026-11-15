@@ -40,7 +40,7 @@ const activityDriverSchema = z.object({
   propertyId: z.string().uuid(),
   locationId: z.string().uuid().nullable().optional(),
   driverKey: z.string().regex(/^[a-z][a-z0-9_]{1,63}$/),
-  periodStart: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   units: z.number().positive().finite(),
 });
 
@@ -57,7 +57,7 @@ export const listRestaurantCostActivityDriversFn = createServerFn({ method: "POS
   .inputValidator((d: unknown) => z.object({
     tenantId: z.string().uuid(),
     driverKey: z.string().regex(/^[a-z][a-z0-9_]{1,63}$/),
-    periodStart: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+    periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     propertyId: z.string().uuid().optional(),
   }).parse(d))
   .handler(async ({ data, context }) => {
