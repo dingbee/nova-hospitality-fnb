@@ -21,8 +21,8 @@ create or replace function public.restaurant_can_write_scoped(_tenant_id uuid,_r
  select exists(select 1 from public.restaurant_members m where m.tenant_id=_tenant_id and m.user_id=auth.uid()
  and m.role=any(_roles) and (_property_id is null or m.property_id is null or m.property_id=_property_id))
 $$;
-create or replace function public.restaurant_is_platform_admin(uuid) returns boolean language sql stable as $ select false $;
-create or replace function public.restaurant_member_active(_user_id uuid,_tenant_id uuid) returns boolean language sql stable as $ select true $;
+create or replace function public.restaurant_is_platform_admin(uuid) returns boolean language sql stable as $fn$ select false $fn$;
+create or replace function public.restaurant_member_active(_user_id uuid,_tenant_id uuid) returns boolean language sql stable as $fn$ select true $fn$;
 do $roles$
 begin
   create role authenticated;
