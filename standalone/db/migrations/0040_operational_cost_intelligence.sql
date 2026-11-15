@@ -68,6 +68,35 @@ end $$;
 revoke all on function public.restaurant_generate_scheduled_expense(uuid,date) from public,anon;
 grant execute on function public.restaurant_generate_scheduled_expense(uuid,date) to authenticated,service_role;
 
+-- Inventory consumption remains recorded only in restaurant_stock_movements.
+-- This RPC projects its recognised cost into the allocation ledger without duplicating stock.
+create or replace function public.restaurant_commit_consumption_allocation(p_movement_id uuid,p_unallocated_reason text default null)
+returns jsonb language plpgsql security invoker set search_path=public as $$
+declare m public.restaurant_stock_movements%rowtype;
+begin
+ select * into m from public.restaurant_stock_movements where id=p_movement_id for update;
+ if not found then raise exception 'Stock movement not found'; end if;
+ if m.movement_type::text not in ('consumption','waste') then raise exception 'Only consumption or waste movements can be allocated'; end if;
+ if not public.restaurant_can_write_scoped(m.tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],m.property_id) then raise exception 'Not authorized'; end if;
+ perform pg_advisory_xact_lock(hashtextextended(m.tenant_id::text||':consumption:'||p_movement_id::text,0));
+ if exists(select 1 from public.restaurant_cost_allocations where tenant_id=m.tenant_id and source_type='operational_consumption' and source_id=p_movement_id)
+ or exists(select 1 from public.restaurant_cost_allocation_exceptions where tenant_id=m.tenant_id and source_type='operational_consumption' and source_id=p_movement_id) then
+  raise exception 'Consumption movement already recognised';
+ end if;
+ if coalesce(m.total_cost,0)<=0 then raise exception 'Consumption movement must have a positive recognised cost'; end if;
+ if m.property_id is null then
+  if nullif(trim(p_unallocated_reason),'') is null then raise exception 'Unallocated consumption requires a reason'; end if;
+  insert into public.restaurant_cost_allocation_exceptions(tenant_id,source_type,source_id,currency,period_start,source_amount,reason)
+  values(m.tenant_id,'operational_consumption',m.id,m.currency,date_trunc('month',m.occurred_at)::date,m.total_cost,p_unallocated_reason);
+  return jsonb_build_object('source_amount',m.total_cost,'allocated_amount',0,'unallocated_amount',m.total_cost,'balanced',true,'allocation_count',0);
+ end if;
+ insert into public.restaurant_cost_allocations(tenant_id,source_type,source_id,property_id,location_id,currency,period_start,amount,allocation_method)
+ values(m.tenant_id,'operational_consumption',m.id,m.property_id,m.location_id,m.currency,date_trunc('month',m.occurred_at)::date,m.total_cost,'direct');
+ return jsonb_build_object('source_amount',m.total_cost,'allocated_amount',m.total_cost,'unallocated_amount',0,'balanced',true,'allocation_count',1);
+end $$;
+revoke all on function public.restaurant_commit_consumption_allocation(uuid,text) from public,anon;
+grant execute on function public.restaurant_commit_consumption_allocation(uuid,text) to authenticated,service_role;
+
 create or replace function public.restaurant_commit_expense_allocations(p_expense_id uuid,p_allocations jsonb,p_unallocated_reason text default null)
 returns jsonb language plpgsql security invoker set search_path=public as $$
 declare e public.restaurant_operational_expenses%rowtype; a numeric(14,2); u numeric(14,2); r jsonb; n integer:=0;
