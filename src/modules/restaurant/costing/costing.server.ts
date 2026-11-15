@@ -573,7 +573,7 @@ export async function uploadOperationalExpenseAttachment(sb:Sb,userId:string,inp
  if(!buffer.length) throw new Error("The selected file is empty.");
  if(buffer.length>EXPENSE_ATTACHMENT_MAX_BYTES) throw new Error("Attachment exceeds the 10MB limit.");
  const ext:Record<string,string>={"application/pdf":"pdf","image/jpeg":"jpg","image/png":"png","image/webp":"webp"};
- const path=`${x.tenantId}/${x.expenseId}/${randomUUID()}.${ext[x.mimeType]}`;
+ const path=`${x.tenantId}/${x.expenseId}/${userId}/${randomUUID()}.${ext[x.mimeType]}`;
  const {error:uploadError}=await sb.storage.from(EXPENSE_ATTACHMENT_BUCKET).upload(path,buffer,{contentType:x.mimeType,upsert:false});
  if(uploadError) throw new Error(uploadError.message);
  const {data:attachment,error}=await sb.from("restaurant_operational_expense_attachments").insert({
