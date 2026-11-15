@@ -557,7 +557,7 @@ function PreparationActions({
     mutationFn: () => commitFn({ data: { tenantId, contract: reviewedContract } }),
     networkMode: "always",
     onSuccess: (result, message) => {
-      if (result.createdRecordId) {
+      if (result.createdRecordId && preparation.workflow) {
         setCommitted({
           createdRecordId: result.createdRecordId,
           documentNumber: result.documentNumber,
