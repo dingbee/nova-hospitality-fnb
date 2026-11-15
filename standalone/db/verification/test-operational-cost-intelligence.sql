@@ -24,7 +24,7 @@ $$;
 create or replace function public.restaurant_is_platform_admin(uuid) returns boolean language sql stable as $$ select false $$;
 create role authenticated;
 create role anon;
-create role service_role;
+create role service_role bypassrls;
 \ir ../migrations/0040_operational_cost_intelligence.sql
 
 insert into public.restaurant_tenants values
