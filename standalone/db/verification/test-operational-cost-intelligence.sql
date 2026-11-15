@@ -65,7 +65,6 @@ grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0126_operational_expense_attachment_and_schedule_hardening.sql
 \ir ../migrations/0127_operational_expense_service_schedule_generation.sql
 \ir ../migrations/0128_operational_expense_automatic_recurring_generation.sql
-\ir ../migrations/0125_operational_expense_complete_workflows.sql
 
 insert into public.restaurant_tenants values
  ('10000000-0000-0000-0000-000000000001'),('10000000-0000-0000-0000-000000000002');
