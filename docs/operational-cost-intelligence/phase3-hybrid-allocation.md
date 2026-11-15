@@ -1,55 +1,51 @@
 # Phase 3 — Hybrid Cost Allocation Engine
 
-## Delivery boundary
+## Scope and architecture
 
-This phase-3 workaround introduces a pure, deterministic allocation kernel against the current accessible `main` architecture. It does not claim to restore or replace the reported Phase 1 Operational Consumables or Phase 2 Operating Expense Management implementation.
+Phase 3 adds deterministic hybrid allocation for operational expenses and operational consumption while preserving the existing restaurant stock-movement ledger as the authoritative consumption source. It does not introduce a second stock, recipe-cost, or accounting ledger.
 
-The original P1/P2 branches and migrations are not present in the connected repository view. Therefore this change intentionally contains no database migration, table write, UI route, server action, or production integration. The kernel is designed to be called by the restored P1/P2 persistence services once their exact contracts are available.
-
-## Existing architecture reused
-
-- `restaurant_tenants`, `restaurant_properties`, and `restaurant_locations` remain the tenancy and operational scope authorities.
-- `restaurant_stock_movements` remains the single stock-consumption ledger.
-- `restaurant_inventory_items.average_cost` remains the weighted-average inventory valuation.
-- Recipe and order-line cost snapshots remain authoritative for food-cost attribution.
-- `restaurant_profitability_snapshots` remains the reporting extension point.
-- Existing capability enforcement and database RLS remain the security boundary.
-
-No second stock ledger, recipe-cost engine, or accounting ledger is introduced.
+The implementation is staged on `feat/operational-cost-intelligence-phase3-workaround`. It is not merged or deployed.
 
 ## Allocation precedence
 
-1. Direct source property/outlet attribution.
+1. Direct source property/location attribution.
 2. Approved, effective-dated, tenant- and currency-matched versioned allocation rule.
-3. Activity-driver allocation from a trusted operational projection.
+3. Activity-driver allocation from persisted operational units.
 4. Explicitly approved manual allocation.
 5. Visible unallocated exception.
 
-A draft, expired, cross-tenant, or wrong-currency rule is never applied. Invalid activity-driver input is rejected. Manual allocations require an approver and must reconcile exactly to the source amount.
+Draft, expired, cross-tenant, wrong-currency, or inapplicable rules must not be applied. Monetary allocation uses integer minor units and deterministic largest-remainder apportionment. Allocations plus any unallocated exception must reconcile exactly to the source amount. Rule-derived allocations retain rule ID and version. Duplicate source recognition is guarded by tenant, source type, and source ID.
 
-## Financial integrity
+## Implemented in this branch
 
-- Monetary apportionment uses integer minor units and largest-remainder rounding.
-- Allocated amounts plus the unallocated exception must equal the original source amount.
-- Duplicate recognition is guarded by tenant + source type + source ID.
-- Currency is carried through each allocation; no FX conversion is attempted.
-- Rule ID and version are retained on rule-derived allocations.
-- Expense recognition and payment remain separate concerns.
-- Consumption sources are represented as references to the existing operational consumption ledger, not recreated as expense rows.
+- Pure allocation kernel and focused unit tests.
+- Migration `0040_operational_cost_intelligence.sql` defining tenant-scoped operational expense categories, expenses, payments, recurring schedules/occurrences, allocation rules, allocations, exceptions, and activity drivers.
+- Database functions for expense allocation, recurring expense generation, and stock-consumption allocation.
+- Payment-status trigger and database-side checks for overpayment, approval, tenant/property scope, allocation method, rule validity, and reconciliation.
+- Activity-driver server functions and capture/list UI in the restaurant costing route.
+- Consumption-allocation server function.
+- Profitability aggregation includes allocated operating expenses, contribution profit, and contribution margin while retaining food-cost metrics separately.
+- Isolated PostgreSQL verification fixture covering payment lifecycle, allocation, recurring idempotency, approved-rule allocation, consumption attribution, activity-driver distribution, RLS isolation, and rollback.
+- Focused CI workflow covering allocation unit tests and the isolated PostgreSQL fixture.
 
-## Acceptance coverage in this branch
+## Verified evidence
 
-The unit suite covers direct attribution precedence, approved-rule allocation, exact rounding/reconciliation, activity-driver fallback, visible unallocated exceptions, manual approval and reconciliation, tenant/currency/effective-date rule rejection, invalid input, and duplicate source recognition.
+On commit `467811e3c527b81de452ac85831fc8f465e67cc8`:
+- Production build completed.
+- The dedicated Phase 3 workflow completed successfully, including focused unit tests and the isolated PostgreSQL migration/verification fixture.
+- The full repository CI typecheck failed on existing errors in events, inventory-agent, masterdata, staffnova, router, and order-table modules. No reported TypeScript error was in the Phase 3 costing files. Lint and later full-suite steps were skipped after typecheck failed.
 
-## Required follow-on before production integration
+The UAT Tenant A transaction checks previously exercised expense payment state transitions, direct allocation, approved 60/40 allocation, recurring generation idempotency, direct consumption attribution, and activity-driver allocation. Those checks were rolled back; no permanent UAT business data or production migration was applied.
 
-1. Restore or recover the actual P1/P2 persistence contracts and migrations.
-2. Add a server adapter using the repository's existing access/capability helpers and tenant/property/location scope checks.
-3. Verify allocation-rule approval permissions and separation of duties against actual role contracts.
-4. Add isolated PostgreSQL tests for constraints, RLS, transaction concurrency, idempotency and rule-version immutability.
-5. Add E2E tests covering consumption + expenses + allocations + profitability without double counting.
-6. Only after those checks, consider UI exposure and deployment.
+## Remaining closure gates
 
-## Status
+1. Complete the application expense lifecycle experience: create/list expenses, submit/approve, record payments, and initiate/review allocations. The current UI addition captures activity drivers; it is not a complete expense-management interface.
+2. Add focused server/UI tests for those workflows and enforce separation of duties using the actual role contracts.
+3. Extend database verification for concurrency, immutable rule versions, exception resolution, and negative authorization cases.
+4. Re-run focused Phase 3 CI and the relevant changed-path tests after the application work.
+5. Re-run and record the full repository CI baseline. The unrelated repository type errors remain separately tracked; do not misrepresent the full CI as green.
+6. Repeat UAT Tenant A verification in rollback-only transactions. No production migration, merge, or deployment is authorized by this phase work.
 
-Phase 3 domain kernel and unit tests are staged on a dedicated feature branch. Database acceptance, P1/P2 integration, E2E acceptance and production promotion are not claimed by this change.
+## Current disposition
+
+Implementation is materially advanced but Phase 3 is **not closed**. The allocation kernel, database fixture, and profitability integration have passing focused evidence. The expense lifecycle UI, expanded security/concurrency acceptance, and final CI evidence remain open.
