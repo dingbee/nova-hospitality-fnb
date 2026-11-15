@@ -246,15 +246,6 @@ begin
 end $$;
 revoke all on function public.restaurant_commit_expense_allocations(uuid,jsonb,text) from public,anon;
 grant execute on function public.restaurant_commit_expense_allocations(uuid,jsonb,text) to authenticated,service_role;
-),
- period_start date not null,
- units numeric(18,4) not null check(units>0),
- captured_at timestamptz not null default now(),
- created_by uuid not null default auth.uid(),
- unique nulls not distinct(tenant_id,property_id,location_id,driver_key,period_start)
-);
-create index if not exists restaurant_cost_activity_drivers_period_idx
- on public.restaurant_cost_activity_drivers(tenant_id,driver_key,period_start,property_id,location_id);
 create table if not exists public.restaurant_cost_allocation_exceptions(id uuid primary key default gen_random_uuid(),tenant_id uuid not null references public.restaurant_tenants(id) on delete cascade,source_type text not null check(source_type in('operational_expense','operational_consumption')),source_id uuid not null,currency text not null check(currency ~ '^[A-Z]{3}$'),period_start date not null,source_amount numeric(14,2) not null check(source_amount>=0),reason text not null,resolved_at timestamptz,created_by uuid not null default auth.uid(),unique(tenant_id,source_type,source_id));
 create index if not exists restaurant_operational_expenses_scope_date_idx on public.restaurant_operational_expenses(tenant_id,property_id,location_id,incurred_on);
 create index if not exists restaurant_cost_allocations_scope_period_idx on public.restaurant_cost_allocations(tenant_id,property_id,location_id,period_start);
