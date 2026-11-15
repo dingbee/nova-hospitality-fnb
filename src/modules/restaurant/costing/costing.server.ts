@@ -244,7 +244,7 @@ const activityDriverInputSchema = z.object({
   propertyId: z.string().uuid(),
   locationId: z.string().uuid().nullable().optional(),
   driverKey: z.string().regex(/^[a-z][a-z0-9_]{1,63}$/),
-  periodStart: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   units: z.number().positive().finite(),
 });
 
@@ -279,7 +279,7 @@ export async function listCostActivityDrivers(
   const parsed = z.object({
     tenantId: z.string().uuid(),
     driverKey: z.string().regex(/^[a-z][a-z0-9_]{1,63}$/),
-    periodStart: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+    periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     propertyId: z.string().uuid().optional(),
   }).parse(input);
   await assertTenantRead(sb, userId, parsed.tenantId, { propertyId: parsed.propertyId ?? null });
