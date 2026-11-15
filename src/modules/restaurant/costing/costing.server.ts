@@ -557,6 +557,13 @@ export async function listOperationalExpenseAuditEvents(sb:Sb,userId:string,tena
   .eq("tenant_id",tenantId).eq("expense_id",expenseId).order("created_at",{ascending:false}).limit(100);
  if(error) throw new Error(error.message); return data??[];
 }
+export async function listOperationalExpenseScheduleAuditEvents(sb:Sb,userId:string,tenantId:string,scheduleId:string) {
+ await assertTenantRead(sb,userId,tenantId);
+ const {data,error}=await sb.from("restaurant_operational_expense_audit_events")
+  .select("id,event_type,actor_id,reason,before_state,after_state,metadata,created_at")
+  .eq("tenant_id",tenantId).eq("schedule_id",scheduleId).order("created_at",{ascending:false}).limit(100);
+ if(error) throw new Error(error.message); return data??[];
+}
 export const EXPENSE_ATTACHMENT_BUCKET="restaurant-expense-attachments";
 const EXPENSE_ATTACHMENT_MAX_BYTES=10*1024*1024;
 const EXPENSE_ATTACHMENT_TYPES=["application/pdf","image/jpeg","image/png","image/webp"] as const;
