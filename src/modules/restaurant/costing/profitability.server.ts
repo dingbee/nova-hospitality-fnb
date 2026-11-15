@@ -37,6 +37,12 @@ export interface ProfitabilityRow {
   currency: string;
 }
 
+export interface ProfitabilityTotals extends Omit<ProfitabilityRow, "menu_item_id" | "menu_item_name"> {
+  allocated_operating_expenses: number;
+  contribution_profit: number;
+  contribution_margin_percent: number | null;
+}
+
 export async function computeProfitability(
   sb: Sb,
   userId: string,
@@ -45,7 +51,7 @@ export async function computeProfitability(
   periodStart: string;
   periodEnd: string;
   rows: ProfitabilityRow[];
-  totals: Omit<ProfitabilityRow, "menu_item_id" | "menu_item_name">;
+  totals: ProfitabilityTotals;
 }> {
   await assertCapability(sb, userId, input.tenantId, "profitability.manage", {
     propertyId: input.propertyId ?? null,
