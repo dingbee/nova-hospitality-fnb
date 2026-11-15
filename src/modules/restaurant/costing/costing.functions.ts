@@ -92,7 +92,7 @@ export const createOperationalExpenseFn = createServerFn({method:"POST"}).middle
  .inputValidator((d:unknown)=>z.object({
   tenantId:z.string().uuid(),propertyId:z.string().uuid().nullable().optional(),locationId:z.string().uuid().nullable().optional(),
   categoryId:z.string().uuid(),description:z.string().trim().min(2).max(240),amount:z.number().positive().finite(),
-  currency:z.string().regex(/^[A-Z]{3}$/),incurredOn:z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+  currency:z.string().regex(/^[A-Z]{3}$/),incurredOn:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
  }).parse(d)).handler(async({data,context})=>{
   const mod=await import("./costing.server"); return mod.createOperationalExpense(context.supabase,context.userId,data);
  });
