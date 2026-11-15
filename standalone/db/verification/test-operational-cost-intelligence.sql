@@ -93,6 +93,35 @@ do $$ begin
   if sqlerrm='duplicate allocation unexpectedly accepted' then raise; end if;
  end;
 end $$;
+-- Recurring schedule idempotency: retries return one expense and advance once.
+insert into public.restaurant_operational_expense_schedules(tenant_id,property_id,category_id,description,amount,currency,cadence,next_occurrence)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Monthly rent',250000,'TZS','monthly',date '2026-11-15'
+from public.restaurant_operational_expense_categories where category_key='utilities';
+select public.restaurant_generate_scheduled_expense((select id from public.restaurant_operational_expense_schedules where description='Monthly rent'),date '2026-11-15');
+select public.restaurant_generate_scheduled_expense((select id from public.restaurant_operational_expense_schedules where description='Monthly rent'),date '2026-11-15');
+do $ begin
+ if (select count(*) from public.restaurant_operational_expenses where description='Monthly rent')<>1 then raise exception 'Recurring schedule generated duplicate expenses'; end if;
+ if (select next_occurrence from public.restaurant_operational_expense_schedules where description='Monthly rent')<>date '2026-12-15' then raise exception 'Recurring schedule did not advance exactly once'; end if;
+end $;
+-- Approved hybrid rules must match their versioned target weights exactly to minor-unit tolerance.
+insert into public.restaurant_operational_expenses(tenant_id,category_id,description,amount,currency,incurred_on)
+select '10000000-0000-0000-0000-000000000001',id,'Shared utilities',100000,'TZS',date '2026-11-01'
+from public.restaurant_operational_expense_categories where category_key='utilities';
+insert into public.restaurant_cost_allocation_rules(tenant_id,name,currency,effective_from,version,targets,status,approved_by,approved_at)
+values('10000000-0000-0000-0000-000000000001','Utilities 60/40','TZS',date '2026-01-01',1,
+'[{"property_id":"20000000-0000-0000-0000-000000000001","location_id":null,"weight":60},{"property_id":"20000000-0000-0000-0000-000000000001","location_id":null,"weight":40}]',
+'approved','30000000-0000-0000-0000-000000000001',now());
+update public.restaurant_operational_expenses set approval_status='approved',approved_by='30000000-0000-0000-0000-000000000001',approved_at=now() where description='Shared utilities';
+select public.restaurant_commit_expense_allocations(
+ (select id from public.restaurant_operational_expenses where description='Shared utilities'),
+ jsonb_build_array(
+  jsonb_build_object('property_id','20000000-0000-0000-0000-000000000001','amount',60000,'currency','TZS','allocation_method','approved_rule','rule_id',(select id from public.restaurant_cost_allocation_rules where name='Utilities 60/40'),'rule_version',1),
+  jsonb_build_object('property_id','20000000-0000-0000-0000-000000000001','amount',40000,'currency','TZS','allocation_method','approved_rule','rule_id',(select id from public.restaurant_cost_allocation_rules where name='Utilities 60/40'),'rule_version',1)
+ ),null
+);
+do $ begin
+ if (select sum(amount) from public.restaurant_cost_allocations where source_id=(select id from public.restaurant_operational_expenses where description='Shared utilities'))<>100000 then raise exception 'Approved rule allocation did not reconcile'; end if;
+end $;
 -- Tenant/property-scoped RLS: user from tenant A cannot read tenant B.
 set local role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
