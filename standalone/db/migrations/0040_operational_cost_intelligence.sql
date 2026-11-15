@@ -119,8 +119,11 @@ begin
     ) then raise exception 'Duplicate approved-rule allocation target'; end if;
     if abs((r->>'amount')::numeric - round(e.amount *
       (select (t->>'weight')::numeric / nullif((select sum((v->>'weight')::numeric) from jsonb_array_elements(ar.targets) v),0)
-       from jsonb_array_elements(ar.targets) t
-       where t->>'property_id'=r->>'property_id' and coalesce(t->>'location_id','')=coalesce(r->>'location_id','')),2)) > 0.01 then
+       from public.restaurant_cost_allocation_rules ar
+       cross join lateral jsonb_array_elements(ar.targets) t
+       where ar.id=(r->>'rule_id')::uuid
+         and t->>'property_id'=r->>'property_id'
+         and coalesce(t->>'location_id','')=coalesce(r->>'location_id','')),2)) > 0.01 then
       raise exception 'Approved-rule allocation amount does not match configured weight';
     end if;
   end if;
