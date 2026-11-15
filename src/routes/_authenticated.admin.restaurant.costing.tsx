@@ -133,12 +133,12 @@ function CostingPage() {
   const clearExpenseForm = () => {setEditingExpenseId("");setDescription("");setAmount("");setSupplierId("");setExpenseLocation("");};
   const createCategory = useAdminMutation({mutationFn:()=>createCategoryFn({data:{tenantId:tenantId!,name:newCategoryName,categoryKey:newCategoryName.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,""),parentCategoryId:newCategoryParentId||null}}),successMessage:"Expense category created",onSuccess:()=>{setNewCategoryName("");setNewCategoryParentId("");void qc.invalidateQueries({queryKey:["restaurant.expense-categories",tenantId]});}});
   const createExpense = useAdminMutation({mutationFn:(status:"draft"|"recorded")=>createExpenseFn({data:{tenantId:tenantId!,propertyId:expenseProperty||null,locationId:expenseLocation||null,categoryId,supplierId:supplierId||null,description,amount:Number(amount),currency,incurredOn,expenseStatus:status}}),successMessage:"Expense saved",onSuccess:()=>{clearExpenseForm();refreshExpenses();}});
-  const updateExpense = useAdminMutation({mutationFn:()=>updateExpenseFn({data:{tenantId:tenantId!,expenseId:editingExpenseId,propertyId:expenseProperty||null,locationId:expenseLocation||null,categoryId,supplierId:supplierId||null,description,amount:Number(amount),currency,incurredOn}}),successMessage:"Expense updated",onSuccess:()=>{clearExpenseForm();refreshExpenses();}});
-  const recordDraft = useAdminMutation({mutationFn:(expenseId:string)=>recordDraftFn({data:{tenantId:tenantId!,expenseId}}),successMessage:"Draft recorded",onSuccess:refreshExpenses});
-  const approveExpense = useAdminMutation({mutationFn:(expenseId:string)=>approveExpenseFn({data:{tenantId:tenantId!,expenseId}}),successMessage:"Expense approved",onSuccess:refreshExpenses});
-  const rejectExpense = useAdminMutation({mutationFn:(v:{expenseId:string;reason:string})=>rejectExpenseFn({data:{tenantId:tenantId!,...v}}),successMessage:"Expense rejected",onSuccess:refreshExpenses});
-  const cancelExpense = useAdminMutation({mutationFn:(v:{expenseId:string;reason:string})=>cancelExpenseFn({data:{tenantId:tenantId!,...v}}),successMessage:"Expense cancelled",onSuccess:refreshExpenses});
-  const recordPayment = useAdminMutation({mutationFn:(v:{expenseId:string;amount:number;currency:string})=>paymentFn({data:{tenantId:tenantId!,...v}}),successMessage:"Payment recorded",onSuccess:refreshExpenses});
+  const updateExpense = useAdminMutation({mutationFn:()=>updateExpenseFn({data:{tenantId:tenantId!,expenseId:editingExpenseId,propertyId:expenseProperty||null,locationId:expenseLocation||null,categoryId,supplierId:supplierId||null,description,amount:Number(amount),currency,incurredOn}}),successMessage:"Expense updated",onSuccess:()=>{clearExpenseForm();refreshExpenses();refreshDetails();}});
+  const recordDraft = useAdminMutation({mutationFn:(expenseId:string)=>recordDraftFn({data:{tenantId:tenantId!,expenseId}}),successMessage:"Draft recorded",onSuccess:()=>{refreshExpenses();refreshDetails();}});
+  const approveExpense = useAdminMutation({mutationFn:(expenseId:string)=>approveExpenseFn({data:{tenantId:tenantId!,expenseId}}),successMessage:"Expense approved",onSuccess:()=>{refreshExpenses();refreshDetails();}});
+  const rejectExpense = useAdminMutation({mutationFn:(v:{expenseId:string;reason:string})=>rejectExpenseFn({data:{tenantId:tenantId!,...v}}),successMessage:"Expense rejected",onSuccess:()=>{refreshExpenses();refreshDetails();}});
+  const cancelExpense = useAdminMutation({mutationFn:(v:{expenseId:string;reason:string})=>cancelExpenseFn({data:{tenantId:tenantId!,...v}}),successMessage:"Expense cancelled",onSuccess:()=>{refreshExpenses();refreshDetails();}});
+  const recordPayment = useAdminMutation({mutationFn:(v:{expenseId:string;amount:number;currency:string})=>paymentFn({data:{tenantId:tenantId!,...v}}),successMessage:"Payment recorded",onSuccess:()=>{refreshExpenses();refreshDetails();}});
   const allocateExpense = useAdminMutation({mutationFn:(expenseId:string)=>allocateExpenseFn({data:{tenantId:tenantId!,expenseId}}),successMessage:"Expense allocated",onSuccess:refreshExpenses});
   const uploadAttachment = useAdminMutation({mutationFn:(v:{expenseId:string;fileName:string;mimeType:"application/pdf"|"image/jpeg"|"image/png"|"image/webp";fileBase64:string})=>uploadAttachmentFn({data:{tenantId:tenantId!,...v}}),successMessage:"Evidence attached",onSuccess:refreshDetails});
   const removeAttachment = useAdminMutation({mutationFn:(attachmentId:string)=>removeAttachmentFn({data:{tenantId:tenantId!,attachmentId}}),successMessage:"Evidence removed",onSuccess:refreshDetails});
@@ -176,7 +176,8 @@ function CostingPage() {
         title="Expense Centre & Recipe Costing"
         description="Operating expense control, recurring commitments and audit evidence alongside deterministic recipe costing."
       />
-      <SectionCard title="Latest costings">
+      <nav className="flex flex-wrap gap-2 text-sm"><a className="rounded-md border px-3 py-1.5" href="#expense-centre">Expense Centre</a><a className="rounded-md border px-3 py-1.5" href="#recurring-expenses">Recurring expenses</a><a className="rounded-md border px-3 py-1.5" href="#recipe-costing">Recipe costing</a></nav>
+      <div id="recipe-costing"><SectionCard title="Latest costings">
         {(q.data ?? []).length === 0 ? (
           <EmptyState title="Nothing costed yet" description="Add recipe components to a menu item, then compute its cost." />
         ) : (
@@ -192,7 +193,7 @@ function CostingPage() {
             ))}
           </ul>
         )}
-      </SectionCard>
+      </SectionCard></div>
 
       <div id="expense-centre">
       <SectionCard title="Expense Centre" description="Manage one-off and recurring expenses, supplier links, approval decisions, payments, evidence and a complete audit trail.">
@@ -270,13 +271,13 @@ function CostingPage() {
         </div>
         {selectedExpenseForDetails&&<div className="mt-4 grid gap-4 border-t pt-4 lg:grid-cols-2">
           <div><div className="mb-2 flex items-center justify-between"><h3 className="font-medium">Evidence</h3><Button size="sm" variant="ghost" onClick={()=>setSelectedExpenseForDetails("")}>Close</Button></div>
-            {(attachments.data??[]).length===0?<p className="text-sm text-muted-foreground">No attachments.</p>:<ul className="divide-y text-sm">{(attachments.data??[]).map((a:any)=><li key={a.id} className="flex items-center justify-between gap-2 py-2"><a className="underline" href={a.signedUrl} target="_blank" rel="noreferrer">{a.file_name}</a><span className="text-xs text-muted-foreground">{Math.ceil(a.size_bytes/1024)} KB</span><Button size="sm" variant="ghost" onClick={()=>removeAttachment.mutate(a.id)}>Remove</Button></li>)}</ul>}
+            {(attachments.data??[]).length===0?<p className="text-sm text-muted-foreground">No attachments.</p>:<ul className="divide-y text-sm">{(attachments.data??[]).map((a:any)=><li key={a.id} className="flex items-center justify-between gap-2 py-2"><a className="underline" href={a.signedUrl} target="_blank" rel="noreferrer">{a.file_name}</a><span className="text-xs text-muted-foreground">{Math.ceil(a.size_bytes/1024)} KB</span>{a.canRemove&&<Button size="sm" variant="ghost" onClick={()=>removeAttachment.mutate(a.id)}>Remove</Button>}</li>)}</ul>}
           </div>
           <div><h3 className="mb-2 font-medium">Audit history</h3>{(auditEvents.data??[]).length===0?<p className="text-sm text-muted-foreground">No history yet.</p>:<ol className="space-y-2 text-sm">{(auditEvents.data??[]).map((a:any)=><li key={a.id} className="border-l-2 pl-3"><div className="font-medium capitalize">{a.event_type.replaceAll("_"," ")}</div><div className="text-xs text-muted-foreground">{new Date(a.created_at).toLocaleString()}{a.reason?" · "+a.reason:""}</div></li>)}</ol>}</div>
         </div>}
       </SectionCard>
       </div>
-      <SectionCard title="Recurring expense schedules" description="Create, edit, pause, resume and generate recurring expenses. Occurrences are idempotent and retain supplier, property and category context.">
+      <div id="recurring-expenses"><SectionCard title="Recurring expense schedules" description="Create, edit, pause, resume and generate recurring expenses. Occurrences are idempotent and retain supplier, property and category context.">
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <select className="h-9 rounded-md border bg-background px-2 text-sm" value={scheduleProperty} onChange={e=>{const value=e.target.value;setScheduleProperty(value);setScheduleLocation("");const p=properties.find((x:any)=>x.id===value);if(p?.currency)setScheduleCurrency(p.currency);}} aria-label="Schedule property">
             <option value="">Shared / unassigned</option>{properties.map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}
@@ -304,7 +305,7 @@ function CostingPage() {
           <div><div className="font-medium">{s.description} · {s.currency} {Number(s.amount).toLocaleString()}</div><div className="text-xs text-muted-foreground">{s.cadence} · next {s.next_occurrence}{s.ends_on?" · ends "+s.ends_on:""} · {properties.find((p:any)=>p.id===s.property_id)?.name??"Shared"} · {s.active?"Active":"Paused"}</div></div>
           <div className="flex flex-wrap gap-1"><Button size="sm" variant="outline" onClick={()=>{setEditingScheduleId(s.id);setScheduleProperty(s.property_id??"");setScheduleLocation(s.location_id??"");setScheduleCategory(s.category_id);setScheduleSupplier(s.supplier_id??"");setScheduleDescription(s.description);setScheduleAmount(String(s.amount));setScheduleCurrency(s.currency);setScheduleCadence(s.cadence);setScheduleNext(s.next_occurrence);setScheduleEnds(s.ends_on??"");}}>Edit</Button><Button size="sm" variant="outline" disabled={setScheduleActive.isPending} onClick={()=>setScheduleActive.mutate({scheduleId:s.id,active:!s.active})}>{s.active?"Pause":"Resume"}</Button><Button size="sm" disabled={!s.active||generateOccurrence.isPending} onClick={()=>generateOccurrence.mutate({scheduleId:s.id,occurrenceDate:s.next_occurrence})}>Generate next</Button></div>
         </li>)}</ul>
-      </SectionCard>
+      </SectionCard></div>
       <SectionCard title="Shared expense allocation rules" description="Create weighted, versioned property splits. A second authorized user must approve each draft before it can be applied to an approved expense.">
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <Input value={ruleName} onChange={e=>setRuleName(e.target.value)} placeholder="Rule name (e.g. Head office)" aria-label="Allocation rule name"/>
