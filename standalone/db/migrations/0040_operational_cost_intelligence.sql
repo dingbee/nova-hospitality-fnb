@@ -249,15 +249,3 @@ grant execute on function public.restaurant_commit_expense_allocations(uuid,json
 create table if not exists public.restaurant_cost_allocation_exceptions(id uuid primary key default gen_random_uuid(),tenant_id uuid not null references public.restaurant_tenants(id) on delete cascade,source_type text not null check(source_type in('operational_expense','operational_consumption')),source_id uuid not null,currency text not null check(currency ~ '^[A-Z]{3}$'),period_start date not null,source_amount numeric(14,2) not null check(source_amount>=0),reason text not null,resolved_at timestamptz,created_by uuid not null default auth.uid(),unique(tenant_id,source_type,source_id));
 create index if not exists restaurant_operational_expenses_scope_date_idx on public.restaurant_operational_expenses(tenant_id,property_id,location_id,incurred_on);
 create index if not exists restaurant_cost_allocations_scope_period_idx on public.restaurant_cost_allocations(tenant_id,property_id,location_id,period_start);
-create or replace function public.restaurant_sync_operational_expense_payment() returns trigger language plpgsql security invoker set search_path=public as $$
-declare x uuid; paid numeric(14,2); total numeric(14,2); curr text;
-begin x:=case when tg_op='DELETE' then old.expense_id else new.expense_id end;
-select amount,currency into total,curr from public.restaurant_operational_expenses where id=x for update;
-if not found then raise exception 'Expense not found'; end if;
-if exists(select 1 from public.restaurant_operational_expense_payments where expense_id=x and currency<>curr) then raise exception 'Payment currency mismatch'; end if;
-select coalesce(sum(amount),0) into paid from public.restaurant_operational_expense_payments where expense_id=x;
-if paid>total then raise exception 'Payments exceed expense amount'; end if;
-update public.restaurant_operational_expenses set paid_amount=paid,payment_status=case when paid=0 then 'unpaid' when paid=total then 'paid' else 'partially_paid' end,updated_at=now() where id=x;
-if tg_op='DELETE' then return old; else return new; end if; end $$;
-drop trigger if exists restaurant_operational_expense_payment_sync on public.restaurant_operational_expense_payments;
-create trigger restaurant_operational_expense_payment_sync after insert or update or delete on public.restaurant_operational_expense_payments for each row execute function public.restaurant_sync_operational_expense_payment();
