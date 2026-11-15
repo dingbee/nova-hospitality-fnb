@@ -26,7 +26,8 @@ insert into public.restaurant_tenants values
  ('10000000-0000-0000-0000-000000000001'),('10000000-0000-0000-0000-000000000002');
 insert into public.restaurant_properties values
  ('20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001'),
- ('20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002');
+ ('20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002'),
+ ('20000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000001');
 insert into public.restaurant_members values
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','owner',null);
 -- Seed tenant B through service role so the authenticated tenant-A check proves isolation.
@@ -109,14 +110,14 @@ select '10000000-0000-0000-0000-000000000001',id,'Shared utilities',100000,'TZS'
 from public.restaurant_operational_expense_categories where category_key='utilities';
 insert into public.restaurant_cost_allocation_rules(tenant_id,name,currency,effective_from,version,targets,status,approved_by,approved_at)
 values('10000000-0000-0000-0000-000000000001','Utilities 60/40','TZS',date '2026-01-01',1,
-'[{"property_id":"20000000-0000-0000-0000-000000000001","location_id":null,"weight":60},{"property_id":"20000000-0000-0000-0000-000000000001","location_id":null,"weight":40}]',
+'[{"property_id":"20000000-0000-0000-0000-000000000001","location_id":null,"weight":60},{"property_id":"20000000-0000-0000-0000-000000000003","location_id":null,"weight":40}]',
 'approved','30000000-0000-0000-0000-000000000001',now());
 update public.restaurant_operational_expenses set approval_status='approved',approved_by='30000000-0000-0000-0000-000000000001',approved_at=now() where description='Shared utilities';
 select public.restaurant_commit_expense_allocations(
  (select id from public.restaurant_operational_expenses where description='Shared utilities'),
  jsonb_build_array(
   jsonb_build_object('property_id','20000000-0000-0000-0000-000000000001','amount',60000,'currency','TZS','allocation_method','approved_rule','rule_id',(select id from public.restaurant_cost_allocation_rules where name='Utilities 60/40'),'rule_version',1),
-  jsonb_build_object('property_id','20000000-0000-0000-0000-000000000001','amount',40000,'currency','TZS','allocation_method','approved_rule','rule_id',(select id from public.restaurant_cost_allocation_rules where name='Utilities 60/40'),'rule_version',1)
+  jsonb_build_object('property_id','20000000-0000-0000-0000-000000000003','amount',40000,'currency','TZS','allocation_method','approved_rule','rule_id',(select id from public.restaurant_cost_allocation_rules where name='Utilities 60/40'),'rule_version',1)
  ),null
 );
 do $ begin
