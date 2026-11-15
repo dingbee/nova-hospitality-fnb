@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS public.restaurant_operational_expense_audit_events (
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT restaurant_operational_expense_audit_entity_check
-    CHECK ((expense_id IS NOT NULL)::integer + (schedule_id IS NOT NULL)::integer = 1),
+    CHECK ((expense_id IS NOT NULL) <> (schedule_id IS NOT NULL)),
   CONSTRAINT restaurant_operational_expense_audit_expense_fk
     FOREIGN KEY (tenant_id,expense_id)
     REFERENCES public.restaurant_operational_expenses(tenant_id,id) ON DELETE CASCADE,
@@ -124,7 +124,7 @@ CREATE POLICY restaurant_operational_expense_attachments_read_scope
 ON public.restaurant_operational_expense_attachments FOR SELECT TO authenticated
 USING (
   EXISTS (SELECT 1 FROM public.restaurant_operational_expenses e
-    WHERE e.id=expense_id AND e.tenant_id=tenant_id
+    WHERE e.id=restaurant_operational_expense_attachments.expense_id AND e.tenant_id=restaurant_operational_expense_attachments.tenant_id
       AND public.restaurant_can_read_scoped(e.tenant_id,e.property_id))
 );
 DROP POLICY IF EXISTS restaurant_operational_expense_attachments_insert_scope ON public.restaurant_operational_expense_attachments;
