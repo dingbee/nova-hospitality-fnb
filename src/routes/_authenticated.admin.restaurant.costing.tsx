@@ -19,7 +19,7 @@ import {
   rejectOperationalExpenseFn, cancelOperationalExpenseFn, listOperationalExpenseAuditEventsFn,
   uploadOperationalExpenseAttachmentFn, listOperationalExpenseAttachmentsFn, removeOperationalExpenseAttachmentFn,
   listRecurringExpenseSchedulesFn, createRecurringExpenseScheduleFn, updateRecurringExpenseScheduleFn,
-  setRecurringExpenseScheduleActiveFn, generateRecurringExpenseOccurrenceFn,
+  setRecurringExpenseScheduleActiveFn, generateRecurringExpenseOccurrenceFn, listOperationalExpenseScheduleAuditEventsFn,
   listCostAllocationRulesFn, createCostAllocationRuleFn, approveCostAllocationRuleFn, allocateOperationalExpenseByRuleFn,
 } from "@/modules/restaurant/costing/costing.functions";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
@@ -94,6 +94,7 @@ function CostingPage() {
   const updateScheduleFn = useServerFn(updateRecurringExpenseScheduleFn);
   const scheduleActiveFn = useServerFn(setRecurringExpenseScheduleActiveFn);
   const generateOccurrenceFn = useServerFn(generateRecurringExpenseOccurrenceFn);
+  const scheduleAuditFn = useServerFn(listOperationalExpenseScheduleAuditEventsFn);
   const locations = ws.data?.locations ?? [];
   const [newCategoryName,setNewCategoryName] = useState("");
   const [newCategoryParentId,setNewCategoryParentId] = useState("");
@@ -121,12 +122,14 @@ function CostingPage() {
   const [scheduleNext, setScheduleNext] = useState(() => new Date().toISOString().slice(0,10));
   const [scheduleEnds, setScheduleEnds] = useState("");
   const [editingScheduleId, setEditingScheduleId] = useState("");
+  const [selectedScheduleForDetails, setSelectedScheduleForDetails] = useState("");
   const categories = useQuery({queryKey:["restaurant.expense-categories",tenantId],queryFn:()=>categoryListFn({data:{tenantId:tenantId!}}),enabled:Boolean(tenantId)});
   const expenses = useQuery({queryKey:["restaurant.operational-expenses",tenantId],queryFn:()=>expenseListFn({data:{tenantId:tenantId!}}),enabled:Boolean(tenantId)});
   const suppliers = useQuery({queryKey:["restaurant.expense-suppliers",tenantId],queryFn:()=>supplierListFn({data:{tenantId:tenantId!}}),enabled:Boolean(tenantId)});
   const schedules = useQuery({queryKey:["restaurant.expense-schedules",tenantId],queryFn:()=>scheduleListFn({data:{tenantId:tenantId!}}),enabled:Boolean(tenantId)});
   const auditEvents = useQuery({queryKey:["restaurant.expense-audit",tenantId,selectedExpenseForDetails],queryFn:()=>auditListFn({data:{tenantId:tenantId!,expenseId:selectedExpenseForDetails}}),enabled:Boolean(tenantId&&selectedExpenseForDetails)});
   const attachments = useQuery({queryKey:["restaurant.expense-attachments",tenantId,selectedExpenseForDetails],queryFn:()=>attachmentListFn({data:{tenantId:tenantId!,expenseId:selectedExpenseForDetails}}),enabled:Boolean(tenantId&&selectedExpenseForDetails)});
+  const scheduleAuditEvents = useQuery({queryKey:["restaurant.expense-schedule-audit",tenantId,selectedScheduleForDetails],queryFn:()=>scheduleAuditFn({data:{tenantId:tenantId!,scheduleId:selectedScheduleForDetails}}),enabled:Boolean(tenantId&&selectedScheduleForDetails)});
   const refreshExpenses = () => { void qc.invalidateQueries({queryKey:["restaurant.operational-expenses",tenantId]}); };
   const refreshSchedules = () => { void qc.invalidateQueries({queryKey:["restaurant.expense-schedules",tenantId]}); };
   const refreshDetails = () => { void qc.invalidateQueries({queryKey:["restaurant.expense-audit",tenantId,selectedExpenseForDetails]}); void qc.invalidateQueries({queryKey:["restaurant.expense-attachments",tenantId,selectedExpenseForDetails]}); };
@@ -303,8 +306,9 @@ function CostingPage() {
         <div className="mt-3 flex justify-end gap-2">{editingScheduleId&&<Button size="sm" variant="ghost" onClick={()=>{setEditingScheduleId("");setScheduleDescription("");setScheduleAmount("");}}>Cancel edit</Button>}<Button size="sm" disabled={!scheduleCategory||scheduleDescription.trim().length<2||Number(scheduleAmount)<=0||(editingScheduleId?updateSchedule.isPending:createSchedule.isPending)} onClick={()=>editingScheduleId?updateSchedule.mutate():createSchedule.mutate()}>{editingScheduleId?"Save schedule":"Create schedule"}</Button></div>
         <ul className="mt-4 divide-y text-sm">{(schedules.data??[]).map((s:any)=><li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
           <div><div className="font-medium">{s.description} · {s.currency} {Number(s.amount).toLocaleString()}</div><div className="text-xs text-muted-foreground">{s.cadence} · next {s.next_occurrence}{s.ends_on?" · ends "+s.ends_on:""} · {properties.find((p:any)=>p.id===s.property_id)?.name??"Shared"} · {s.active?"Active":"Paused"}</div></div>
-          <div className="flex flex-wrap gap-1"><Button size="sm" variant="outline" onClick={()=>{setEditingScheduleId(s.id);setScheduleProperty(s.property_id??"");setScheduleLocation(s.location_id??"");setScheduleCategory(s.category_id);setScheduleSupplier(s.supplier_id??"");setScheduleDescription(s.description);setScheduleAmount(String(s.amount));setScheduleCurrency(s.currency);setScheduleCadence(s.cadence);setScheduleNext(s.next_occurrence);setScheduleEnds(s.ends_on??"");}}>Edit</Button><Button size="sm" variant="outline" disabled={setScheduleActive.isPending} onClick={()=>setScheduleActive.mutate({scheduleId:s.id,active:!s.active})}>{s.active?"Pause":"Resume"}</Button><Button size="sm" disabled={!s.active||generateOccurrence.isPending} onClick={()=>generateOccurrence.mutate({scheduleId:s.id,occurrenceDate:s.next_occurrence})}>Generate next</Button></div>
+          <div className="flex flex-wrap gap-1"><Button size="sm" variant="outline" onClick={()=>{setEditingScheduleId(s.id);setScheduleProperty(s.property_id??"");setScheduleLocation(s.location_id??"");setScheduleCategory(s.category_id);setScheduleSupplier(s.supplier_id??"");setScheduleDescription(s.description);setScheduleAmount(String(s.amount));setScheduleCurrency(s.currency);setScheduleCadence(s.cadence);setScheduleNext(s.next_occurrence);setScheduleEnds(s.ends_on??"");}}>Edit</Button><Button size="sm" variant="outline" disabled={setScheduleActive.isPending} onClick={()=>setScheduleActive.mutate({scheduleId:s.id,active:!s.active})}>{s.active?"Pause":"Resume"}</Button><Button size="sm" disabled={!s.active||generateOccurrence.isPending} onClick={()=>generateOccurrence.mutate({scheduleId:s.id,occurrenceDate:s.next_occurrence})}>Generate next</Button><Button size="sm" variant="ghost" onClick={()=>setSelectedScheduleForDetails(s.id)}>History</Button></div>
         </li>)}</ul>
+        {selectedScheduleForDetails&&<div className="mt-4 border-t pt-4"><div className="mb-2 flex items-center justify-between"><h3 className="font-medium">Schedule audit history</h3><Button size="sm" variant="ghost" onClick={()=>setSelectedScheduleForDetails("")}>Close</Button></div>{(scheduleAuditEvents.data??[]).length===0?<p className="text-sm text-muted-foreground">No schedule history yet.</p>:<ol className="space-y-2 text-sm">{(scheduleAuditEvents.data??[]).map((a:any)=><li key={a.id} className="border-l-2 pl-3"><div className="font-medium capitalize">{a.event_type.replaceAll("_"," ")}</div><div className="text-xs text-muted-foreground">{new Date(a.created_at).toLocaleString()}{a.actor_id?" · "+a.actor_id:""}{a.reason?" · "+a.reason:""}</div></li>)}</ol>}</div>}
       </SectionCard></div>
       <SectionCard title="Shared expense allocation rules" description="Create weighted, versioned property splits. A second authorized user must approve each draft before it can be applied to an approved expense.">
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
