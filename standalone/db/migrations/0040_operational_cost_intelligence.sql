@@ -5,6 +5,15 @@ create table if not exists public.restaurant_operational_expense_payments(id uui
 create table if not exists public.restaurant_operational_expense_schedules(id uuid primary key default gen_random_uuid(),tenant_id uuid not null references public.restaurant_tenants(id) on delete cascade,property_id uuid references public.restaurant_properties(id),location_id uuid references public.restaurant_locations(id),category_id uuid not null references public.restaurant_operational_expense_categories(id),description text not null,amount numeric(14,2) not null check(amount>0),currency text not null check(currency ~ '^[A-Z]{3}$'),cadence text not null check(cadence in('weekly','monthly','quarterly','annually')),next_occurrence date not null,active boolean not null default true,created_by uuid not null default auth.uid(),check(property_id is not null or location_id is null));
 create table if not exists public.restaurant_cost_allocation_rules(id uuid primary key default gen_random_uuid(),tenant_id uuid not null references public.restaurant_tenants(id) on delete cascade,name text not null,currency text not null check(currency ~ '^[A-Z]{3}$'),effective_from date not null,effective_to date,version integer not null check(version>0),targets jsonb not null check(jsonb_typeof(targets)='array' and jsonb_array_length(targets)>0),status text not null default 'draft' check(status in('draft','approved','retired')),approved_by uuid,approved_at timestamptz,created_by uuid not null default auth.uid(),unique(tenant_id,name,version),check(effective_to is null or effective_to>=effective_from),check(status<>'approved' or (approved_by is not null and approved_at is not null)));
 create table if not exists public.restaurant_cost_allocations(id uuid primary key default gen_random_uuid(),tenant_id uuid not null references public.restaurant_tenants(id) on delete cascade,source_type text not null check(source_type in('operational_expense','operational_consumption')),source_id uuid not null,property_id uuid not null references public.restaurant_properties(id),location_id uuid references public.restaurant_locations(id),currency text not null check(currency ~ '^[A-Z]{3}$'),period_start date not null,amount numeric(14,2) not null check(amount>0),allocation_method text not null check(allocation_method in('direct','approved_rule','activity_driver','manual')),rule_id uuid references public.restaurant_cost_allocation_rules(id),rule_version integer,approved_by uuid,created_by uuid not null default auth.uid(),check((allocation_method='approved_rule')=(rule_id is not null)),check(allocation_method<>'manual' or approved_by is not null));
+create table if not exists public.restaurant_operational_expense_schedule_occurrences(
+ id uuid primary key default gen_random_uuid(),
+ tenant_id uuid not null references public.restaurant_tenants(id) on delete cascade,
+ schedule_id uuid not null references public.restaurant_operational_expense_schedules(id) on delete cascade,
+ occurrence_date date not null,
+ expense_id uuid references public.restaurant_operational_expenses(id),
+ created_at timestamptz not null default now(),
+ unique(schedule_id,occurrence_date)
+);
 create table if not exists public.restaurant_cost_allocation_exceptions(id uuid primary key default gen_random_uuid(),tenant_id uuid not null references public.restaurant_tenants(id) on delete cascade,source_type text not null check(source_type in('operational_expense','operational_consumption')),source_id uuid not null,currency text not null check(currency ~ '^[A-Z]{3}$'),period_start date not null,source_amount numeric(14,2) not null check(source_amount>=0),reason text not null,resolved_at timestamptz,created_by uuid not null default auth.uid(),unique(tenant_id,source_type,source_id));
 create index if not exists restaurant_operational_expenses_scope_date_idx on public.restaurant_operational_expenses(tenant_id,property_id,location_id,incurred_on);
 create index if not exists restaurant_cost_allocations_scope_period_idx on public.restaurant_cost_allocations(tenant_id,property_id,location_id,period_start);
@@ -20,7 +29,7 @@ update public.restaurant_operational_expenses set paid_amount=paid,payment_statu
 if tg_op='DELETE' then return old; else return new; end if; end $$;
 drop trigger if exists restaurant_operational_expense_payment_sync on public.restaurant_operational_expense_payments;
 create trigger restaurant_operational_expense_payment_sync after insert or update or delete on public.restaurant_operational_expense_payments for each row execute function public.restaurant_sync_operational_expense_payment();
-do $$ declare t text; s text; begin foreach t in array array['restaurant_operational_expense_categories','restaurant_operational_expenses','restaurant_operational_expense_payments','restaurant_operational_expense_schedules','restaurant_cost_allocation_rules','restaurant_cost_allocations','restaurant_cost_allocation_exceptions'] loop
+do $$ declare t text; s text; begin foreach t in array array['restaurant_operational_expense_categories','restaurant_operational_expenses','restaurant_operational_expense_payments','restaurant_operational_expense_schedules','restaurant_operational_expense_schedule_occurrences','restaurant_cost_allocation_rules','restaurant_cost_allocations','restaurant_cost_allocation_exceptions'] loop
 execute format('alter table public.%I enable row level security',t);
 s:=case when t in('restaurant_operational_expenses','restaurant_operational_expense_schedules','restaurant_cost_allocations') then 'property_id' when t='restaurant_operational_expense_payments' then '(select property_id from public.restaurant_operational_expenses e where e.id=expense_id)' else 'null' end;
 execute format('create policy %I on public.%I for select to authenticated using(public.restaurant_can_read_scoped(tenant_id,%s))',t||'_read_scoped',t,s);
@@ -28,11 +37,12 @@ end loop; end $$;
 create policy restaurant_operational_expense_categories_write_scoped on public.restaurant_operational_expense_categories for all to authenticated using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],null)) with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],null));
 create policy restaurant_operational_expenses_write_scoped on public.restaurant_operational_expenses for all to authenticated using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id)) with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id));
 create policy restaurant_operational_expense_payments_write_scoped on public.restaurant_operational_expense_payments for all to authenticated using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],(select property_id from public.restaurant_operational_expenses e where e.id=expense_id))) with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],(select property_id from public.restaurant_operational_expenses e where e.id=expense_id)));
+create policy restaurant_operational_expense_schedule_occurrences_write_scoped on public.restaurant_operational_expense_schedule_occurrences for all to authenticated using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],null)) with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],null));
 create policy restaurant_operational_expense_schedules_write_scoped on public.restaurant_operational_expense_schedules for all to authenticated using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id)) with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id));
 create policy restaurant_cost_allocation_rules_write_scoped on public.restaurant_cost_allocation_rules for all to authenticated using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],null)) with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],null));
 create policy restaurant_cost_allocations_write_scoped on public.restaurant_cost_allocations for all to authenticated using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id)) with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id));
 create policy restaurant_cost_allocation_exceptions_write_scoped on public.restaurant_cost_allocation_exceptions for all to authenticated using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],null)) with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],null));
-grant select,insert,update,delete on public.restaurant_operational_expense_categories,public.restaurant_operational_expenses,public.restaurant_operational_expense_payments,public.restaurant_operational_expense_schedules,public.restaurant_cost_allocation_rules,public.restaurant_cost_allocations,public.restaurant_cost_allocation_exceptions to authenticated;
+grant select,insert,update,delete on public.restaurant_operational_expense_categories,public.restaurant_operational_expenses,public.restaurant_operational_expense_payments,public.restaurant_operational_expense_schedules,public.restaurant_operational_expense_schedule_occurrences,public.restaurant_cost_allocation_rules,public.restaurant_cost_allocations,public.restaurant_cost_allocation_exceptions to authenticated;
 grant all on public.restaurant_operational_expense_categories,public.restaurant_operational_expenses,public.restaurant_operational_expense_payments,public.restaurant_operational_expense_schedules,public.restaurant_cost_allocation_rules,public.restaurant_cost_allocations,public.restaurant_cost_allocation_exceptions to service_role;
 
 create or replace function public.restaurant_commit_expense_allocations(p_expense_id uuid,p_allocations jsonb,p_unallocated_reason text default null)
@@ -57,6 +67,12 @@ begin
   if not exists(select 1 from public.restaurant_properties p where p.id=(r->>'property_id')::uuid and p.tenant_id=e.tenant_id) then raise exception 'Allocation target property is outside expense tenant'; end if;
   if nullif(r->>'location_id','') is not null and not exists(select 1 from public.restaurant_locations l where l.id=(r->>'location_id')::uuid and l.tenant_id=e.tenant_id and l.property_id=(r->>'property_id')::uuid) then raise exception 'Allocation target location does not belong to target property'; end if;
   if not public.restaurant_can_write_scoped(e.tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],(r->>'property_id')::uuid) then raise exception 'Not authorized for target property'; end if;
+  if r->>'allocation_method'='direct' then
+   if e.property_id is null or (r->>'property_id')::uuid<>e.property_id
+      or (e.location_id is not null and nullif(r->>'location_id','')::uuid<>e.location_id) then
+     raise exception 'Direct allocation must preserve source property and location attribution';
+   end if;
+  end if;
   if r->>'allocation_method'='approved_rule' and not exists(
     select 1 from public.restaurant_cost_allocation_rules ar
     where ar.id=(r->>'rule_id')::uuid and ar.tenant_id=e.tenant_id and ar.status='approved'
@@ -67,6 +83,24 @@ begin
         where t->>'property_id'=r->>'property_id'
           and coalesce(t->>'location_id','')=coalesce(r->>'location_id',''))
   ) then raise exception 'Allocation rule is not approved, effective or applicable to target'; end if;
+  if r->>'allocation_method'='approved_rule' then
+    if (select count(*) from jsonb_array_elements(p_allocations)) <>
+       (select jsonb_array_length(ar.targets) from public.restaurant_cost_allocation_rules ar where ar.id=(r->>'rule_id')::uuid) then
+      raise exception 'Approved rule allocation must include every configured target exactly once';
+    end if;
+    if exists(
+      select 1 from jsonb_array_elements(p_allocations) x
+      where x->>'rule_id'=r->>'rule_id'
+      group by x->>'property_id',coalesce(x->>'location_id','')
+      having count(*)>1
+    ) then raise exception 'Duplicate approved-rule allocation target'; end if;
+    if abs((r->>'amount')::numeric - round(e.amount *
+      (select (t->>'weight')::numeric / nullif((select sum((v->>'weight')::numeric) from jsonb_array_elements(ar.targets) v),0)
+       from jsonb_array_elements(ar.targets) t
+       where t->>'property_id'=r->>'property_id' and coalesce(t->>'location_id','')=coalesce(r->>'location_id','')),2)) > 0.01 then
+      raise exception 'Approved-rule allocation amount does not match configured weight';
+    end if;
+  end if;
   if r->>'allocation_method'='manual' and nullif(r->>'approved_by','')::uuid is distinct from auth.uid() then raise exception 'Manual allocation must be approved by the acting user'; end if;
   insert into public.restaurant_cost_allocations(tenant_id,source_type,source_id,property_id,location_id,currency,period_start,amount,allocation_method,rule_id,rule_version,approved_by)
   values(e.tenant_id,'operational_expense',p_expense_id,(r->>'property_id')::uuid,nullif(r->>'location_id','')::uuid,e.currency,date_trunc('month',e.incurred_on)::date,
