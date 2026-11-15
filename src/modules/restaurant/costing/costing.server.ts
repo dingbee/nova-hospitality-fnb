@@ -572,6 +572,12 @@ export async function uploadOperationalExpenseAttachment(sb:Sb,userId:string,inp
  const buffer=Buffer.from(x.fileBase64,"base64");
  if(!buffer.length) throw new Error("The selected file is empty.");
  if(buffer.length>EXPENSE_ATTACHMENT_MAX_BYTES) throw new Error("Attachment exceeds the 10MB limit.");
+ const isPng=buffer.length>=8&&buffer.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+ const isJpeg=buffer.length>=3&&buffer[0]===0xff&&buffer[1]===0xd8&&buffer[2]===0xff;
+ const isPdf=buffer.subarray(0,5).toString("ascii")==="%PDF-";
+ const isWebp=buffer.length>=12&&buffer.subarray(0,4).toString("ascii")==="RIFF"&&buffer.subarray(8,12).toString("ascii")==="WEBP";
+ if((x.mimeType==="application/pdf"&&!isPdf)||(x.mimeType==="image/jpeg"&&!isJpeg)||(x.mimeType==="image/png"&&!isPng)||(x.mimeType==="image/webp"&&!isWebp))
+  throw new Error("File content does not match its declared type.");
  const ext:Record<string,string>={"application/pdf":"pdf","image/jpeg":"jpg","image/png":"png","image/webp":"webp"};
  const path=`${x.tenantId}/${x.expenseId}/${userId}/${randomUUID()}.${ext[x.mimeType]}`;
  const {error:uploadError}=await sb.storage.from(EXPENSE_ATTACHMENT_BUCKET).upload(path,buffer,{contentType:x.mimeType,upsert:false});
@@ -591,7 +597,7 @@ export async function listOperationalExpenseAttachments(sb:Sb,userId:string,tena
  return await Promise.all((rows??[]).map(async(row:any)=>{
   const {data,error:signedError}=await sb.storage.from(EXPENSE_ATTACHMENT_BUCKET).createSignedUrl(row.storage_path,300);
   if(signedError) throw new Error(signedError.message);
-  return {...row,signedUrl:data.signedUrl};
+  return {...row,signedUrl:data.signedUrl,canRemove:row.uploaded_by===userId};
  }));
 }
 export async function removeOperationalExpenseAttachment(sb:Sb,userId:string,input:{tenantId:string;attachmentId:string}) {
