@@ -108,14 +108,14 @@ update public.restaurant_operational_expenses set approval_status='approved',app
 reset role;
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
 -- Direct payment writes against pending expenses must fail.
-do $ begin
+do $phase2$ begin
  begin
   insert into public.restaurant_operational_expense_payments(tenant_id,expense_id,amount,currency)
   select tenant_id,id,1,'TZS' from public.restaurant_operational_expenses where description='Pending payment rejection';
   raise exception 'Pending expense payment unexpectedly succeeded';
  exception when insufficient_privilege then null;
  end;
-end $;
+end $phase2$;
 -- Payment trigger derives paid state, requires approval, and rejects overpayment.
 insert into public.restaurant_operational_expense_payments(tenant_id,expense_id,amount,currency)
  select tenant_id,id,40000,'TZS' from public.restaurant_operational_expenses where description='Electricity';
