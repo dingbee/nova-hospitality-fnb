@@ -90,7 +90,7 @@ function CostingPage() {
             {properties.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
           <Input value={driverKey} onChange={(e) => setDriverKey(e.target.value)} placeholder="Driver key (e.g. covers)" aria-label="Driver key" />
-          <Input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} aria-label="Driver period start" />
+          <Input type="month" value={periodStart.slice(0, 7)} onChange={(e) => setPeriodStart(e.target.value ? `${e.target.value}-01` : "")} aria-label="Driver period month" />
           <Input type="number" min="0.0001" step="0.0001" value={units} onChange={(e) => setUnits(e.target.value)} aria-label="Activity units" />
         </div>
         <div className="mt-3 flex justify-end">
