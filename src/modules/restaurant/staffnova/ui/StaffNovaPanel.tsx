@@ -532,6 +532,7 @@ function PreparationActions({
   const [committed, setCommitted] = useState<{
     createdRecordId: string;
     documentNumber: string | null;
+    workflow: NovaPreparationWorkflow;
   } | null>(null);
   const [quantities, setQuantities] = useState<Record<string, number>>(() =>
     Object.fromEntries(
@@ -560,6 +561,7 @@ function PreparationActions({
         setCommitted({
           createdRecordId: result.createdRecordId,
           documentNumber: result.documentNumber,
+          workflow: preparation.workflow,
         });
       }
     },
@@ -640,14 +642,14 @@ function PreparationActions({
         <Button type="button" size="sm" variant="outline" onClick={() => route && navigate({ to: route.to as never, search: route.search as never })}>
           Open {label}{committed.documentNumber ? ` (${committed.documentNumber})` : ""}
         </Button>
-        {preparation.workflow === "purchase_request" && (
+        {committed.workflow === "purchase_request" && (
           <PurchaseRequestLifecycleActions tenantId={tenantId} requestId={committed.createdRecordId} />
         )}
-        {preparation.workflow === "requisition" && (
+        {committed.workflow === "requisition" && (
           <RequisitionLifecycleActions tenantId={tenantId} requisitionId={committed.createdRecordId} />
         )}
-        {EXECUTABLE_WORKFLOWS.includes(preparation.workflow) && (
-          <ExecutionActions workflow={preparation.workflow as NovaExecutableWorkflow} recordId={committed.createdRecordId} tenantId={tenantId} />
+        {EXECUTABLE_WORKFLOWS.includes(committed.workflow) && (
+          <ExecutionActions workflow={committed.workflow as NovaExecutableWorkflow} recordId={committed.createdRecordId} tenantId={tenantId} />
         )}
       </div>
     );
@@ -745,7 +747,7 @@ function RequisitionLifecycleActions({ tenantId, requisitionId }: { tenantId: st
       data: {
         tenantId,
         requisitionId,
-        lines: (requisition.data?.lines ?? []).map((line) => ({
+        lines: (requisition.data?.lines ?? []).map((line: { id: string; approved_quantity?: number | null; requested_quantity?: number | null; issued_quantity?: number | null }) => ({
           lineId: line.id,
           issueQuantity: Math.max(0, Number(line.approved_quantity ?? line.requested_quantity ?? 0) - Number(line.issued_quantity ?? 0)),
         })),
