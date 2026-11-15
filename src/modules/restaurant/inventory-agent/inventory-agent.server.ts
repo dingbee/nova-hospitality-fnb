@@ -69,7 +69,7 @@ export interface InventoryAgentRecommendation {
   recommendedActionType: string | null;
   actionId: string | null;
   actionStatus: string | null;
-  verification: Record<string, unknown> | null;
+  verification: Record<string, InventoryAgentFactValue> | null;
 }
 
 export interface InventoryAgentRunResult {
@@ -166,7 +166,9 @@ export async function runInventoryAgent(
       recommendedActionType: selected?.option?.actionType ?? null,
       actionId: row.action_id ?? null,
       actionStatus: action?.status ?? null,
-      verification: action?.verification_result ?? null,
+      verification: action?.verification_result
+        ? serializableFacts(action.verification_result as Record<string, unknown>)
+        : null,
     };
   });
 

@@ -561,7 +561,7 @@ function PreparationActions({
         setCommitted({
           createdRecordId: result.createdRecordId,
           documentNumber: result.documentNumber,
-          workflow: preparation.workflow,
+          ...(preparation.workflow ? { workflow: preparation.workflow } : {}),
         });
       }
     },

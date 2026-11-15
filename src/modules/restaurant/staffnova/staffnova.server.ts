@@ -783,7 +783,7 @@ export async function askStaffNova(
       try {
         const { previewIntelligentPurchaseOrders } = await import("../procurement/ask-lexibite.server");
         intelligentPurchaseOrder = await previewIntelligentPurchaseOrders(sb, userId, {
-          tenantId: input.tenantId, idempotencyKey: `nova-po-preview:${input.tenantId}:${input.userId}`, lineOverrides: [], inventoryItemIds: [], supplierId: null,
+          tenantId: input.tenantId, idempotencyKey: `nova-po-preview:${input.tenantId}:${userId}`, lineOverrides: [], inventoryItemIds: [], supplierId: null,
         });
       } catch (err) {
         logStageFailure("intelligent_po_preview", err, { tenantId: input.tenantId, userId, propertyId });
