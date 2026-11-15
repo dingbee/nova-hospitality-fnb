@@ -173,8 +173,8 @@ function CostingPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Recipe Costing"
-        description="Deterministic costing: Σ (quantity ÷ yield) × average unit cost, plus overhead. No estimates."
+        title="Expense Centre & Recipe Costing"
+        description="Operating expense control, recurring commitments and audit evidence alongside deterministic recipe costing."
       />
       <SectionCard title="Latest costings">
         {(q.data ?? []).length === 0 ? (
@@ -194,34 +194,116 @@ function CostingPage() {
         )}
       </SectionCard>
 
-      <SectionCard title="Operating expenses" description="Record expenses, route them for independent approval, record payments, and allocate approved property expenses into profitability.">
-        <div className="mb-3 flex flex-wrap gap-2"><Input value={newCategoryName} onChange={e=>setNewCategoryName(e.target.value)} placeholder="New category name" aria-label="New expense category"/><Button size="sm" variant="outline" disabled={newCategoryName.trim().length<2||createCategory.isPending} onClick={()=>createCategory.mutate()}>Add category</Button></div>
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={expenseProperty} onChange={e=>setExpenseProperty(e.target.value)} aria-label="Expense property">
+      <div id="expense-centre">
+      <SectionCard title="Expense Centre" description="Manage one-off and recurring expenses, supplier links, approval decisions, payments, evidence and a complete audit trail.">
+        <div className="mb-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+          <Input value={newCategoryName} onChange={e=>setNewCategoryName(e.target.value)} placeholder="Category or subcategory name" aria-label="New expense category"/>
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={newCategoryParentId} onChange={e=>setNewCategoryParentId(e.target.value)} aria-label="Parent category">
+            <option value="">Top-level category</option>{(categories.data??[]).filter((x:any)=>!x.parent_category_id).map((x:any)=><option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+          <Button size="sm" variant="outline" disabled={newCategoryName.trim().length<2||createCategory.isPending} onClick={()=>createCategory.mutate()}>Add category</Button>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={expenseProperty} onChange={e=>{const value=e.target.value;setExpenseProperty(value);setExpenseLocation("");const p=properties.find((x:any)=>x.id===value);if(p?.currency)setCurrency(p.currency);}} aria-label="Expense property">
             <option value="">Shared / unassigned</option>{properties.map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={expenseLocation} onChange={e=>setExpenseLocation(e.target.value)} aria-label="Expense outlet" disabled={!expenseProperty}>
+            <option value="">Property-level / all outlets</option>{locations.filter((l:any)=>l.property_id===expenseProperty).map((l:any)=><option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
           <select className="h-9 rounded-md border bg-background px-2 text-sm" value={categoryId} onChange={e=>setCategoryId(e.target.value)} aria-label="Expense category">
-            <option value="">Select category</option>{(categories.data??[]).map((x:any)=><option key={x.id} value={x.id}>{x.name}</option>)}
+            <option value="">Select category</option>{(categories.data??[]).map((x:any)=><option key={x.id} value={x.id}>{x.parent_category_id?"↳ ":""}{x.name}</option>)}
+          </select>
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={supplierId} onChange={e=>setSupplierId(e.target.value)} aria-label="Expense supplier">
+            <option value="">No supplier linked</option>{(suppliers.data??[]).map((s:any)=><option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <Input value={description} onChange={e=>setDescription(e.target.value)} placeholder="Expense description" aria-label="Expense description"/>
           <Input type="number" min="0.01" step="0.01" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="Amount" aria-label="Expense amount"/>
-          <Input value={currency} maxLength={3} onChange={e=>setCurrency(e.target.value.toUpperCase())} aria-label="Currency"/>
+          <Input value={currency} maxLength={3} readOnly={Boolean(expenseProperty)} onChange={e=>setCurrency(e.target.value.toUpperCase())} aria-label="Currency"/>
           <Input type="date" value={incurredOn} onChange={e=>setIncurredOn(e.target.value)} aria-label="Expense date"/>
         </div>
-        <div className="mt-3 flex justify-end"><Button size="sm" disabled={!tenantId||!categoryId||description.trim().length<2||Number(amount)<=0||! /^[A-Z]{3}$/.test(currency)||createExpense.isPending} onClick={()=>createExpense.mutate()}>Record expense</Button></div>
+        <div className="mt-3 flex flex-wrap justify-end gap-2">
+          {editingExpenseId ? <>
+            <Button size="sm" variant="outline" disabled={updateExpense.isPending||!categoryId||description.trim().length<2||Number(amount)<=0} onClick={()=>updateExpense.mutate()}>Save changes</Button>
+            <Button size="sm" variant="ghost" onClick={clearExpenseForm}>Cancel edit</Button>
+          </> : <>
+            <Button size="sm" variant="outline" disabled={!tenantId||!categoryId||description.trim().length<2||Number(amount)<=0||createExpense.isPending} onClick={()=>createExpense.mutate("draft")}>Save draft</Button>
+            <Button size="sm" disabled={!tenantId||!categoryId||description.trim().length<2||Number(amount)<=0||createExpense.isPending} onClick={()=>createExpense.mutate("recorded")}>Record expense</Button>
+          </>}
+        </div>
         <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-sm"><thead><tr className="border-b text-left text-muted-foreground"><th className="py-2">Expense</th><th>Amount</th><th>Approval</th><th>Payment</th><th>Actions</th></tr></thead>
-          <tbody>{(expenses.data??[]).map((e:any)=><tr key={e.id} className="border-b align-top"><td className="py-2"><div className="font-medium">{e.description}</div><div className="text-xs text-muted-foreground">{e.incurred_on} · {properties.find((p:any)=>p.id===e.property_id)?.name??"Shared"}</div></td>
-          <td>{e.currency} {Number(e.amount).toLocaleString()}<div className="text-xs text-muted-foreground">Paid {Number(e.paid_amount).toLocaleString()}</div></td>
-          <td><span className="capitalize">{e.approval_status}</span></td><td><span className="capitalize">{e.payment_status}</span></td>
-          <td><div className="flex flex-wrap gap-1">
-            {e.approval_status==="pending"&&<Button size="sm" variant="outline" disabled={approveExpense.isPending} onClick={()=>approveExpense.mutate(e.id)}>Approve</Button>}
-            {e.approval_status==="approved"&&e.payment_status!=="paid"&&<><Input className="h-8 w-24" type="number" min="0.01" placeholder="Payment" value={paymentAmounts[e.id]??""} onChange={ev=>setPaymentAmounts(v=>({...v,[e.id]:ev.target.value}))}/><Button size="sm" variant="outline" disabled={recordPayment.isPending||Number(paymentAmounts[e.id])<=0} onClick={()=>recordPayment.mutate({expenseId:e.id,amount:Number(paymentAmounts[e.id]),currency:e.currency})}>Pay</Button></>}
-            {e.approval_status==="approved"&&e.property_id&&<Button size="sm" variant="outline" disabled={allocateExpense.isPending} onClick={()=>allocateExpense.mutate(e.id)}>Allocate</Button>}
-          </div></td></tr>)}</tbody></table>
+          <table className="w-full text-sm">
+            <thead><tr className="border-b text-left text-muted-foreground"><th className="py-2">Expense</th><th>Amount</th><th>Lifecycle</th><th>Approval</th><th>Actions</th></tr></thead>
+            <tbody>{(expenses.data??[]).map((e:any)=>{
+              const propertyName=properties.find((p:any)=>p.id===e.property_id)?.name??"Shared";
+              const locationName=locations.find((l:any)=>l.id===e.location_id)?.name;
+              const supplierName=suppliers.data?.find((s:any)=>s.id===e.supplier_id)?.name;
+              return <tr key={e.id} className="border-b align-top">
+                <td className="py-2"><div className="font-medium">{e.description}</div><div className="text-xs text-muted-foreground">{e.incurred_on} · {propertyName}{locationName?" · "+locationName:""}{supplierName?" · "+supplierName:""}</div></td>
+                <td>{e.currency} {Number(e.amount).toLocaleString()}<div className="text-xs text-muted-foreground">Paid {Number(e.paid_amount).toLocaleString()}</div></td>
+                <td><span className="capitalize">{String(e.expense_status??"recorded").replaceAll("_"," ")}</span><div className="text-xs text-muted-foreground">{e.payment_status}</div></td>
+                <td><span className="capitalize">{e.approval_status}</span>{e.rejection_reason&&<div className="max-w-40 text-xs text-destructive">{e.rejection_reason}</div>}</td>
+                <td><div className="flex min-w-64 flex-wrap gap-1">
+                  {["draft","recorded"].includes(e.expense_status)&&<Button size="sm" variant="outline" onClick={()=>{setEditingExpenseId(e.id);setExpenseProperty(e.property_id??"");setExpenseLocation(e.location_id??"");setCategoryId(e.category_id);setSupplierId(e.supplier_id??"");setDescription(e.description);setAmount(String(e.amount));setCurrency(e.currency);setIncurredOn(e.incurred_on);}}>Edit</Button>}
+                  {e.expense_status==="draft"&&<Button size="sm" variant="outline" disabled={recordDraft.isPending} onClick={()=>recordDraft.mutate(e.id)}>Record</Button>}
+                  {e.expense_status==="recorded"&&e.approval_status==="pending"&&<>
+                    <Button size="sm" variant="outline" disabled={approveExpense.isPending} onClick={()=>approveExpense.mutate(e.id)}>Approve</Button>
+                    <Input className="h-8 w-28" placeholder="Rejection reason" value={rejectionReasons[e.id]??""} onChange={ev=>setRejectionReasons(v=>({...v,[e.id]:ev.target.value}))}/>
+                    <Button size="sm" variant="outline" disabled={rejectExpense.isPending||(rejectionReasons[e.id]??"").trim().length<3} onClick={()=>rejectExpense.mutate({expenseId:e.id,reason:rejectionReasons[e.id]})}>Reject</Button>
+                  </>}
+                  {["draft","recorded"].includes(e.expense_status)&&<>
+                    <Input className="h-8 w-28" placeholder="Cancel reason" value={cancellationReasons[e.id]??""} onChange={ev=>setCancellationReasons(v=>({...v,[e.id]:ev.target.value}))}/>
+                    <Button size="sm" variant="ghost" disabled={cancelExpense.isPending||(cancellationReasons[e.id]??"").trim().length<3} onClick={()=>cancelExpense.mutate({expenseId:e.id,reason:cancellationReasons[e.id]})}>Cancel</Button>
+                  </>}
+                  {["approved","partially_paid"].includes(e.expense_status)&&<>
+                    <Input className="h-8 w-24" type="number" min="0.01" placeholder="Payment" value={paymentAmounts[e.id]??""} onChange={ev=>setPaymentAmounts(v=>({...v,[e.id]:ev.target.value}))}/>
+                    <Button size="sm" variant="outline" disabled={recordPayment.isPending||Number(paymentAmounts[e.id])<=0} onClick={()=>recordPayment.mutate({expenseId:e.id,amount:Number(paymentAmounts[e.id]),currency:e.currency})}>Pay</Button>
+                  </>}
+                  {e.approval_status==="approved"&&e.property_id&&<Button size="sm" variant="outline" disabled={allocateExpense.isPending} onClick={()=>allocateExpense.mutate(e.id)}>Allocate</Button>}
+                  <Button size="sm" variant="ghost" onClick={()=>setSelectedExpenseForDetails(e.id)}>Evidence / history</Button>
+                  {["draft","recorded"].includes(e.expense_status)&&<Input className="h-8 w-36" type="file" accept=".pdf,image/jpeg,image/png,image/webp" aria-label="Attach expense evidence" onChange={async ev=>{const input=ev.currentTarget;const file=input.files?.[0];if(!file)return;setSelectedExpenseForDetails(e.id);try{if(!["application/pdf","image/jpeg","image/png","image/webp"].includes(file.type))throw new Error("Use PDF, JPEG, PNG or WebP evidence.");const fileBase64=await fileToBase64(file);uploadAttachment.mutate({expenseId:e.id,fileName:file.name,mimeType:file.type as "application/pdf"|"image/jpeg"|"image/png"|"image/webp",fileBase64});}finally{input.value="";}}}/>}
+                </div></td>
+              </tr>;
+            })}</tbody>
+          </table>
           {expenses.isLoading&&<p className="py-3 text-sm text-muted-foreground">Loading expenses…</p>}
           {!expenses.isLoading&&(expenses.data??[]).length===0&&<p className="py-3 text-sm text-muted-foreground">No operational expenses recorded.</p>}
         </div>
+        {selectedExpenseForDetails&&<div className="mt-4 grid gap-4 border-t pt-4 lg:grid-cols-2">
+          <div><div className="mb-2 flex items-center justify-between"><h3 className="font-medium">Evidence</h3><Button size="sm" variant="ghost" onClick={()=>setSelectedExpenseForDetails("")}>Close</Button></div>
+            {(attachments.data??[]).length===0?<p className="text-sm text-muted-foreground">No attachments.</p>:<ul className="divide-y text-sm">{(attachments.data??[]).map((a:any)=><li key={a.id} className="flex items-center justify-between gap-2 py-2"><a className="underline" href={a.signedUrl} target="_blank" rel="noreferrer">{a.file_name}</a><span className="text-xs text-muted-foreground">{Math.ceil(a.size_bytes/1024)} KB</span><Button size="sm" variant="ghost" onClick={()=>removeAttachment.mutate(a.id)}>Remove</Button></li>)}</ul>}
+          </div>
+          <div><h3 className="mb-2 font-medium">Audit history</h3>{(auditEvents.data??[]).length===0?<p className="text-sm text-muted-foreground">No history yet.</p>:<ol className="space-y-2 text-sm">{(auditEvents.data??[]).map((a:any)=><li key={a.id} className="border-l-2 pl-3"><div className="font-medium capitalize">{a.event_type.replaceAll("_"," ")}</div><div className="text-xs text-muted-foreground">{new Date(a.created_at).toLocaleString()}{a.reason?" · "+a.reason:""}</div></li>)}</ol>}</div>
+        </div>}
+      </SectionCard>
+      </div>
+      <SectionCard title="Recurring expense schedules" description="Create, edit, pause, resume and generate recurring expenses. Occurrences are idempotent and retain supplier, property and category context.">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={scheduleProperty} onChange={e=>{const value=e.target.value;setScheduleProperty(value);setScheduleLocation("");const p=properties.find((x:any)=>x.id===value);if(p?.currency)setScheduleCurrency(p.currency);}} aria-label="Schedule property">
+            <option value="">Shared / unassigned</option>{properties.map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={scheduleLocation} onChange={e=>setScheduleLocation(e.target.value)} aria-label="Schedule outlet" disabled={!scheduleProperty}>
+            <option value="">Property-level</option>{locations.filter((l:any)=>l.property_id===scheduleProperty).map((l:any)=><option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={scheduleCategory} onChange={e=>setScheduleCategory(e.target.value)} aria-label="Schedule category">
+            <option value="">Category</option>{(categories.data??[]).map((x:any)=><option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={scheduleSupplier} onChange={e=>setScheduleSupplier(e.target.value)} aria-label="Schedule supplier">
+            <option value="">No supplier</option>{(suppliers.data??[]).map((s:any)=><option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <Input value={scheduleDescription} onChange={e=>setScheduleDescription(e.target.value)} placeholder="Recurring expense description"/>
+          <Input type="number" min="0.01" step="0.01" value={scheduleAmount} onChange={e=>setScheduleAmount(e.target.value)} placeholder="Amount"/>
+          <Input value={scheduleCurrency} readOnly={Boolean(scheduleProperty)} onChange={e=>setScheduleCurrency(e.target.value.toUpperCase())} maxLength={3} aria-label="Schedule currency"/>
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={scheduleCadence} onChange={e=>setScheduleCadence(e.target.value)} aria-label="Schedule cadence">
+            <option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="annually">Annually</option>
+          </select>
+          <Input type="date" value={scheduleNext} onChange={e=>setScheduleNext(e.target.value)} aria-label="Next occurrence"/>
+          <Input type="date" value={scheduleEnds} onChange={e=>setScheduleEnds(e.target.value)} aria-label="Schedule end date"/>
+        </div>
+        <div className="mt-3 flex justify-end gap-2">{editingScheduleId&&<Button size="sm" variant="ghost" onClick={()=>{setEditingScheduleId("");setScheduleDescription("");setScheduleAmount("");}}>Cancel edit</Button>}<Button size="sm" disabled={!scheduleCategory||scheduleDescription.trim().length<2||Number(scheduleAmount)<=0||(editingScheduleId?updateSchedule.isPending:createSchedule.isPending)} onClick={()=>editingScheduleId?updateSchedule.mutate():createSchedule.mutate()}>{editingScheduleId?"Save schedule":"Create schedule"}</Button></div>
+        <ul className="mt-4 divide-y text-sm">{(schedules.data??[]).map((s:any)=><li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
+          <div><div className="font-medium">{s.description} · {s.currency} {Number(s.amount).toLocaleString()}</div><div className="text-xs text-muted-foreground">{s.cadence} · next {s.next_occurrence}{s.ends_on?" · ends "+s.ends_on:""} · {properties.find((p:any)=>p.id===s.property_id)?.name??"Shared"} · {s.active?"Active":"Paused"}</div></div>
+          <div className="flex flex-wrap gap-1"><Button size="sm" variant="outline" onClick={()=>{setEditingScheduleId(s.id);setScheduleProperty(s.property_id??"");setScheduleLocation(s.location_id??"");setScheduleCategory(s.category_id);setScheduleSupplier(s.supplier_id??"");setScheduleDescription(s.description);setScheduleAmount(String(s.amount));setScheduleCurrency(s.currency);setScheduleCadence(s.cadence);setScheduleNext(s.next_occurrence);setScheduleEnds(s.ends_on??"");}}>Edit</Button><Button size="sm" variant="outline" disabled={setScheduleActive.isPending} onClick={()=>setScheduleActive.mutate({scheduleId:s.id,active:!s.active})}>{s.active?"Pause":"Resume"}</Button><Button size="sm" disabled={!s.active||generateOccurrence.isPending} onClick={()=>generateOccurrence.mutate({scheduleId:s.id,occurrenceDate:s.next_occurrence})}>Generate next</Button></div>
+        </li>)}</ul>
       </SectionCard>
       <SectionCard title="Shared expense allocation rules" description="Create weighted, versioned property splits. A second authorized user must approve each draft before it can be applied to an approved expense.">
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
