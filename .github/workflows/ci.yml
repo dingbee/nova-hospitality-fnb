@@ -115,6 +115,14 @@ jobs:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-lb03-pos-room-charge-ledger.sql
 
+      - name: Verify Phase 3 hybrid allocation and operational expense lifecycle in isolated PostgreSQL
+        env:
+          PGPASSWORD: postgres
+        run: |
+          createdb -h localhost -U postgres lexibite_phase3_test
+          psql -h localhost -U postgres -d lexibite_phase3_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-operational-cost-intelligence.sql
+          bunx vitest run src/modules/restaurant/costing/hybrid-allocation.test.ts src/modules/restaurant/costing/profitability.server.test.ts
+
       - name: Scoped GTM and changed-path functional tests
         run: |
           bunx vitest run \

@@ -22,9 +22,24 @@ create or replace function public.restaurant_can_write_scoped(_tenant_id uuid,_r
  and m.role=any(_roles) and (_property_id is null or m.property_id is null or m.property_id=_property_id))
 $$;
 create or replace function public.restaurant_is_platform_admin(uuid) returns boolean language sql stable as $$ select false $$;
-create role authenticated;
-create role anon;
-create role service_role bypassrls;
+do $roles$
+begin
+  create role authenticated;
+exception when duplicate_object then null;
+end
+$roles$;
+do $roles$
+begin
+  create role anon;
+exception when duplicate_object then null;
+end
+$roles$;
+do $roles$
+begin
+  create role service_role bypassrls;
+exception when duplicate_object then null;
+end
+$roles$;
 grant usage on schema auth to authenticated,anon,service_role;
 grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0040_operational_cost_intelligence.sql
@@ -152,6 +167,24 @@ do $$ begin
  if (select sum(amount) from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002')<>1250 then raise exception 'Activity driver allocation did not reconcile'; end if;
  if (select amount from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002' and property_id='20000000-0000-0000-0000-000000000001')<>750 then raise exception 'Activity driver weight 3/5 was not applied'; end if;
 end $$;
+-- Property-scoped membership cannot read or write another property in the same tenant.
+insert into public.restaurant_members values
+ ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','restaurant_manager','20000000-0000-0000-0000-000000000001');
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000002',true);
+set local role authenticated;
+do $phase3$ begin
+ if exists(select 1 from public.restaurant_operational_expenses where property_id='20000000-0000-0000-0000-000000000003') then
+  raise exception 'Property-scoped member can read another property expense';
+ end if;
+ begin
+  insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
+  select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003',id,'Forbidden property write',1,'TZS',date '2026-11-01'
+  from public.restaurant_operational_expense_categories where category_key='utilities';
+  raise exception 'Property-scoped member unexpectedly wrote to another property';
+ exception when insufficient_privilege or check_violation then null;
+ end;
+end $phase3$;
+reset role;
 -- Tenant/property-scoped RLS: user from tenant A cannot read tenant B.
 set local role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
