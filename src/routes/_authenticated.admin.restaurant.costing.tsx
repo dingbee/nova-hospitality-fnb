@@ -15,6 +15,11 @@ import {
   upsertRestaurantCostActivityDriverFn,
   listOperationalExpensesFn, listOperationalExpenseCategoriesFn, createOperationalExpenseFn,
   approveOperationalExpenseFn, recordOperationalExpensePaymentFn, allocateOperationalExpenseDirectFn, createOperationalExpenseCategoryFn,
+  listOperationalExpenseSuppliersFn, updateOperationalExpenseFn, recordOperationalExpenseDraftFn,
+  rejectOperationalExpenseFn, cancelOperationalExpenseFn, listOperationalExpenseAuditEventsFn,
+  uploadOperationalExpenseAttachmentFn, listOperationalExpenseAttachmentsFn, removeOperationalExpenseAttachmentFn,
+  listRecurringExpenseSchedulesFn, createRecurringExpenseScheduleFn, updateRecurringExpenseScheduleFn,
+  setRecurringExpenseScheduleActiveFn, generateRecurringExpenseOccurrenceFn,
   listCostAllocationRulesFn, createCostAllocationRuleFn, approveCostAllocationRuleFn, allocateOperationalExpenseByRuleFn,
 } from "@/modules/restaurant/costing/costing.functions";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
@@ -29,6 +34,18 @@ export const Route = createFileRoute("/_authenticated/admin/restaurant/costing")
   }),
   component: CostingPage,
 });
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result ?? "");
+      resolve(value.slice(value.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read file."));
+    reader.readAsDataURL(file);
+  });
+}
 
 function CostingPage() {
   const ws = useRestaurantWorkspace();
@@ -63,22 +80,72 @@ function CostingPage() {
   const paymentFn = useServerFn(recordOperationalExpensePaymentFn);
   const allocateExpenseFn = useServerFn(allocateOperationalExpenseDirectFn);
   const createCategoryFn = useServerFn(createOperationalExpenseCategoryFn);
+  const supplierListFn = useServerFn(listOperationalExpenseSuppliersFn);
+  const updateExpenseFn = useServerFn(updateOperationalExpenseFn);
+  const recordDraftFn = useServerFn(recordOperationalExpenseDraftFn);
+  const rejectExpenseFn = useServerFn(rejectOperationalExpenseFn);
+  const cancelExpenseFn = useServerFn(cancelOperationalExpenseFn);
+  const auditListFn = useServerFn(listOperationalExpenseAuditEventsFn);
+  const uploadAttachmentFn = useServerFn(uploadOperationalExpenseAttachmentFn);
+  const attachmentListFn = useServerFn(listOperationalExpenseAttachmentsFn);
+  const removeAttachmentFn = useServerFn(removeOperationalExpenseAttachmentFn);
+  const scheduleListFn = useServerFn(listRecurringExpenseSchedulesFn);
+  const createScheduleFn = useServerFn(createRecurringExpenseScheduleFn);
+  const updateScheduleFn = useServerFn(updateRecurringExpenseScheduleFn);
+  const scheduleActiveFn = useServerFn(setRecurringExpenseScheduleActiveFn);
+  const generateOccurrenceFn = useServerFn(generateRecurringExpenseOccurrenceFn);
+  const locations = ws.data?.locations ?? [];
   const [newCategoryName,setNewCategoryName] = useState("");
+  const [newCategoryParentId,setNewCategoryParentId] = useState("");
   const [expenseProperty, setExpenseProperty] = useState("");
+  const [expenseLocation, setExpenseLocation] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [supplierId, setSupplierId] = useState("");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("TZS");
   const [incurredOn, setIncurredOn] = useState(() => new Date().toISOString().slice(0,10));
+  const [editingExpenseId, setEditingExpenseId] = useState("");
   const [paymentAmounts, setPaymentAmounts] = useState<Record<string,string>>({});
+  const [rejectionReasons, setRejectionReasons] = useState<Record<string,string>>({});
+  const [cancellationReasons, setCancellationReasons] = useState<Record<string,string>>({});
+  const [selectedExpenseForDetails, setSelectedExpenseForDetails] = useState("");
+  const [scheduleProperty, setScheduleProperty] = useState("");
+  const [scheduleLocation, setScheduleLocation] = useState("");
+  const [scheduleCategory, setScheduleCategory] = useState("");
+  const [scheduleSupplier, setScheduleSupplier] = useState("");
+  const [scheduleDescription, setScheduleDescription] = useState("");
+  const [scheduleAmount, setScheduleAmount] = useState("");
+  const [scheduleCurrency, setScheduleCurrency] = useState("TZS");
+  const [scheduleCadence, setScheduleCadence] = useState("monthly");
+  const [scheduleNext, setScheduleNext] = useState(() => new Date().toISOString().slice(0,10));
+  const [scheduleEnds, setScheduleEnds] = useState("");
+  const [editingScheduleId, setEditingScheduleId] = useState("");
   const categories = useQuery({queryKey:["restaurant.expense-categories",tenantId],queryFn:()=>categoryListFn({data:{tenantId:tenantId!}}),enabled:Boolean(tenantId)});
   const expenses = useQuery({queryKey:["restaurant.operational-expenses",tenantId],queryFn:()=>expenseListFn({data:{tenantId:tenantId!}}),enabled:Boolean(tenantId)});
+  const suppliers = useQuery({queryKey:["restaurant.expense-suppliers",tenantId],queryFn:()=>supplierListFn({data:{tenantId:tenantId!}}),enabled:Boolean(tenantId)});
+  const schedules = useQuery({queryKey:["restaurant.expense-schedules",tenantId],queryFn:()=>scheduleListFn({data:{tenantId:tenantId!}}),enabled:Boolean(tenantId)});
+  const auditEvents = useQuery({queryKey:["restaurant.expense-audit",tenantId,selectedExpenseForDetails],queryFn:()=>auditListFn({data:{tenantId:tenantId!,expenseId:selectedExpenseForDetails}}),enabled:Boolean(tenantId&&selectedExpenseForDetails)});
+  const attachments = useQuery({queryKey:["restaurant.expense-attachments",tenantId,selectedExpenseForDetails],queryFn:()=>attachmentListFn({data:{tenantId:tenantId!,expenseId:selectedExpenseForDetails}}),enabled:Boolean(tenantId&&selectedExpenseForDetails)});
   const refreshExpenses = () => { void qc.invalidateQueries({queryKey:["restaurant.operational-expenses",tenantId]}); };
-  const createCategory = useAdminMutation({mutationFn:()=>createCategoryFn({data:{tenantId:tenantId!,name:newCategoryName,categoryKey:newCategoryName.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"")}}),successMessage:"Expense category created",onSuccess:()=>{setNewCategoryName("");void qc.invalidateQueries({queryKey:["restaurant.expense-categories",tenantId]});}});
-  const createExpense = useAdminMutation({mutationFn:()=>createExpenseFn({data:{tenantId:tenantId!,propertyId:expenseProperty||null,categoryId,description,amount:Number(amount),currency,incurredOn}}),successMessage:"Expense recorded",onSuccess:()=>{setDescription("");setAmount("");refreshExpenses();}});
+  const refreshSchedules = () => { void qc.invalidateQueries({queryKey:["restaurant.expense-schedules",tenantId]}); };
+  const refreshDetails = () => { void qc.invalidateQueries({queryKey:["restaurant.expense-audit",tenantId,selectedExpenseForDetails]}); void qc.invalidateQueries({queryKey:["restaurant.expense-attachments",tenantId,selectedExpenseForDetails]}); };
+  const clearExpenseForm = () => {setEditingExpenseId("");setDescription("");setAmount("");setSupplierId("");setExpenseLocation("");};
+  const createCategory = useAdminMutation({mutationFn:()=>createCategoryFn({data:{tenantId:tenantId!,name:newCategoryName,categoryKey:newCategoryName.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,""),parentCategoryId:newCategoryParentId||null}}),successMessage:"Expense category created",onSuccess:()=>{setNewCategoryName("");setNewCategoryParentId("");void qc.invalidateQueries({queryKey:["restaurant.expense-categories",tenantId]});}});
+  const createExpense = useAdminMutation({mutationFn:(status:"draft"|"recorded")=>createExpenseFn({data:{tenantId:tenantId!,propertyId:expenseProperty||null,locationId:expenseLocation||null,categoryId,supplierId:supplierId||null,description,amount:Number(amount),currency,incurredOn,expenseStatus:status}}),successMessage:"Expense saved",onSuccess:()=>{clearExpenseForm();refreshExpenses();}});
+  const updateExpense = useAdminMutation({mutationFn:()=>updateExpenseFn({data:{tenantId:tenantId!,expenseId:editingExpenseId,propertyId:expenseProperty||null,locationId:expenseLocation||null,categoryId,supplierId:supplierId||null,description,amount:Number(amount),currency,incurredOn}}),successMessage:"Expense updated",onSuccess:()=>{clearExpenseForm();refreshExpenses();}});
+  const recordDraft = useAdminMutation({mutationFn:(expenseId:string)=>recordDraftFn({data:{tenantId:tenantId!,expenseId}}),successMessage:"Draft recorded",onSuccess:refreshExpenses});
   const approveExpense = useAdminMutation({mutationFn:(expenseId:string)=>approveExpenseFn({data:{tenantId:tenantId!,expenseId}}),successMessage:"Expense approved",onSuccess:refreshExpenses});
+  const rejectExpense = useAdminMutation({mutationFn:(v:{expenseId:string;reason:string})=>rejectExpenseFn({data:{tenantId:tenantId!,...v}}),successMessage:"Expense rejected",onSuccess:refreshExpenses});
+  const cancelExpense = useAdminMutation({mutationFn:(v:{expenseId:string;reason:string})=>cancelExpenseFn({data:{tenantId:tenantId!,...v}}),successMessage:"Expense cancelled",onSuccess:refreshExpenses});
   const recordPayment = useAdminMutation({mutationFn:(v:{expenseId:string;amount:number;currency:string})=>paymentFn({data:{tenantId:tenantId!,...v}}),successMessage:"Payment recorded",onSuccess:refreshExpenses});
   const allocateExpense = useAdminMutation({mutationFn:(expenseId:string)=>allocateExpenseFn({data:{tenantId:tenantId!,expenseId}}),successMessage:"Expense allocated",onSuccess:refreshExpenses});
+  const uploadAttachment = useAdminMutation({mutationFn:(v:{expenseId:string;fileName:string;mimeType:"application/pdf"|"image/jpeg"|"image/png"|"image/webp";fileBase64:string})=>uploadAttachmentFn({data:{tenantId:tenantId!,...v}}),successMessage:"Evidence attached",onSuccess:refreshDetails});
+  const removeAttachment = useAdminMutation({mutationFn:(attachmentId:string)=>removeAttachmentFn({data:{tenantId:tenantId!,attachmentId}}),successMessage:"Evidence removed",onSuccess:refreshDetails});
+  const createSchedule = useAdminMutation({mutationFn:()=>createScheduleFn({data:{tenantId:tenantId!,propertyId:scheduleProperty||null,locationId:scheduleLocation||null,categoryId:scheduleCategory,supplierId:scheduleSupplier||null,description:scheduleDescription,amount:Number(scheduleAmount),currency:scheduleCurrency,cadence:scheduleCadence as "weekly"|"monthly"|"quarterly"|"annually",nextOccurrence:scheduleNext,endsOn:scheduleEnds||null}}),successMessage:"Recurring expense saved",onSuccess:()=>{setScheduleDescription("");setScheduleAmount("");refreshSchedules();}});
+  const updateSchedule = useAdminMutation({mutationFn:()=>updateScheduleFn({data:{tenantId:tenantId!,scheduleId:editingScheduleId,propertyId:scheduleProperty||null,locationId:scheduleLocation||null,categoryId:scheduleCategory,supplierId:scheduleSupplier||null,description:scheduleDescription,amount:Number(scheduleAmount),currency:scheduleCurrency,cadence:scheduleCadence as "weekly"|"monthly"|"quarterly"|"annually",nextOccurrence:scheduleNext,endsOn:scheduleEnds||null}}),successMessage:"Recurring expense updated",onSuccess:()=>{setEditingScheduleId("");setScheduleDescription("");setScheduleAmount("");refreshSchedules();}});
+  const setScheduleActive = useAdminMutation({mutationFn:(v:{scheduleId:string;active:boolean})=>scheduleActiveFn({data:{tenantId:tenantId!,...v}}),successMessage:"Schedule updated",onSuccess:refreshSchedules});
+  const generateOccurrence = useAdminMutation({mutationFn:(v:{scheduleId:string;occurrenceDate:string})=>generateOccurrenceFn({data:{tenantId:tenantId!,...v}}),successMessage:"Scheduled expense generated",onSuccess:()=>{refreshExpenses();refreshSchedules();}});
   const rulesListFn = useServerFn(listCostAllocationRulesFn);
   const createRuleFn = useServerFn(createCostAllocationRuleFn);
   const approveRuleFn = useServerFn(approveCostAllocationRuleFn);
