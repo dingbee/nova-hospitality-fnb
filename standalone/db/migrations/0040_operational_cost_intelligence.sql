@@ -232,7 +232,7 @@ grant execute on function public.restaurant_commit_expense_allocations(uuid,json
  units numeric(18,4) not null check(units>0),
  captured_at timestamptz not null default now(),
  created_by uuid not null default auth.uid(),
- unique(tenant_id,property_id,location_id,driver_key,period_start)
+ unique nulls not distinct(tenant_id,property_id,location_id,driver_key,period_start)
 );
 create index if not exists restaurant_cost_activity_drivers_period_idx
  on public.restaurant_cost_activity_drivers(tenant_id,driver_key,period_start,property_id,location_id);
