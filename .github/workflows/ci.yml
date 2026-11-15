@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - "release/**"
+      - "feat/operational-cost-intelligence-phase3-workaround"
   pull_request:
     branches:
       - main
