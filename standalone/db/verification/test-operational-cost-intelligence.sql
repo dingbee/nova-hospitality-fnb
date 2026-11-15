@@ -26,6 +26,7 @@ create role authenticated;
 create role anon;
 create role service_role bypassrls;
 grant usage on schema auth to authenticated,anon,service_role;
+grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0040_operational_cost_intelligence.sql
 
 insert into public.restaurant_tenants values
