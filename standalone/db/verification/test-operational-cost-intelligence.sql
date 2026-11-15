@@ -29,6 +29,7 @@ insert into public.restaurant_properties values
  ('20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002');
 insert into public.restaurant_members values
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','owner',null);
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
 insert into public.restaurant_operational_expense_categories(tenant_id,name,category_key)
  values('10000000-0000-0000-0000-000000000001','Utilities','utilities');
 insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
