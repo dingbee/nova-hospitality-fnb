@@ -14,7 +14,7 @@ import {
   listRestaurantCostActivityDriversFn,
   upsertRestaurantCostActivityDriverFn,
   listOperationalExpensesFn, listOperationalExpenseCategoriesFn, createOperationalExpenseFn,
-  approveOperationalExpenseFn, recordOperationalExpensePaymentFn, allocateOperationalExpenseDirectFn,
+  approveOperationalExpenseFn, recordOperationalExpensePaymentFn, allocateOperationalExpenseDirectFn, createOperationalExpenseCategoryFn,
 } from "@/modules/restaurant/costing/costing.functions";
 import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
 
@@ -60,7 +60,7 @@ function CostingPage() {
   const createExpenseFn = useServerFn(createOperationalExpenseFn);
   const approveExpenseFn = useServerFn(approveOperationalExpenseFn);
   const paymentFn = useServerFn(recordOperationalExpensePaymentFn);
-  const allocateExpenseFn = useServerFn(allocateOperationalExpenseDirectFn);
+  const allocateExpenseFn = useServerFn(allocateOperationalExpenseDirectFn);\n  const createCategoryFn = useServerFn(createOperationalExpenseCategoryFn);\n  const [newCategoryName,setNewCategoryName] = useState("");
   const [expenseProperty, setExpenseProperty] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [description, setDescription] = useState("");
@@ -71,7 +71,7 @@ function CostingPage() {
   const categories = useQuery({queryKey:["restaurant.expense-categories",tenantId],queryFn:()=>categoryListFn({data:{tenantId:tenantId!}}),enabled:Boolean(tenantId)});
   const expenses = useQuery({queryKey:["restaurant.operational-expenses",tenantId],queryFn:()=>expenseListFn({data:{tenantId:tenantId!}}),enabled:Boolean(tenantId)});
   const refreshExpenses = () => { void qc.invalidateQueries({queryKey:["restaurant.operational-expenses",tenantId]}); };
-  const createExpense = useAdminMutation({mutationFn:()=>createExpenseFn({data:{tenantId:tenantId!,propertyId:expenseProperty||null,categoryId,description,amount:Number(amount),currency,incurredOn}}),successMessage:"Expense recorded",onSuccess:()=>{setDescription("");setAmount("");refreshExpenses();}});
+  const createCategory = useAdminMutation({mutationFn:()=>createCategoryFn({data:{tenantId:tenantId!,name:newCategoryName,categoryKey:newCategoryName.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"")}}),successMessage:"Expense category created",onSuccess:()=>{setNewCategoryName("");void qc.invalidateQueries({queryKey:["restaurant.expense-categories",tenantId]});}});\n  const createExpense = useAdminMutation({mutationFn:()=>createExpenseFn({data:{tenantId:tenantId!,propertyId:expenseProperty||null,categoryId,description,amount:Number(amount),currency,incurredOn}}),successMessage:"Expense recorded",onSuccess:()=>{setDescription("");setAmount("");refreshExpenses();}});
   const approveExpense = useAdminMutation({mutationFn:(expenseId:string)=>approveExpenseFn({data:{tenantId:tenantId!,expenseId}}),successMessage:"Expense approved",onSuccess:refreshExpenses});
   const recordPayment = useAdminMutation({mutationFn:(v:{expenseId:string;amount:number;currency:string})=>paymentFn({data:{tenantId:tenantId!,...v}}),successMessage:"Payment recorded",onSuccess:refreshExpenses});
   const allocateExpense = useAdminMutation({mutationFn:(expenseId:string)=>allocateExpenseFn({data:{tenantId:tenantId!,expenseId}}),successMessage:"Expense allocated",onSuccess:refreshExpenses});
@@ -106,7 +106,7 @@ function CostingPage() {
       </SectionCard>
 
       <SectionCard title="Operating expenses" description="Record expenses, route them for independent approval, record payments, and allocate approved property expenses into profitability.">
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="mb-3 flex flex-wrap gap-2"><Input value={newCategoryName} onChange={e=>setNewCategoryName(e.target.value)} placeholder="New category name" aria-label="New expense category"/><Button size="sm" variant="outline" disabled={newCategoryName.trim().length<2||createCategory.isPending} onClick={()=>createCategory.mutate()}>Add category</Button></div>\n        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           <select className="h-9 rounded-md border bg-background px-2 text-sm" value={expenseProperty} onChange={e=>setExpenseProperty(e.target.value)} aria-label="Expense property">
             <option value="">Shared / unassigned</option>{properties.map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
