@@ -22,9 +22,24 @@ create or replace function public.restaurant_can_write_scoped(_tenant_id uuid,_r
  and m.role=any(_roles) and (_property_id is null or m.property_id is null or m.property_id=_property_id))
 $$;
 create or replace function public.restaurant_is_platform_admin(uuid) returns boolean language sql stable as $$ select false $$;
-create role authenticated;
-create role anon;
-create role service_role bypassrls;
+do $roles$
+begin
+  create role authenticated;
+exception when duplicate_object then null;
+end
+$roles$;
+do $roles$
+begin
+  create role anon;
+exception when duplicate_object then null;
+end
+$roles$;
+do $roles$
+begin
+  create role service_role bypassrls;
+exception when duplicate_object then null;
+end
+$roles$;
 grant usage on schema auth to authenticated,anon,service_role;
 grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0040_operational_cost_intelligence.sql
