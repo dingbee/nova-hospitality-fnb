@@ -309,6 +309,14 @@ values('10000000-0000-0000-0000-000000000001','Facilities','facilities',null,tru
 insert into public.restaurant_operational_expense_categories(tenant_id,name,category_key,parent_category_id,active)
 select '10000000-0000-0000-0000-000000000001','Cleaning','facilities_cleaning',id,true
 from public.restaurant_operational_expense_categories where category_key='facilities';
+insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on,created_by,expense_status)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,
+ 'Cancelled draft expense',3000,'TZS',date '2026-11-16','30000000-0000-0000-0000-000000000001','draft'
+from public.restaurant_operational_expense_categories where category_key='utilities';
+update public.restaurant_operational_expenses
+set expense_status='cancelled',cancelled_by='30000000-0000-0000-0000-000000000001',
+ cancelled_at=now(),cancellation_reason='Duplicate entry'
+where description='Cancelled draft expense';
 
 insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,supplier_id,description,amount,currency,incurred_on,created_by,expense_status)
 select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',c.id,
@@ -350,6 +358,16 @@ select tenant_id,id,
  '10000000-0000-0000-0000-000000000001/'||id::text||'/30000000-0000-0000-0000-000000000001/evidence.pdf',
  'evidence.pdf','application/pdf',1024,'30000000-0000-0000-0000-000000000001'
 from public.restaurant_operational_expenses where description='Evidence attachment expense';
+do $phase2$ begin
+ begin
+  insert into storage.objects(bucket_id,name)
+  select 'restaurant-expense-attachments',
+   '10000000-0000-0000-0000-000000000001/'||id::text||'/30000000-0000-0000-0000-000000000003/forged.pdf'
+  from public.restaurant_operational_expenses where description='Evidence attachment expense';
+  raise exception 'Attachment path accepted a different uploader identity';
+ exception when insufficient_privilege then null;
+ end;
+end $phase2$;
 do $phase2$ begin
  if (select count(*) from public.restaurant_operational_expense_attachments where file_name='evidence.pdf')<>1 then
   raise exception 'Expense attachment metadata was not persisted';
