@@ -8,6 +8,9 @@ create table public.restaurant_suppliers(id uuid primary key,tenant_id uuid not 
 create schema if not exists storage;
 create table storage.buckets(id text primary key,name text not null,public boolean not null default false,file_size_limit bigint,allowed_mime_types text[]);
 create table storage.objects(bucket_id text not null,name text not null);
+alter table storage.objects enable row level security;
+grant usage on schema storage to authenticated,service_role;
+grant select,insert,delete on storage.objects to authenticated,service_role;
 create or replace function storage.foldername(_name text) returns text[] language sql immutable as $folder$
  select case when array_length(string_to_array(_name,'/'),1)>1
    then (string_to_array(_name,'/'))[1:array_length(string_to_array(_name,'/'),1)-1]
