@@ -50,7 +50,7 @@ function CostingPage() {
       tenantId: tenantId!, propertyId: effectivePropertyId, driverKey,
       periodStart, units: Number(units),
     } }),
-    onSuccessToast: "Activity driver saved",
+    onSuccessToast: () => "Activity driver saved",
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["restaurant.cost-activity-drivers", tenantId] }),
   });
   const q = useQuery({
