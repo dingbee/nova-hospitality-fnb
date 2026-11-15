@@ -21,7 +21,8 @@ create or replace function public.restaurant_can_write_scoped(_tenant_id uuid,_r
  select exists(select 1 from public.restaurant_members m where m.tenant_id=_tenant_id and m.user_id=auth.uid()
  and m.role=any(_roles) and (_property_id is null or m.property_id is null or m.property_id=_property_id))
 $$;
-create or replace function public.restaurant_is_platform_admin(uuid) returns boolean language sql stable as $$ select false $$;
+create or replace function public.restaurant_is_platform_admin(uuid) returns boolean language sql stable as $ select false $;
+create or replace function public.restaurant_member_active(_user_id uuid,_tenant_id uuid) returns boolean language sql stable as $ select true $;
 do $roles$
 begin
   create role authenticated;
@@ -43,6 +44,8 @@ $roles$;
 grant usage on schema auth to authenticated,anon,service_role;
 grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0040_operational_cost_intelligence.sql
+\ir ../migrations/0120_operational_expense_security_closure.sql
+\ir ../migrations/0121_operational_expense_payment_and_schedule_scope_closure.sql
 
 insert into public.restaurant_tenants values
  ('10000000-0000-0000-0000-000000000001'),('10000000-0000-0000-0000-000000000002');
@@ -51,7 +54,8 @@ insert into public.restaurant_properties values
  ('20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002'),
  ('20000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000001');
 insert into public.restaurant_members values
- ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','owner',null);
+ ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','owner',null),
+ ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000003','accountant','20000000-0000-0000-0000-000000000001');
 insert into public.restaurant_locations values
  ('40000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001');
 insert into public.restaurant_stock_movements values
@@ -73,7 +77,13 @@ insert into public.restaurant_operational_expense_categories(tenant_id,name,cate
 insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
  select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Electricity',100000,'TZS','2026-11-01'
  from public.restaurant_operational_expense_categories where category_key='utilities';
--- Payment trigger derives paid state and rejects overpayment.
+-- Approvals require a distinct authorized user, including through direct table writes.
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000003',true);
+set local role authenticated;
+update public.restaurant_operational_expenses set approval_status='approved',approved_by='30000000-0000-0000-0000-000000000003',approved_at=now() where description='Electricity';
+reset role;
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
+-- Payment trigger derives paid state, requires approval, and rejects overpayment.
 insert into public.restaurant_operational_expense_payments(tenant_id,expense_id,amount,currency)
  select tenant_id,id,40000,'TZS' from public.restaurant_operational_expenses where description='Electricity';
 do $$ begin
@@ -97,9 +107,7 @@ do $$ begin
 end $$;
 -- Authenticate the owner for the allocation RPC's authorization check.
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
--- Approve and atomically allocate the complete expense to its property.
-update public.restaurant_operational_expenses set approval_status='approved',
- approved_by='30000000-0000-0000-0000-000000000001',approved_at=now() where description='Electricity';
+-- Expense is already independently approved; allocate the complete expense.
 select public.restaurant_commit_expense_allocations(
  (select id from public.restaurant_operational_expenses where description='Electricity'),
  '[{"property_id":"20000000-0000-0000-0000-000000000001","location_id":null,"amount":100000,"currency":"TZS","allocation_method":"direct"}]'::jsonb,
@@ -140,7 +148,9 @@ insert into public.restaurant_cost_allocation_rules(tenant_id,name,currency,effe
 values('10000000-0000-0000-0000-000000000001','Utilities 60/40','TZS',date '2026-01-01',1,
 '[{"property_id":"20000000-0000-0000-0000-000000000001","location_id":null,"weight":60},{"property_id":"20000000-0000-0000-0000-000000000003","location_id":null,"weight":40}]',
 'approved','30000000-0000-0000-0000-000000000001',now());
-update public.restaurant_operational_expenses set approval_status='approved',approved_by='30000000-0000-0000-0000-000000000001',approved_at=now() where description='Shared utilities';
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000003',true);
+update public.restaurant_operational_expenses set approval_status='approved',approved_by='30000000-0000-0000-0000-000000000003',approved_at=now() where description='Shared utilities';
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
 select public.restaurant_commit_expense_allocations(
  (select id from public.restaurant_operational_expenses where description='Shared utilities'),
  jsonb_build_array(
