@@ -105,3 +105,7 @@ export const recordOperationalExpensePaymentFn = createServerFn({method:"POST"})
 export const allocateOperationalExpenseDirectFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
  .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),expenseId:z.string().uuid()}).parse(d))
  .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.allocateOperationalExpenseDirect(context.supabase,context.userId,data);});
+
+export const createOperationalExpenseCategoryFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),name:z.string().trim().min(2).max(80),categoryKey:z.string().regex(/^[a-z][a-z0-9_]{1,63}$/)}).parse(d))
+ .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.createOperationalExpenseCategory(context.supabase,context.userId,data);});
