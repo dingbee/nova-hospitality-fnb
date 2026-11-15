@@ -1,5 +1,13 @@
 name: Phase 3 Hybrid Allocation
 on:
+  push:
+    branches:
+      - "feat/operational-cost-intelligence-phase3-workaround"
+    paths:
+      - "src/modules/restaurant/costing/**"
+      - "standalone/db/migrations/0040_operational_cost_intelligence.sql"
+      - "standalone/db/verification/test-operational-cost-intelligence.sql"
+      - ".github/workflows/phase3-hybrid-allocation.yml"
   pull_request:
     paths:
       - "src/modules/restaurant/costing/**"
