@@ -178,7 +178,10 @@ export function allocateOperationalCost(input: {
   }
 
   const drivers = input.drivers ?? [];
-  if (drivers.length && drivers.every(d => Number.isFinite(d.units) && d.units > 0)) {
+  if (drivers.length) {
+    if (drivers.some(d => !Number.isFinite(d.units) || d.units <= 0 || !d.propertyId)) {
+      throw new AllocationError("Activity-driver rows require a property and positive finite units.");
+    }
     const portions = apportion(sourceMinor, drivers.map(d => ({ ...d, weight: d.units })));
     return result(source, sourceMinor, "activity_driver", portions);
   }
