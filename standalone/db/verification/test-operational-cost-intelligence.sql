@@ -30,6 +30,7 @@ insert into public.restaurant_properties values
 insert into public.restaurant_members values
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','owner',null);
 -- Seed tenant B through service role so the authenticated tenant-A check proves isolation.
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
 set local role service_role;
 insert into public.restaurant_operational_expense_categories(tenant_id,name,category_key)
  values('10000000-0000-0000-0000-000000000002','Utilities B','utilities-b');
