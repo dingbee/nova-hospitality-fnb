@@ -4,7 +4,7 @@ create extension if not exists pgcrypto;
 create schema if not exists auth;
 do $$ begin create type public.restaurant_role as enum('owner','general_manager','restaurant_manager','accountant'); exception when duplicate_object then null; end $$;
 create table public.restaurant_tenants(id uuid primary key);
-create table public.restaurant_suppliers(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id),name text not null);
+create table public.restaurant_suppliers(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id),name text not null,status text not null default 'active');
 create schema if not exists storage;
 create table storage.buckets(id text primary key,name text not null,public boolean not null default false,file_size_limit bigint,allowed_mime_types text[]);
 create table storage.objects(bucket_id text not null,name text not null);
@@ -61,6 +61,8 @@ grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0122_operational_expense_property_currency_integrity.sql
 \ir ../migrations/0123_operational_expense_creator_identity_integrity.sql
 \ir ../migrations/0124_operational_expense_read_property_scope_integrity.sql
+\ir ../migrations/0125_operational_expense_complete_workflows.sql
+\ir ../migrations/0126_operational_expense_attachment_and_schedule_hardening.sql
 \ir ../migrations/0125_operational_expense_complete_workflows.sql
 
 insert into public.restaurant_tenants values
@@ -295,4 +297,90 @@ do $$ begin
  end if;
 end $$;
 reset role;
+
+-- Complete Phase 2 workflows: category hierarchy, supplier links, draft/edit/record/reject/cancel,
+-- private evidence storage, audit trail, recurring schedule lifecycle and end-date enforcement.
+SAVEPOINT phase2_complete_workflows;
+insert into public.restaurant_suppliers(id,tenant_id,name,status)
+values('60000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','UAT Utilities Supplier','active');
+insert into public.restaurant_operational_expense_categories(tenant_id,name,category_key,parent_category_id,active)
+values('10000000-0000-0000-0000-000000000001','Facilities','facilities',null,true);
+insert into public.restaurant_operational_expense_categories(tenant_id,name,category_key,parent_category_id,active)
+select '10000000-0000-0000-0000-000000000001','Cleaning','facilities_cleaning',id,true
+from public.restaurant_operational_expense_categories where category_key='facilities';
+
+insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,supplier_id,description,amount,currency,incurred_on,created_by,expense_status)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',c.id,
+ '60000000-0000-0000-0000-000000000001','Draft facilities expense',25000,'TZS',date '2026-11-16',
+ '30000000-0000-0000-0000-000000000001','draft'
+from public.restaurant_operational_expense_categories c where c.category_key='facilities_cleaning';
+update public.restaurant_operational_expenses
+set description='Recorded facilities expense',expense_status='recorded'
+where description='Draft facilities expense';
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000003',true);
+set local role authenticated;
+update public.restaurant_operational_expenses
+set approval_status='rejected',rejected_by='30000000-0000-0000-0000-000000000003',
+ rejected_at=now(),rejection_reason='Insufficient supporting documentation'
+where description='Recorded facilities expense';
+reset role;
+do $phase2$ begin
+ if not exists(select 1 from public.restaurant_operational_expenses where description='Recorded facilities expense' and expense_status='cancelled' and approval_status='rejected') then
+  raise exception 'Independent rejection did not transition the expense to cancelled';
+ end if;
+ if (select count(*) from public.restaurant_operational_expense_audit_events where event_type in ('created','recorded','rejected') and expense_id=(select id from public.restaurant_operational_expenses where description='Recorded facilities expense'))<3 then
+  raise exception 'Expense lifecycle audit history is incomplete';
+ end if;
+end $phase2$;
+
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
+insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on,created_by,expense_status)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,
+ 'Evidence attachment expense',5000,'TZS',date '2026-11-16','30000000-0000-0000-0000-000000000001','draft'
+from public.restaurant_operational_expense_categories where category_key='utilities';
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
+set local role authenticated;
+insert into storage.objects(bucket_id,name)
+select 'restaurant-expense-attachments',
+ '10000000-0000-0000-0000-000000000001/'||id::text||'/30000000-0000-0000-0000-000000000001/evidence.pdf'
+from public.restaurant_operational_expenses where description='Evidence attachment expense';
+insert into public.restaurant_operational_expense_attachments(tenant_id,expense_id,storage_path,file_name,mime_type,size_bytes,uploaded_by)
+select tenant_id,id,
+ '10000000-0000-0000-0000-000000000001/'||id::text||'/30000000-0000-0000-0000-000000000001/evidence.pdf',
+ 'evidence.pdf','application/pdf',1024,'30000000-0000-0000-0000-000000000001'
+from public.restaurant_operational_expenses where description='Evidence attachment expense';
+do $phase2$ begin
+ if (select count(*) from public.restaurant_operational_expense_attachments where file_name='evidence.pdf')<>1 then
+  raise exception 'Expense attachment metadata was not persisted';
+ end if;
+ if (select count(*) from public.restaurant_operational_expense_audit_events where event_type='attachment_added')<>1 then
+  raise exception 'Attachment audit event was not recorded';
+ end if;
+end $phase2$;
+delete from storage.objects where name like '%/evidence.pdf';
+delete from public.restaurant_operational_expense_attachments where file_name='evidence.pdf';
+reset role;
+
+insert into public.restaurant_operational_expense_schedules(tenant_id,property_id,category_id,supplier_id,description,amount,currency,cadence,next_occurrence,ends_on,created_by)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,
+ '60000000-0000-0000-0000-000000000001','Facilities quarterly service',75000,'TZS','quarterly',
+ date '2026-11-16',date '2027-05-16','30000000-0000-0000-0000-000000000001'
+from public.restaurant_operational_expense_categories where category_key='facilities_cleaning';
+update public.restaurant_operational_expense_schedules set active=false
+where description='Facilities quarterly service';
+update public.restaurant_operational_expense_schedules set active=true
+where description='Facilities quarterly service';
+select public.restaurant_generate_scheduled_expense(
+ (select id from public.restaurant_operational_expense_schedules where description='Facilities quarterly service'),date '2026-11-16');
+select public.restaurant_generate_scheduled_expense(
+ (select id from public.restaurant_operational_expense_schedules where description='Facilities quarterly service'),date '2026-11-16');
+do $phase2$ begin
+ if (select count(*) from public.restaurant_operational_expense_schedule_occurrences o join public.restaurant_operational_expenses e on e.id=o.expense_id where e.description='Facilities quarterly service')<>1 then
+  raise exception 'Recurring schedule generation is not idempotent';
+ end if;
+ if (select count(*) from public.restaurant_operational_expense_audit_events where event_type in ('schedule_created','schedule_paused','schedule_resumed') and schedule_id=(select id from public.restaurant_operational_expense_schedules where description='Facilities quarterly service'))<3 then
+  raise exception 'Recurring schedule audit trail is incomplete';
+ end if;
+end $phase2$;
+ROLLBACK TO SAVEPOINT phase2_complete_workflows;
 rollback;
