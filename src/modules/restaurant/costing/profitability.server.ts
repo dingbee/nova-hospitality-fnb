@@ -65,9 +65,10 @@ export async function computeProfitability(
   if (orderErr) throw new Error(orderErr.message);
 
   const orderIds = ((orders ?? []) as any[]).map((o) => o.id);
-  const currency = ((orders ?? []) as any[])[0]?.currency ?? "TZS";
-  const periodFrom = `${input.from.slice(0, 7)}-01`;
-  const periodTo = `${input.to.slice(0, 7)}-01`;
+  const orderCurrencies = new Set(((orders ?? []) as any[]).map((o) => o.currency).filter(Boolean));
+  if (orderCurrencies.size > 1) throw new Error("Profitability cannot combine sales across currencies.");
+  const periodFrom = input.from.slice(0, 10);
+  const periodTo = input.to.slice(0, 10);
   let expenseAllocationQuery = sb
     .from("restaurant_cost_allocations")
     .select("amount, currency")
@@ -79,10 +80,10 @@ export async function computeProfitability(
   if (input.locationId) expenseAllocationQuery = expenseAllocationQuery.eq("location_id", input.locationId);
   const { data: expenseAllocations, error: expenseAllocationError } = await expenseAllocationQuery;
   if (expenseAllocationError) throw new Error(expenseAllocationError.message);
-  const currencies = new Set(((expenseAllocations ?? []) as any[]).map((r) => r.currency));
-  if (currencies.size > 1 || (currencies.size === 1 && !currencies.has(currency))) {
-    throw new Error("Profitability cannot combine operating costs across currencies.");
-  }
+  const currencies = new Set(((expenseAllocations ?? []) as any[]).map((r) => r.currency).filter(Boolean));
+  const currencySet = new Set([...orderCurrencies, ...currencies]);
+  if (currencySet.size > 1) throw new Error("Profitability cannot combine sales and operating costs across currencies.");
+  const currency = [...currencySet][0] ?? "TZS";
   const allocatedOperatingExpenses = Number(
     ((expenseAllocations ?? []) as any[]).reduce((sum, row) => sum + Number(row.amount ?? 0), 0).toFixed(2),
   );
