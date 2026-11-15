@@ -47,6 +47,7 @@ grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0120_operational_expense_security_closure.sql
 \ir ../migrations/0121_operational_expense_payment_and_schedule_scope_closure.sql
 \ir ../migrations/0122_operational_expense_property_currency_integrity.sql
+\ir ../migrations/0123_operational_expense_creator_identity_integrity.sql
 
 insert into public.restaurant_tenants values
  ('10000000-0000-0000-0000-000000000001'),('10000000-0000-0000-0000-000000000002');
@@ -93,6 +94,20 @@ insert into public.restaurant_operational_expenses(tenant_id,property_id,categor
 insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
  select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Pending payment rejection',1000,'TZS','2026-11-01'
  from public.restaurant_operational_expense_categories where category_key='utilities';
+do $phase2$ begin
+ begin
+  insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on,created_by)
+  select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Forged creator rejection',1000,'TZS','2026-11-01','30000000-0000-0000-0000-000000000003'
+  from public.restaurant_operational_expense_categories where category_key='utilities';
+  raise exception 'Forged expense creator unexpectedly accepted';
+ exception when insufficient_privilege then null;
+ end;
+ begin
+  update public.restaurant_operational_expenses set created_by='30000000-0000-0000-0000-000000000003' where description='Self approval rejection';
+  raise exception 'Expense creator identity unexpectedly mutable';
+ exception when insufficient_privilege then null;
+ end;
+end $phase2$;
 do $phase2$ begin
  begin
   insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
