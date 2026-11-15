@@ -157,7 +157,7 @@ insert into public.restaurant_members values
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','restaurant_manager','20000000-0000-0000-0000-000000000001');
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000002',true);
 set local role authenticated;
-do $ begin
+do $phase3$ begin
  if exists(select 1 from public.restaurant_operational_expenses where property_id='20000000-0000-0000-0000-000000000003') then
   raise exception 'Property-scoped member can read another property expense';
  end if;
@@ -168,7 +168,7 @@ do $ begin
   raise exception 'Property-scoped member unexpectedly wrote to another property';
  exception when insufficient_privilege or check_violation then null;
  end;
-end $;
+end $phase3$;
 reset role;
 -- Tenant/property-scoped RLS: user from tenant A cannot read tenant B.
 set local role authenticated;
