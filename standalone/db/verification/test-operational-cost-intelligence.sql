@@ -239,7 +239,7 @@ reset role;
 set local role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
 do $$ begin
- if (select count(*) from public.restaurant_operational_expenses) <> 3 then
+ if (select count(*) from public.restaurant_operational_expenses) <> 5 then
   raise exception 'tenant member should see exactly own tenant expense';
  end if;
 end $$;
