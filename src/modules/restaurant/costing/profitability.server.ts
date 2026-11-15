@@ -153,7 +153,7 @@ export async function computeProfitability(
     agg.set(key, row);
   }
 
-  const rows = [...agg.values()]
+  const allRows = [...agg.values()]
     .map((r) => {
       const revenue = Number(r.revenue.toFixed(2));
       const actual = Number(r.actual_cost.toFixed(4));
@@ -171,14 +171,14 @@ export async function computeProfitability(
         quantity_sold: Number(r.quantity_sold.toFixed(3)),
       };
     })
-    .sort((a, b) => b.gross_profit - a.gross_profit)
-    .slice(0, input.limit);
+    .sort((a, b) => b.gross_profit - a.gross_profit);
+  const rows = allRows.slice(0, input.limit);
 
-  const revenue = Number(rows.reduce((s, r) => s + r.revenue, 0).toFixed(2));
-  const actual = Number(rows.reduce((s, r) => s + r.actual_cost, 0).toFixed(4));
-  const theoretical = Number(rows.reduce((s, r) => s + r.theoretical_cost, 0).toFixed(4));
+  const revenue = Number(allRows.reduce((s, r) => s + r.revenue, 0).toFixed(2));
+  const actual = Number(allRows.reduce((s, r) => s + r.actual_cost, 0).toFixed(4));
+  const theoretical = Number(allRows.reduce((s, r) => s + r.theoretical_cost, 0).toFixed(4));
   const totals = {
-    quantity_sold: Number(rows.reduce((s, r) => s + r.quantity_sold, 0).toFixed(3)),
+    quantity_sold: Number(allRows.reduce((s, r) => s + r.quantity_sold, 0).toFixed(3)),
     revenue,
     theoretical_cost: theoretical,
     actual_cost: actual,
@@ -194,9 +194,9 @@ export async function computeProfitability(
     currency,
   };
 
-  if (input.persist && rows.length > 0) {
+  if (input.persist && allRows.length > 0) {
     const { error } = await sb.from("restaurant_profitability_snapshots").insert(
-      rows.map((r) => ({
+      allRows.map((r) => ({
         tenant_id: input.tenantId,
         property_id: input.propertyId ?? null,
         location_id: input.locationId ?? null,
