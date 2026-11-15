@@ -7,6 +7,12 @@ create table public.restaurant_tenants(id uuid primary key);
 create table public.restaurant_properties(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id));
 create table public.restaurant_locations(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id),property_id uuid references public.restaurant_properties(id));
 create table public.restaurant_members(tenant_id uuid,user_id uuid,role public.restaurant_role,property_id uuid);
+create table public.restaurant_locations(id uuid primary key,tenant_id uuid not null,property_id uuid references public.restaurant_properties(id));
+create table public.restaurant_stock_movements(
+ id uuid primary key,tenant_id uuid not null,property_id uuid,location_id uuid,movement_type text not null,
+ total_cost numeric(14,2) not null,currency text not null,occurred_at timestamptz not null
+);
+
 create or replace function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
 create or replace function public.restaurant_can_read_scoped(_tenant_id uuid,_property_id uuid) returns boolean language sql stable as $$
  select exists(select 1 from public.restaurant_members m where m.tenant_id=_tenant_id and m.user_id=auth.uid()
@@ -30,6 +36,11 @@ insert into public.restaurant_properties values
  ('20000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000001');
 insert into public.restaurant_members values
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','owner',null);
+insert into public.restaurant_locations values
+ ('40000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001');
+insert into public.restaurant_stock_movements values
+ ('50000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001',null,'40000000-0000-0000-0000-000000000001','consumption',1250,'TZS',now());
+
 -- Seed tenant B through service role so the authenticated tenant-A check proves isolation.
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
 set local role service_role;
@@ -122,6 +133,11 @@ select public.restaurant_commit_expense_allocations(
 );
 do $ begin
  if (select sum(amount) from public.restaurant_cost_allocations where source_id=(select id from public.restaurant_operational_expenses where description='Shared utilities'))<>100000 then raise exception 'Approved rule allocation did not reconcile'; end if;
+end $;
+-- Existing stock movement remains the source ledger; allocation is a scoped cost projection.
+select public.restaurant_commit_consumption_allocation('50000000-0000-0000-0000-000000000001',null);
+do $ begin
+ if (select sum(amount) from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000001')<>1250 then raise exception 'Consumption allocation did not reconcile'; end if;
 end $;
 -- Tenant/property-scoped RLS: user from tenant A cannot read tenant B.
 set local role authenticated;
