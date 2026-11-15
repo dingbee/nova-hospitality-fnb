@@ -237,3 +237,81 @@ export async function listRecipeCosts(sb: Sb, userId: string, tenantId: string) 
 }
 
 export const _schemas = { computeRecipeCostSchema };
+
+
+const activityDriverInputSchema = z.object({
+  tenantId: z.string().uuid(),
+  propertyId: z.string().uuid(),
+  locationId: z.string().uuid().nullable().optional(),
+  driverKey: z.string().regex(/^[a-z][a-z0-9_]{1,63}$/),
+  periodStart: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+  units: z.number().positive().finite(),
+});
+
+export async function upsertCostActivityDriver(sb: Sb, userId: string, rawInput: unknown) {
+  const input = activityDriverInputSchema.parse(rawInput);
+  await assertCapability(sb, userId, input.tenantId, "costing.manage", {
+    propertyId: input.propertyId,
+    locationId: input.locationId ?? null,
+  });
+  const { data, error } = await sb
+    .from("restaurant_cost_activity_drivers")
+    .upsert({
+      tenant_id: input.tenantId,
+      property_id: input.propertyId,
+      location_id: input.locationId ?? null,
+      driver_key: input.driverKey,
+      period_start: input.periodStart,
+      units: input.units,
+      created_by: userId,
+    }, { onConflict: "tenant_id,property_id,location_id,driver_key,period_start" })
+    .select("id, property_id, location_id, driver_key, period_start, units, captured_at")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function listCostActivityDrivers(
+  sb: Sb,
+  userId: string,
+  input: { tenantId: string; driverKey: string; periodStart: string; propertyId?: string },
+) {
+  const parsed = z.object({
+    tenantId: z.string().uuid(),
+    driverKey: z.string().regex(/^[a-z][a-z0-9_]{1,63}$/),
+    periodStart: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+    propertyId: z.string().uuid().optional(),
+  }).parse(input);
+  await assertTenantRead(sb, userId, parsed.tenantId, { propertyId: parsed.propertyId ?? null });
+  let query = sb.from("restaurant_cost_activity_drivers")
+    .select("id, property_id, location_id, driver_key, period_start, units, captured_at")
+    .eq("tenant_id", parsed.tenantId)
+    .eq("driver_key", parsed.driverKey)
+    .eq("period_start", parsed.periodStart)
+    .order("property_id", { ascending: true });
+  if (parsed.propertyId) query = query.eq("property_id", parsed.propertyId);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+export async function commitConsumptionAllocation(
+  sb: Sb,
+  userId: string,
+  input: { tenantId: string; movementId: string; driverKey?: string; unallocatedReason?: string },
+) {
+  const parsed = z.object({
+    tenantId: z.string().uuid(),
+    movementId: z.string().uuid(),
+    driverKey: z.string().regex(/^[a-z][a-z0-9_]{1,63}$/).optional(),
+    unallocatedReason: z.string().trim().min(3).max(500).optional(),
+  }).parse(input);
+  await assertCapability(sb, userId, parsed.tenantId, "costing.manage");
+  const { data, error } = await sb.rpc("restaurant_commit_consumption_allocation", {
+    p_movement_id: parsed.movementId,
+    p_unallocated_reason: parsed.unallocatedReason ?? null,
+    p_driver_key: parsed.driverKey ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}
