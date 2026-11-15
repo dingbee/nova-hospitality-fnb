@@ -48,6 +48,7 @@ grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0121_operational_expense_payment_and_schedule_scope_closure.sql
 \ir ../migrations/0122_operational_expense_property_currency_integrity.sql
 \ir ../migrations/0123_operational_expense_creator_identity_integrity.sql
+\ir ../migrations/0124_operational_expense_read_property_scope_integrity.sql
 
 insert into public.restaurant_tenants values
  ('10000000-0000-0000-0000-000000000001'),('10000000-0000-0000-0000-000000000002');
@@ -65,6 +66,12 @@ do $phase2$ begin
  end if;
  if not public.restaurant_can_write_scoped('10000000-0000-0000-0000-000000000001',ARRAY['owner']::restaurant_role[],'20000000-0000-0000-0000-000000000001') then
   raise exception 'Valid same-tenant property authorization failed';
+ end if;
+ if public.restaurant_can_read_scoped('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000002') then
+  raise exception 'Cross-tenant property read scope unexpectedly passed';
+ end if;
+ if not public.restaurant_can_read_scoped('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001') then
+  raise exception 'Valid same-tenant property read scope failed';
  end if;
 end $phase2$;
 insert into public.restaurant_locations values
