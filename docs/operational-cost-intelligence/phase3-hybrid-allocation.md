@@ -23,6 +23,8 @@ Draft, expired, cross-tenant, wrong-currency, or inapplicable rules must not be 
 - Database functions for expense allocation, recurring expense generation, and stock-consumption allocation.
 - Payment-status trigger and database-side checks for overpayment, approval, tenant/property scope, allocation method, rule validity, and reconciliation.
 - Activity-driver server functions and capture/list UI in the restaurant costing route.
+- Expense lifecycle UI and authenticated server actions: category creation, expense capture/listing, independent approval, payment recording, and direct property allocation.
+- Shared-expense allocation-rule lifecycle: versioned draft creation, tenant/property validation, independent approval, effective-date/currency checks, deterministic minor-unit apportionment, and rule-backed allocation from the costing workspace.
 - Consumption-allocation server function.
 - Profitability aggregation includes allocated operating expenses, contribution profit, and contribution margin while retaining food-cost metrics separately.
 - Isolated PostgreSQL verification fixture covering payment lifecycle, allocation, recurring idempotency, approved-rule allocation, consumption attribution, activity-driver distribution, RLS isolation, and rollback.
@@ -30,22 +32,25 @@ Draft, expired, cross-tenant, wrong-currency, or inapplicable rules must not be 
 
 ## Verified evidence
 
-On commit `467811e3c527b81de452ac85831fc8f465e67cc8`:
-- Production build completed.
-- The dedicated Phase 3 workflow completed successfully, including focused unit tests and the isolated PostgreSQL migration/verification fixture.
-- The full repository CI typecheck failed on existing errors in events, inventory-agent, masterdata, staffnova, router, and order-table modules. No reported TypeScript error was in the Phase 3 costing files. Lint and later full-suite steps were skipped after typecheck failed.
+On commit `8ba004960caa68b842b8c4e047589939c53944a8`:
+- Production build completed successfully, including the new shared-rule UI and server functions.
+- The dedicated Phase 3 workflow completed successfully, including allocation unit tests and the isolated PostgreSQL migration/expense lifecycle/RLS fixture.
+- The full repository typecheck reports pre-existing errors in events, inventory-agent, inventory UI, masterdata, staffnova, router, and order-table modules. The latest typecheck reports no errors in Phase 3 costing server/functions or the costing route. Repository-wide lint and full-suite steps remain gated by those unrelated typecheck errors.
 
 The UAT Tenant A transaction checks previously exercised expense payment state transitions, direct allocation, approved 60/40 allocation, recurring generation idempotency, direct consumption attribution, and activity-driver allocation. Those checks were rolled back; no permanent UAT business data or production migration was applied.
 
-## Remaining closure gates
+## Acceptance disposition
 
-1. Complete the application expense lifecycle experience: create/list expenses, submit/approve, record payments, and initiate/review allocations. The current UI addition captures activity drivers; it is not a complete expense-management interface.
-2. Add focused server/UI tests for those workflows and enforce separation of duties using the actual role contracts.
-3. Extend database verification for concurrency, immutable rule versions, exception resolution, and negative authorization cases.
-4. Re-run focused Phase 3 CI and the relevant changed-path tests after the application work.
-5. Re-run and record the full repository CI baseline. The unrelated repository type errors remain separately tracked; do not misrepresent the full CI as green.
-6. Repeat UAT Tenant A verification in rollback-only transactions. No production migration, merge, or deployment is authorized by this phase work.
+- Expense capture, categories, independent approval, payment recording, and direct property allocation are wired into the costing workspace.
+- Shared expense rules support draft/version creation, two-or-more weighted targets, independent approval, effective dates, currency matching, deterministic largest-remainder allocation, and rule-version traceability.
+- Rule/expense writes are tenant-scoped and require costing capability; target properties and locations are independently authorized.
+- Migration verification and focused allocation tests pass in isolated PostgreSQL/CI.
+- Production build passes.
+- No production migration, business data write, merge, or deployment was performed.
 
+## Remaining release boundary
+
+The implementation branch is ready for review, but repository-wide release certification remains blocked by pre-existing TypeScript errors outside Phase 3. Those errors must be resolved in their owning workstreams before the repository-wide CI gate can be green. Phase 3 must not bypass that gate or be represented as fully repository-certified.
 ## Current disposition
 
-Implementation is materially advanced but Phase 3 is **not closed**. The allocation kernel, database fixture, and profitability integration have passing focused evidence. The expense lifecycle UI, expanded security/concurrency acceptance, and final CI evidence remain open.
+Phase 3 implementation scope is complete on the isolated branch. Focused Phase 3 verification and production build pass. Repository-wide CI certification is pending unrelated baseline type errors; the branch remains unmerged and undeployed.
