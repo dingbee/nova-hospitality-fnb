@@ -79,6 +79,24 @@ function CostingPage() {
   const approveExpense = useAdminMutation({mutationFn:(expenseId:string)=>approveExpenseFn({data:{tenantId:tenantId!,expenseId}}),successMessage:"Expense approved",onSuccess:refreshExpenses});
   const recordPayment = useAdminMutation({mutationFn:(v:{expenseId:string;amount:number;currency:string})=>paymentFn({data:{tenantId:tenantId!,...v}}),successMessage:"Payment recorded",onSuccess:refreshExpenses});
   const allocateExpense = useAdminMutation({mutationFn:(expenseId:string)=>allocateExpenseFn({data:{tenantId:tenantId!,expenseId}}),successMessage:"Expense allocated",onSuccess:refreshExpenses});
+  const rulesListFn = useServerFn(listCostAllocationRulesFn);
+  const createRuleFn = useServerFn(createCostAllocationRuleFn);
+  const approveRuleFn = useServerFn(approveCostAllocationRuleFn);
+  const allocateByRuleFn = useServerFn(allocateOperationalExpenseByRuleFn);
+  const rules = useQuery({queryKey:["restaurant.cost-allocation-rules",tenantId],queryFn:()=>rulesListFn({data:{tenantId:tenantId!}}),enabled:Boolean(tenantId)});
+  const [ruleName,setRuleName] = useState("");
+  const [rulePropertyA,setRulePropertyA] = useState("");
+  const [rulePropertyB,setRulePropertyB] = useState("");
+  const [ruleWeightA,setRuleWeightA] = useState("60");
+  const [ruleWeightB,setRuleWeightB] = useState("40");
+  const [ruleCurrency,setRuleCurrency] = useState("TZS");
+  const [ruleEffectiveFrom,setRuleEffectiveFrom] = useState(()=>new Date().toISOString().slice(0,10));
+  const [selectedSharedExpense,setSelectedSharedExpense] = useState("");
+  const [selectedAllocationRule,setSelectedAllocationRule] = useState("");
+  const refreshRules = () => { void qc.invalidateQueries({queryKey:["restaurant.cost-allocation-rules",tenantId]}); };
+  const createRule = useAdminMutation({mutationFn:()=>createRuleFn({data:{tenantId:tenantId!,name:ruleName,currency:ruleCurrency,effectiveFrom:ruleEffectiveFrom,targets:[{propertyId:rulePropertyA,weight:Number(ruleWeightA)},{propertyId:rulePropertyB,weight:Number(ruleWeightB)}]}}),successMessage:"Allocation rule saved as draft",onSuccess:()=>{setRuleName("");refreshRules();}});
+  const approveRule = useAdminMutation({mutationFn:(ruleId:string)=>approveRuleFn({data:{tenantId:tenantId!,ruleId}}),successMessage:"Allocation rule approved",onSuccess:refreshRules});
+  const allocateByRule = useAdminMutation({mutationFn:()=>allocateByRuleFn({data:{tenantId:tenantId!,expenseId:selectedSharedExpense,ruleId:selectedAllocationRule}}),successMessage:"Shared expense allocated",onSuccess:()=>{refreshExpenses();refreshRules();}});
   const q = useQuery({
     queryKey: ["restaurant.recipe-costs", tenantId],
     queryFn: () => fn({ data: { tenantId: tenantId! } }),
@@ -156,13 +174,13 @@ function CostingPage() {
           </li>)}
         </ul>
         <div className="mt-4 flex flex-wrap gap-2">
-          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={Object.keys(expenseRuleSelections)[0]??""} onChange={e=>setExpenseRuleSelections(e.target.value?{[e.target.value]:expenseRuleSelections[e.target.value]??""}:{})} aria-label="Select shared expense">
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={selectedSharedExpense} onChange={e=>setSelectedSharedExpense(e.target.value)} aria-label="Select shared expense">
             <option value="">Select shared approved expense</option>{(expenses.data??[]).filter((e:any)=>!e.property_id&&e.approval_status==="approved").map((e:any)=><option key={e.id} value={e.id}>{e.description} · {e.currency} {Number(e.amount).toLocaleString()}</option>)}
           </select>
-          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={Object.values(expenseRuleSelections)[0]??""} onChange={e=>{const id=Object.keys(expenseRuleSelections)[0];if(id)setExpenseRuleSelections({[id]:e.target.value});}} aria-label="Select approved allocation rule">
+          <select className="h-9 rounded-md border bg-background px-2 text-sm" value={selectedAllocationRule} onChange={e=>setSelectedAllocationRule(e.target.value)} aria-label="Select approved allocation rule">
             <option value="">Select approved rule</option>{(rules.data??[]).filter((x:any)=>x.status==="approved").map((x:any)=><option key={x.id} value={x.id}>{x.name} · v{x.version}</option>)}
           </select>
-          <Button size="sm" disabled={!Object.keys(expenseRuleSelections)[0]||!Object.values(expenseRuleSelections)[0]||allocateByRule.isPending} onClick={()=>{const expenseId=Object.keys(expenseRuleSelections)[0];const ruleId=expenseRuleSelections[expenseId];allocateByRule.mutate({expenseId,ruleId});}}>Allocate shared expense</Button>
+          <Button size="sm" disabled={!selectedSharedExpense||!selectedAllocationRule||allocateByRule.isPending} onClick={()=>allocateByRule.mutate()}>Allocate shared expense</Button>
         </div>
       </SectionCard>
       <SectionCard title="Hybrid allocation activity drivers" description="Record auditable operating activity by property and period. Shared consumption can use these weighted units when no direct property attribution exists.">
