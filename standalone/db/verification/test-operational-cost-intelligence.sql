@@ -2,6 +2,7 @@
 begin;
 create extension if not exists pgcrypto;
 create schema if not exists auth;
+grant usage on schema auth to authenticated,anon,service_role;
 do $$ begin create type public.restaurant_role as enum('owner','general_manager','restaurant_manager','accountant'); exception when duplicate_object then null; end $$;
 create table public.restaurant_tenants(id uuid primary key);
 create table public.restaurant_properties(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id));
