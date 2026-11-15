@@ -54,17 +54,17 @@ insert into public.restaurant_properties values
  ('20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002'),
  ('20000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000001');
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
-do $ begin
+insert into public.restaurant_members values
+ ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','owner',null),
+ ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000003','accountant','20000000-0000-0000-0000-000000000001');
+do $phase2$ begin
  if public.restaurant_can_write_scoped('10000000-0000-0000-0000-000000000001',ARRAY['owner']::restaurant_role[],'20000000-0000-0000-0000-000000000002') then
   raise exception 'Cross-tenant property authorization unexpectedly passed';
  end if;
  if not public.restaurant_can_write_scoped('10000000-0000-0000-0000-000000000001',ARRAY['owner']::restaurant_role[],'20000000-0000-0000-0000-000000000001') then
   raise exception 'Valid same-tenant property authorization failed';
  end if;
-end $;
-insert into public.restaurant_members values
- ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','owner',null),
- ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000003','accountant','20000000-0000-0000-0000-000000000001');
+end $phase2$;
 insert into public.restaurant_locations values
  ('40000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001');
 insert into public.restaurant_stock_movements values
@@ -86,6 +86,21 @@ insert into public.restaurant_operational_expense_categories(tenant_id,name,cate
 insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
  select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Electricity',100000,'TZS','2026-11-01'
  from public.restaurant_operational_expense_categories where category_key='utilities';
+insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
+ select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Self approval rejection',1000,'TZS','2026-11-01'
+ from public.restaurant_operational_expense_categories where category_key='utilities';
+insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
+ select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Pending payment rejection',1000,'TZS','2026-11-01'
+ from public.restaurant_operational_expense_categories where category_key='utilities';
+do $phase2$ begin
+ begin
+  update public.restaurant_operational_expenses
+     set approval_status='approved',approved_by='30000000-0000-0000-0000-000000000001',approved_at=now()
+   where description='Self approval rejection';
+  raise exception 'Self approval unexpectedly succeeded';
+ exception when insufficient_privilege then null;
+ end;
+end $phase2$;
 -- Approvals require a distinct authorized user, including through direct table writes.
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000003',true);
 set local role authenticated;
@@ -96,7 +111,7 @@ select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001'
 do $ begin
  begin
   insert into public.restaurant_operational_expense_payments(tenant_id,expense_id,amount,currency)
-  select tenant_id,id,1,'TZS' from public.restaurant_operational_expenses where description='Electricity';
+  select tenant_id,id,1,'TZS' from public.restaurant_operational_expenses where description='Pending payment rejection';
   raise exception 'Pending expense payment unexpectedly succeeded';
  exception when insufficient_privilege then null;
  end;
