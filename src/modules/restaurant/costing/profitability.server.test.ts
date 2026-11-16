@@ -54,7 +54,7 @@ describe("computeProfitability operating-cost integration", () => {
   it("includes allocated operating costs when the period has no sales", async () => {
     const sb = makeSupabase({
       restaurant_orders: [],
-      restaurant_cost_allocations: [{ amount: 125000, currency: "TZS" }],
+      restaurant_cost_allocations: [{ amount: 125000, currency: "TZS", property_id: "property-1", period_start: "2026-11-01" }],
     });
     const result = await computeProfitability(sb, "user-1", input);
     expect(result.rows).toEqual([]);
@@ -73,7 +73,7 @@ describe("computeProfitability operating-cost integration", () => {
     const persisted: unknown[][] = [];
     const sb = makeSupabase({
       restaurant_orders: [{ id: "order-1", currency: "TZS" }],
-      restaurant_cost_allocations: [{ amount: 10000, currency: "TZS" }],
+      restaurant_cost_allocations: [{ amount: 10000, currency: "TZS", property_id: "property-1", period_start: "2026-11-01" }],
       restaurant_order_items: [
         { id: "line-1", order_id: "order-1", menu_item_id: "menu-1", description: "Pilau", quantity: 2, line_total: 30000, line_cost: 10000, status: "served" },
         { id: "line-2", order_id: "order-1", menu_item_id: "menu-2", description: "Juice", quantity: 1, line_total: 10000, line_cost: 3000, status: "served" },
@@ -174,7 +174,7 @@ describe("computeProfitability operating-cost integration", () => {
   it("rejects a sales source with no currency even when operating costs have one", async () => {
     const sb = makeSupabase({
       restaurant_orders: [{ id: "order-1", currency: null }],
-      restaurant_cost_allocations: [{ amount: 100, currency: "TZS" }],
+      restaurant_cost_allocations: [{ amount: 100, currency: "TZS", property_id: "property-1", period_start: "2026-11-01" }],
     });
     await expect(computeProfitability(sb, "user-1", input)).rejects.toThrow(
       "Sales source currency is missing or invalid.",
@@ -195,7 +195,7 @@ describe("computeProfitability operating-cost integration", () => {
   it("rejects mixed currencies between sales and allocated operating costs", async () => {
     const sb = makeSupabase({
       restaurant_orders: [{ id: "order-1", currency: "TZS" }],
-      restaurant_cost_allocations: [{ amount: 100, currency: "USD" }],
+      restaurant_cost_allocations: [{ amount: 100, currency: "USD", property_id: "property-1", period_start: "2026-11-01" }],
       restaurant_order_items: [],
       restaurant_stock_movements: [],
     });
