@@ -229,9 +229,6 @@ export async function computeProfitability(
   const consumableCoverageIncomplete = !hasConsumptionProfiles || missingConsumableMovements.length > 0;
   // Service consumable movements are projected separately by Phase 1;
   // exclude them from recipe COGS so direct costs are never double-counted.
-  const capturedConsumableMovementIds = new Set(
-    ((consumptionEvents ?? []) as any[]).map((e) => e.stock_movement_id),
-  );
   const actualByItem = new Map<string, number>();
   for (const m of movementRows) {
     if (!m.order_item_id || costClassByInventoryItem.has(m.inventory_item_id)) continue;
