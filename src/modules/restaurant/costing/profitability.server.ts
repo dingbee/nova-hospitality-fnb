@@ -57,6 +57,7 @@ export interface ProfitabilityTotals extends Omit<ProfitabilityRow, "menu_item_i
   other_direct_variable_costs: number;
   direct_variable_costs: number;
   unallocated_operating_expenses: number;
+  pending_expense_amount: number;
   confidence_state: string;
 }
 
@@ -463,6 +464,7 @@ export async function computeProfitability(
     tax_collected: operational.taxCollected, net_sales: operational.netSales,
     service_consumables: operational.serviceConsumables, other_direct_variable_costs: operational.otherDirectVariableCosts,
     direct_variable_costs: operational.directVariableCosts, unallocated_operating_expenses: operational.unallocatedOperatingExpenses,
+    pending_expense_amount: operational.pendingExpenseAmount,
     confidence_state: operational.reconciliationState,
   };
   const agg = new Map<string, ProfitabilityRow>();
