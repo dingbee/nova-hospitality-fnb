@@ -382,71 +382,108 @@ export async function postGoodsReceipt(
     : { data: [] as any[] };
   const unitById = new Map(((unitRows ?? []) as UnitRow[]).map((u) => [u.id, u]));
 
-  const converted = new Map<string, { quantity: number; unitCost: number; stockUnitId: string | null }>();
+  const converted = new Map<string, {
+    quantity: number;
+    unitCost: number;
+    stockUnitId: string | null;
+    poUnitId: string | null;
+    poUnitCost: number;
+    poReceivedQuantity: number;
+    poAcceptedQuantity: number;
+    poRejectedQuantity: number;
+  }>();
   for (const l of rows) {
-    const accepted = Number(l.accepted_quantity ?? 0);
-    const unitCost = Number(l.unit_cost ?? 0);
+    const receiptReceived = Number(l.received_quantity ?? 0);
+    const receiptAccepted = Number(l.accepted_quantity ?? 0);
+    const receiptRejected = Number(l.rejected_quantity ?? 0) + Number(l.damaged_quantity ?? 0);
+    const receiptUnitCost = Number(l.unit_cost ?? 0);
     const item = l.inventory_item_id ? itemById.get(l.inventory_item_id) : null;
     const poItem = l.purchase_order_item_id ? poItemById.get(l.purchase_order_item_id) : null;
-    if (accepted <= 0 || !l.inventory_item_id) {
-      converted.set(l.id, { quantity: accepted, unitCost, stockUnitId: poItem?.stock_unit_id ?? item?.unit_id ?? l.unit_id ?? null });
+    const poUnitId = poItem?.unit_id ?? l.unit_id ?? null;
+
+    const toPoUnit = (quantity: number): number => {
+      if (!poItem || !poUnitId || l.unit_id === poUnitId) return quantity;
+      const result = convertUnits(quantity, unitById.get(l.unit_id), unitById.get(poUnitId));
+      if (!result.exact) {
+        throw new Error(
+          '"' + l.description + '": receipt quantity cannot be converted to the purchase-order unit (' +
+          (result.reason ?? "unknown conversion") + ").",
+        );
+      }
+      return result.quantity;
+    };
+
+    const poReceivedQuantity = toPoUnit(receiptReceived);
+    const poAcceptedQuantity = toPoUnit(receiptAccepted);
+    const poRejectedQuantity = toPoUnit(receiptRejected);
+    const poUnitCost = poReceivedQuantity > 0
+      ? (receiptReceived * receiptUnitCost) / poReceivedQuantity
+      : receiptUnitCost;
+
+    if (receiptAccepted <= 0 || !l.inventory_item_id) {
+      converted.set(l.id, {
+        quantity: 0,
+        unitCost: 0,
+        stockUnitId: poItem?.stock_unit_id ?? item?.unit_id ?? l.unit_id ?? null,
+        poUnitId,
+        poUnitCost,
+        poReceivedQuantity,
+        poAcceptedQuantity,
+        poRejectedQuantity,
+      });
       continue;
     }
 
-    if (poItem?.stock_units_per_purchase_unit != null) {
-      const factor = Number(poItem.stock_units_per_purchase_unit);
-      if (!poItem.stock_unit_id || !item?.unit_id || poItem.stock_unit_id !== item.unit_id ||
-          !poItem.unit_id || !Number.isFinite(factor) || factor <= 0) {
+    let stockUnitId: string | null = poItem?.stock_unit_id ?? item?.unit_id ?? null;
+    let stockQuantity = 0;
+    const factorSnapshot = poItem?.stock_units_per_purchase_unit;
+    if (factorSnapshot != null) {
+      const factor = Number(factorSnapshot);
+      if (!stockUnitId || !item?.unit_id || stockUnitId !== item.unit_id ||
+          !Number.isFinite(factor) || factor <= 0 || !poUnitId) {
         throw new Error("The purchase-order line has an invalid or obsolete stock-unit conversion snapshot. Reconcile the item unit before posting.");
       }
-      let purchaseQuantity = accepted;
-      if (l.unit_id !== poItem.unit_id) {
-        const toPurchaseUnit = convertUnits(accepted, unitById.get(l.unit_id), unitById.get(poItem.unit_id));
-        if (!toPurchaseUnit.exact) {
+      stockQuantity = poAcceptedQuantity * factor;
+    } else {
+      if (poItem?.supplier_product_id) {
+        throw new Error("A supplier-linked legacy purchase-order line has no immutable conversion snapshot. Manual review is required before receiving.");
+      }
+      if (!item?.unit_id) {
+        throw new Error('"' + l.description + '": inventory item has no configured stock unit.');
+      }
+      if (poUnitId === item.unit_id) {
+        stockQuantity = poAcceptedQuantity;
+        stockUnitId = item.unit_id;
+      } else if (poUnitId === item.purchase_unit_id) {
+        const result = purchaseToStock(poAcceptedQuantity, item.pack_size);
+        stockQuantity = result.quantity;
+        stockUnitId = item.unit_id;
+      } else {
+        const result = convertUnits(poAcceptedQuantity, unitById.get(poUnitId), unitById.get(item.unit_id));
+        if (!result.exact) {
           throw new Error(
-            '"' + l.description + '": receipt unit cannot be reconciled to the purchase-order unit (' +
-            (toPurchaseUnit.reason ?? "unknown conversion") + ").",
+            '"' + l.description + '": received in a unit that cannot be converted to this item's stock unit (' +
+            (result.reason ?? "unknown conversion") + "). Fix the unit on this line, or the item's purchase unit/pack size, before posting.",
           );
         }
-        purchaseQuantity = toPurchaseUnit.quantity;
+        stockQuantity = result.quantity;
+        stockUnitId = item.unit_id;
       }
-      const stockQuantity = purchaseQuantity * factor;
-      converted.set(l.id, {
-        quantity: stockQuantity,
-        unitCost: (accepted * unitCost) / stockQuantity,
-        stockUnitId: poItem.stock_unit_id,
-      });
-      continue;
     }
 
-    if (poItem?.supplier_product_id) {
-      throw new Error("A supplier-linked legacy purchase-order line has no immutable conversion snapshot. Manual review is required before receiving.");
+    if (!Number.isFinite(stockQuantity) || stockQuantity < 0 || !stockUnitId) {
+      throw new Error('"' + l.description + '": stock-unit quantity could not be reconciled.');
     }
-    // Legacy/manual PO lines retain the existing item-level conversion path.
-    if (!item?.unit_id || !l.unit_id || l.unit_id === item.unit_id) {
-      converted.set(l.id, { quantity: accepted, unitCost, stockUnitId: item?.unit_id ?? l.unit_id ?? null });
-      continue;
-    }
-    if (l.unit_id === item.purchase_unit_id) {
-      const result = purchaseToStock(accepted, item.pack_size);
-      converted.set(l.id, {
-        quantity: result.quantity,
-        unitCost: (accepted * unitCost) / result.quantity,
-        stockUnitId: item.unit_id,
-      });
-      continue;
-    }
-    const result = convertUnits(accepted, unitById.get(l.unit_id), unitById.get(item.unit_id));
-    if (!result.exact) {
-      throw new Error(
-        '"' + l.description + '": received in a unit that cannot be converted to this item's stock unit (' +
-        (result.reason ?? "unknown conversion") + "). Fix the unit on this line, or the item's purchase unit/pack size, before posting.",
-      );
-    }
+    const acceptedValueForLine = receiptAccepted * receiptUnitCost;
     converted.set(l.id, {
-      quantity: result.quantity,
-      unitCost: (accepted * unitCost) / result.quantity,
-      stockUnitId: item.unit_id,
+      quantity: stockQuantity,
+      unitCost: stockQuantity > 0 ? acceptedValueForLine / stockQuantity : 0,
+      stockUnitId,
+      poUnitId,
+      poUnitCost,
+      poReceivedQuantity,
+      poAcceptedQuantity,
+      poRejectedQuantity,
     });
   }
 
