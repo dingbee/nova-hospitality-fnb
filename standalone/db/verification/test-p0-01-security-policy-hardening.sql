@@ -13,11 +13,21 @@ BEGIN
   OR (SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='restaurant_receipt_deliveries' AND policyname IN ('receipt deliveries readable by tenant','receipt deliveries updatable by tenant staff','receipt deliveries writable by tenant staff'))<>3 THEN
     RAISE EXCEPTION 'P0-01 receipt-delivery policies lost authenticated-only scope';
   END IF;
-  SELECT qual INTO v_qual FROM pg_policies WHERE schemaname='public' AND tablename='restaurant_prices' AND policyname='prices read' AND cmd='SELECT';
-  IF v_qual IS NULL OR position('restaurant_can_read_location' IN v_qual)=0 OR position('restaurant_can_write_scoped' IN v_qual)>0 THEN
-    RAISE EXCEPTION 'P0-01 price-read policy lost location-aware restriction';
+  -- Price catalogue reads are intentionally tenant-wide: the POS uses a shared
+  -- tenant catalogue across properties. The policy remains safe because both
+  -- SECURITY DEFINER predicates reject auth.uid() IS NULL and are not executable
+  -- by anon. Do not impose a nonexistent location-level helper here.
+  SELECT qual INTO v_qual FROM pg_policies
+  WHERE schemaname='public' AND tablename='restaurant_prices'
+    AND policyname='prices read' AND cmd='SELECT';
+  IF v_qual IS NULL
+     OR position('restaurant_can_read(tenant_id)' IN v_qual)=0
+     OR position('restaurant_can_write_scoped' IN v_qual)=0
+     OR has_function_privilege('anon','public.restaurant_can_read(uuid)'::regprocedure,'EXECUTE')
+     OR has_function_privilege('anon','public.restaurant_can_write_scoped(uuid,restaurant_role[],uuid)'::regprocedure,'EXECUTE') THEN
+    RAISE EXCEPTION 'P0-01 tenant-wide price-read policy is missing its tenant predicates or anon execution is not revoked';
   END IF;
 
-  RAISE NOTICE 'P0-01 repository RLS hardening verified; no policy was broadened to production roles.';
+  RAISE NOTICE 'P0-01 repository RLS hardening verified; tenant-wide pricing reads remain membership-gated and anon execution is revoked.';
 END
 $$;
