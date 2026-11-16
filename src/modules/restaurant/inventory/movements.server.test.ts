@@ -81,6 +81,10 @@ function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[];
       }
       if (table === "restaurant_stock_movements") {
         const row = (api as any)._insertRow;
+        if (!row) {
+          const existing = movements.find((movement) => movement.dedupe_key === filters.dedupe_key) ?? null;
+          return { data: existing, error: null };
+        }
         if (row.dedupe_key && movements.some((m) => m.dedupe_key === row.dedupe_key)) {
           return { data: null, error: { code: "23505", message: "duplicate" } };
         }
