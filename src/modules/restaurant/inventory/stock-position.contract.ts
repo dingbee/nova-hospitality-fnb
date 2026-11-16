@@ -147,6 +147,7 @@ export function forecastDailyDemand(
   dailyConsumption: number[],
   horizonDays: number,
   minimumObservations = 7,
+  observedDays = dailyConsumption.length,
 ): DailyDemandForecast {
   if (!Number.isInteger(horizonDays) || horizonDays < 1) {
     throw new Error("Forecast horizon must be a positive integer.");
@@ -154,14 +155,17 @@ export function forecastDailyDemand(
   if (!Number.isInteger(minimumObservations) || minimumObservations < 1) {
     throw new Error("Minimum demand observations must be a positive integer.");
   }
+  if (!Number.isInteger(observedDays) || observedDays < 0) {
+    throw new Error("Observed demand days must be a non-negative integer.");
+  }
   const values = dailyConsumption.map(Number);
   if (values.some((value) => !nonNegative(value))) {
     throw new Error("Demand observations must be finite and non-negative.");
   }
-  if (values.length < minimumObservations) {
+  if (values.length < minimumObservations || observedDays < minimumObservations) {
     return {
       status: "insufficient_history",
-      observations: values.length,
+      observations: observedDays,
       dailyAverage: null,
       forecastQuantity: null,
       horizonDays,
@@ -172,7 +176,7 @@ export function forecastDailyDemand(
   }
 
   const sorted = [...values].sort((a, b) => a - b);
-  const capIndex = Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1);
+  const capIndex = Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * 0.95));
   const cap = sorted[Math.max(0, capIndex)] ?? 0;
   const outlierDays: number[] = [];
   const winsorized = values.map((value, index) => {
@@ -183,10 +187,10 @@ export function forecastDailyDemand(
     return value;
   });
   const dailyAverage = winsorized.reduce((sum, value) => sum + value, 0) / winsorized.length;
-  const confidence = values.length >= 21 ? "high" : values.length >= 14 ? "medium" : "low";
+  const confidence = observedDays >= 21 ? "high" : observedDays >= 14 ? "medium" : "low";
   return {
     status: "ready",
-    observations: values.length,
+    observations: observedDays,
     dailyAverage: Number(dailyAverage.toFixed(4)),
     forecastQuantity: Number((dailyAverage * horizonDays).toFixed(4)),
     horizonDays,
@@ -309,4 +313,41 @@ export function comparableSupplierUnitCost(
   if (!finite(unitPrice) || unitPrice < 0 || !currency || currency !== expectedCurrency) return null;
   if (!finite(stockUnitsPerPurchaseUnit) || stockUnitsPerPurchaseUnit <= 0) return null;
   return Number((unitPrice / stockUnitsPerPurchaseUnit).toFixed(6));
+}
+
+export interface InventoryUnitEvidence {
+  id: string;
+  dimension: string;
+  base_unit_id: string | null;
+  factor: number;
+}
+
+/**
+ * Resolves a configured purchase-unit conversion to stock units. Unit factors
+ * are used only when dimensions and base units match; the explicit item pack
+ * mapping is the sole fallback. Unknown or incompatible units fail closed.
+ */
+export function stockUnitsPerUnit(
+  sourceUnitId: string | null,
+  stockUnitId: string | null,
+  purchaseUnitId: string | null,
+  configuredPackSize: number | null,
+  units: readonly InventoryUnitEvidence[],
+): number | null {
+  if (!sourceUnitId || !stockUnitId) return null;
+  if (sourceUnitId === stockUnitId) return 1;
+  const source = units.find((unit) => unit.id === sourceUnitId);
+  const stock = units.find((unit) => unit.id === stockUnitId);
+  if (source && stock && source.dimension === stock.dimension && source.base_unit_id === stock.base_unit_id) {
+    const sourceFactor = Number(source.factor);
+    const stockFactor = Number(stock.factor);
+    if (finite(sourceFactor) && finite(stockFactor) && sourceFactor > 0 && stockFactor > 0) {
+      return Number((sourceFactor / stockFactor).toFixed(8));
+    }
+  }
+  if (sourceUnitId === purchaseUnitId && configuredPackSize != null) {
+    const pack = Number(configuredPackSize);
+    return finite(pack) && pack > 0 ? pack : null;
+  }
+  return null;
 }
