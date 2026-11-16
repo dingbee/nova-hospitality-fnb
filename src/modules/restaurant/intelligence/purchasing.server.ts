@@ -83,7 +83,7 @@ export async function getPurchasingIntelligence(
       if (input.locationId) q = q.eq("location_id", input.locationId);
       return q;
     })(),
-    sb.from("restaurant_inventory_units").select("id, dimension, base_unit_id, factor").eq("tenant_id", tenantId),
+    sb.from("restaurant_inventory_units").select("id, dimension, base_unit_id, factor").or("tenant_id.eq." + tenantId + ",tenant_id.is.null"),
   ]);
 
   for (const [label, result] of [
