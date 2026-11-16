@@ -44,6 +44,7 @@ $roles$;
 grant usage on schema auth to authenticated,anon,service_role;
 grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0040_operational_cost_intelligence.sql
+\ir ../migrations/0042_cost_reconciliation_variance_intelligence.sql
 
 insert into public.restaurant_tenants values
  ('10000000-0000-0000-0000-000000000001'),('10000000-0000-0000-0000-000000000002');
