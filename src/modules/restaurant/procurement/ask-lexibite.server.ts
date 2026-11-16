@@ -535,7 +535,7 @@ export async function createIntelligentPurchaseOrders(
     if (existing) {
       const { data: existingLines, error: existingLinesError } = await sb
         .from("restaurant_purchase_order_items")
-        .select("id, inventory_item_id, supplier_product_id, unit_id, quantity, unit_price")
+        .select("id, inventory_item_id, supplier_product_id, unit_id, stock_unit_id, stock_units_per_purchase_unit, minimum_order_quantity, order_multiple, quantity, unit_price")
         .eq("tenant_id", input.tenantId)
         .eq("purchase_order_id", existing.id);
       if (existingLinesError)
@@ -552,6 +552,10 @@ export async function createIntelligentPurchaseOrders(
               saved.inventory_item_id === line.inventoryItemId &&
               saved.supplier_product_id === line.supplierProductId &&
               saved.unit_id === line.unitId &&
+              saved.stock_unit_id === line.stockUnitId &&
+              Number(saved.stock_units_per_purchase_unit) === Number(line.stockUnitsPerPurchaseUnit) &&
+              Number(saved.minimum_order_quantity ?? 0) === Number(line.minimumOrderQuantity ?? 0) &&
+              Number(saved.order_multiple ?? 1) === Number(line.orderMultiple ?? 1) &&
               Number(saved.quantity) === Number(line.quantity) &&
               Number(saved.unit_price) === Number(line.unitPrice),
           ),
