@@ -56,7 +56,9 @@ export async function listSupplierInvoices(
     !tenantScope.platformAdmin &&
     !tenantScope.grants.some((grant) => grant.propertyId === null)
   ) {
-    const propertyIds = [...new Set(tenantScope.grants.map((grant) => grant.propertyId).filter(Boolean))] as string[];
+    const propertyIds = [
+      ...new Set(tenantScope.grants.map((grant) => grant.propertyId).filter(Boolean)),
+    ] as string[];
     if (propertyIds.length === 0) return [];
     q = q.in("property_id", propertyIds);
   }
@@ -92,8 +94,11 @@ export async function listSupplierInvoices(
     .from("restaurant_suppliers")
     .select("id, name")
     .eq("tenant_id", input.tenantId);
-  if (suppliersError) throw new Error("Unable to load invoice suppliers: " + suppliersError.message);
-  const names = new Map(((suppliers ?? []) as any[]).map((supplier) => [supplier.id, supplier.name]));
+  if (suppliersError)
+    throw new Error("Unable to load invoice suppliers: " + suppliersError.message);
+  const names = new Map(
+    ((suppliers ?? []) as any[]).map((supplier) => [supplier.id, supplier.name]),
+  );
   return invoiceRows.map((invoice) => {
     const creditApplied = creditByInvoice.get(invoice.id) ?? 0;
     return {
@@ -101,7 +106,10 @@ export async function listSupplierInvoices(
       supplier_name: names.get(invoice.supplier_id) ?? "—",
       credit_applied: Number(creditApplied.toFixed(2)),
       outstanding_balance: Number(
-        Math.max(0, Number(invoice.total ?? 0) - Number(invoice.amount_paid ?? 0) - creditApplied).toFixed(2),
+        Math.max(
+          0,
+          Number(invoice.total ?? 0) - Number(invoice.amount_paid ?? 0) - creditApplied,
+        ).toFixed(2),
       ),
     };
   });
@@ -518,7 +526,9 @@ export async function setInvoicePaymentStatus(
   await assertCapability(sb, userId, input.tenantId, "invoice.manage");
   const { data: before, error: readError } = await sb
     .from("restaurant_supplier_invoices")
-    .select("id, payment_status, document_number, total, amount_paid, match_status, property_id, location_id")
+    .select(
+      "id, payment_status, document_number, total, amount_paid, match_status, property_id, location_id",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("id", input.invoiceId)
     .single();
@@ -576,19 +586,27 @@ export async function setInvoicePaymentStatus(
     );
   }
   if (amountPaid - payableTotal > 0.0001) {
-    throw new Error("Amount paid cannot exceed the outstanding invoice balance after supplier credits.");
+    throw new Error(
+      "Amount paid cannot exceed the outstanding invoice balance after supplier credits.",
+    );
   }
   if (input.paymentStatus === "unpaid" && amountPaid + creditApplied > 0.0001) {
-    throw new Error("An invoice with a recorded payment or applied supplier credit cannot be marked unpaid.");
+    throw new Error(
+      "An invoice with a recorded payment or applied supplier credit cannot be marked unpaid.",
+    );
   }
   if (
     input.paymentStatus === "partially_paid" &&
     !(amountPaid + creditApplied > 0.0001 && amountPaid + creditApplied < total - 0.0001)
   ) {
-    throw new Error("Partially paid status requires settlement by cash or supplier credit below the invoice total.");
+    throw new Error(
+      "Partially paid status requires settlement by cash or supplier credit below the invoice total.",
+    );
   }
   if (input.paymentStatus === "paid" && Math.abs(amountPaid + creditApplied - total) > 0.01) {
-    throw new Error("Paid status requires cash payments plus applied supplier credits to equal the invoice total.");
+    throw new Error(
+      "Paid status requires cash payments plus applied supplier credits to equal the invoice total.",
+    );
   }
   if (
     input.paymentStatus === "disputed" &&

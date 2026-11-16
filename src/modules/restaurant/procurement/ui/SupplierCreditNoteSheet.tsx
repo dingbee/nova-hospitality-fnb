@@ -313,7 +313,10 @@ export function ApplySupplierCreditNoteSheet({
         </Field>
         <Field label="Available credit">
           <div className="flex h-11 items-center rounded-md border px-3 text-sm font-medium">
-            {formatMoney(creditNote?.remaining_amount ?? creditNote?.total ?? 0, creditNote?.currency)}
+            {formatMoney(
+              creditNote?.remaining_amount ?? creditNote?.total ?? 0,
+              creditNote?.currency,
+            )}
           </div>
         </Field>
       </FieldRow>

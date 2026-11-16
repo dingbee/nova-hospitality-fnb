@@ -25,7 +25,12 @@ export type PurchaseRequestStatus = (typeof PR_STATUSES)[number];
 export const PR_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
 export type PurchaseRequestPriority = (typeof PR_PRIORITIES)[number];
 
-export const CONFIRMATION_STATUSES = ["pending", "confirmed", "partially_confirmed", "declined"] as const;
+export const CONFIRMATION_STATUSES = [
+  "pending",
+  "confirmed",
+  "partially_confirmed",
+  "declined",
+] as const;
 export type SupplierConfirmationStatus = (typeof CONFIRMATION_STATUSES)[number];
 
 export const RECEIPT_STATUSES = ["draft", "posted", "cancelled"] as const;
@@ -34,10 +39,22 @@ export type GoodsReceiptStatus = (typeof RECEIPT_STATUSES)[number];
 export const INVOICE_STATUSES = ["draft", "recorded", "matched", "disputed", "cancelled"] as const;
 export type SupplierInvoiceStatus = (typeof INVOICE_STATUSES)[number];
 
-export const PROCUREMENT_PAYMENT_STATUSES = ["unpaid", "partially_paid", "paid", "disputed"] as const;
+export const PROCUREMENT_PAYMENT_STATUSES = [
+  "unpaid",
+  "partially_paid",
+  "paid",
+  "disputed",
+] as const;
 export type ProcurementPaymentStatus = (typeof PROCUREMENT_PAYMENT_STATUSES)[number];
 
-export const VARIANCE_TYPES = ["quantity", "price", "quality", "delivery", "tax", "invoice"] as const;
+export const VARIANCE_TYPES = [
+  "quantity",
+  "price",
+  "quality",
+  "delivery",
+  "tax",
+  "invoice",
+] as const;
 export type VarianceType = (typeof VARIANCE_TYPES)[number];
 
 export const VARIANCE_STATUSES = ["open", "accepted", "resolved", "escalated"] as const;

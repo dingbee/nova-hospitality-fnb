@@ -67,7 +67,7 @@ export async function recordSupplierCreditNote(
   }
 
   let propertyId = input.propertyId ?? linkedInvoiceScope.property_id ?? null;
-  let locationId = input.locationId ?? linkedInvoiceScope.location_id ?? null;
+  const locationId = input.locationId ?? linkedInvoiceScope.location_id ?? null;
   if (propertyId) {
     const { data: property, error: propertyError } = await sb
       .from("restaurant_properties")
@@ -159,7 +159,9 @@ export async function listSupplierCreditNotes(
     !tenantScope.platformAdmin &&
     !tenantScope.grants.some((grant) => grant.propertyId === null)
   ) {
-    const propertyIds = [...new Set(tenantScope.grants.map((grant) => grant.propertyId).filter(Boolean))] as string[];
+    const propertyIds = [
+      ...new Set(tenantScope.grants.map((grant) => grant.propertyId).filter(Boolean)),
+    ] as string[];
     if (propertyIds.length === 0) return [];
     q = q.in("property_id", propertyIds);
   }

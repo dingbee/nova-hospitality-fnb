@@ -120,7 +120,13 @@ export function computeCloseTotals(
   const active = payments.filter((p) => p.state !== "voided" && p.state !== "failed");
   const byMethod = new Map<string, MethodTotal>();
   for (const p of active) {
-    const entry = byMethod.get(p.method) ?? { method: p.method, captured: 0, refunded: 0, net: 0, count: 0 };
+    const entry = byMethod.get(p.method) ?? {
+      method: p.method,
+      captured: 0,
+      refunded: 0,
+      net: 0,
+      count: 0,
+    };
     const amount = n(p.amount);
     if (p.refund_of || p.state === "refunded" || amount < 0) {
       entry.refunded += Math.abs(amount);
@@ -161,7 +167,8 @@ export function computeCloseTotals(
     voids: extra.voidedItems ?? 0,
     reopened: orders.filter((o) => Boolean(o.reopened_at)).length,
     cancelled: orders.filter((o) => o.status === "cancelled").length,
-    openOrders: orders.filter((o) => !["closed", "cancelled", "voided"].includes(String(o.status))).length,
+    openOrders: orders.filter((o) => !["closed", "cancelled", "voided"].includes(String(o.status)))
+      .length,
     costOfSales: sum("cost_total"),
     byMethod: methods,
   };
@@ -192,7 +199,13 @@ export function reconcileTenders(
     const expected = round2(n(sys?.net) + (method === "cash" ? openingFloat : 0));
     const decl = declared.get(method);
     if (!decl || decl.declared_amount == null) {
-      return { method, systemAmount: expected, declaredAmount: null, variance: 0, outcome: "undeclared" as const };
+      return {
+        method,
+        systemAmount: expected,
+        declaredAmount: null,
+        variance: 0,
+        outcome: "undeclared" as const,
+      };
     }
     const variance = round2(n(decl.declared_amount) - expected);
     return {
@@ -268,7 +281,12 @@ export function detectPaymentExceptions(
       out.push(
         draftException("payment.duplicate", businessDate, p.id, {
           whatHappened: `Two ${p.method} payments of ${round2(n(p.amount))} were captured against the same order.`,
-          evidence: { orderId: p.order_id, firstPaymentId: first.id, duplicatePaymentId: p.id, amount: n(p.amount) },
+          evidence: {
+            orderId: p.order_id,
+            firstPaymentId: first.id,
+            duplicatePaymentId: p.id,
+            amount: n(p.amount),
+          },
           impactValue: Math.abs(n(p.amount)),
           entityType: "restaurant_payments",
           entityId: p.id,
@@ -304,7 +322,11 @@ export function detectPaymentExceptions(
           whatHappened: `Refunds of ${round2(refunded)} exceed the original ${p.method} payment of ${round2(
             n(original.amount),
           )}.`,
-          evidence: { originalPaymentId: original.id, refunded: round2(refunded), original: n(original.amount) },
+          evidence: {
+            originalPaymentId: original.id,
+            refunded: round2(refunded),
+            original: n(original.amount),
+          },
           impactValue: round2(refunded - n(original.amount)),
           entityType: "restaurant_payments",
           entityId: original.id,
@@ -315,7 +337,9 @@ export function detectPaymentExceptions(
 
   // Order-level settlement integrity.
   for (const order of orders.filter(isLiveOrder)) {
-    const rows = (byOrder.get(order.id) ?? []).filter((p) => p.state !== "voided" && p.state !== "failed");
+    const rows = (byOrder.get(order.id) ?? []).filter(
+      (p) => p.state !== "voided" && p.state !== "failed",
+    );
     const captured = round2(
       rows.reduce((s, p) => s + (p.refund_of ? -Math.abs(n(p.amount)) : n(p.amount)), 0),
     );
@@ -440,7 +464,12 @@ export function detectSalesChainExceptions(
           whatHappened: `Receipt ${receipt.receipt_number ?? receipt.id} was issued for ${n(
             receipt.total,
           )} with no settled payment behind it.`,
-          evidence: { receiptId: receipt.id, orderId: receipt.order_id, total: n(receipt.total), paid },
+          evidence: {
+            receiptId: receipt.id,
+            orderId: receipt.order_id,
+            total: n(receipt.total),
+            paid,
+          },
           impactValue: n(receipt.total),
           entityType: "restaurant_receipts",
           entityId: receipt.id,
@@ -496,20 +525,18 @@ const SIGN: Record<string, 1 | -1> = {
 export function computeItemFlows(movements: MovementFact[]): ItemFlow[] {
   const map = new Map<string, ItemFlow>();
   for (const m of movements) {
-    const flow: ItemFlow =
-      map.get(m.inventory_item_id) ??
-      {
-        itemId: m.inventory_item_id,
-        purchases: 0,
-        sales: 0,
-        waste: 0,
-        transfersIn: 0,
-        transfersOut: 0,
-        production: 0,
-        adjustments: 0,
-        stocktake: 0,
-        net: 0,
-      };
+    const flow: ItemFlow = map.get(m.inventory_item_id) ?? {
+      itemId: m.inventory_item_id,
+      purchases: 0,
+      sales: 0,
+      waste: 0,
+      transfersIn: 0,
+      transfersOut: 0,
+      production: 0,
+      adjustments: 0,
+      stocktake: 0,
+      net: 0,
+    };
     const qty = Math.abs(n(m.quantity));
     const type = String(m.movement_type);
     const sign = SIGN[type] ?? (n(m.quantity) < 0 ? -1 : 1);
@@ -651,7 +678,13 @@ export interface ProcurementVarianceFact {
   purchase_order_id?: string | null;
 }
 
-const VARIANCE_CODE: Record<string, "procurement.quantity_variance" | "procurement.price_variance" | "procurement.quality_rejection" | "procurement.invoice_mismatch"> = {
+const VARIANCE_CODE: Record<
+  string,
+  | "procurement.quantity_variance"
+  | "procurement.price_variance"
+  | "procurement.quality_rejection"
+  | "procurement.invoice_mismatch"
+> = {
   quantity: "procurement.quantity_variance",
   price: "procurement.price_variance",
   quality: "procurement.quality_rejection",
@@ -677,7 +710,9 @@ export function detectProcurementExceptions(
       (creditByInvoice.get(application.invoice_id) ?? 0) + n(application.amount),
     );
   }
-  const invoicedOrders = new Set(invoices.map((i) => i.purchase_order_id).filter(Boolean) as string[]);
+  const invoicedOrders = new Set(
+    invoices.map((i) => i.purchase_order_id).filter(Boolean) as string[],
+  );
 
   for (const v of variances) {
     if (v.status !== "open" && v.status !== "escalated") continue;
@@ -695,7 +730,10 @@ export function detectProcurementExceptions(
           purchaseOrderId: v.purchase_order_id,
         },
         impactValue: Math.abs(n(v.variance_value)),
-        severity: v.status === "escalated" ? "high" : (v.severity as ExceptionSeverity | undefined) ?? undefined,
+        severity:
+          v.status === "escalated"
+            ? "high"
+            : ((v.severity as ExceptionSeverity | undefined) ?? undefined),
         entityType: "restaurant_procurement_variances",
         entityId: v.id,
       }),
@@ -710,7 +748,11 @@ export function detectProcurementExceptions(
         whatHappened: `Goods receipt ${r.document_number ?? r.id} accepted ${n(
           r.accepted_value,
         )} of stock with no supplier invoice recorded.`,
-        evidence: { receiptId: r.id, purchaseOrderId: r.purchase_order_id, acceptedValue: n(r.accepted_value) },
+        evidence: {
+          receiptId: r.id,
+          purchaseOrderId: r.purchase_order_id,
+          acceptedValue: n(r.accepted_value),
+        },
         impactValue: n(r.accepted_value),
         entityType: "restaurant_goods_receipts",
         entityId: r.id,
@@ -810,12 +852,16 @@ export function detectRoomChargeExceptions(
 ): ExceptionDraft[] {
   const out: ExceptionDraft[] = [];
   const roomCharges = payments.filter(
-    (p) => p.method === "room_charge" && !p.refund_of && p.state !== "voided" && p.state !== "failed",
+    (p) =>
+      p.method === "room_charge" && !p.refund_of && p.state !== "voided" && p.state !== "failed",
   );
   const postedByOrder = new Map<string, FolioPostingFact[]>();
   for (const post of postings) {
     if (!post.source_order_id) continue;
-    postedByOrder.set(post.source_order_id, [...(postedByOrder.get(post.source_order_id) ?? []), post]);
+    postedByOrder.set(post.source_order_id, [
+      ...(postedByOrder.get(post.source_order_id) ?? []),
+      post,
+    ]);
   }
 
   for (const p of roomCharges) {
@@ -833,7 +879,12 @@ export function detectRoomChargeExceptions(
             whatHappened: unresolved
               ? `A room charge of ${round2(n(p.amount))} was attempted but the property system never confirmed it.`
               : `A room charge of ${round2(n(p.amount))} settled the bill with no folio posting behind it.`,
-            evidence: { orderId: p.order_id, paymentId: p.id, amount: n(p.amount), postings: related.map((r) => r.id) },
+            evidence: {
+              orderId: p.order_id,
+              paymentId: p.id,
+              amount: n(p.amount),
+              postings: related.map((r) => r.id),
+            },
             impactValue: Math.abs(n(p.amount)),
             entityType: "restaurant_payments",
             entityId: p.id,
@@ -846,7 +897,12 @@ export function detectRoomChargeExceptions(
       out.push(
         draftException("payment.amount_mismatch", businessDate, `roomcharge:${p.id}`, {
           whatHappened: `A room charge of ${round2(n(p.amount))} does not match the ${round2(settledAmount)} posted to the folio.`,
-          evidence: { orderId: p.order_id, paymentId: p.id, paid: n(p.amount), posted: settledAmount },
+          evidence: {
+            orderId: p.order_id,
+            paymentId: p.id,
+            paid: n(p.amount),
+            posted: settledAmount,
+          },
           impactValue: Math.abs(settledAmount - n(p.amount)),
           entityType: "restaurant_payments",
           entityId: p.id,
@@ -862,7 +918,12 @@ export function detectRoomChargeExceptions(
     out.push(
       draftException("payment.room_charge_orphaned", businessDate, post.id, {
         whatHappened: `A guest folio was charged ${round2(n(post.amount))} but the outlet bill was never settled.`,
-        evidence: { postingId: post.id, orderId: post.source_order_id, bookingId: post.booking_id, amount: n(post.amount) },
+        evidence: {
+          postingId: post.id,
+          orderId: post.source_order_id,
+          bookingId: post.booking_id,
+          amount: n(post.amount),
+        },
         impactValue: Math.abs(n(post.amount)),
         entityType: "pms_folio_postings",
         entityId: post.id,

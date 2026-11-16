@@ -180,7 +180,12 @@ export const matchRestaurantSupplierInvoiceFn = createServerFn({ method: "POST" 
   .inputValidator((d: unknown) => matchInvoiceSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./invoices.server");
-    return mod.matchSupplierInvoice(context.supabase, context.userId, data.tenantId, data.invoiceId);
+    return mod.matchSupplierInvoice(
+      context.supabase,
+      context.userId,
+      data.tenantId,
+      data.invoiceId,
+    );
   });
 
 export const setRestaurantInvoicePaymentStatusFn = createServerFn({ method: "POST" })

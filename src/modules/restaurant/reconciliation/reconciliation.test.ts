@@ -36,7 +36,14 @@ describe("close totals", () => {
   it("excludes cancelled orders and nets refunds out of tender", () => {
     const totals = computeCloseTotals(
       [
-        order({ id: "a", total: 100, paid_total: 100, subtotal: 90, tax_total: 10, guest_count: 2 }),
+        order({
+          id: "a",
+          total: 100,
+          paid_total: 100,
+          subtotal: 90,
+          tax_total: 10,
+          guest_count: 2,
+        }),
         order({ id: "b", status: "cancelled", total: 500 }),
       ],
       [
@@ -66,7 +73,11 @@ describe("tender declaration", () => {
       ],
       50,
     );
-    expect(lines.find((l) => l.method === "cash")).toMatchObject({ systemAmount: 150, variance: 0, outcome: "balanced" });
+    expect(lines.find((l) => l.method === "cash")).toMatchObject({
+      systemAmount: 150,
+      variance: 0,
+      outcome: "balanced",
+    });
     expect(lines.find((l) => l.method === "card")).toMatchObject({ variance: 0 });
   });
 
@@ -158,7 +169,15 @@ describe("inventory", () => {
   it("reports counted variance, ledger drift and negative positions", () => {
     const drafts = detectInventoryExceptions(
       DATE,
-      [{ id: "l1", inventory_item_id: "i", expected_quantity: 10, counted_quantity: 8, unit_cost: 500 }],
+      [
+        {
+          id: "l1",
+          inventory_item_id: "i",
+          expected_quantity: 10,
+          counted_quantity: 8,
+          unit_cost: 500,
+        },
+      ],
       [{ itemId: "j", storedQuantity: -2, ledgerQuantity: -2, unitCost: 100, name: "Gin" }],
     );
     const codes = drafts.map((d) => d.code);
@@ -198,40 +217,48 @@ describe("procurement", () => {
     const drafts = detectProcurementExceptions(
       DATE,
       [],
-      [{
-        id: "inv-credit",
-        purchase_order_id: "po-credit",
-        status: "recorded",
-        match_status: "matched",
-        payment_status: "partially_paid",
-        total: 100,
-        amount_paid: 20,
-        due_date: "2026-02-01",
-      }],
+      [
+        {
+          id: "inv-credit",
+          purchase_order_id: "po-credit",
+          status: "recorded",
+          match_status: "matched",
+          payment_status: "partially_paid",
+          total: 100,
+          amount_paid: 20,
+          due_date: "2026-02-01",
+        },
+      ],
       [],
       [{ invoice_id: "inv-credit", amount: 80 }],
     );
-    expect(drafts.map((draft) => draft.code)).not.toContain("procurement.outstanding_supplier_amount");
+    expect(drafts.map((draft) => draft.code)).not.toContain(
+      "procurement.outstanding_supplier_amount",
+    );
   });
 
   it("keeps an overdue exception for the net balance after partial credit application", () => {
     const drafts = detectProcurementExceptions(
       DATE,
       [],
-      [{
-        id: "inv-credit-partial",
-        purchase_order_id: "po-credit",
-        status: "recorded",
-        match_status: "matched",
-        payment_status: "partially_paid",
-        total: 100,
-        amount_paid: 20,
-        due_date: "2026-02-01",
-      }],
+      [
+        {
+          id: "inv-credit-partial",
+          purchase_order_id: "po-credit",
+          status: "recorded",
+          match_status: "matched",
+          payment_status: "partially_paid",
+          total: 100,
+          amount_paid: 20,
+          due_date: "2026-02-01",
+        },
+      ],
       [],
       [{ invoice_id: "inv-credit-partial", amount: 70 }],
     );
-    const overdue = drafts.find((draft) => draft.code === "procurement.outstanding_supplier_amount");
+    const overdue = drafts.find(
+      (draft) => draft.code === "procurement.outstanding_supplier_amount",
+    );
     expect(overdue?.impactValue).toBe(10);
   });
 });
@@ -239,7 +266,10 @@ describe("procurement", () => {
 describe("idempotency and summary", () => {
   it("keeps one draft per finding regardless of how often it is detected", () => {
     const a = draftException("cash.shortage", DATE, "cash", { whatHappened: "x", impactValue: 10 });
-    const b = draftException("cash.shortage", DATE, "cash", { whatHappened: "x again", impactValue: 10 });
+    const b = draftException("cash.shortage", DATE, "cash", {
+      whatHappened: "x again",
+      impactValue: 10,
+    });
     expect(a.dedupeKey).toBe(b.dedupeKey);
     expect(dedupeDrafts([a, b])).toHaveLength(1);
   });

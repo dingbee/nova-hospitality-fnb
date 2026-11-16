@@ -21,10 +21,7 @@ import { StatusChip } from "@/components/os/StatusChip";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "../../ui/useRestaurantWorkspace";
 import { SupplierInvoiceSheet } from "./SupplierInvoiceSheet";
-import {
-  ApplySupplierCreditNoteSheet,
-  SupplierCreditNoteSheet,
-} from "./SupplierCreditNoteSheet";
+import { ApplySupplierCreditNoteSheet, SupplierCreditNoteSheet } from "./SupplierCreditNoteSheet";
 import { DocumentActions } from "../../documents/ui/DocumentActions";
 import { formatMoney, formatQty, lifecycleBadge, VARIANCE_LABELS } from "../lifecycle";
 import {
@@ -1015,7 +1012,12 @@ function InvoicesTab({ tenantId }: { tenantId: string }) {
         description="Matched against the order and the goods actually accepted. Applied supplier credits reduce the payable balance without rewriting the invoice."
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" className="h-10" onClick={() => setCreditEntryOpen(true)}>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-10"
+              onClick={() => setCreditEntryOpen(true)}
+            >
               Record credit note
             </Button>
             <Button size="sm" className="h-10" onClick={() => setEntryOpen(true)}>
@@ -1037,8 +1039,8 @@ function InvoicesTab({ tenantId }: { tenantId: string }) {
                     Gross {formatMoney(i.total, i.currency)} · cash paid{" "}
                     {formatMoney(i.amount_paid, i.currency)} · credit applied{" "}
                     {formatMoney(i.credit_applied ?? 0, i.currency)} · outstanding{" "}
-                    {formatMoney(i.outstanding_balance ?? i.total - i.amount_paid, i.currency)}
-                    {" "}· due {i.due_date ?? "—"}
+                    {formatMoney(i.outstanding_balance ?? i.total - i.amount_paid, i.currency)} ·
+                    due {i.due_date ?? "—"}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -1104,11 +1106,7 @@ function InvoicesTab({ tenantId }: { tenantId: string }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <Chip status={note.status} />
                   {note.status !== "voided" && note.remaining_amount > 0.01 && (
-                    <Button
-                      size="sm"
-                      className="h-10"
-                      onClick={() => setCreditNoteToApply(note)}
-                    >
+                    <Button size="sm" className="h-10" onClick={() => setCreditNoteToApply(note)}>
                       Apply to invoice
                     </Button>
                   )}

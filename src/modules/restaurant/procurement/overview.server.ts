@@ -21,17 +21,26 @@ export async function procurementOverview(sb: Sb, userId: string, tenantId: stri
     creditNotesRes,
     creditApplicationsRes,
   ] = await Promise.all([
-    sb.from("restaurant_purchase_requests").select("id, status, estimated_total").eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_purchase_requests")
+      .select("id, status, estimated_total")
+      .eq("tenant_id", tenantId),
     sb
       .from("restaurant_purchase_orders")
       .select("id, status, confirmation_status, total, expected_at")
       .eq("tenant_id", tenantId),
-    sb.from("restaurant_goods_receipts").select("id, status, accepted_value").eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_goods_receipts")
+      .select("id, status, accepted_value")
+      .eq("tenant_id", tenantId),
     sb
       .from("restaurant_supplier_invoices")
       .select("id, status, payment_status, match_status, total, amount_paid, due_date")
       .eq("tenant_id", tenantId),
-    sb.from("restaurant_procurement_variances").select("id, status, severity").eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_procurement_variances")
+      .select("id, status, severity")
+      .eq("tenant_id", tenantId),
     sb
       .from("restaurant_supplier_credit_notes")
       .select("id, status, total")
@@ -51,9 +60,9 @@ export async function procurementOverview(sb: Sb, userId: string, tenantId: stri
     ["supplier credit notes", creditNotesRes],
     ["supplier credit applications", creditApplicationsRes],
   ] as const) {
-    if (result.error) throw new Error("Unable to load procurement " + label + ": " + result.error.message);
+    if (result.error)
+      throw new Error("Unable to load procurement " + label + ": " + result.error.message);
   }
-
 
   const reqRows = (requestsRes.data ?? []) as any[];
   const orderRows = (ordersRes.data ?? []) as any[];
@@ -95,14 +104,20 @@ export async function procurementOverview(sb: Sb, userId: string, tenantId: stri
         .reduce((s, r) => s + Number(r.estimated_total ?? 0), 0),
     },
     ordered: {
-      open: orderRows.filter((o) => ["submitted", "approved", "partially_received"].includes(o.status)).length,
+      open: orderRows.filter((o) =>
+        ["submitted", "approved", "partially_received"].includes(o.status),
+      ).length,
       awaitingConfirmation: orderRows.filter(
         (o) =>
           ["submitted", "approved"].includes(o.status) &&
           (!o.confirmation_status || o.confirmation_status === "pending"),
       ).length,
       overdue: orderRows.filter(
-        (o) => o.expected_at && o.expected_at < today && o.status !== "received" && o.status !== "cancelled",
+        (o) =>
+          o.expected_at &&
+          o.expected_at < today &&
+          o.status !== "received" &&
+          o.status !== "cancelled",
       ).length,
       openValue: orderRows
         .filter((o) => ["submitted", "approved", "partially_received"].includes(o.status))
@@ -129,7 +144,9 @@ export async function procurementOverview(sb: Sb, userId: string, tenantId: stri
       ).length,
       outstandingValue: Number(outstanding.toFixed(2)),
       creditNotesRecorded: creditNoteRows.filter((note) => note.status === "recorded").length,
-      creditNotesPartiallyApplied: creditNoteRows.filter((note) => note.status === "partially_applied").length,
+      creditNotesPartiallyApplied: creditNoteRows.filter(
+        (note) => note.status === "partially_applied",
+      ).length,
       creditNotesApplied: creditNoteRows.filter((note) => note.status === "applied").length,
       creditNoteValue: Number(
         creditNoteRows.reduce((sum, note) => sum + Number(note.total ?? 0), 0).toFixed(2),
@@ -144,7 +161,11 @@ export async function procurementOverview(sb: Sb, userId: string, tenantId: stri
   };
 }
 
-export async function listProcurementAudit(sb: Sb, userId: string, input: z.infer<typeof listAuditSchema>) {
+export async function listProcurementAudit(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listAuditSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_procurement_audit")
