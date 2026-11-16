@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { assertCapability } from "@/modules/restaurant/core/access.server";
+import { writeCommercialAudit } from "@/modules/commercial/audit.server";
 
 type Db = any;
 type ClaimedEvent = {
@@ -262,5 +263,13 @@ export async function requeueMetaWebhookDeadLetter(
     .eq("id", eventId)
     .eq("status", "dead_letter");
   if (error) throw new Error("Dead-letter event could not be requeued.");
+  await writeCommercialAudit(userDb, {
+    actorId: userId,
+    action: "whatsapp.webhook_event.requeued",
+    entityType: "wa_webhook_event",
+    entityId: eventId,
+    tenantId: event.tenant_id,
+    after: { propertyId: event.property_id, status: "pending" },
+  });
   return { eventId, status: "pending" as const };
 }
