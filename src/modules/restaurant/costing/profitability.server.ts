@@ -72,8 +72,12 @@ export async function computeProfitability(
   const { data: orders, error: orderErr } = await orderQuery;
   if (orderErr) throw new Error(orderErr.message);
 
-  const orderIds = ((orders ?? []) as any[]).map((o) => o.id);
-  const orderCurrencies = new Set(((orders ?? []) as any[]).map((o) => o.currency).filter(Boolean));
+  const orderRows = (orders ?? []) as any[];
+  if (orderRows.some((o) => !/^[A-Z]{3}$/.test(String(o.currency ?? "")))) {
+    throw new Error("Sales source currency is missing or invalid.");
+  }
+  const orderIds = orderRows.map((o) => o.id);
+  const orderCurrencies = new Set(orderRows.map((o) => o.currency));
   if (orderCurrencies.size > 1) throw new Error("Profitability cannot combine sales across currencies.");
   const periodFrom = input.from.slice(0, 10);
   const periodTo = input.to.slice(0, 10);
@@ -88,7 +92,11 @@ export async function computeProfitability(
   if (input.locationId) expenseAllocationQuery = expenseAllocationQuery.eq("location_id", input.locationId);
   const { data: expenseAllocations, error: expenseAllocationError } = await expenseAllocationQuery;
   if (expenseAllocationError) throw new Error(expenseAllocationError.message);
-  const currencies = new Set(((expenseAllocations ?? []) as any[]).map((r) => r.currency).filter(Boolean));
+  const allocationRows = (expenseAllocations ?? []) as any[];
+  if (allocationRows.some((r) => !/^[A-Z]{3}$/.test(String(r.currency ?? "")))) {
+    throw new Error("Allocated operating cost currency is missing or invalid.");
+  }
+  const currencies = new Set(allocationRows.map((r) => r.currency));
   const currencySet = new Set([...orderCurrencies, ...currencies]);
   if (currencySet.size > 1) throw new Error("Profitability cannot combine sales and operating costs across currencies.");
   let currency = [...currencySet][0];
