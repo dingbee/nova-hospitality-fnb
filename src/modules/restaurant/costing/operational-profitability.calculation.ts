@@ -27,6 +27,8 @@ export interface ProfitabilityCalculationInput {
   allocatedOperatingExpenses: number;
   unallocatedOperatingExpenses: number;
   pendingExpenseVerification: boolean;
+  partiallyReconciled?: boolean;
+  incompleteSourceData?: boolean;
 }
 
 export interface ProfitabilityCalculation {
@@ -88,15 +90,19 @@ export function calculateOperationalProfitability(
   );
   const contribution = money(netSales - directVariableCosts);
   const operatingProfit = money(contribution - input.allocatedOperatingExpenses);
-  const hasEstimatedCosts = input.recipeCostBasis !== "actual" || input.consumablesCostBasis === "estimated";
+  const hasEstimatedCosts = input.recipeCostBasis !== "actual" || input.consumablesCostBasis !== "actual";
   const hasUnallocated = input.unallocatedOperatingExpenses > 0;
-  const reconciliationState: ReconciliationState = input.pendingExpenseVerification
-    ? "pending_expense_verification"
-    : hasUnallocated
+  const reconciliationState: ReconciliationState = input.incompleteSourceData
+    ? "incomplete_source_data"
+    : input.pendingExpenseVerification
+      ? "pending_expense_verification"
+      : hasUnallocated
       ? "unallocated_costs_present"
-      : hasEstimatedCosts
-        ? "estimated"
-        : "fully_reconciled";
+        : hasEstimatedCosts
+          ? "estimated"
+          : input.partiallyReconciled
+            ? "partially_reconciled"
+            : "fully_reconciled";
 
   return {
     currency: input.currency,
