@@ -13,6 +13,7 @@ export const Route = createFileRoute("/guest/$token")({
       { title: `${loaderData?.businessName ?? "Guest Menu"} — ${PRODUCT.guestFacingName}` },
       { name: "robots", content: "noindex,nofollow" },
       { name: "referrer", content: "no-referrer" },
+      { "http-equiv": "Cache-Control", content: "no-store, private, max-age=0" },
       { name: "theme-color", content: "#346739" },
     ],
   }),
