@@ -1,5 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase test double mirrors untyped query builders. */
 import { describe, expect, it, vi } from "vitest";
+const handoffMocks = vi.hoisted(() => ({ enqueue: vi.fn() }));
+vi.mock("./handoff.server", () => ({
+  enqueueWhatsAppGuestPortalHandoff: handoffMocks.enqueue,
+}));
+
 import { processPendingMetaWebhookEvents } from "./webhook-queue.server";
 
 const baseEvent = {
@@ -31,6 +36,7 @@ function makeDb(
 ) {
   const inserts: Array<{ table: string; row: Record<string, unknown> }> = [];
   const updates: Array<{ table: string; patch: Record<string, unknown> }> = [];
+  handoffMocks.enqueue.mockResolvedValue({ queued: true });
   const rpc = vi.fn(async (name: string) => {
     if (name === "wa_claim_webhook_events") return { data: events, error: null };
     if (name === "wa_apply_message_delivery_status") {
