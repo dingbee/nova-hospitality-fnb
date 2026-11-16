@@ -524,7 +524,7 @@ export async function createIntelligentPurchaseOrders(
     const { data: existing, error: existingError } = await sb
       .from("restaurant_purchase_orders")
       .select(
-        "id, document_number, reference, status, supplier_id, property_id, location_id, total, currency",
+        "id, document_number, reference, status, supplier_id, property_id, location_id, total, currency, metadata",
       )
       .eq("tenant_id", input.tenantId)
       .eq("reference", reference)
@@ -558,7 +558,8 @@ export async function createIntelligentPurchaseOrders(
         );
       if (!lineMatches || existing.supplier_id !== group.supplierId ||
           existing.property_id !== group.propertyId || existing.location_id !== group.locationId ||
-          existing.currency !== group.currency) {
+          existing.currency !== group.currency ||
+          !(existing.metadata as any)?.intelligent_replenishment) {
         throw new Error(
           "An intelligent PO already exists for this request but its persisted lines differ from the current plan. Review the Procurement Centre; the existing order was not changed.",
         );
@@ -620,7 +621,7 @@ export async function createIntelligentPurchaseOrders(
 
     const { data: persistedLines, error: persistedError } = await sb
       .from("restaurant_purchase_order_items")
-      .select("inventory_item_id, supplier_product_id, unit_id, quantity, unit_price")
+      .select("inventory_item_id, supplier_product_id, unit_id, stock_unit_id, stock_units_per_purchase_unit, minimum_order_quantity, order_multiple, quantity, unit_price")
       .eq("tenant_id", input.tenantId)
       .eq("purchase_order_id", po.id);
     if (persistedError) throw new Error("Unable to verify persisted intelligent PO lines: " + persistedError.message);
@@ -630,6 +631,10 @@ export async function createIntelligentPurchaseOrders(
         saved.inventory_item_id === line.inventoryItemId &&
         saved.supplier_product_id === line.supplierProductId &&
         saved.unit_id === line.unitId &&
+        saved.stock_unit_id === line.stockUnitId &&
+        Number(saved.stock_units_per_purchase_unit) === Number(line.stockUnitsPerPurchaseUnit) &&
+        Number(saved.minimum_order_quantity ?? 0) === Number(line.minimumOrderQuantity ?? 0) &&
+        Number(saved.order_multiple ?? 1) === Number(line.orderMultiple ?? 1) &&
         Number(saved.quantity) === Number(line.quantity) &&
         Number(saved.unit_price) === Number(line.unitPrice),
       ));
