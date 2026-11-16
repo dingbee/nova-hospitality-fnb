@@ -159,6 +159,8 @@ export interface PurchaseSuggestion {
   purchaseUnitPrice?: number;
   purchaseCurrency?: string;
   effectivePriceDate?: string | null;
+  minimumOrderQuantity?: number;
+  orderMultiple?: number;
   stockUnitsPerPurchaseUnit?: number;
   forecastDemand?: number;
   safetyStock?: number;
