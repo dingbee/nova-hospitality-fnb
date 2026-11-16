@@ -236,16 +236,13 @@ describe("unit conversion at receiving", () => {
     expect(db["restaurant_goods_receipts"]![0]!.status).toBe("draft"); // never silently marked posted
   });
 
-  it("never guesses a bare unhandled unit — falls through unchanged only when the item itself has no stock unit recorded", async () => {
+  it("refuses to post when the inventory item has no authoritative stock unit", async () => {
     db["restaurant_inventory_items"] = [
       { id: "item-1", tenant_id: TENANT, unit_id: null, purchase_unit_id: null, pack_size: 1 },
     ];
     const draft = await draftReceipt("item-1", CARTON, 5, 12000);
-    await postGoodsReceipt(sb, USER, TENANT, draft.id);
-
-    // No stock unit on the item at all — nothing to convert against, so the
-    // captured quantity is trusted as-is rather than the post being blocked.
-    expect(movements).toHaveLength(1);
-    expect(movements[0].quantity).toBe(5);
+    await expect(postGoodsReceipt(sb, USER, TENANT, draft.id)).rejects.toThrow(/no configured stock unit/i);
+    expect(movements).toHaveLength(0);
+    expect(db["restaurant_goods_receipts"]![0]!.status).toBe("draft");
   });
 });
