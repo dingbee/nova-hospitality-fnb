@@ -200,14 +200,22 @@ export async function computeProfitability(
     p.active !== false && p.effective_from <= periodTo && (!p.effective_to || p.effective_to >= periodFrom) &&
     reportPropertyIds.some((propertyId) => p.property_id === null || p.property_id === propertyId) &&
     (!input.locationId || p.location_id === null || p.location_id === input.locationId)
+  ).sort((a, b) =>
+    Number(b.location_id === input.locationId) - Number(a.location_id === input.locationId) ||
+    Number(b.property_id === input.propertyId) - Number(a.property_id === input.propertyId)
   );
   const profileById = new Map(profileRows.map((p) => [p.id, p]));
   const ruleRows = ((consumptionRules ?? []) as any[]).filter((r) =>
     r.active !== false && r.effective_from <= periodTo && (!r.effective_to || r.effective_to >= periodFrom) &&
     profileById.has(r.profile_id)
   );
+  const profilePriority = new Map(profileRows.map((p, index) => [p.id, index]));
+  const orderedRuleRows = [...ruleRows].sort(
+    (a, b) => (profilePriority.get(a.profile_id) ?? Number.MAX_SAFE_INTEGER) -
+      (profilePriority.get(b.profile_id) ?? Number.MAX_SAFE_INTEGER),
+  );
   const costClassByInventoryItem = new Map<string, "service_consumable" | "other_direct_variable">();
-  for (const rule of ruleRows) {
+  for (const rule of orderedRuleRows.reverse()) {
     const profile = profileById.get(rule.profile_id);
     if (profile) costClassByInventoryItem.set(rule.inventory_item_id, profile.cost_class);
   }
