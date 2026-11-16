@@ -44,23 +44,11 @@ DROP POLICY IF EXISTS "supplier credit notes read" ON public.restaurant_supplier
 DROP POLICY IF EXISTS "supplier credit notes insert" ON public.restaurant_supplier_credit_notes;
 CREATE POLICY "supplier credit notes read" ON public.restaurant_supplier_credit_notes
   FOR SELECT TO public
-  USING (
-    public.restaurant_can_read(tenant_id)
-    OR public.restaurant_can_write(
-      tenant_id,
-      ARRAY[
-        'owner'::public.restaurant_role,
-        'general_manager'::public.restaurant_role,
-        'restaurant_manager'::public.restaurant_role,
-        'purchasing_officer'::public.restaurant_role,
-        'accountant'::public.restaurant_role
-      ]
-    )
-  );
+  USING (public.restaurant_can_read_scoped(tenant_id, property_id));
 CREATE POLICY "supplier credit notes insert" ON public.restaurant_supplier_credit_notes
   FOR INSERT TO public
   WITH CHECK (
-    public.restaurant_can_write(
+    public.restaurant_can_write_scoped(
       tenant_id,
       ARRAY[
         'owner'::public.restaurant_role,
@@ -68,13 +56,16 @@ CREATE POLICY "supplier credit notes insert" ON public.restaurant_supplier_credi
         'restaurant_manager'::public.restaurant_role,
         'purchasing_officer'::public.restaurant_role,
         'accountant'::public.restaurant_role
-      ]
+      ],
+      property_id
     )
   );
 
 CREATE TABLE IF NOT EXISTS public.restaurant_supplier_credit_note_applications (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE CASCADE,
+  property_id uuid REFERENCES public.restaurant_properties(id) ON DELETE SET NULL,
+  location_id uuid REFERENCES public.restaurant_locations(id) ON DELETE SET NULL,
   credit_note_id uuid NOT NULL REFERENCES public.restaurant_supplier_credit_notes(id) ON DELETE RESTRICT,
   invoice_id uuid NOT NULL REFERENCES public.restaurant_supplier_invoices(id) ON DELETE RESTRICT,
   amount numeric(14,2) NOT NULL CHECK (amount > 0),
@@ -98,19 +89,7 @@ ALTER TABLE public.restaurant_supplier_credit_note_applications ENABLE ROW LEVEL
 DROP POLICY IF EXISTS "supplier credit note applications read" ON public.restaurant_supplier_credit_note_applications;
 CREATE POLICY "supplier credit note applications read" ON public.restaurant_supplier_credit_note_applications
   FOR SELECT TO public
-  USING (
-    public.restaurant_can_read(tenant_id)
-    OR public.restaurant_can_write(
-      tenant_id,
-      ARRAY[
-        'owner'::public.restaurant_role,
-        'general_manager'::public.restaurant_role,
-        'restaurant_manager'::public.restaurant_role,
-        'purchasing_officer'::public.restaurant_role,
-        'accountant'::public.restaurant_role
-      ]
-    )
-  );
+  USING (public.restaurant_can_read_scoped(tenant_id, property_id));
 
 CREATE OR REPLACE FUNCTION public.restaurant_apply_supplier_credit_note(
   _tenant_id uuid,
@@ -242,9 +221,18 @@ BEGIN
   END IF;
 
   INSERT INTO public.restaurant_supplier_credit_note_applications (
-    tenant_id, credit_note_id, invoice_id, amount, idempotency_key, reason, applied_by
+    tenant_id, property_id, location_id, credit_note_id, invoice_id,
+    amount, idempotency_key, reason, applied_by
   ) VALUES (
-    _tenant_id, _credit_note_id, _invoice_id, round(_amount, 2), _idempotency_key, trim(_reason), v_actor
+    _tenant_id,
+    coalesce(v_note.property_id, v_invoice.property_id),
+    coalesce(v_note.location_id, v_invoice.location_id),
+    _credit_note_id,
+    _invoice_id,
+    round(_amount, 2),
+    _idempotency_key,
+    trim(_reason),
+    v_actor
   ) RETURNING * INTO v_application;
 
   v_note_remaining := round(v_note_remaining - _amount, 2);
