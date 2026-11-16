@@ -123,56 +123,31 @@ export async function computeProfitability(
   const currencies = new Set(allocationRows.map((r) => r.currency));
   const currencySet = new Set([...orderCurrencies, ...currencies]);
   if (currencySet.size > 1) throw new Error("Profitability cannot combine sales and operating costs across currencies.");
-  let currency = [...currencySet][0];
-  if (!currency) {
-    if (input.propertyId) {
-      const { data: property, error: propertyError } = await sb
-        .from("restaurant_properties")
-        .select("currency")
-        .eq("tenant_id", input.tenantId)
-        .eq("id", input.propertyId)
-        .single();
-      if (propertyError || !/^[A-Z]{3}$/.test(String(property?.currency ?? ""))) {
-        throw new Error("A valid property reporting currency is required.");
-      }
-      currency = property.currency;
-    } else if (input.locationId) {
-      const { data: location, error: locationError } = await sb
-        .from("restaurant_locations")
-        .select("property_id")
-        .eq("tenant_id", input.tenantId)
-        .eq("id", input.locationId)
-        .single();
-      if (locationError || !location?.property_id) {
-        throw new Error("A valid property reporting currency is required.");
-      }
-      const { data: property, error: propertyError } = await sb
-        .from("restaurant_properties")
-        .select("currency")
-        .eq("tenant_id", input.tenantId)
-        .eq("id", location.property_id)
-        .single();
-      if (propertyError || !/^[A-Z]{3}$/.test(String(property?.currency ?? ""))) {
-        throw new Error("A valid property reporting currency is required.");
-      }
-      currency = property.currency;
-    } else {
-      const { data: properties, error: propertyError } = await sb
-        .from("restaurant_properties")
-        .select("currency")
-        .eq("tenant_id", input.tenantId);
-      if (propertyError) throw new Error(propertyError.message);
-      const propertyCurrencies = new Set(
-        ((properties ?? []) as any[]).map((p) => p.currency).filter((v) => /^[A-Z]{3}$/.test(String(v))),
-      );
-      if (propertyCurrencies.size !== 1) {
-        throw new Error("A single property reporting currency is required for a tenant-wide profitability report.");
-      }
-      currency = [...propertyCurrencies][0];
+  let reportingPropertyId = input.propertyId ?? null;
+  if (input.locationId) {
+    const { data: location, error: locationError } = await sb
+      .from("restaurant_locations")
+      .select("property_id")
+      .eq("tenant_id", input.tenantId)
+      .eq("id", input.locationId)
+      .single();
+    if (locationError || !location?.property_id) throw new Error("A valid property reporting currency is required.");
+    if (reportingPropertyId && reportingPropertyId !== location.property_id) {
+      throw new Error("The selected outlet does not belong to the selected property.");
     }
+    reportingPropertyId = location.property_id;
   }
-  if (!/^[A-Z]{3}$/.test(String(currency))) {
-    throw new Error("A valid property reporting currency is required.");
+  let propertyQuery = sb.from("restaurant_properties").select("id,currency").eq("tenant_id", input.tenantId);
+  if (reportingPropertyId) propertyQuery = propertyQuery.eq("id", reportingPropertyId);
+  const { data: reportingProperties, error: reportingPropertyError } = await propertyQuery;
+  if (reportingPropertyError) throw new Error(reportingPropertyError.message);
+  const propertyCurrencySet = new Set(((reportingProperties ?? []) as any[]).map((p) => p.currency));
+  if (propertyCurrencySet.size !== 1 || [...propertyCurrencySet].some((v) => !/^[A-Z]{3}$/.test(String(v ?? "")))) {
+    throw new Error("A single valid property reporting currency is required for this profitability report.");
+  }
+  const currency = [...propertyCurrencySet][0] as string;
+  if (currencySet.size > 0 && [...currencySet].some((sourceCurrency) => sourceCurrency !== currency)) {
+    throw new Error("Profitability source currency does not match the reporting property's currency.");
   }
   const allocatedOperatingExpenses = Number(
     allocationRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0).toFixed(2),
