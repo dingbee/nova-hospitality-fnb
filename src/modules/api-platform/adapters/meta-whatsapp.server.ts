@@ -40,7 +40,7 @@ export const metaWhatsAppAdapter: ChannelAdapter = {
     } catch (error) {
       if (error instanceof MetaGraphError) {
         const message =
-          error.status === 401 || error.graphCode === 190
+          error.status === 401 || error.code === 190
             ? "Meta access token is invalid or expired."
             : error.retryable
               ? "Meta API is temporarily unavailable; retry the connection check."
