@@ -169,10 +169,16 @@ describe("computeProfitability operating-cost integration", () => {
         discount: 100, tax_amount: 100, status: "served", is_comp: false,
         channel: "pos",
       }],
-      restaurant_payments: [{
-        id: "payment-1", order_id: "order-1", amount: 1100,
-        state: "refunded", refund_of: null, currency: "TZS",
-      }],
+      restaurant_payments: [
+        {
+          id: "payment-1", order_id: "order-1", amount: 1100,
+          state: "refunded", refund_of: null, currency: "TZS",
+        },
+        {
+          id: "refund-1", order_id: "order-1", amount: -1100,
+          state: "refunded", refund_of: "payment-1", currency: "TZS",
+        },
+      ],
     });
     const result = await computeProfitability(sb, "user-1", input);
     expect(result.operational).toMatchObject({
