@@ -189,9 +189,54 @@ function ProfitabilityPage() {
             tone={result.totals.operating_profit < 0 ? "danger" : "green"}
             hint={result.totals.operating_margin_percent != null ? `${result.totals.operating_margin_percent}% operating margin` : "No sales in period"}
           />
+          <StatCard
+            label="Net sales"
+            value={money(result.totals.net_sales)}
+            icon={PiggyBank}
+            hint="After discounts, refunds and tax"
+          />
+          <StatCard
+            label="Service consumables"
+            value={money(result.totals.service_consumables)}
+            icon={Calculator}
+            hint="Awaiting Phase 1 source integration"
+          />
         </div>
       )}
 
+      {result && (
+        <SectionCard
+          title="Operational confidence"
+          description={`Calculation status: ${result.operational?.reconciliationState ?? result.totals.confidence_state}. Figures are not certified as fully reconciled while source coverage is incomplete.`}
+        >
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div className="rounded-md border p-3 text-sm">
+              <p className="text-muted-foreground">Gross sales</p>
+              <p className="font-semibold">{money(result.operational?.grossSales ?? result.totals.gross_sales)}</p>
+            </div>
+            <div className="rounded-md border p-3 text-sm">
+              <p className="text-muted-foreground">Refunds</p>
+              <p className="font-semibold">{money(result.operational?.refunds ?? result.totals.refunds)}</p>
+            </div>
+            <div className="rounded-md border p-3 text-sm">
+              <p className="text-muted-foreground">Unallocated operating costs</p>
+              <p className="font-semibold">{money(result.operational?.unallocatedOperatingExpenses ?? result.totals.unallocated_operating_expenses)}</p>
+            </div>
+          </div>
+        </SectionCard>
+      )}
+      {result?.dimensions?.length > 0 && (
+        <SectionCard title="Channel, outlet and property profitability" description="Contribution and operating profit are shown by source dimension.">
+          <ul className="divide-y text-sm">
+            {result.dimensions.map((d: any) => (
+              <li key={`${d.dimension_type}:${d.dimension_key}`} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <div><span className="font-medium">{d.dimension_name}</span><p className="text-xs text-muted-foreground">{d.dimension_type.replace("_", " ")} · net sales {money(d.net_sales)}</p></div>
+                <span className="text-xs text-muted-foreground">Contribution {money(d.contribution)} · operating {money(d.operating_profit)}</span>
+              </li>
+            ))}
+          </ul>
+        </SectionCard>
+      )}
       <SectionCard
         title="By menu item"
         description={rows.length > 0 ? `${rows.length} item(s) in period.` : undefined}
