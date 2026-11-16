@@ -605,3 +605,128 @@ export async function consumeForOrderItem(
   }
   return Number(actualCost.toFixed(4));
 }
+
+
+/**
+ * Applies configured per-cover operational consumables once per order.
+ * The stock movement ledger remains the only inventory source of truth;
+ * Phase 1 events are a classification projection created by its DB trigger.
+ */
+export async function consumeOperationalConsumablesForOrder(
+  sb: Sb,
+  userId: string,
+  args: {
+    tenantId: string;
+    propertyId: string;
+    locationId: string;
+    orderId: string;
+    guestCount: number;
+    currency: string;
+    occurredAt?: string;
+  },
+): Promise<number> {
+  if (!/^[A-Z]{3}$/.test(args.currency)) {
+    throw new Error("Operational consumables require a valid property currency.");
+  }
+  const [{ data: profiles, error: profileError }] = await Promise.all([
+    sb.from("restaurant_consumption_profiles")
+      .select("id, cost_class, property_id, location_id, active, effective_from, effective_to")
+      .eq("tenant_id", args.tenantId)
+      .eq("active", true),
+  ]);
+  if (profileError) throw new Error(profileError.message);
+  const date = (args.occurredAt ?? new Date().toISOString()).slice(0, 10);
+  const applicableProfiles = ((profiles ?? []) as any[])
+    .filter((p) =>
+      (p.property_id === null || p.property_id === args.propertyId) &&
+      (p.location_id === null || p.location_id === args.locationId) &&
+      p.effective_from <= date && (!p.effective_to || p.effective_to >= date)
+    )
+    .sort((a, b) =>
+      Number(b.location_id === args.locationId) - Number(a.location_id === args.locationId) ||
+      Number(b.property_id === args.propertyId) - Number(a.property_id === args.propertyId)
+    );
+  if (applicableProfiles.length === 0) return 0;
+  const profileIds = applicableProfiles.map((p) => p.id);
+  const { data: rules, error: ruleError } = await sb
+    .from("restaurant_consumption_rules")
+    .select("id, profile_id, inventory_item_id, unit_id, quantity_per_cover, active, effective_from, effective_to")
+    .eq("tenant_id", args.tenantId)
+    .eq("active", true)
+    .in("profile_id", profileIds);
+  if (ruleError) throw new Error(ruleError.message);
+  const profileById = new Map(applicableProfiles.map((p) => [p.id, p]));
+  const selectedRules = new Map<string, any>();
+  for (const rule of (rules ?? []) as any[]) {
+    const profile = profileById.get(rule.profile_id);
+    if (!profile || !rule.quantity_per_cover || Number(rule.quantity_per_cover) <= 0 ||
+        rule.effective_from > date || (rule.effective_to && rule.effective_to < date)) continue;
+    if (!selectedRules.has(rule.inventory_item_id)) selectedRules.set(rule.inventory_item_id, { ...rule, profile });
+  }
+  const ruleRows = [...selectedRules.values()];
+  if (ruleRows.length === 0) return 0;
+  const inventoryIds = ruleRows.map((r) => r.inventory_item_id);
+  const { data: inventory, error: inventoryError } = await sb
+    .from("restaurant_inventory_items")
+    .select("id, name, average_cost, currency, property_id, unit_id, content_per_stock_unit, content_unit_id")
+    .eq("tenant_id", args.tenantId)
+    .in("id", inventoryIds);
+  if (inventoryError) throw new Error(inventoryError.message);
+  const inventoryById = new Map(((inventory ?? []) as any[]).map((item) => [item.id, item]));
+  if (inventoryById.size !== inventoryIds.length) {
+    throw new Error("Operational consumable configuration references missing or foreign inventory items.");
+  }
+  const unitIds = [...new Set([
+    ...ruleRows.map((r) => r.unit_id),
+    ...[...inventoryById.values()].map((item: any) => item.unit_id),
+  ].filter(Boolean))] as string[];
+  const { data: units, error: unitError } = unitIds.length
+    ? await sb.from("restaurant_inventory_units")
+        .select("id, code, name, dimension, factor, base_unit_id")
+        .in("id", unitIds)
+    : { data: [], error: null };
+  if (unitError) throw new Error(unitError.message);
+  const unitById = new Map(((units ?? []) as UnitRow[]).map((unit) => [unit.id, unit]));
+  let actualCost = 0;
+  const covers = Math.max(1, Number(args.guestCount || 1));
+  for (const rule of ruleRows) {
+    const item = inventoryById.get(rule.inventory_item_id);
+    if (!item || item.property_id !== args.propertyId) {
+      throw new Error(`Operational consumable "${item?.name ?? rule.inventory_item_id}" is not assigned to this property.`);
+    }
+    if (!/^[A-Z]{3}$/.test(String(item.currency ?? "")) || item.currency !== args.currency) {
+      throw new Error(`Operational consumable "${item.name}" has a missing or mismatched currency.`);
+    }
+    const conversion = componentToStock(
+      Number(rule.quantity_per_cover) * covers,
+      rule.unit_id,
+      item,
+      unitById,
+    );
+    if (!conversion.exact) {
+      throw new Error(`"${item.name}": operational consumable unit cannot be converted to its stock unit (${conversion.reason ?? "unknown conversion"}).`);
+    }
+    const unitCost = Number(item.average_cost ?? 0);
+    if (!Number.isFinite(unitCost) || unitCost < 0) {
+      throw new Error(`"${item.name}": operational consumable has an invalid average cost.`);
+    }
+    await insertMovement(sb, userId, {
+      tenantId: args.tenantId,
+      propertyId: args.propertyId,
+      locationId: args.locationId,
+      inventoryItemId: item.id,
+      unitId: item.unit_id ?? rule.unit_id ?? null,
+      movementType: "consumption",
+      quantity: -conversion.quantity,
+      unitCost,
+      currency: args.currency,
+      reason: `Operational ${rule.profile.cost_class.replaceAll("_", " ")}`,
+      referenceType: "restaurant_order",
+      referenceId: args.orderId,
+      occurredAt: args.occurredAt,
+      dedupeKey: `operational-consume:${args.orderId}:${rule.id}`,
+    });
+    actualCost += conversion.quantity * unitCost;
+  }
+  return Number(actualCost.toFixed(4));
+}
