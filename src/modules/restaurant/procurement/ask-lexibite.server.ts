@@ -395,8 +395,8 @@ export async function previewIntelligentPurchaseOrders(
       continue;
     }
     const minimumOrderQuantity = Number(product.min_order_quantity ?? 0);
-    const orderMultiple = Number(suggestion.orderMultiple ?? 1);
-    if (!Number.isFinite(minimumOrderQuantity) || minimumOrderQuantity > purchaseQuantity ||
+    const orderMultiple = Number(suggestion.orderMultiple);
+    if (suggestion.orderMultiple == null || !Number.isFinite(minimumOrderQuantity) || minimumOrderQuantity > purchaseQuantity ||
         !Number.isFinite(currentOrderMultiple) || currentOrderMultiple <= 0 ||
         Math.abs(currentOrderMultiple - orderMultiple) > 0.000001 ||
         Math.abs(purchaseQuantity / orderMultiple - Math.round(purchaseQuantity / orderMultiple)) > 0.000001) {
@@ -423,7 +423,7 @@ export async function previewIntelligentPurchaseOrders(
       recommendedPurchaseQuantity: purchaseQuantity,
       stockUnitsPerPurchaseUnit,
       minimumOrderQuantity: Number(suggestion.minimumOrderQuantity ?? 0),
-      orderMultiple: Number(suggestion.orderMultiple ?? 1),
+      orderMultiple,
       recommendationEvidence: {
         currentOnHand: suggestion.currentQuantity,
         netAvailable: suggestion.netAvailable ?? null,
