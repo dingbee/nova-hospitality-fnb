@@ -447,16 +447,16 @@ export async function setInvoicePaymentStatus(
   if (!Number.isFinite(amountPaid) || amountPaid < 0) {
     throw new Error("Amount paid must be a finite, non-negative value.");
   }
-  if (amountPaid + 0.01 < previousAmountPaid) {
+  if (amountPaid + 0.0001 < previousAmountPaid) {
     throw new Error("Recorded payments cannot be reversed through invoice status; use a separately authorised refund or credit workflow.");
   }
-  if (amountPaid - total > 0.01) {
+  if (amountPaid - total > 0.0001) {
     throw new Error("Amount paid cannot exceed the supplier invoice total.");
   }
-  if (input.paymentStatus === "unpaid" && amountPaid > 0.01) {
+  if (input.paymentStatus === "unpaid" && amountPaid > 0.0001) {
     throw new Error("An invoice with a recorded payment cannot be marked unpaid.");
   }
-  if (input.paymentStatus === "partially_paid" && !(amountPaid > 0.01 && amountPaid < total - 0.01)) {
+  if (input.paymentStatus === "partially_paid" && !(amountPaid > 0.0001 && amountPaid < total - 0.0001)) {
     throw new Error("Partially paid status requires a positive balance payment below the invoice total.");
   }
   if (input.paymentStatus === "paid" && Math.abs(amountPaid - total) > 0.01) {
