@@ -204,13 +204,11 @@ BEGIN
   END IF;
 
   IF v_note.property_id IS NOT NULL
-    AND v_invoice.property_id IS NOT NULL
-    AND v_note.property_id <> v_invoice.property_id THEN
+    AND v_note.property_id IS DISTINCT FROM v_invoice.property_id THEN
     RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'CREDIT_NOTE_PROPERTY_SCOPE_MISMATCH';
   END IF;
   IF v_note.location_id IS NOT NULL
-    AND v_invoice.location_id IS NOT NULL
-    AND v_note.location_id <> v_invoice.location_id THEN
+    AND v_note.location_id IS DISTINCT FROM v_invoice.location_id THEN
     RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'CREDIT_NOTE_LOCATION_SCOPE_MISMATCH';
   END IF;
 
