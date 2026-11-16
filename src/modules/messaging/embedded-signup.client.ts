@@ -124,11 +124,15 @@ export function loadMetaFacebookSdk(config: MetaEmbeddedSignupConfig): Promise<v
       initialise();
     } else {
       script.addEventListener("load", initialise, { once: true });
-      script.addEventListener("error", () => {
-        window.clearTimeout(timeout);
-        sdkPromise = null;
-        reject(new Error("Meta JavaScript SDK could not be loaded."));
-      }, { once: true });
+      script.addEventListener(
+        "error",
+        () => {
+          window.clearTimeout(timeout);
+          sdkPromise = null;
+          reject(new Error("Meta JavaScript SDK could not be loaded."));
+        },
+        { once: true },
+      );
     }
   });
 
