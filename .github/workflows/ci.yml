@@ -58,6 +58,47 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Clean replay of the complete canonical migration inventory
+        env:
+          NOVA_DB_HOST: localhost
+          NOVA_DB_PORT: 5432
+          NOVA_DB_NAME: lexibite_migration_replay
+          NOVA_DB_SUPERUSER: postgres
+          NOVA_DB_SUPERUSER_PASSWORD: postgres
+          NOVA_DB_AUTHENTICATOR: nova_authenticator
+          NOVA_DB_AUTHENTICATOR_PASSWORD: migration-replay-test-only
+          PGSSLMODE: disable
+        run: |
+          bash local/scripts/init-db.sh
+          psql -h localhost -U postgres -d lexibite_migration_replay -v ON_ERROR_STOP=1 <<'SQL'
+          DO $
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM nova_local.schema_migrations WHERE filename = '0120_lb02zz_dispatch_cron_schedule.sql') THEN
+              RAISE EXCEPTION 'LB-02 cron schedule was not replayed';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'lexibite-lb02-outbox-dispatch' AND active = false) THEN
+              RAISE EXCEPTION 'Local cron compatibility schedule must be recorded inactive';
+            END IF;
+            IF to_regclass('public.api_integrations') IS NULL
+              OR to_regclass('public.lb02_inbox_events') IS NULL
+              OR to_regclass('public.lb03_pos_room_charge_operations') IS NULL
+              OR to_regclass('public.restaurant_operational_profitability_snapshots') IS NULL THEN
+              RAISE EXCEPTION 'Expected integration / inbox / POS ledger / profitability objects are missing';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_proc p
+              JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = 'public'
+                AND p.proname = 'lb03_reject_pos_room_charge_audit_mutation'
+            ) THEN
+              RAISE EXCEPTION 'LB-03 audit immutability trigger function is missing';
+            END IF;
+          END $;
+          SELECT count(*) FILTER (WHERE status = 'applied') AS applied_migrations,
+                 count(*) FILTER (WHERE status = 'skipped') AS policy_skipped_migrations
+          FROM nova_local.schema_migrations;
+          SQL
+
       - name: Generate production artifacts
         run: bun run build
 
