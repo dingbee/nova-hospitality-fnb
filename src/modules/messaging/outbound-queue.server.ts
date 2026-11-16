@@ -125,6 +125,7 @@ async function processOneOutboundJob(db: Db, job: ClaimedOutboundJob, workerId: 
     portalSessionError ||
     !portalSession ||
     portalSession.revoked_at !== null ||
+    !Number.isFinite(new Date(portalSession.expires_at).getTime()) ||
     new Date(portalSession.expires_at).getTime() <= Date.now()
   ) {
     await markFailed(db, job, workerId, "guest_portal_session_expired_or_revoked");
