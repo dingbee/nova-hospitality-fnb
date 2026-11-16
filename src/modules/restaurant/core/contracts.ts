@@ -337,6 +337,8 @@ export const createPurchaseOrderSchema = tenantScopeSchema.extend({
   expectedAt: z.string().optional(),
   currency: z.string().min(3).max(3).default("TZS"),
   notes: z.string().max(2000).optional(),
+  /** Non-authoritative provenance retained with the governed procurement record. */
+  metadata: z.record(z.string(), z.unknown()).optional(),
   /**
    * A purchase order raised without a requisition is an exception, not a
    * shortcut: the reason for bypassing the request stage is mandatory and is
