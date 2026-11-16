@@ -351,7 +351,7 @@ export async function computeProfitability(
   }
   const propertyNetSalesById = new Map<string, number>();
   for (const d of dimensionMap.values()) {
-    if (d.dimension_type === "outlet" && d.property_id) {
+    if (d.dimension_type === "property" && d.property_id) {
       propertyNetSalesById.set(d.property_id, (propertyNetSalesById.get(d.property_id) ?? 0) + d.net_sales);
     }
   }
