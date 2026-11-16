@@ -49,6 +49,7 @@ export const PROCUREMENT_DOCUMENT_TYPES = [
   "supplier_confirmation",
   "goods_receipt",
   "supplier_invoice",
+  "supplier_credit_note",
   "variance_report",
 ] as const;
 export type ProcurementDocumentType = (typeof PROCUREMENT_DOCUMENT_TYPES)[number];
@@ -59,6 +60,7 @@ export const DOCUMENT_PREFIX: Record<ProcurementDocumentType, string> = {
   supplier_confirmation: "SC",
   goods_receipt: "GRN",
   supplier_invoice: "INV",
+  supplier_credit_note: "SCN",
   variance_report: "VAR",
 };
 
@@ -275,6 +277,38 @@ export const listInvoicesSchema = z.object({
 });
 
 export const matchInvoiceSchema = z.object({ tenantId: uuid, invoiceId: uuid });
+
+export const recordSupplierCreditNoteSchema = z.object({
+  tenantId: uuid,
+  supplierId: uuid,
+  referenceInvoiceId: uuid.optional(),
+  propertyId: uuid.optional(),
+  locationId: uuid.optional(),
+  supplierCreditNoteNumber: z.string().min(1).max(80),
+  creditDate: z.string(),
+  currency: z.string().min(3).max(3).default("TZS"),
+  subtotal: z.number().min(0),
+  taxTotal: z.number().min(0).default(0),
+  reason: z.string().min(5).max(500),
+  notes: z.string().max(2000).optional(),
+});
+export type RecordSupplierCreditNoteInput = z.infer<typeof recordSupplierCreditNoteSchema>;
+
+export const listSupplierCreditNotesSchema = z.object({
+  tenantId: uuid,
+  supplierId: uuid.optional(),
+  status: z.enum(["recorded", "partially_applied", "applied", "voided"]).optional(),
+  limit: z.number().int().min(1).max(200).default(50),
+});
+
+export const applySupplierCreditNoteSchema = z.object({
+  tenantId: uuid,
+  creditNoteId: uuid,
+  invoiceId: uuid,
+  amount: z.number().positive(),
+  reason: z.string().min(3).max(500),
+  idempotencyKey: uuid,
+});
 
 export const setInvoicePaymentStatusSchema = z.object({
   tenantId: uuid,
