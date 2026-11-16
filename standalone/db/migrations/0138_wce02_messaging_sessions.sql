@@ -80,6 +80,7 @@ DECLARE
   integration_provider text;
   integration_channel text;
   integration_type text;
+  integration_config jsonb;
 BEGIN
   SELECT l.tenant_id, l.property_id
   INTO location_tenant, location_property
@@ -92,8 +93,8 @@ BEGIN
     RAISE EXCEPTION 'WhatsApp receiving number outlet is outside the selected tenant/property scope';
   END IF;
 
-  SELECT i.tenant_id, i.property_id, i.provider, i.channel_key, i.integration_type
-  INTO integration_tenant, integration_property, integration_provider, integration_channel, integration_type
+  SELECT i.tenant_id, i.property_id, i.provider, i.channel_key, i.integration_type, i.config
+  INTO integration_tenant, integration_property, integration_provider, integration_channel, integration_type, integration_config
   FROM public.api_integrations i
   WHERE i.id = NEW.integration_id;
 
@@ -102,8 +103,17 @@ BEGIN
     OR integration_property IS DISTINCT FROM NEW.property_id
     OR integration_provider IS DISTINCT FROM 'meta-whatsapp'
     OR integration_channel IS DISTINCT FROM 'whatsapp'
-    OR integration_type IS DISTINCT FROM 'channel' THEN
-    RAISE EXCEPTION 'WhatsApp integration is outside the selected tenant/property scope';
+    OR integration_type IS DISTINCT FROM 'channel'
+    OR integration_config->>'wabaId' IS DISTINCT FROM NEW.waba_id
+    OR (
+      integration_config->>'phoneNumberId' IS DISTINCT FROM NEW.phone_number_id
+      AND NOT EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(coalesce(integration_config->'phoneNumbers', '[]'::jsonb)) phone
+        WHERE phone->>'id' = NEW.phone_number_id
+      )
+    ) THEN
+    RAISE EXCEPTION 'WhatsApp integration or phone asset is outside the selected tenant/property scope';
   END IF;
 
   RETURN NEW;
@@ -146,6 +156,7 @@ CREATE TABLE IF NOT EXISTS public.wa_webhook_events (
   processed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT wa_webhook_events_phone_event_uq UNIQUE (phone_number_id, event_key),
+  CONSTRAINT wa_webhook_events_scope_id_uq UNIQUE (tenant_id, property_id, location_id, id),
   CONSTRAINT wa_webhook_events_binding_scope_fkey
     FOREIGN KEY (tenant_id, property_id, location_id, binding_id)
     REFERENCES public.wa_phone_number_bindings(tenant_id, property_id, location_id, id)
