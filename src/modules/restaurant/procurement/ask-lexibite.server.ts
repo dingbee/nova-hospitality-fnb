@@ -199,6 +199,8 @@ export interface IntelligentPurchaseOrderLine {
   quantity: number;
   recommendedPurchaseQuantity: number;
   stockUnitsPerPurchaseUnit: number;
+  minimumOrderQuantity: number;
+  orderMultiple: number;
   recommendationEvidence: Record<string, unknown>;
   unitPrice: number;
   estimatedCost: number;
@@ -356,6 +358,8 @@ export async function previewIntelligentPurchaseOrders(
       quantity: purchaseQuantity,
       recommendedPurchaseQuantity: purchaseQuantity,
       stockUnitsPerPurchaseUnit,
+      minimumOrderQuantity: Number(suggestion.minimumOrderQuantity ?? 0),
+      orderMultiple: Number(suggestion.orderMultiple ?? 1),
       recommendationEvidence: {
         currentOnHand: suggestion.currentQuantity,
         netAvailable: suggestion.netAvailable ?? null,
