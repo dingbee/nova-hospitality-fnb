@@ -18,7 +18,8 @@ ALTER TABLE public.restaurant_purchase_order_items
   ADD COLUMN IF NOT EXISTS stock_units_per_purchase_unit numeric(18,6),
   ADD COLUMN IF NOT EXISTS minimum_order_quantity numeric(14,4),
   ADD COLUMN IF NOT EXISTS order_multiple numeric(14,6),
-  ADD COLUMN IF NOT EXISTS source_action_id uuid REFERENCES public.intelligence_actions(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS source_action_id uuid REFERENCES public.intelligence_actions(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS source_request_item_id uuid REFERENCES public.restaurant_purchase_request_items(id) ON DELETE SET NULL;
 
 DO $$
 BEGIN
@@ -93,3 +94,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurant_purchase_request_items_source_a
 CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurant_purchase_order_items_source_action
   ON public.restaurant_purchase_order_items (source_action_id)
   WHERE source_action_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurant_purchase_order_items_source_request_item
+  ON public.restaurant_purchase_order_items (source_request_item_id)
+  WHERE source_request_item_id IS NOT NULL;
