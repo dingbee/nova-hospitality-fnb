@@ -9,6 +9,7 @@ import { createPurchaseOrder, transitionPurchaseOrder } from "../purchasing/purc
 import { createGoodsReceipt } from "./receiving.server";
 
 type Sb = any;
+type SerializableJson = null | string | number | boolean | SerializableJson[] | { [key: string]: SerializableJson };
 const uuid = z.string().uuid();
 
 export const askLexiBitePurchaseOrderInputSchema = z.object({
@@ -204,7 +205,7 @@ export interface IntelligentPurchaseOrderLine {
   stockUnitsPerPurchaseUnit: number;
   minimumOrderQuantity: number;
   orderMultiple: number;
-  recommendationEvidence: Record<string, unknown>;
+  recommendationEvidence: Record<string, SerializableJson>;
   unitPrice: number;
   estimatedCost: number;
   currentQuantity: number;
@@ -346,7 +347,7 @@ export async function previewIntelligentPurchaseOrders(
       continue;
     }
     const supplier = supplierById.get(suggestion.supplierId);
-    if (!supplier || supplier.status !== "active") {
+    if (!supplier || supplier.status !== "active" || typeof supplier.name !== "string" || !supplier.name.trim()) {
       skipped.push(suggestion.name + ": selected supplier is no longer active.");
       continue;
     }
@@ -430,7 +431,7 @@ export async function previewIntelligentPurchaseOrders(
         safetyStock: suggestion.safetyStock ?? null,
         leadTimeDays: suggestion.leadTimeDays,
         targetCoverageDays: suggestion.coverDays,
-        stockPosition: suggestion.stockPositionEvidence ?? null,
+        stockPosition: (suggestion.stockPositionEvidence ?? null) as SerializableJson,
         supplierPriceEffectiveDate: suggestion.effectivePriceDate ?? null,
       },
       unitPrice: purchaseUnitPrice,
