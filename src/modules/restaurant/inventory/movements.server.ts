@@ -17,8 +17,7 @@ import type {
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { evaluateNegativeStock } from "./policy";
-import { toStockUnits, type UnitRow } from "./units";
-import { componentToStock, type UnitRow } from "./units";
+import { componentToStock, toStockUnits, type UnitRow } from "./units";
 import { assertLocationInTenant } from "./locations.server";
 
 type Sb = any;
