@@ -242,6 +242,8 @@ describe("Purchasing Intelligence procurement integrity", () => {
     const result = await getPurchasingIntelligence(fakeSupabase(), "user-1", {
       tenantId: TENANT,
       windowDays: 30,
+      propertyId: PROPERTY,
+      locationId: LOCATION,
     });
     expect(result.suggestions[0]).toMatchObject({
       supplierId: cheaperSupplier,
@@ -257,6 +259,8 @@ describe("Purchasing Intelligence procurement integrity", () => {
     const result = await getPurchasingIntelligence(fakeSupabase(), "user-1", {
       tenantId: TENANT,
       windowDays: 30,
+      propertyId: PROPERTY,
+      locationId: LOCATION,
     });
     expect(result.suggestions).toHaveLength(0);
   });
@@ -267,6 +271,8 @@ describe("Purchasing Intelligence procurement integrity", () => {
       getPurchasingIntelligence(fakeSupabase(), "user-1", {
         tenantId: TENANT,
         windowDays: 30,
+        propertyId: PROPERTY,
+        locationId: LOCATION,
       }),
     ).rejects.toThrow(/Unable to load purchase-order lines for replenishment: database unavailable/);
   });
