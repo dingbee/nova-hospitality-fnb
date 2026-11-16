@@ -98,6 +98,17 @@ describe("computeProfitability operating-cost integration", () => {
     expect(persisted[0]).toHaveLength(2);
   });
 
+  it("does not invent a reporting currency when the tenant has no currency-bearing sources", async () => {
+    const sb = makeSupabase({
+      restaurant_orders: [],
+      restaurant_cost_allocations: [],
+      restaurant_properties: [],
+    });
+    await expect(computeProfitability(sb, "user-1", input)).rejects.toThrow(
+      "A single property reporting currency is required for a tenant-wide profitability report.",
+    );
+  });
+
   it("rejects mixed currencies between sales and allocated operating costs", async () => {
     const sb = makeSupabase({
       restaurant_orders: [{ id: "order-1", currency: "TZS" }],
