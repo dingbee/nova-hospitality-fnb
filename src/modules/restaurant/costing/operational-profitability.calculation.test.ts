@@ -57,9 +57,10 @@ describe("calculateOperationalProfitability", () => {
 
   it("marks pending expense verification above other confidence states", () => {
     const result = calculateOperationalProfitability({
-      ...base, pendingExpenseVerification: true, unallocatedOperatingExpenses: 100,
+      ...base, pendingExpenseVerification: true, pendingExpenseAmount: 300, unallocatedOperatingExpenses: 100,
     });
     expect(result.reconciliationState).toBe("pending_expense_verification");
+    expect(result.pendingExpenseAmount).toBe(300);
   });
 
   it("returns unavailable margins when net sales are zero", () => {
