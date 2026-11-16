@@ -34,8 +34,26 @@ export async function getPurchasingIntelligence(
   if (!Number.isFinite(windowDays) || windowDays <= 0) {
     throw new Error("Purchasing intelligence requires a positive, finite analysis window.");
   }
+  if (!input.propertyId && !input.locationId) {
+    throw new Error("Replenishment intelligence requires an explicit property or stock-location scope.");
+  }
+  let propertyId = input.propertyId ?? null;
+  if (input.locationId) {
+    const { data: selectedLocation, error: locationError } = await sb
+      .from("restaurant_locations")
+      .select("id, property_id")
+      .eq("tenant_id", tenantId)
+      .eq("id", input.locationId)
+      .maybeSingle();
+    if (locationError) throw new Error("Unable to validate replenishment location: " + locationError.message);
+    if (!selectedLocation) throw new Error("The selected replenishment location does not exist in this tenant.");
+    if (propertyId && selectedLocation.property_id !== propertyId) {
+      throw new Error("The selected stock location does not belong to the requested property.");
+    }
+    propertyId = propertyId ?? selectedLocation.property_id ?? null;
+  }
   await assertTenantRead(sb, userId, tenantId, {
-    propertyId: input.propertyId ?? null,
+    propertyId,
     locationId: input.locationId ?? null,
   });
 
@@ -50,14 +68,15 @@ export async function getPurchasingIntelligence(
       "id, name, property_id, location_id, current_quantity, average_cost, currency, unit_id, purchase_unit_id, pack_size, reorder_point, par_level, metadata, updated_at",
     )
     .eq("tenant_id", tenantId);
-  if (input.propertyId) itemsQuery = itemsQuery.or("property_id.eq." + input.propertyId + ",property_id.is.null");
+  if (propertyId) itemsQuery = itemsQuery.or("property_id.eq." + propertyId + ",property_id.is.null");
+  else if (input.locationId) itemsQuery = itemsQuery.is("property_id", null);
 
   let movesQuery = sb
     .from("restaurant_stock_movements")
     .select("inventory_item_id, movement_type, quantity, total_cost, occurred_at")
     .eq("tenant_id", tenantId)
     .gte("occurred_at", prevMonthStart);
-  if (input.propertyId) movesQuery = movesQuery.eq("property_id", input.propertyId);
+  if (propertyId) movesQuery = movesQuery.eq("property_id", propertyId);
   if (input.locationId) movesQuery = movesQuery.eq("location_id", input.locationId);
 
   const [itemsRes, movesRes, productsRes, suppliersRes, poRes, unitsRes] = await Promise.all([
@@ -113,7 +132,7 @@ export async function getPurchasingIntelligence(
     tenantId,
     itemIds: items.map((item) => item.id),
     items,
-    propertyId: input.propertyId ?? null,
+    propertyId,
     locationId: input.locationId ?? null,
     asOf: new Date(now).toISOString(),
   });
