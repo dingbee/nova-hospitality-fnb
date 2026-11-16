@@ -35,6 +35,9 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 END
 $dbroles$;
 
+GRANT USAGE ON SCHEMA auth TO authenticated;
+GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated;
+
 CREATE TABLE public.restaurant_tenants (id uuid PRIMARY KEY);
 CREATE TABLE public.restaurant_properties (id uuid PRIMARY KEY, tenant_id uuid);
 CREATE TABLE public.restaurant_locations (id uuid PRIMARY KEY);
