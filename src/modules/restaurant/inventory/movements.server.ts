@@ -199,11 +199,11 @@ export async function insertMovement(
 export async function findMovementByDedupeKey(sb: Sb, tenantId: string, dedupeKey: string) {
   const { data } = await sb
     .from("restaurant_stock_movements")
-    .select("id, quantity, location_id, movement_type")
+    .select("id, quantity, total_cost, location_id, movement_type")
     .eq("tenant_id", tenantId)
     .eq("dedupe_key", dedupeKey)
     .maybeSingle();
-  return data as { id: string; quantity: number; location_id: string | null } | null;
+  return data as { id: string; quantity: number; total_cost: number; location_id: string | null; movement_type: string } | null;
 }
 
 /** Whether `movementId` already has a reversal posted against it. */
