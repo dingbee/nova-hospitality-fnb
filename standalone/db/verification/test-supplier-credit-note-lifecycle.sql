@@ -328,6 +328,9 @@ BEGIN
   IF (SELECT count(*) FROM public.restaurant_procurement_audit WHERE document_type='supplier_credit_note' AND action='credit_note_applied') <> 4 THEN
     RAISE EXCEPTION 'Credit application audit was not written atomically';
   END IF;
+  IF (SELECT count(*) FROM public.restaurant_procurement_audit WHERE document_type='supplier_credit_note' AND action='recorded') <> 7 THEN
+    RAISE EXCEPTION 'Credit-note creation audit was not written atomically';
+  END IF;
 END
 $credit_note_assertions$;
 
