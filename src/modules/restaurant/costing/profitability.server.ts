@@ -106,6 +106,16 @@ export async function computeProfitability(
   const periodFrom = input.from.slice(0, 10);
   const periodTo = input.to.slice(0, 10);
   const allocationPeriodFrom = `${periodFrom.slice(0, 7)}-01`;
+  const prorateMonthlyAmount = (amount: number, monthStart: string) => {
+    const [year, month] = monthStart.split("-").map(Number);
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const monthEnd = `${year}-${String(month).padStart(2, "0")}-${String(daysInMonth).padStart(2, "0")}`;
+    const overlapStart = periodFrom > monthStart ? periodFrom : monthStart;
+    const overlapEnd = periodTo < monthEnd ? periodTo : monthEnd;
+    if (overlapEnd < overlapStart) return 0;
+    const overlapDays = Math.floor((Date.parse(`${overlapEnd}T00:00:00Z`) - Date.parse(`${overlapStart}T00:00:00Z`)) / 86_400_000) + 1;
+    return amount * overlapDays / daysInMonth;
+  };
   let expenseAllocationQuery = sb
     .from("restaurant_cost_allocations")
     .select("amount, currency, property_id, location_id, source_id")
@@ -151,7 +161,7 @@ export async function computeProfitability(
     throw new Error("Profitability source currency does not match the reporting property's currency.");
   }
   const allocatedOperatingExpenses = Number(
-    allocationRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0).toFixed(2),
+    allocationRows.reduce((sum, row) => sum + prorateMonthlyAmount(Number(row.amount ?? 0), row.period_start), 0).toFixed(2),
   );
   let unallocatedQuery = sb.from("restaurant_cost_allocation_exceptions")
     .select("id, source_id, source_amount, currency, source_type")
@@ -312,7 +322,7 @@ export async function computeProfitability(
     unallocatedRows = unallocatedRows.filter((r) => allowedSourceIds.has(r.source_id));
   }
   const pendingRows = (pendingExpenses ?? []) as any[];
-  const unallocatedOperatingExpenses = unallocatedRows.reduce((sum, r) => sum + Number(r.source_amount ?? 0), 0);
+  const unallocatedOperatingExpenses = unallocatedRows.reduce((sum, r) => sum + prorateMonthlyAmount(Number(r.source_amount ?? 0), r.period_start), 0);
   const pendingExpenseVerification = pendingRows.length > 0;
   const serviceConsumables = consumptionEventRows.filter((e) => e.cost_class === "service_consumable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0) + missingServiceConsumables;
   const otherDirectVariableCosts = consumptionEventRows.filter((e) => e.cost_class === "other_direct_variable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0) + missingOtherDirectCosts;
@@ -418,11 +428,11 @@ export async function computeProfitability(
     const matchingOpex = allocationRows.filter((a) =>
       d.dimension_type === "outlet" ? a.location_id === d.dimension_key :
       d.dimension_type === "property" ? a.property_id === d.dimension_key : false
-    ).reduce((sum, a) => sum + Number(a.amount ?? 0), 0);
+    ).reduce((sum, a) => sum + prorateMonthlyAmount(Number(a.amount ?? 0), a.period_start), 0);
     const propertyNetSales = d.property_id ? propertyNetSalesById.get(d.property_id) ?? 0 : 0;
     const propertyAllocatedOpex = allocationRows
       .filter((a) => a.property_id === d.property_id)
-      .reduce((sum, a) => sum + Number(a.amount ?? 0), 0);
+      .reduce((sum, a) => sum + prorateMonthlyAmount(Number(a.amount ?? 0), a.period_start), 0);
     const allocated = d.dimension_type === "channel"
       ? propertyAllocatedOpex * (d.net_sales / Math.max(propertyNetSales, 0.01))
       : matchingOpex;
