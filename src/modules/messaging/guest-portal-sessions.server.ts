@@ -63,6 +63,23 @@ export async function createWhatsAppGuestPortalSession(
     throw new Error("The WhatsApp integration is not active.");
   }
 
+  const { data: location, error: locationError } = await admin
+    .from("restaurant_locations")
+    .select("id, location_type, is_storage, status")
+    .eq("id", input.locationId)
+    .eq("tenant_id", input.tenantId)
+    .eq("property_id", input.propertyId)
+    .maybeSingle();
+  if (
+    locationError ||
+    !location ||
+    location.status !== "active" ||
+    location.is_storage ||
+    !["outlet", "restaurant", "bar"].includes(location.location_type)
+  ) {
+    throw new Error("The selected location is not an active customer-facing outlet.");
+  }
+
   const { data: conversation, error: conversationError } = await admin
     .from("wa_conversations")
     .select("id, binding_id, tenant_id, property_id, location_id, status")
@@ -107,6 +124,7 @@ export async function createWhatsAppGuestPortalSession(
   const expiresAt = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
   const token = randomBytes(32).toString("base64url");
   const tokenHash = hashToken(token);
+  const portalUrl = createPortalUrl(token);
 
   const { error: revokeError } = await admin
     .from("wa_guest_portal_sessions")
@@ -141,7 +159,7 @@ export async function createWhatsAppGuestPortalSession(
   return {
     sessionId: created.id,
     token,
-    portalUrl: createPortalUrl(token),
+    portalUrl,
     expiresAt,
     currency: property.currency,
     scope: "menu_browse" as const,
