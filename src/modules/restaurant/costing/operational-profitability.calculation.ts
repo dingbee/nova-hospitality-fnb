@@ -27,6 +27,7 @@ export interface ProfitabilityCalculationInput {
   allocatedOperatingExpenses: number;
   unallocatedOperatingExpenses: number;
   pendingExpenseVerification: boolean;
+  pendingExpenseAmount?: number;
   partiallyReconciled?: boolean;
   incompleteSourceData?: boolean;
 }
@@ -51,6 +52,7 @@ export interface ProfitabilityCalculation {
   serviceConsumablesRatio: number | null;
   allocatedOperatingExpenses: number;
   unallocatedOperatingExpenses: number;
+  pendingExpenseAmount: number;
   operatingProfit: number;
   operatingMarginPercent: number | null;
   operatingExpenseRatio: number | null;
@@ -72,6 +74,7 @@ export function calculateOperationalProfitability(
     "recipeCogs", "serviceConsumables", "otherDirectVariableCosts",
     "allocatedOperatingExpenses", "unallocatedOperatingExpenses",
   ];
+  if (input.pendingExpenseAmount !== undefined) fields.push("pendingExpenseAmount");
   for (const field of fields) {
     const value = input[field];
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
@@ -124,6 +127,7 @@ export function calculateOperationalProfitability(
     serviceConsumablesRatio: ratio(input.serviceConsumables, netSales),
     allocatedOperatingExpenses: money(input.allocatedOperatingExpenses),
     unallocatedOperatingExpenses: money(input.unallocatedOperatingExpenses),
+    pendingExpenseAmount: money(input.pendingExpenseAmount ?? 0),
     operatingProfit,
     operatingMarginPercent: ratio(operatingProfit, netSales),
     operatingExpenseRatio: ratio(input.allocatedOperatingExpenses, netSales),
