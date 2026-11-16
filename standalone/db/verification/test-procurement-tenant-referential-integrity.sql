@@ -58,7 +58,7 @@ BEGIN
       'f1000000-0000-4000-8000-000000000010'
     );
     v_supplier_link_allowed := true;
-  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation OR check_violation THEN
+  EXCEPTION WHEN foreign_key_violation THEN
     NULL;
   END;
 
@@ -74,7 +74,7 @@ BEGIN
       100
     );
     v_invoice_item_link_allowed := true;
-  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation OR check_violation THEN
+  EXCEPTION WHEN foreign_key_violation THEN
     NULL;
   END;
 
