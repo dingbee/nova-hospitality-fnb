@@ -699,7 +699,7 @@ export async function listProfitability(
     (() => {
       let operationalQuery = sb
         .from("restaurant_operational_profitability_snapshots")
-        .select("id, property_id, location_id, period_start, period_end, currency, net_sales, direct_variable_costs, contribution, operating_profit, operating_margin_percent, confidence_state, computed_at")
+        .select("id, property_id, location_id, period_start, period_end, currency, net_sales, direct_variable_costs, contribution, operating_profit, operating_margin_percent, confidence_state, source_counts, source_references, calculation_version, computed_at")
         .eq("tenant_id", input.tenantId)
         .order("computed_at", { ascending: false })
         .limit(input.limit);
@@ -729,6 +729,9 @@ export async function listProfitability(
     snapshot_type: "operational",
     contribution: Number(s.contribution ?? 0),
     confidence_state: s.confidence_state,
+    source_counts: s.source_counts,
+    source_references: s.source_references,
+    calculation_version: s.calculation_version,
   }));
   return [...(data ?? []), ...operationalRows]
     .sort((a: any, b: any) => new Date(b.computed_at).getTime() - new Date(a.computed_at).getTime())
