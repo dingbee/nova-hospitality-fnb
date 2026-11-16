@@ -184,7 +184,7 @@ describe("computeProfitability operating-cost integration", () => {
         location_id: null, effective_from: "2025-01-01", effective_to: null, active: true,
       }],
       restaurant_consumption_rules: [{
-        id: "rule-1", profile_id: "profile-1", inventory_item_id: "napkin",
+        id: "rule-1", profile_id: "profile-1", inventory_item_id: "napkin", quantity_per_cover: 1,
         effective_from: "2025-01-01", effective_to: null, active: true,
       }],
       restaurant_cost_reconciliation_runs: [{
