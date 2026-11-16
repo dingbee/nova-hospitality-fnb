@@ -41,7 +41,7 @@ function makeSupabase(data: Record<string, unknown[]>, persisted?: unknown[][]) 
           return query;
         },
         then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
-          Promise.resolve({ data: inserted ? null : data[table] ?? [], error: null }).then(resolve, reject),
+          Promise.resolve({ data: inserted ? null : data[table] ?? (table === "restaurant_properties" ? [{ id: "property-1", currency: "TZS" }] : []), error: null }).then(resolve, reject),
       };
       return query;
     },
@@ -120,7 +120,7 @@ describe("computeProfitability operating-cost integration", () => {
       restaurant_properties: [],
     });
     await expect(computeProfitability(sb, "user-1", input)).rejects.toThrow(
-      "A single property reporting currency is required for a tenant-wide profitability report.",
+      "A single valid property reporting currency is required for this profitability report.",
     );
   });
 
