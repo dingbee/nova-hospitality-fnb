@@ -7,8 +7,38 @@
  * against a fake Supabase client, not a stub of the checks themselves —
  * exactly the same methodology decision.server.test.ts uses for I2/I3.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { executeRestaurantAction, verifyRestaurantAction } from "./actions.server";
+
+vi.mock("../intelligence/purchasing.server", () => ({
+  getPurchasingIntelligence: vi.fn(async () => ({
+    currency: "TZS",
+    suggestions: [{
+      inventoryItemId: "66666666-6666-6666-6666-666666666666",
+      supplierId: "77777777-7777-7777-7777-777777777777",
+      supplierProductId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      purchaseUnitId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      stockUnitId: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      purchaseQuantity: 30,
+      purchaseUnitPrice: 1500,
+      stockUnitsPerPurchaseUnit: 1,
+      minimumOrderQuantity: 0,
+      orderMultiple: 1,
+      recommendedQuantity: 30,
+      netAvailable: 20,
+      forecastDemand: 30,
+      safetyStock: 0,
+      dailyVelocity: 10,
+      leadTimeDays: 3,
+      targetCoverageDays: 3,
+      demandObservations: 7,
+      effectivePriceDate: "2026-11-16",
+      forecastConfidence: "medium",
+      purchaseCurrency: "TZS",
+    }],
+  })),
+}));
+
 
 // Registers the restaurant provider + its tenant scope checker as a side
 // effect, exactly like the real app does via the admin/restaurant layout.
@@ -21,6 +51,10 @@ const WAITER = "44444444-4444-4444-4444-444444444444";
 const DECISION_ID = "55555555-5555-5555-5555-555555555555";
 const INVENTORY_ITEM_ID = "66666666-6666-6666-6666-666666666666";
 const SUPPLIER_ID = "77777777-7777-7777-7777-777777777777";
+const SUPPLIER_PRODUCT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const PURCHASE_UNIT_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+const STOCK_UNIT_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+const LOCATION_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
 const OTHER_ITEM_ID = "99999999-9999-9999-9999-999999999999";
 
 function findingFacts(overrides: Partial<Record<string, unknown>> = {}) {
@@ -32,6 +66,23 @@ function findingFacts(overrides: Partial<Record<string, unknown>> = {}) {
     inventoryItemId: INVENTORY_ITEM_ID,
     recommendedQuantity: 30,
     supplierId: SUPPLIER_ID,
+    supplierProductId: SUPPLIER_PRODUCT_ID,
+    purchaseUnitId: PURCHASE_UNIT_ID,
+    stockUnitId: STOCK_UNIT_ID,
+    purchaseQuantity: 30,
+    purchaseUnitPrice: 1500,
+    stockUnitsPerPurchaseUnit: 1,
+    minimumOrderQuantity: 0,
+    orderMultiple: 1,
+    effectivePriceDate: "2026-11-16",
+    netAvailable: 20,
+    forecastDemand: 30,
+    safetyStock: 0,
+    dailyVelocity: 10,
+    targetCoverageDays: 3,
+    demandObservations: 7,
+    forecastConfidence: "medium",
+    stockPositionEvidence: { netAvailable: 20 },
     estimatedUnitCost: 1500,
     currency: "TZS",
     ...overrides,
@@ -45,7 +96,7 @@ function decisionRow(overrides: Partial<Record<string, unknown>> = {}) {
     module: "restaurant",
     decision_key: "restaurant.tenant.finding.purchasing",
     property_id: null,
-    location_id: null,
+    location_id: LOCATION_ID,
     context: {
       finding: {
         subject: "UAT reorder ingredient",
