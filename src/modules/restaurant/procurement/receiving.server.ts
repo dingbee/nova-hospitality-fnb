@@ -448,13 +448,16 @@ export async function postGoodsReceipt(
       }
       stockQuantity = poAcceptedQuantity * factor;
     } else {
-      if (poItem?.supplier_product_id) {
-        throw new Error("A supplier-linked legacy purchase-order line has no immutable conversion snapshot. Manual review is required before receiving.");
-      }
       if (!item?.unit_id) {
         throw new Error('"' + l.description + '": inventory item has no configured stock unit.');
       }
-      if (poUnitId === item.unit_id) {
+      if (poItem) {
+        if (poUnitId !== item.unit_id) {
+          throw new Error("A legacy purchase-order line has no immutable purchase-to-stock conversion snapshot. Manual review is required before receiving.");
+        }
+        stockQuantity = poAcceptedQuantity;
+        stockUnitId = item.unit_id;
+      } else if (poUnitId === item.unit_id) {
         stockQuantity = poAcceptedQuantity;
         stockUnitId = item.unit_id;
       } else if (poUnitId === item.purchase_unit_id) {
