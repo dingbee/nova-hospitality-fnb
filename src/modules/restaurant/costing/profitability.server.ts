@@ -195,6 +195,7 @@ export async function computeProfitability(
   if (consumptionRuleError) throw new Error(consumptionRuleError.message);
 
   const itemRows = ((items ?? []) as any[]).filter((i) => i.status !== "voided");
+  const reportPropertyIds = ((reportingProperties ?? []) as any[]).map((property) => property.id);
   const profileRows = ((consumptionProfiles ?? []) as any[]).filter((p) =>
     p.active !== false && p.effective_from <= periodTo && (!p.effective_to || p.effective_to >= periodFrom) &&
     reportPropertyIds.some((propertyId) => p.property_id === null || p.property_id === propertyId) &&
