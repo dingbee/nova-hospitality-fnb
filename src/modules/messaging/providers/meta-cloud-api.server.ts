@@ -22,19 +22,33 @@ export type MetaGraphErrorInfo = {
   code?: number;
   error_subcode?: number;
   fbtrace_id?: string;
+  is_transient?: boolean;
 };
 
 export class MetaGraphError extends Error {
   readonly status: number | null;
   readonly code: number | null;
   readonly subcode: number | null;
+  readonly fbtraceId: string | null;
+  readonly retryable: boolean;
+  readonly retryAfterMs: number | null;
 
-  constructor(message: string, status: number | null, code: number | null = null, subcode: number | null = null) {
+  constructor(
+    message: string,
+    status: number | null,
+    code: number | null = null,
+    subcode: number | null = null,
+    options: { fbtraceId?: string | null; isTransient?: boolean; retryAfterMs?: number | null } = {},
+  ) {
     super(message);
     this.name = "MetaGraphError";
     this.status = status;
     this.code = code;
     this.subcode = subcode;
+    this.fbtraceId = options.fbtraceId ?? null;
+    this.retryAfterMs = options.retryAfterMs ?? null;
+    this.retryable = status === null || status === 429 || (status !== null && status >= 500)
+      || [4, 17, 32, 613].includes(code ?? -1) || options.isTransient === true;
   }
 }
 
@@ -71,8 +85,19 @@ async function readGraphResponse<T>(response: Response): Promise<T> {
     : {};
   if (!response.ok || payload.error) {
     const message = typeof error.message === "string" ? error.message.slice(0, 500) : "Meta Graph API request failed.";
-    throw new MetaGraphError(message, response.status, typeof error.code === "number" ? error.code : null,
-      typeof error.error_subcode === "number" ? error.error_subcode : null);
+    const retryAfter = response.headers.get("retry-after");
+    const retryAfterSeconds = retryAfter && /^\\d+(?:\\.\\d+)?$/.test(retryAfter) ? Number(retryAfter) : null;
+    throw new MetaGraphError(
+      message,
+      response.status,
+      typeof error.code === "number" ? error.code : null,
+      typeof error.error_subcode === "number" ? error.error_subcode : null,
+      {
+        fbtraceId: typeof error.fbtrace_id === "string" ? error.fbtrace_id : null,
+        isTransient: error.is_transient === true,
+        retryAfterMs: retryAfterSeconds === null ? null : Math.max(0, Math.round(retryAfterSeconds * 1000)),
+      },
+    );
   }
   if (body === null) throw new MetaGraphError("Meta Graph API returned an invalid JSON response.", response.status);
   return body as T;
