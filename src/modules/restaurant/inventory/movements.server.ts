@@ -704,7 +704,7 @@ export async function consumeOperationalConsumablesForOrder(
   const covers = Math.max(1, Number(args.guestCount || 1));
   for (const rule of ruleRows) {
     const item = inventoryById.get(rule.inventory_item_id);
-    if (!item || item.property_id !== args.propertyId) {
+    if (!item || (item.property_id !== null && item.property_id !== args.propertyId)) {
       throw new Error(`Operational consumable "${item?.name ?? rule.inventory_item_id}" is not assigned to this property.`);
     }
     if (!/^[A-Z]{3}$/.test(String(item.currency ?? "")) || item.currency !== args.currency) {
