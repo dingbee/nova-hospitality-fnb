@@ -114,33 +114,41 @@ export async function insertMovement(
     dedupeKey?: string | null;
   },
 ) {
+  let stockUnitId: string;
   // One policy for every stock-affecting path. Corrections and inbound
   // movements pass straight through; an outbound movement that would push the
   // balance below zero is refused unless the item allows it or a supervisor
   // has approved this specific movement.
   {
-    const { data: item } = await sb
+    const { data: item, error: itemError } = await sb
       .from("restaurant_inventory_items")
-      .select("id, name, current_quantity, allow_negative")
+      .select("id, name, current_quantity, allow_negative, unit_id")
       .eq("tenant_id", row.tenantId)
       .eq("id", row.inventoryItemId)
       .maybeSingle();
-    if (item) {
-      const decision = evaluateNegativeStock({
+    if (itemError) throw new Error(itemError.message);
+    if (!item) throw new Error("Inventory item not found in the requested tenant.");
+    if (!item.unit_id) {
+      throw new Error("Inventory item has no configured stock unit. Configure the stock unit before posting movements.");
+    }
+    if (row.unitId && row.unitId !== item.unit_id) {
+      throw new Error("Stock movements must use the inventory item's canonical stock unit. Convert the quantity before posting.");
+    }
+    stockUnitId = item.unit_id;
+    const decision = evaluateNegativeStock({
+      movementType: row.movementType,
+      quantity: row.quantity,
+      currentQuantity: Number(item.current_quantity ?? 0),
+      allowNegative: Boolean(item.allow_negative),
+      approvedBy: row.approvedBy ?? null,
+      itemName: item.name,
+    });
+    if (!decision.allowed) {
+      throw new NegativeStockError(decision.message, {
+        inventoryItemId: row.inventoryItemId,
         movementType: row.movementType,
-        quantity: row.quantity,
-        currentQuantity: Number(item.current_quantity ?? 0),
-        allowNegative: Boolean(item.allow_negative),
-        approvedBy: row.approvedBy ?? null,
-        itemName: item.name,
+        shortfall: decision.shortfall,
       });
-      if (!decision.allowed) {
-        throw new NegativeStockError(decision.message, {
-          inventoryItemId: row.inventoryItemId,
-          movementType: row.movementType,
-          shortfall: decision.shortfall,
-        });
-      }
     }
   }
 
@@ -152,7 +160,7 @@ export async function insertMovement(
       location_id: row.locationId ?? null,
       destination_location_id: row.destinationLocationId ?? null,
       inventory_item_id: row.inventoryItemId,
-      unit_id: row.unitId ?? null,
+      unit_id: stockUnitId,
       movement_type: row.movementType,
       quantity: row.quantity,
       unit_cost: row.unitCost,
