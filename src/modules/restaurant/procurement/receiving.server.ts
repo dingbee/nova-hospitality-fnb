@@ -511,19 +511,9 @@ export async function postGoodsReceipt(
     const receivedQty = stockQuantity.poReceivedQuantity;
     const rejected = stockQuantity.poRejectedQuantity;
 
-    // ME-03: whether this line's fulfilment was already posted by an
-    // earlier attempt at this exact receipt. `moved` (below) is the
-    // authoritative signal for the common case — insertMovement's
-    // dedupe_key (`receipt:<receiptId>:<lineId>`) makes it null exactly
-    // when this line's stock has already been received, e.g. a retried
-    // request or a concurrent double-post of the same receipt. A line with
-    // no stock impact (nothing accepted, or no inventory item) has no
-    // ledger row to key off; the receipt_item's own stock_movement_id
-    // already being set is the fallback signal for "this line, specifically,
-    // was already processed by a prior successful post."
-    let alreadyPosted = Boolean(l.stock_movement_id);
     if (receiptAccepted > 0 && l.inventory_item_id) {
-      const moved = await insertMovement(sb, userId, {
+      const dedupeKey = "receipt:" + receipt.id + ":" + l.id;
+      let movement = await insertMovement(sb, userId, {
         tenantId,
         propertyId: receipt.property_id,
         locationId: l.storage_location_id ?? receipt.location_id,
@@ -533,40 +523,40 @@ export async function postGoodsReceipt(
         quantity: Math.abs(stockQuantity.quantity),
         unitCost: stockQuantity.unitCost,
         currency: receipt.currency,
-        reason: `Goods receipt ${receipt.document_number}`,
+        reason: "Goods receipt " + receipt.document_number,
         referenceType: "restaurant_goods_receipt",
         referenceId: receipt.id,
         occurredAt: receipt.received_at,
-        dedupeKey: `receipt:${receipt.id}:${l.id}`,
+        dedupeKey,
       });
-      if (moved) {
-        await sb
-          .from("restaurant_goods_receipt_items")
-          .update({ stock_movement_id: moved.id })
+      if (!movement) {
+        const { data: existingMovement, error: movementReadError } = await sb
+          .from("restaurant_stock_movements")
+          .select("id")
           .eq("tenant_id", tenantId)
-          .eq("id", l.id);
-
-        // Lot traceability: the batch code and expiry captured at the door
-        // are only useful if they survive into stock. Without this, a
-        // recall or an expiry sweep has nothing to work from. Recorded in
-        // stock units, same as the ledger movement it traces, so
-        // FIFO/expiry consumption later reconciles against the same
-        // quantity the ledger holds.
-        await persistReceiptBatch(sb, userId, {
-          tenantId,
-          receipt,
-          line: l,
-          accepted: stockQuantity.quantity,
-          unitCost: stockQuantity.unitCost,
-          stockUnitId: stockQuantity.stockUnitId,
-        });
-      } else {
-        // insertMovement returned null: this line's stock was already
-        // received by an earlier attempt at this receipt (dedupe_key
-        // conflict). Nothing below in this iteration — variances, price
-        // history, cumulative PO fulfilment — must run again either.
-        alreadyPosted = true;
+          .eq("dedupe_key", dedupeKey)
+          .maybeSingle();
+        if (movementReadError || !existingMovement) {
+          throw new Error(movementReadError?.message ?? "Previously posted receipt movement could not be recovered.");
+        }
+        movement = existingMovement;
       }
+      const { error: movementLinkError } = await sb
+        .from("restaurant_goods_receipt_items")
+        .update({ stock_movement_id: movement.id })
+        .eq("tenant_id", tenantId)
+        .eq("id", l.id);
+      if (movementLinkError) throw new Error(movementLinkError.message);
+
+      // Batch creation is independently idempotent by receipt-item reference.
+      await persistReceiptBatch(sb, userId, {
+        tenantId,
+        receipt,
+        line: l,
+        accepted: stockQuantity.quantity,
+        unitCost: stockQuantity.unitCost,
+        stockUnitId: stockQuantity.stockUnitId,
+      });
     }
 
     // ---- variance detection (recorded, never auto-approved) ----
@@ -643,24 +633,19 @@ export async function postGoodsReceipt(
       dedupeSuffix: l.id,
     });
 
-    // Cumulative fulfilment on the order line. ME-03: gated on
-    // !alreadyPosted — without this guard a retried or
-    // concurrently-duplicated post of the same receipt double-counts
-    // received/accepted/rejected quantities on the PO line even though the
-    // stock ledger itself stayed correct. ME-13: the increment itself is a
-    // single atomic UPDATE in the database (restaurant_increment_po_item_fulfilment),
-    // not a read-then-write in application code — two different receipts
-    // posting against the same PO line concurrently would otherwise race:
-    // both read the pre-update row, compute independently, and the second
-    // UPDATE silently overwrites the first's contribution.
-    if (l.purchase_order_item_id && !alreadyPosted) {
-      await sb.rpc("restaurant_increment_po_item_fulfilment", {
+    // The database atomically claims this receipt item and increments the PO
+    // line once. Retrying after a movement or line-update failure cannot
+    // double-apply fulfilment counters.
+    if (l.purchase_order_item_id) {
+      const { error: fulfilmentError } = await sb.rpc("restaurant_apply_po_receipt_fulfilment", {
         _tenant: tenantId,
+        _receipt_item_id: l.id,
         _po_item_id: l.purchase_order_item_id,
         _received_delta: receivedQty,
         _accepted_delta: accepted,
         _rejected_delta: rejected,
       });
+      if (fulfilmentError) throw new Error(fulfilmentError.message);
     }
   }
 
