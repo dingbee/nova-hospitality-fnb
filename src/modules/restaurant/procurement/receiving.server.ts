@@ -468,7 +468,7 @@ export async function postGoodsReceipt(
         const result = convertUnits(poAcceptedQuantity, unitById.get(poUnitId), unitById.get(item.unit_id));
         if (!result.exact) {
           throw new Error(
-            '"' + l.description + '": received in a unit that cannot be converted to this item's stock unit (' +
+            '"' + l.description + '": received in a unit that cannot be converted to this item\'s stock unit (' +
             (result.reason ?? "unknown conversion") + "). Fix the unit on this line, or the item's purchase unit/pack size, before posting.",
           );
         }
