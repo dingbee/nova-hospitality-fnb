@@ -507,6 +507,7 @@ function ProfitabilityPage() {
                         <p>Stock movements: {(s.source_references.stock_movement_ids ?? []).join(", ") || "None"}</p>
                         <p>Consumable events: {(s.source_references.consumable_event_ids ?? []).join(", ") || "None"}</p>
                         <p>Expense allocations: {(s.source_references.allocation_source_ids ?? []).join(", ") || "None"}</p>
+                        <p>Pending expenses: {(s.source_references.pending_expense_ids ?? []).join(", ") || "None"}</p>
                       </div>
                     </details>
                   ) : null}
