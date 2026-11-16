@@ -1,6 +1,6 @@
 # WCE-02 — Messaging and Guest Portal Session Infrastructure
 
-**Status:** IMPLEMENTED — verification pending combined CI  
+**Status:** CLOSED — software acceptance verified; live Meta acceptance remains external  
 **Migration:** `0138_wce02_messaging_sessions.sql`  
 **Branch:** `wce/wce-02-messaging-sessions`  
 **PR:** #195
@@ -19,7 +19,7 @@ One WABA is supported per property at this stage, with multiple Meta-verified ph
 4. Valid events are persisted to `wa_webhook_events` before HTTP 200. Unknown, disabled or mismatched numbers are quarantined as rejected events without tenant context.
 5. Event identity is unique per receiving number and payload/change hash. Provider message IDs are separately unique in `wa_messages`.
 6. The one-minute Supabase cron dispatcher claims events with leases and `FOR UPDATE SKIP LOCKED`. Claims are ordered per receiving number; an earlier retry/dead-letter blocks later events for that number.
-7. Failures use bounded exponential retry. Exhausted events enter dead-letter; authorized tenant/property operators may requeue them, with commercial audit evidence.
+7. Failures use bounded exponential retry. Exhausted events enter dead-letter and block later events for that receiving number; authorized tenant/property operators may requeue or explicitly reject a poison event after review, with commercial audit evidence.
 8. Inbound messages create/reuse scoped conversations. Delivery status updates are monotonic (sent → delivered → read); an early status with no corresponding outbound message is retried.
 
 ## Session security
@@ -45,7 +45,7 @@ The Guest Portal base URL is read from `LEXIBITE_GUEST_PORTAL_BASE_URL`; product
 | `wa_webhook_events` | RLS enabled, no authenticated policies; service role only |
 | `wa_guest_portal_sessions` | RLS enabled, no authenticated policies; service role only |
 
-All five new public tables have RLS enabled. Service-only RPCs claim inbox events, apply monotonic message delivery status, resolve browse sessions and revoke sessions. The database prevents cross-tenant/property/outlet foreign-key combinations.
+All five new public tables have RLS enabled. The combined clean replay verified 222/222 public tables RLS-enabled. Service-only RPCs claim inbox events, apply monotonic message delivery status, resolve browse sessions and revoke sessions. The database prevents cross-tenant/property/outlet foreign-key combinations.
 
 The current restaurant RBAC model exposes tenant/property scopes, not a separate outlet-membership grant. Outlet identity is nevertheless persisted and enforced for routing and session context; outlet-specific staff visibility remains a separate RBAC enhancement if required.
 
@@ -58,8 +58,19 @@ The current restaurant RBAC model exposes tenant/property scopes, not a separate
 
 The migration registers `lexibite-wa-webhook-dispatch` every minute using the existing Vault secret and the current LexiBite API origin. Local replay records the schedule inactive and performs no HTTP request.
 
-## Acceptance evidence required
+## Acceptance evidence
 
-- Combined PR #195 CI: clean PostgreSQL 17 replay including migration 0138, 222-table RLS assertion, service-only function grants, channel catalogue and cron assertions, WCE tests, typecheck, lint, production build and full repository tests.
-- No live Meta request is claimed. Live onboarding still requires Meta Business verification, Embedded Signup configuration, Advanced Access/App Review and a real test WABA/phone.
+<badge color="success">VERIFIED</badge> **PR #195 CI run:** `43960937024` on commit `a58615f9f1315c61f8c6cfbdb7c902ec8774dc06` — SUCCESS.
+
+- Clean PostgreSQL 17 replay including migration 0138: PASS.
+- Public schema RLS: 222/222 tables enabled.
+- Service-only RPC grants, private inbox/session policies, WhatsApp channel definition and inactive local cron schedule assertions: PASS.
+- TypeScript strict typecheck: PASS.
+- Changed-source lint: PASS.
+- Production build: PASS.
+- Scoped functional suite: 141/141 tests passed.
+- Full repository suite: 2,627/2,627 tests across 244 files passed.
+- Existing isolated migration, LB-02/LB-03 and operational regression gates: PASS.
+
+No live Meta request is claimed. Live onboarding still requires Meta Business verification, Embedded Signup configuration, Advanced Access/App Review and a real test WABA/phone.
 - No production migration, production database write, credential change, deployment or promotion has been performed.
