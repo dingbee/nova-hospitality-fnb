@@ -14,10 +14,10 @@ import {
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import {
   listRestaurantSupplierInvoicesFn,
-  listRestaurantSuppliersFn,
   recordRestaurantSupplierCreditNoteFn,
   applyRestaurantSupplierCreditNoteFn,
 } from "../procurement.functions";
+import { listRestaurantSuppliersFn } from "@/modules/restaurant/suppliers/suppliers.functions";
 import { formatMoney } from "../lifecycle";
 
 interface SheetProps {
