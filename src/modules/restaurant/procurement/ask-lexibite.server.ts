@@ -4,6 +4,7 @@ import { assertCapability, getTenantScope, resolveMultiPropertyScope } from "../
 import type { NovaIntentContract } from "../understand/intent.contracts";
 import { getPurchasingIntelligence } from "../intelligence/purchasing.server";
 import { resolveTenantCurrency } from "../prepare/resolve.server";
+import { stockUnitsPerUnit } from "../inventory/stock-position.contract";
 import { createPurchaseOrder, transitionPurchaseOrder } from "../purchasing/purchasing.server";
 import { createGoodsReceipt } from "./receiving.server";
 
@@ -271,6 +272,7 @@ export async function previewIntelligentPurchaseOrders(
     { data: items, error: itemError },
     { data: products, error: productError },
     { data: suppliers, error: supplierError },
+    { data: units, error: unitError },
   ] = await Promise.all([
     sb
       .from("restaurant_inventory_items")
@@ -283,11 +285,13 @@ export async function previewIntelligentPurchaseOrders(
       .eq("tenant_id", tenantId)
       .in("inventory_item_id", itemIds),
     sb.from("restaurant_suppliers").select("id, name, status").eq("tenant_id", tenantId),
+    sb.from("restaurant_inventory_units").select("id, dimension, base_unit_id, factor").eq("tenant_id", tenantId),
   ]);
   if (itemError)
     throw new Error("Unable to validate replenishment inventory: " + itemError.message);
   if (productError) throw new Error("Unable to validate supplier pricing: " + productError.message);
   if (supplierError) throw new Error("Unable to validate suppliers: " + supplierError.message);
+  if (unitError) throw new Error("Unable to validate supplier unit conversions: " + unitError.message);
 
   const itemById = new Map(((items ?? []) as any[]).map((x) => [x.id, x]));
   const supplierById = new Map(((suppliers ?? []) as any[]).map((x) => [x.id, x]));
@@ -321,23 +325,34 @@ export async function previewIntelligentPurchaseOrders(
     const purchaseQuantity = Number(suggestion.purchaseQuantity ?? 0);
     const purchaseUnitPrice = Number(suggestion.purchaseUnitPrice ?? NaN);
     const purchaseCurrency = suggestion.purchaseCurrency ?? null;
+    const currentStockFactor = unitId
+      ? stockUnitsPerUnit(
+          unitId,
+          item.unit_id ?? null,
+          unitId === item.purchase_unit_id ? unitId : null,
+          Number(product.pack_size),
+          (units ?? []) as any[],
+        )
+      : null;
+    const currentOrderMultiple = unitId === item.unit_id ? Number(product.pack_size ?? 1) : 1;
     if (!unitId || unitId !== suggestion.purchaseUnitId ||
+        currentStockFactor == null || Math.abs(currentStockFactor - stockUnitsPerPurchaseUnit) > 0.000001 ||
         !(stockUnitsPerPurchaseUnit > 0) || !Number.isFinite(purchaseQuantity) ||
         purchaseQuantity <= 0 || !Number.isFinite(purchaseUnitPrice) || purchaseUnitPrice < 0) {
-      skipped.push(suggestion.name + ": the recommendation's purchase-unit contract is incomplete.");
+      skipped.push(suggestion.name + ": the recommendation's purchase-unit contract is incomplete or stale.");
       continue;
     }
     if (purchaseCurrency !== item.currency || product.currency !== purchaseCurrency) {
       skipped.push(suggestion.name + ": supplier and property currencies are no longer comparable.");
       continue;
     }
-    if (Number(product.min_order_quantity ?? 0) > purchaseQuantity) {
-      skipped.push(suggestion.name + ": the current supplier minimum order quantity exceeds the recommendation.");
-      continue;
-    }
-    const productPackSize = Number(product.pack_size);
-    if (unitId !== item.unit_id && (!Number.isFinite(productPackSize) || productPackSize <= 0)) {
-      skipped.push(suggestion.name + ": supplier pack size is invalid.");
+    const minimumOrderQuantity = Number(product.min_order_quantity ?? 0);
+    const orderMultiple = Number(suggestion.orderMultiple ?? 1);
+    if (!Number.isFinite(minimumOrderQuantity) || minimumOrderQuantity > purchaseQuantity ||
+        !Number.isFinite(currentOrderMultiple) || currentOrderMultiple <= 0 ||
+        Math.abs(currentOrderMultiple - orderMultiple) > 0.000001 ||
+        Math.abs(purchaseQuantity / orderMultiple - Math.round(purchaseQuantity / orderMultiple)) > 0.000001) {
+      skipped.push(suggestion.name + ": supplier minimum order quantity or order multiple has changed.");
       continue;
     }
     const propertyScopeId = item.property_id ?? propertyId ?? null;
