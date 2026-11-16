@@ -369,7 +369,7 @@ function ProfitabilityPage() {
                   </p>
                 </div>
                 <span className="text-xs text-muted-foreground">
-                  GP {money(r.gross_profit)}
+                  Contribution {money(r.gross_profit)}
                   {r.margin_percent != null ? ` · ${r.margin_percent}% margin` : ""}
                   {r.food_cost_percent != null ? ` · ${r.food_cost_percent}% direct cost` : ""}
                 </span>
@@ -400,7 +400,7 @@ function ProfitabilityPage() {
                 </span>
                 <span className="text-xs text-muted-foreground">
                   {s.period_start} → {s.period_end} · {s.currency}{" "}
-                  {Number(s.gross_profit).toLocaleString()} {s.snapshot_type === "operational" ? "operating profit" : "GP"}
+                  {Number(s.gross_profit).toLocaleString()} {s.snapshot_type === "operational" ? "operating profit" : "contribution"}
                   {s.food_cost_percent != null ? ` · ${s.food_cost_percent}% direct cost` : ""}
                 </span>
               </li>
