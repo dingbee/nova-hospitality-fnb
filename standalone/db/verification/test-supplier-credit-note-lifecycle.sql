@@ -77,41 +77,41 @@ CREATE TABLE public.restaurant_members (
 GRANT SELECT ON public.restaurant_members TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.restaurant_can_read(_tenant uuid)
-RETURNS boolean LANGUAGE sql STABLE AS $$
+RETURNS boolean LANGUAGE sql STABLE AS $$$
   SELECT EXISTS (
     SELECT 1 FROM public.restaurant_members m
     WHERE m.tenant_id = _tenant AND m.user_id = auth.uid() AND m.active
   )
 $$;
 CREATE OR REPLACE FUNCTION public.restaurant_can_write(_tenant uuid, _roles public.restaurant_role[])
-RETURNS boolean LANGUAGE sql STABLE AS $
+RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.restaurant_members m
     WHERE m.tenant_id = _tenant AND m.user_id = auth.uid()
       AND m.active AND m.role = ANY(_roles)
   )
-$;
+$$;
 CREATE OR REPLACE FUNCTION public.restaurant_can_read_scoped(_tenant uuid, _property uuid)
-RETURNS boolean LANGUAGE sql STABLE AS $
+RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.restaurant_members m
     WHERE m.tenant_id = _tenant AND m.user_id = auth.uid()
       AND m.active AND (m.property_id IS NULL OR m.property_id = _property)
   )
-$;
+$$;
 CREATE OR REPLACE FUNCTION public.restaurant_can_write_scoped(
   _tenant uuid,
   _roles public.restaurant_role[],
   _property uuid
 )
-RETURNS boolean LANGUAGE sql STABLE AS $
+RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.restaurant_members m
     WHERE m.tenant_id = _tenant AND m.user_id = auth.uid()
       AND m.active AND m.role = ANY(_roles)
       AND (m.property_id IS NULL OR m.property_id = _property)
   )
-$;
+$$;
 
 \i standalone/db/migrations/0112_supplier_credit_note_lifecycle.sql
 
