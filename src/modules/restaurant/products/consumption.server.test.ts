@@ -153,13 +153,24 @@ function makeFakeSupabase(options: { itemProperty?: string | null; locationScope
       if (table === "restaurant_inventory_units" && op === "select") {
         return { data: [], error: null };
       }
+      if (table === "restaurant_stock_movements" && op === "select") {
+        return {
+          data: movements.find((m) => m.dedupe_key === filters.dedupe_key) ?? null,
+          error: null,
+        };
+      }
       if (table === "restaurant_stock_movements" && op === "insert") {
         const row = payload;
         if (row.dedupe_key && movements.some((m) => m.dedupe_key === row.dedupe_key)) {
           return { data: null, error: { code: "23505", message: "duplicate" } };
         }
         seq += 1;
-        const stored = { ...row, id: `mv-${seq}`, balance_after: 0 };
+        const stored = {
+          ...row,
+          id: `mv-${seq}`,
+          total_cost: Math.abs(Number(row.quantity)) * Number(row.unit_cost),
+          balance_after: 0,
+        };
         movements.push(stored);
         return isSingleInsert ? { data: stored, error: null } : { data: [stored], error: null };
       }
@@ -172,6 +183,7 @@ function makeFakeSupabase(options: { itemProperty?: string | null; locationScope
   return {
     supabase: { from: (table: string) => builder(table) },
     movements,
+    inventoryItems: [tomatoItem],
   };
 }
 
@@ -198,6 +210,43 @@ describe("consumeForRecipeSale — dedupe-key uniqueness when the same childless
     // Total Tomato Base consumed: 30 units @ 50 TZS = 1500, not 1000 (which
     // is what a dropped second movement would have produced: 10 units only).
     expect(cost).toBe(1500);
+  });
+
+  it("reuses the committed ledger cost when inventory average cost changes before a retry", async () => {
+    const fake = makeFakeSupabase();
+    const args = {
+      tenantId: TENANT,
+      propertyId: PROPERTY,
+      locationId: LOCATION,
+      orderId: "order-cost-retry",
+      orderItemId: "item-cost-retry",
+      recipeId: BURGER_RECIPE,
+      quantity: 1,
+    };
+
+    const firstCost = await consumeForRecipeSale(fake.supabase as any, USER, args);
+    fake.inventoryItems[0].average_cost = 100;
+    const retryCost = await consumeForRecipeSale(fake.supabase as any, USER, args);
+
+    expect(firstCost).toBe(1500);
+    expect(retryCost).toBe(1500);
+    expect(fake.movements).toHaveLength(2);
+    expect(fake.movements.reduce((sum, movement) => sum + movement.total_cost, 0)).toBe(1500);
+  });
+
+  it("rejects missing inventory currency instead of silently defaulting to TZS", async () => {
+    const fake = makeFakeSupabase();
+    fake.inventoryItems[0].currency = null;
+    await expect(consumeForRecipeSale(fake.supabase as any, USER, {
+      tenantId: TENANT,
+      propertyId: PROPERTY,
+      locationId: LOCATION,
+      orderId: "order-no-currency",
+      orderItemId: "item-no-currency",
+      recipeId: BURGER_RECIPE,
+      quantity: 1,
+    })).rejects.toThrow(/no valid inventory currency/);
+    expect(fake.movements).toHaveLength(0);
   });
 
   it("is still idempotent on a genuine retry — the same order item processed twice never doubles either movement", async () => {
