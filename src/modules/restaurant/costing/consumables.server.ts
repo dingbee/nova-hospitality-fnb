@@ -89,14 +89,16 @@ export async function saveOperationalConsumptionProfile(
     throw new Error("The inventory item currency must match the property's configured currency.");
   }
   const effectiveFrom = new Date().toISOString().slice(0, 10);
-  const { data: existing, error: existingError } = await sb
+  let existingProfileQuery = sb
     .from("restaurant_consumption_profiles")
     .select("id")
     .eq("tenant_id", input.tenantId)
     .eq("property_id", input.propertyId)
-    .eq("location_id", input.locationId ?? null)
-    .eq("name", input.name)
-    .maybeSingle();
+    .eq("name", input.name);
+  existingProfileQuery = input.locationId
+    ? existingProfileQuery.eq("location_id", input.locationId)
+    : existingProfileQuery.is("location_id", null);
+  const { data: existing, error: existingError } = await existingProfileQuery.maybeSingle();
   if (existingError) throw new Error(existingError.message);
   const profilePayload = {
     tenant_id: input.tenantId,
