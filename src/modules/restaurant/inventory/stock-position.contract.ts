@@ -349,9 +349,11 @@ export function stockUnitsPerUnit(
   if (sourceUnitId === purchaseUnitId && configuredPackSize != null) {
     const pack = Number(configuredPackSize);
     if (!finite(pack) || pack <= 0) return null;
-    // A configured supplier pack may override a generic unit conversion only
-    // when both definitions agree. Conflicting evidence is never guessed.
-    if (factor != null && Math.abs(factor - pack) > 0.000001) return null;
+    // A supplier-specific pack (>1) may override a generic unit record whose
+    // factor is still the default 1. Two non-default conflicting definitions
+    // are ambiguous and must be reviewed rather than guessed.
+    if (pack > 1 && factor != null && factor > 1 && Math.abs(factor - pack) > 0.000001) return null;
+    if (pack > 1 && (factor == null || factor === 1)) return pack;
     return factor ?? pack;
   }
   return factor;
