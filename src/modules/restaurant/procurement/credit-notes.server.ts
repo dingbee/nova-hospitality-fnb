@@ -16,8 +16,6 @@ export async function recordSupplierCreditNote(
   userId: string,
   input: z.infer<typeof recordSupplierCreditNoteSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "invoice.manage");
-
   const { data: supplier, error: supplierError } = await sb
     .from("restaurant_suppliers")
     .select("id")
@@ -67,6 +65,35 @@ export async function recordSupplierCreditNote(
     };
   }
 
+  let propertyId = input.propertyId ?? linkedInvoiceScope.property_id ?? null;
+  let locationId = input.locationId ?? linkedInvoiceScope.location_id ?? null;
+  if (propertyId) {
+    const { data: property, error: propertyError } = await sb
+      .from("restaurant_properties")
+      .select("id")
+      .eq("tenant_id", input.tenantId)
+      .eq("id", propertyId)
+      .single();
+    if (propertyError || !property) throw new Error("Credit note property is outside this tenant.");
+  }
+  if (locationId) {
+    const { data: location, error: locationError } = await sb
+      .from("restaurant_locations")
+      .select("id, property_id")
+      .eq("tenant_id", input.tenantId)
+      .eq("id", locationId)
+      .single();
+    if (locationError || !location) throw new Error("Credit note location is outside this tenant.");
+    if (propertyId && location.property_id && location.property_id !== propertyId) {
+      throw new Error("Credit note location does not belong to the selected property.");
+    }
+    if (!propertyId) propertyId = location.property_id ?? null;
+  }
+  await assertCapability(sb, userId, input.tenantId, "invoice.manage", {
+    propertyId,
+    locationId,
+  });
+
   const documentNumber = await nextDocumentNumber(
     sb,
     input.tenantId,
@@ -77,8 +104,8 @@ export async function recordSupplierCreditNote(
     .from("restaurant_supplier_credit_notes")
     .insert({
       tenant_id: input.tenantId,
-      property_id: input.propertyId ?? linkedInvoiceScope.property_id ?? null,
-      location_id: input.locationId ?? linkedInvoiceScope.location_id ?? null,
+      property_id: propertyId,
+      location_id: locationId,
       supplier_id: input.supplierId,
       reference_invoice_id: input.referenceInvoiceId ?? null,
       document_number: documentNumber,
@@ -123,7 +150,10 @@ export async function listSupplierCreditNotes(
   userId: string,
   input: z.infer<typeof listSupplierCreditNotesSchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: input.propertyId,
+    locationId: input.locationId,
+  });
   let q = sb
     .from("restaurant_supplier_credit_notes")
     .select(
@@ -133,6 +163,8 @@ export async function listSupplierCreditNotes(
     .order("credit_date", { ascending: false })
     .limit(input.limit);
   if (input.supplierId) q = q.eq("supplier_id", input.supplierId);
+  if (input.propertyId) q = q.eq("property_id", input.propertyId);
+  if (input.locationId) q = q.eq("location_id", input.locationId);
   if (input.status) q = q.eq("status", input.status);
 
   const { data, error } = await q;
@@ -156,7 +188,47 @@ export async function applySupplierCreditNote(
   userId: string,
   input: z.infer<typeof applySupplierCreditNoteSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "invoice.manage");
+  const { data: creditNote, error: creditNoteError } = await sb
+    .from("restaurant_supplier_credit_notes")
+    .select("id, supplier_id, currency, property_id, location_id, reference_invoice_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.creditNoteId)
+    .single();
+  if (creditNoteError || !creditNote) throw new Error("Supplier credit note not found.");
+  const { data: invoice, error: invoiceError } = await sb
+    .from("restaurant_supplier_invoices")
+    .select("id, supplier_id, currency, property_id, location_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.invoiceId)
+    .single();
+  if (invoiceError || !invoice) throw new Error("Supplier invoice not found.");
+  if (creditNote.supplier_id !== invoice.supplier_id) {
+    throw new Error("Supplier credit note and target invoice must belong to the same supplier.");
+  }
+  if (String(creditNote.currency).toUpperCase() !== String(invoice.currency).toUpperCase()) {
+    throw new Error("Supplier credit note and target invoice currencies must match.");
+  }
+  if (creditNote.reference_invoice_id && creditNote.reference_invoice_id !== invoice.id) {
+    throw new Error("Supplier credit note is restricted to its referenced invoice.");
+  }
+  if (
+    creditNote.property_id &&
+    invoice.property_id &&
+    creditNote.property_id !== invoice.property_id
+  ) {
+    throw new Error("Supplier credit note and target invoice property scopes differ.");
+  }
+  if (
+    creditNote.location_id &&
+    invoice.location_id &&
+    creditNote.location_id !== invoice.location_id
+  ) {
+    throw new Error("Supplier credit note and target invoice location scopes differ.");
+  }
+  await assertCapability(sb, userId, input.tenantId, "invoice.manage", {
+    propertyId: invoice.property_id ?? creditNote.property_id,
+    locationId: invoice.location_id ?? creditNote.location_id,
+  });
   const { data, error } = await sb.rpc("restaurant_apply_supplier_credit_note", {
     _tenant_id: input.tenantId,
     _credit_note_id: input.creditNoteId,
