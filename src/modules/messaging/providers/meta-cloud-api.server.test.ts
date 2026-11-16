@@ -2,9 +2,11 @@ import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MetaGraphError,
+  assertRequiredWhatsAppPermissions,
   checkPhoneNumberHealth,
   exchangeEmbeddedSignupCode,
   getWabaDetails,
+  inspectAccessToken,
   listWabaPhoneNumbers,
   registerVerifiedPhoneNumber,
   sendTextMessage,
@@ -43,6 +45,22 @@ describe("Meta WhatsApp Cloud API foundation", () => {
     expect(String(url)).toContain("/v27.0/oauth/access_token");
     expect(url.searchParams.get("client_secret")).toBe("app-secret");
     expect(url.searchParams.get("code")).toBe("signup-code");
+  });
+
+
+  it("inspects token validity and enforces the two required WhatsApp scopes", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: { is_valid: true, app_id: "app-1", expires_at: 1900000000, scopes: ["whatsapp_business_management", "whatsapp_business_messaging"] },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const inspected = await inspectAccessToken("tenant-token", { appId: "app-1", appSecret: "app-secret", graphApiVersion: "v27.0" });
+    expect(inspected.is_valid).toBe(true);
+    expect(() => assertRequiredWhatsAppPermissions(inspected)).not.toThrow();
+    expect(() => assertRequiredWhatsAppPermissions({ is_valid: true, scopes: ["whatsapp_business_management"] }))
+      .toThrow(/whatsapp_business_messaging/);
+    expect(() => assertRequiredWhatsAppPermissions({ is_valid: false, scopes: [] })).toThrow(/invalid or expired/);
+    const [url] = fetchMock.mock.calls[0] as [URL];
+    expect(String(url)).toContain("/v27.0/debug_token");
   });
 
   it("lists phone numbers and checks phone-number health", async () => {
