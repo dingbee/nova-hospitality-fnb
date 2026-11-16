@@ -49,7 +49,7 @@ const LOCATION = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 function chain(result: unknown) {
   const q: any = {};
-  for (const method of ["select", "eq", "in", "maybeSingle", "single"]) q[method] = vi.fn(() => q);
+  for (const method of ["select", "eq", "in", "or", "lte", "maybeSingle", "single"]) q[method] = vi.fn(() => q);
   q.then = (resolve: (value: unknown) => unknown) => Promise.resolve(resolve(result));
   return q;
 }
