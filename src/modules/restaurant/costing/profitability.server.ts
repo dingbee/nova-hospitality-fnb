@@ -408,6 +408,7 @@ export async function computeProfitability(
     allocatedOperatingExpenses,
     unallocatedOperatingExpenses: Number(unallocatedOperatingExpenses.toFixed(2)),
     pendingExpenseVerification,
+    pendingExpenseAmount,
     partiallyReconciled,
     incompleteSourceData: consumableCoverageIncomplete || salesSourceMismatch,
   });
@@ -589,6 +590,7 @@ export async function computeProfitability(
         contribution: operational.contribution,
         allocated_operating_expenses: operational.allocatedOperatingExpenses,
         unallocated_operating_expenses: operational.unallocatedOperatingExpenses,
+        pending_expense_amount: operational.pendingExpenseAmount,
         operating_profit: operational.operatingProfit,
         contribution_margin_percent: operational.contributionMarginPercent,
         operating_margin_percent: operational.operatingMarginPercent,
@@ -596,6 +598,7 @@ export async function computeProfitability(
         source_counts: {
           orders: orderRows.length, order_items: itemRows.length,
           order_source_mismatches: orderSourceMismatchIds.length,
+          pending_expenses: pendingRows.length,
           stock_movements: ((movements ?? []) as any[]).length,
           refunds: (payments ?? []).filter((p: any) => p.refund_of && p.state === "refunded").length,
           consumable_events: consumptionEventRows.length,
@@ -707,7 +710,7 @@ export async function listProfitability(
     (() => {
       let operationalQuery = sb
         .from("restaurant_operational_profitability_snapshots")
-        .select("id, property_id, location_id, period_start, period_end, currency, net_sales, direct_variable_costs, contribution, operating_profit, operating_margin_percent, confidence_state, source_counts, source_references, calculation_version, computed_at")
+        .select("id, property_id, location_id, period_start, period_end, currency, net_sales, direct_variable_costs, contribution, operating_profit, operating_margin_percent, pending_expense_amount, confidence_state, source_counts, source_references, calculation_version, computed_at")
         .eq("tenant_id", input.tenantId)
         .order("computed_at", { ascending: false })
         .limit(input.limit);
@@ -737,6 +740,7 @@ export async function listProfitability(
     snapshot_type: "operational",
     contribution: Number(s.contribution ?? 0),
     confidence_state: s.confidence_state,
+    pending_expense_amount: Number(s.pending_expense_amount ?? 0),
     source_counts: s.source_counts,
     source_references: s.source_references,
     calculation_version: s.calculation_version,
