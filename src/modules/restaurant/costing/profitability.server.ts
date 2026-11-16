@@ -351,7 +351,7 @@ export async function computeProfitability(
       } satisfies ProfitabilityRow);
 
     row.quantity_sold += Number(item.quantity ?? 0);
-    row.revenue += Number(item.line_total ?? 0);
+    row.revenue += item.is_comp ? 0 : Number(item.line_total ?? 0);
     row.theoretical_cost += Number(item.line_cost ?? 0);
     row.actual_cost += actualByItem.get(item.id) ?? Number(item.line_cost ?? 0);
     agg.set(key, row);
@@ -393,10 +393,8 @@ export async function computeProfitability(
     allocated_operating_expenses: allocatedOperatingExpenses,
     // Contribution is net menu revenue less direct recipe cost. Allocated
     // operating expenses are deducted only after contribution is calculated.
-    contribution_profit: Number((revenue - actual).toFixed(2)),
-    contribution_margin_percent: revenue > 0
-      ? Number((((revenue - actual) / revenue) * 100).toFixed(2))
-      : null,
+    contribution_profit: operational.contribution,
+    contribution_margin_percent: operational.contributionMarginPercent,
     operating_profit: operational.operatingProfit,
     operating_margin_percent: operational.operatingMarginPercent,
     currency,
@@ -427,6 +425,80 @@ export async function computeProfitability(
     if (error) throw new Error(error.message);
   }
 
+  if (input.persist) {
+    const { data: snapshot, error: snapshotError } = await sb
+      .from("restaurant_operational_profitability_snapshots")
+      .insert({
+        tenant_id: input.tenantId,
+        property_id: input.propertyId ?? null,
+        location_id: input.locationId ?? null,
+        period_start: periodFrom,
+        period_end: periodTo,
+        currency,
+        gross_sales: operational.grossSales,
+        discounts: operational.discounts,
+        refunds: operational.refunds,
+        sales_adjustments: operational.salesAdjustments,
+        tax_collected: operational.taxCollected,
+        net_sales: operational.netSales,
+        recipe_cogs: operational.recipeCogs,
+        service_consumables: operational.serviceConsumables,
+        other_direct_variable_costs: operational.otherDirectVariableCosts,
+        direct_variable_costs: operational.directVariableCosts,
+        contribution: operational.contribution,
+        allocated_operating_expenses: operational.allocatedOperatingExpenses,
+        unallocated_operating_expenses: operational.unallocatedOperatingExpenses,
+        operating_profit: operational.operatingProfit,
+        confidence_state: operational.reconciliationState,
+        source_counts: {
+          orders: orderRows.length, order_items: itemRows.length,
+          stock_movements: ((movements ?? []) as any[]).length,
+          refunds: (payments ?? []).filter((p: any) => p.refund_of && p.state === "refunded").length,
+          expense_allocations: allocationRows.length,
+          unallocated_costs: unallocatedRows.length,
+          pending_expenses: pendingRows.length,
+        },
+        source_references: {
+          order_ids: orderIds,
+          stock_movement_ids: ((movements ?? []) as any[]).map((m) => m.id),
+          payment_ids: ((payments ?? []) as any[]).map((p: any) => p.id),
+          allocation_source_ids: allocationRows.map((a) => a.source_id).filter(Boolean),
+          unallocated_source_ids: unallocatedRows.map((a) => a.source_id).filter(Boolean),
+          pending_expense_ids: pendingRows.map((e) => e.id),
+        },
+        calculation_version: "phase5-v1",
+        computed_by: userId,
+      })
+      .select("id")
+      .single();
+    if (snapshotError || !snapshot?.id) throw new Error(snapshotError?.message ?? "Profitability snapshot could not be persisted.");
+    if (dimensions.length > 0) {
+      const dimensionRows = dimensions.map((d) => ({
+        tenant_id: input.tenantId,
+        snapshot_id: snapshot.id,
+        property_id: d.dimension_type === "property" ? d.dimension_key : input.propertyId ?? null,
+        location_id: d.dimension_type === "outlet" ? d.dimension_key : input.locationId ?? null,
+        dimension_type: d.dimension_type,
+        dimension_key: d.dimension_key,
+        dimension_name: d.dimension_name,
+        currency,
+        net_sales: d.net_sales,
+        direct_variable_costs: d.direct_variable_costs,
+        contribution: d.contribution,
+        allocated_operating_expenses: Math.max(0, d.contribution - d.operating_profit),
+        operating_profit: d.operating_profit,
+        source_references: orderIds,
+      }));
+      const { error: dimensionError } = await sb
+        .from("restaurant_operational_profitability_dimensions")
+        .insert(dimensionRows);
+      if (dimensionError) {
+        await sb.from("restaurant_operational_profitability_snapshots").delete().eq("tenant_id", input.tenantId).eq("id", snapshot.id);
+        throw new Error(dimensionError.message);
+      }
+    }
+  }
+
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.profitability.computed",
     tenantId: input.tenantId,
@@ -446,7 +518,7 @@ export async function computeProfitability(
     },
   });
 
-  return { periodStart: input.from, periodEnd: input.to, rows, totals };
+  return { periodStart: input.from, periodEnd: input.to, rows, totals, operational, dimensions };
 }
 
 export async function listProfitability(
