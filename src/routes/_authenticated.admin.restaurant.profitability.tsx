@@ -92,8 +92,12 @@ function ProfitabilityPage() {
 
   const result = compute.data;
   const rows = result?.rows ?? [];
-  const currency = result?.totals.currency ?? ws.data?.properties[0]?.currency ?? "TZS";
-  const money = (v: number) => `${currency} ${Number(v).toLocaleString()}`;
+  const propertyCurrencies = new Set(properties.map((p: any) => p.currency).filter(Boolean));
+  const currency =
+    result?.totals.currency ??
+    (propertyCurrencies.size === 1 ? [...propertyCurrencies][0] : null);
+  const money = (v: number) =>
+    currency ? `${currency} ${Number(v).toLocaleString()}` : Number(v).toLocaleString();
 
   return (
     <div className="space-y-4">
@@ -177,6 +181,13 @@ function ProfitabilityPage() {
             icon={PiggyBank}
             tone={result.totals.contribution_profit < 0 ? "danger" : "green"}
             hint={result.totals.contribution_margin_percent != null ? `${result.totals.contribution_margin_percent}% contribution margin` : "No sales in period"}
+          />
+          <StatCard
+            label="Operating profit"
+            value={money(result.totals.operating_profit)}
+            icon={Calculator}
+            tone={result.totals.operating_profit < 0 ? "danger" : "green"}
+            hint={result.totals.operating_margin_percent != null ? `${result.totals.operating_margin_percent}% operating margin` : "No sales in period"}
           />
         </div>
       )}
