@@ -60,7 +60,7 @@ The migration registers `lexibite-wa-webhook-dispatch` every minute using the ex
 
 ## Acceptance evidence
 
-<badge color="success">VERIFIED</badge> **PR #195 CI run:** `43960937024` on commit `a58615f9f1315c61f8c6cfbdb7c902ec8774dc06` — SUCCESS.
+**Verified — PR #195 CI run:** `43960937024` on commit `a58615f9f1315c61f8c6cfbdb7c902ec8774dc06` — SUCCESS.
 
 - Clean PostgreSQL 17 replay including migration 0138: PASS.
 - Public schema RLS: 222/222 tables enabled.
