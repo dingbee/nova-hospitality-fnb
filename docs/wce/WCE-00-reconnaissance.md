@@ -3,7 +3,7 @@
 **Programme:** LexiBite WhatsApp Conversational Commerce (WCE-00 → WCE-08)  
 **Status:** Findings established; implementation path approved with explicit gates  
 **Inspection date:** 2026-11-16  
-**Repository baseline:** `main` at `5e68a32dbd502092564f24f49a8e82effce6cf97`  
+**Repository baseline inspected during continuation:** `main` at `f6fd6824c672b386c1b0a4c450dd08cc5a28c443` (the WCE branch originated at `5e68a32dbd502092564f24f49a8e82effce6cf97`)  
 **Supabase project:** `nova-hospitality-fnb` (`lusiqcmxfxhnehxmwihs`, PostgreSQL 17.11)  
 **Inspection mode:** GitHub source inspection + live Supabase read-only catalog, migration and policy inspection. No production writes, migrations, credential reads, or customer/financial row reads were performed.
 
@@ -13,14 +13,14 @@ The repository already contains substantial reusable capabilities for guest orde
 
 It does **not** contain a native Meta WhatsApp Cloud API integration or WhatsApp-specific data model. Existing WhatsApp references are a limited notification adapter using Twilio-era environment configuration. This is not a native Meta integration and must not be treated as one.
 
-The safe implementation is an additive native Meta messaging adapter and conversation domain that delegates all operational mutations to existing LexiBite services. It must not create a second order, menu, pricing, payment, inventory, reservation, or subscription system.
+The approved implementation is an additive native Meta messaging adapter and conversation domain. WhatsApp is the acquisition, conversation, identity and notification channel; the LexiBite Guest Portal is the primary visual commerce interface for menu discovery, cart, checkout and tracking; the existing LexiBite Commerce Engine remains authoritative for quote, order, payment, inventory and fulfilment. Conversational ordering remains an alternative interaction. Both interfaces must call the same domain services and must never create a second order, menu, pricing, payment, inventory, reservation or subscription authority.
 
 WCE-00 establishes a safe implementation blueprint. Database changes remain gated by the migration-provenance reconciliation and the specific security findings in this report.
 
 ## 2. Repository and runtime baseline
 
 - Canonical branch: `main`; inspected commit `5e68a32dbd502092564f24f49a8e82effce6cf97`.
-- Repository migration directory: 156 SQL files under `standalone/db/migrations/`.
+- Current `main` migration directory: 157 SQL files under `standalone/db/migrations/`; duplicate numeric prefixes exist and filenames are not a safe migration ordering key.
 - Connected production migration ledger: 171 applied records.
 - Live public schema: 217 tables; all 217 have RLS enabled; none has FORCE ROW LEVEL SECURITY.
 - No WhatsApp-specific tables were found in the live public schema.
@@ -172,29 +172,46 @@ The existing commercial usage counters remain the entitlement/quota aggregate; t
 - Reservation availability and confirmation must be validated by the authoritative reservation service.
 - AI may invoke only allowlisted domain operations with authorization, entitlement and confirmation checks.
 
-## 7. Phase dependency map
+## 7. Updated architecture — WhatsApp initiation, Guest Portal completion
+
+The primary journey is:
+
+`WhatsApp inbound → verified Meta webhook → receiving-number tenant/property/outlet resolution → customer identity/consent resolution → short-lived server-side Guest Portal session → branded portal deep link → live menu → cart → server-validated checkout → verified payment → one authoritative LexiBite order → POS/kitchen → fulfilment notifications → CRM and analytics attribution`.
+
+The Guest Portal is not a second commerce engine. Its existing table-scoped route `/order/$tableId` and self-order services are reusable for the catalogue, modifiers, server-side order creation, Pesapal payment verification and POS lifecycle. However, the current public experience is QR/table-bound: `/order/` explicitly instructs guests to scan a table QR code. It does not yet provide a general WhatsApp/property/outlet session entry point. Its `restaurant_guest_sessions` are table-bound dining sessions and must not be repurposed as WhatsApp handoff sessions.
+
+Required separation:
+- **WhatsApp channel:** Meta webhook, customer conversation, verified sender, consent, acquisition and status notifications.
+- **Guest Portal handoff session:** short-lived, revocable, high-entropy server-side session bound to verified receiving-number mapping, tenant, property, outlet, menu context and acquisition attribution. URL token is a scoped entry capability, not unrestricted login.
+- **Guest Commerce:** existing catalogue/pricing/order services remain authoritative; cart can be portal-local until checkout, where all values are recalculated.
+- **CRM:** separate tenant-scoped restaurant customer identity and consent domain; do not use the currently unscoped `guests` / `guest_preferences` tables as a cross-channel CRM.
+- **Payments:** existing provider settlement and server-side verification; tenant/property configuration must be resolved server-side before initiation.
+- **Attribution:** persist source/channel/campaign/session context through order and payment records without trusting client-supplied tenant identifiers.
+
+## 8. Updated phase dependency map
 
 | Phase | Main dependency / exit gate |
 |---|---|
-| WCE-00 | Reconnaissance baseline and migration provenance; this report establishes the safe design. |
-| WCE-01 | Meta developer app, verified business, v4 configuration, App Review/Advanced Access and server secrets for live onboarding; code and mocked contract tests can proceed without credentials. |
-| WCE-02 | Complete migration provenance mapping, tenant/property authorization design, encrypted integration vault reuse, webhook inbox and replay proof. |
-| WCE-03 | Existing menu, pricing, modifiers, order, POS and event contracts; no parallel order engine. |
-| WCE-04 | Tenant-configured Pesapal adapter path and authoritative reservation-service decision. |
-| WCE-05 | Tenant-scoped restaurant customer identity, explicit consent, AI tool authorization and loyalty-domain decision/implementation. |
-| WCE-06 | Existing commercial plans, entitlements, quotas, AI cost governance plus effective-dated Meta rate-card configuration. |
-| WCE-07 | Founder-only commercial administration and tenant/property-scoped dashboards. |
-| WCE-08 | Integrated CI, migration replay, RLS/security, provider contract tests, idempotency/reliability tests and UAT evidence. |
+| WCE-00 | Actual repository baseline, portal-first architecture, capability/security matrix, migration provenance plan and external dependency register verified. |
+| WCE-01 | Meta Cloud API client and Embedded Signup v4 browser contracts; token lifecycle/error handling and mocked contract CI. Live onboarding additionally requires Meta app, verified business, configuration, Advanced Access and test WABA/phone. |
+| Migration gate | Reconcile all 171 live ledger records against the current 157 SQL files, resolve duplicate numeric prefixes and historical split/rename/consolidation provenance, then prove isolated clean replay. No WCE DDL before this gate. |
+| WCE-02 | Tenant/property/outlet resolution, encrypted credential-vault integration, durable Meta webhook inbox, idempotency/retry/dead-letter and secure non-table-bound Guest Portal sessions. |
+| WCE-03 | WhatsApp-to-Guest-Portal handoff, deep-link/session continuity, branded mobile entry, attribution and failure fallback. |
+| WCE-04 | Unified Guest Commerce using existing menu, modifier, price/tax, inventory, cart/checkout, order and POS contracts; no parallel order engine. |
+| WCE-05 | Order lifecycle attribution, tenant-isolated restaurant CRM/consent, AI concierge with allowlisted domain operations and human handover. |
+| WCE-06 | Tenant/property Pesapal configuration, authoritative payment verification, restaurant table reservations only if no existing domain is found, and fulfilment integration. |
+| WCE-07 | Existing subscription/entitlement/quota governance, Meta usage/cost ledger, templates/consent/campaign controls and founder/tenant analytics boundaries. |
+| WCE-08 | Cross-tenant and cross-property integrated E2E, clean migration replay, RLS, payment/order idempotency, Meta contracts and UAT certification. |
 
-## 8. WCE-00 exit assessment
+## 9. WCE-00 exit assessment
 
-**Architecture path:** Established.  
+**Architecture path:** Updated to WhatsApp initiation and Guest Portal completion; baseline closure still pending verification of migration provenance and current branch/CI state.  
 **Reusable domain services:** Identified.  
 **Live project and schema:** Identified and read-only inspected.  
 **WhatsApp-specific schema:** Absent.  
 **Native Meta credentials/approvals:** Not available; external dependency.  
 **Known implementation risks:** Guest CRM RLS is not tenant-safe; Pesapal currently uses global environment credentials; no restaurant reservation service was located; channel category needs a messaging type.  
-**Migration provenance:** Partially reconciled; exact ledger-to-source provenance remains a blocking gate before WCE-02 DDL.
+**Migration provenance:** Not closed. The live ledger has 171 records and current `main` has 157 SQL files; 14-record count difference is not proof of missing migrations. Exact record-to-file lineage, including duplicate prefixes and historical source-only/live-only records, remains a blocking gate before WCE-02 DDL.
 
 ### Required next actions
 
