@@ -540,7 +540,7 @@ async function runProcurementDraftExecution(
     !sameNumber(freshSuggestion.purchaseUnitPrice, purchaseUnitPrice) ||
     !sameNumber(freshSuggestion.stockUnitsPerPurchaseUnit, stockUnitsPerPurchaseUnit) ||
     !sameNumber(freshSuggestion.minimumOrderQuantity ?? 0, minimumOrderQuantity) ||
-    !sameNumber(freshSuggestion.orderMultiple ?? 1, orderMultiple) ||
+    !sameNumber(freshSuggestion.orderMultiple, orderMultiple) ||
     !sameNumber(freshSuggestion.recommendedQuantity, recommendedStockQuantity) ||
     !sameNumber(freshSuggestion.netAvailable, facts.netAvailable) ||
     !sameNumber(freshSuggestion.forecastDemand, facts.forecastDemand) ||
@@ -1807,7 +1807,8 @@ async function verifyProcurementDraft(
        Math.abs(Number(matchingItem.stock_units_per_purchase_unit) - Number(facts.stockUnitsPerPurchaseUnit)) > 0.000001 ||
        Math.abs(Number(matchingItem.estimated_unit_cost) - Number(facts.purchaseUnitPrice)) > 0.0001 ||
        Math.abs(Number(matchingItem.minimum_order_quantity ?? 0) - Number(facts.minimumOrderQuantity ?? 0)) > 0.000001 ||
-       Math.abs(Number(matchingItem.order_multiple ?? 1) - Number(facts.orderMultiple ?? 1)) > 0.000001)) {
+       matchingItem.order_multiple == null || facts.orderMultiple == null ||
+       Math.abs(Number(matchingItem.order_multiple) - Number(facts.orderMultiple)) > 0.000001)) {
     return {
       verified: false,
       outcome: "unit_snapshot_mismatch",
