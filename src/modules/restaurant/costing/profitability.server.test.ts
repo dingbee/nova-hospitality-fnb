@@ -57,8 +57,10 @@ describe("computeProfitability operating-cost integration", () => {
     expect(result.totals).toMatchObject({
       revenue: 0,
       allocated_operating_expenses: 125000,
-      contribution_profit: -125000,
+      contribution_profit: 0,
       contribution_margin_percent: null,
+      operating_profit: -125000,
+      operating_margin_percent: null,
       currency: "TZS",
     });
   });
@@ -87,8 +89,10 @@ describe("computeProfitability operating-cost integration", () => {
       variance: 3000,
       gross_profit: 24000,
       allocated_operating_expenses: 10000,
-      contribution_profit: 14000,
-      contribution_margin_percent: 35,
+      contribution_profit: 24000,
+      contribution_margin_percent: 60,
+      operating_profit: 14000,
+      operating_margin_percent: 35,
     });
     expect(persisted).toHaveLength(1);
     expect(persisted[0]).toHaveLength(2);
