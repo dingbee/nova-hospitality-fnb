@@ -257,7 +257,7 @@ function ProfitabilityPage() {
             tone="gold"
           />
           <StatCard
-            label="Actual food cost"
+            label="Direct variable cost"
             value={money(result.totals.actual_cost)}
             icon={Calculator}
           />
@@ -351,7 +351,7 @@ function ProfitabilityPage() {
         {rows.length === 0 ? (
           <EmptyState
             title="No analysis yet"
-            description="Choose a period and compute to see gross profit and food cost variance per item."
+            description="Choose a period and compute to see net sales, direct variable cost and contribution by menu item."
           />
         ) : (
           <ul className="divide-y text-sm">
