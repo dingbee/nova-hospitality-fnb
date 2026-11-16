@@ -178,7 +178,7 @@ export async function computeProfitability(
     allocationRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0).toFixed(2),
   );
   let unallocatedQuery = sb.from("restaurant_cost_allocation_exceptions")
-    .select("id, source_id, source_amount, currency, property_id, source_type")
+    .select("id, source_id, source_amount, currency, source_type")
     .eq("tenant_id", input.tenantId).eq("source_type", "operational_expense")
     .gte("period_start", periodFrom).lte("period_start", periodTo);
   let pendingExpenseQuery = sb.from("restaurant_operational_expenses")
@@ -188,12 +188,10 @@ export async function computeProfitability(
     .select("id, cost_class, property_id, location_id")
     .eq("tenant_id", input.tenantId).eq("active", true);
   if (input.propertyId) {
-    unallocatedQuery = unallocatedQuery.eq("property_id", input.propertyId);
     pendingExpenseQuery = pendingExpenseQuery.eq("property_id", input.propertyId);
     consumptionProfileQuery = consumptionProfileQuery.eq("property_id", input.propertyId);
   }
   if (input.locationId) {
-    unallocatedQuery = unallocatedQuery.eq("location_id", input.locationId);
     pendingExpenseQuery = pendingExpenseQuery.eq("location_id", input.locationId);
     consumptionProfileQuery = consumptionProfileQuery.eq("location_id", input.locationId);
   }
@@ -266,7 +264,20 @@ export async function computeProfitability(
   const taxCollected = Math.max(0, grossTax - refundedTax);
   const recipeCogs = itemRows.reduce((sum, i) => sum + (actualByItem.has(i.id) ? actualByItem.get(i.id)! : Number(i.line_cost ?? 0)), 0);
   const allLinesHaveActualMovements = itemRows.every((i) => actualByItem.has(i.id));
-  const unallocatedRows = (unallocated ?? []) as any[];
+  let unallocatedRows = (unallocated ?? []) as any[];
+  if ((input.propertyId || input.locationId) && unallocatedRows.length > 0) {
+    const sourceIds = [...new Set(unallocatedRows.map((r) => r.source_id).filter(Boolean))];
+    const { data: scopedExpenseSources, error: scopedExpenseError } = await sb
+      .from("restaurant_operational_expenses")
+      .select("id, property_id, location_id")
+      .eq("tenant_id", input.tenantId)
+      .in("id", sourceIds);
+    if (scopedExpenseError) throw new Error(scopedExpenseError.message);
+    const allowedSourceIds = new Set(((scopedExpenseSources ?? []) as any[])
+      .filter((e) => (!input.propertyId || e.property_id === input.propertyId) && (!input.locationId || e.location_id === input.locationId))
+      .map((e) => e.id));
+    unallocatedRows = unallocatedRows.filter((r) => allowedSourceIds.has(r.source_id));
+  }
   const pendingRows = (pendingExpenses ?? []) as any[];
   const unallocatedOperatingExpenses = unallocatedRows.reduce((sum, r) => sum + Number(r.source_amount ?? 0), 0);
   const pendingExpenseVerification = pendingRows.length > 0;
