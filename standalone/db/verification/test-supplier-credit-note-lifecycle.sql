@@ -181,6 +181,16 @@ SELECT public.restaurant_apply_supplier_credit_note(
  50,'Apply first portion','60000000-0000-4000-8000-000000000001'
 );
 
+DO $credit_application_rls$
+BEGIN
+  PERFORM set_config('request.test_user_id','50000000-0000-4000-8000-000000000003',true);
+  IF (SELECT count(*) FROM public.restaurant_supplier_credit_note_applications WHERE tenant_id='10000000-0000-4000-8000-000000000001') <> 0 THEN
+    RAISE EXCEPTION 'Property-scoped member can read tenant-wide credit application';
+  END IF;
+  PERFORM set_config('request.test_user_id','50000000-0000-4000-8000-000000000001',true);
+END
+$credit_application_rls$;
+
 DO $credit_note_rejections$
 BEGIN
   BEGIN
