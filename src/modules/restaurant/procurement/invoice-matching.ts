@@ -146,6 +146,7 @@ export function calculateSupplierInvoiceMatch(evidence: InvoiceMatchEvidence): I
 
   for (const [orderLineId, invoicedQuantity] of invoicedByOrderLine) {
     const acceptedQuantity = acceptedByOrderLine.get(orderLineId) ?? 0;
+    if (acceptedQuantity <= EPSILON) continue;
     if (invoicedQuantity - acceptedQuantity > EPSILON) {
       add(
         "quantity",
