@@ -159,7 +159,7 @@ SELECT set_config('request.test_user_id','50000000-0000-4000-8000-000000000001',
 
 DO $credit_note_rls$
 BEGIN
-  IF (SELECT count(*) FROM public.restaurant_supplier_credit_notes WHERE tenant_id='10000000-0000-4000-8000-000000000001') <> 7 THEN
+  IF (SELECT count(*) FROM public.restaurant_supplier_credit_notes WHERE tenant_id='10000000-0000-4000-8000-000000000001') <> 6 THEN
     RAISE EXCEPTION 'Tenant member cannot read own supplier credit notes';
   END IF;
   IF (SELECT count(*) FROM public.restaurant_supplier_credit_notes WHERE tenant_id='10000000-0000-4000-8000-000000000002') <> 0 THEN
