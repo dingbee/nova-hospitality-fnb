@@ -162,6 +162,15 @@ export async function getPurchasingIntelligence(
     const item = itemById.get(product.inventory_item_id);
     const supplier = supplierById.get(product.supplier_id);
     if (!item || !supplier || !item.unit_id || !product.unit_id) continue;
+    const configuredLeadTime = product.lead_time_days ?? supplier.lead_time_days ?? null;
+    if (configuredLeadTime == null || !Number.isFinite(Number(configuredLeadTime)) || Number(configuredLeadTime) < 0) {
+      supplierIssues.set(item.id, "Supplier lead time is missing or invalid.");
+      continue;
+    }
+    if (!item.currency) {
+      supplierIssues.set(item.id, "Property stock currency is not configured.");
+      continue;
+    }
     const stockFactor = stockUnitsPerUnit(
       product.unit_id,
       item.unit_id,
@@ -190,7 +199,7 @@ export async function getPurchasingIntelligence(
     const normalizedStockUnitPrice = comparableSupplierUnitCost(
       price,
       effectivePrice.currency,
-      item.currency ?? currency,
+      item.currency,
       stockFactor,
     );
     if (normalizedStockUnitPrice == null) {
