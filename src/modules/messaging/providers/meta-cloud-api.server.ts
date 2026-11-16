@@ -86,7 +86,7 @@ async function readGraphResponse<T>(response: Response): Promise<T> {
   if (!response.ok || payload.error) {
     const message = typeof error.message === "string" ? error.message.slice(0, 500) : "Meta Graph API request failed.";
     const retryAfter = response.headers.get("retry-after");
-    const retryAfterSeconds = retryAfter && /^\\d+(?:\\.\\d+)?$/.test(retryAfter) ? Number(retryAfter) : null;
+    const retryAfterSeconds = retryAfter && /^\d+(?:\.\d+)?$/.test(retryAfter) ? Number(retryAfter) : null;
     throw new MetaGraphError(
       message,
       response.status,
