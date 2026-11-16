@@ -354,8 +354,14 @@ export async function computeProfitability(
       d.dimension_type === "outlet" ? a.location_id === d.dimension_key :
       d.dimension_type === "property" ? a.property_id === d.dimension_key : false
     ).reduce((sum, a) => sum + Number(a.amount ?? 0), 0);
+    const propertyNetSales = dimensions
+      .filter((candidate) => candidate.property_id === d.property_id && candidate.dimension_type === "outlet")
+      .reduce((sum, candidate) => sum + candidate.net_sales, 0);
+    const propertyAllocatedOpex = allocationRows
+      .filter((a) => a.property_id === d.property_id)
+      .reduce((sum, a) => sum + Number(a.amount ?? 0), 0);
     const allocated = d.dimension_type === "channel"
-      ? allocatedOperatingExpenses * (d.net_sales / Math.max(operational.netSales, 0.01))
+      ? propertyAllocatedOpex * (d.net_sales / Math.max(propertyNetSales, 0.01))
       : matchingOpex;
     return { ...d, net_sales: Number(d.net_sales.toFixed(2)), direct_variable_costs: Number(d.direct_variable_costs.toFixed(2)), contribution: Number(d.contribution.toFixed(2)), operating_profit: Number((d.contribution - allocated).toFixed(2)) };
   });
