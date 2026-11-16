@@ -25,11 +25,11 @@ import { listRestaurantInventoryFn } from "@/modules/restaurant/inventory/invent
 export const Route = createFileRoute("/_authenticated/admin/restaurant/profitability")({
   head: () => ({
     meta: [
-      { title: "Menu Profitability — Restaurant & Bar OS" },
+      { title: "Operational Profitability — Restaurant & Bar OS" },
       {
         name: "description",
         content:
-          "Recipe cost versus actual consumption: gross profit, margin and food cost variance per menu item.",
+          "Net sales, direct costs, contribution, allocated operating expenses and operating profit by menu item and property.",
       },
       { name: "robots", content: "noindex,nofollow" },
     ],
@@ -152,8 +152,8 @@ function ProfitabilityPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Menu profitability"
-        description="Recipe → consumption → actual food cost → margin. Theoretical cost comes from recipe costing at the time of sale; actual cost from the stock consumed."
+        title="Operational profitability"
+        description="Net sales less recipe COGS and classified service consumables gives contribution; approved operating expense allocations are then deducted to calculate operating profit."
       />
 
       <SectionCard
@@ -262,7 +262,7 @@ function ProfitabilityPage() {
             icon={Calculator}
           />
           <StatCard
-            label="Food cost %"
+            label="Direct cost %"
             value={
               result.totals.food_cost_percent != null ? `${result.totals.food_cost_percent}%` : "—"
             }
@@ -371,7 +371,7 @@ function ProfitabilityPage() {
                 <span className="text-xs text-muted-foreground">
                   GP {money(r.gross_profit)}
                   {r.margin_percent != null ? ` · ${r.margin_percent}% margin` : ""}
-                  {r.food_cost_percent != null ? ` · ${r.food_cost_percent}% food cost` : ""}
+                  {r.food_cost_percent != null ? ` · ${r.food_cost_percent}% direct cost` : ""}
                 </span>
               </li>
             ))}
@@ -401,7 +401,7 @@ function ProfitabilityPage() {
                 <span className="text-xs text-muted-foreground">
                   {s.period_start} → {s.period_end} · {s.currency}{" "}
                   {Number(s.gross_profit).toLocaleString()} {s.snapshot_type === "operational" ? "operating profit" : "GP"}
-                  {s.food_cost_percent != null ? ` · ${s.food_cost_percent}% food cost` : ""}
+                  {s.food_cost_percent != null ? ` · ${s.food_cost_percent}% direct cost` : ""}
                 </span>
               </li>
             ))}
