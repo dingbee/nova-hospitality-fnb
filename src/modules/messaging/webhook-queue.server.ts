@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { assertCapability } from "@/modules/restaurant/core/access.server";
 import { writeCommercialAudit } from "@/modules/commercial/audit.server";
+import { enqueueWhatsAppGuestPortalHandoff } from "./handoff.server";
 
 type Db = any;
 type ClaimedEvent = {
