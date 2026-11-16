@@ -109,7 +109,10 @@ BEGIN
       integration_config->>'phoneNumberId' IS DISTINCT FROM NEW.phone_number_id
       AND NOT EXISTS (
         SELECT 1
-        FROM jsonb_array_elements(coalesce(integration_config->'phoneNumbers', '[]'::jsonb)) phone
+        FROM jsonb_array_elements(
+          CASE WHEN jsonb_typeof(integration_config->'phoneNumbers') = 'array'
+            THEN integration_config->'phoneNumbers' ELSE '[]'::jsonb END
+        ) phone
         WHERE phone->>'id' = NEW.phone_number_id
       )
     ) THEN
