@@ -76,7 +76,7 @@ export async function getPurchasingIntelligence(
     .select("inventory_item_id, movement_type, quantity, total_cost, occurred_at")
     .eq("tenant_id", tenantId)
     .gte("occurred_at", prevMonthStart);
-  if (propertyId) movesQuery = movesQuery.eq("property_id", propertyId);
+  if (propertyId && !input.locationId) movesQuery = movesQuery.eq("property_id", propertyId);
   if (input.locationId) movesQuery = movesQuery.eq("location_id", input.locationId);
 
   const [itemsRes, movesRes, productsRes, suppliersRes, poRes, unitsRes] = await Promise.all([
@@ -99,7 +99,7 @@ export async function getPurchasingIntelligence(
           "id, supplier_id, status, order_date, expected_at, received_at, total, property_id, location_id",
         )
         .eq("tenant_id", tenantId);
-      if (propertyId) q = q.eq("property_id", propertyId);
+      if (propertyId && !input.locationId) q = q.eq("property_id", propertyId);
       if (input.locationId) q = q.eq("location_id", input.locationId);
       return q;
     })(),
