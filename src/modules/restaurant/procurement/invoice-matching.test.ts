@@ -93,4 +93,12 @@ describe("PW-08 supplier invoice reconciliation", () => {
     evidence.previouslyInvoicedQuantities = { "po-line-1": 1 };
     expect(calculateSupplierInvoiceMatch(evidence).dimensions.map((d) => d.code)).toContain("INVOICED_ABOVE_ACCEPTED");
   });
+
+  it("does not match an empty invoice against an existing purchase order", () => {
+    const evidence = base();
+    evidence.invoiceLines = [];
+    evidence.invoice = { currency: "TZS", subtotal: 0, taxTotal: 0, total: 0 };
+    expect(calculateSupplierInvoiceMatch(evidence).dimensions.map((d) => d.code)).toContain("EMPTY_INVOICE_LINES");
+    expect(calculateSupplierInvoiceMatch(evidence).matchStatus).toBe("mismatched");
+  });
 });
