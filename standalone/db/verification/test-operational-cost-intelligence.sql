@@ -2,11 +2,19 @@
 begin;
 create extension if not exists pgcrypto;
 create schema if not exists auth;
-create table auth.users(id uuid primary key);
-insert into auth.users values ('30000000-0000-0000-0000-000000000001'),('30000000-0000-0000-0000-000000000002');
 do $$ begin create type public.restaurant_role as enum('owner','general_manager','restaurant_manager','accountant'); exception when duplicate_object then null; end $$;
 create table public.restaurant_tenants(id uuid primary key);
-create table public.restaurant_properties(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id));
+create table public.restaurant_suppliers(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id),name text not null,status text not null default 'active');
+create schema if not exists storage;
+create table storage.buckets(id text primary key,name text not null,public boolean not null default false,file_size_limit bigint,allowed_mime_types text[]);
+create table storage.objects(bucket_id text not null,name text not null);
+alter table storage.objects enable row level security;
+create or replace function storage.foldername(_name text) returns text[] language sql immutable as $folder$
+ select case when array_length(string_to_array(_name,'/'),1)>1
+   then (string_to_array(_name,'/'))[1:array_length(string_to_array(_name,'/'),1)-1]
+   else array[]::text[] end
+$folder$;
+create table public.restaurant_properties(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id),currency text not null default 'TZS');
 create table public.restaurant_locations(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id),property_id uuid references public.restaurant_properties(id));
 create table public.restaurant_members(tenant_id uuid,user_id uuid,role public.restaurant_role,property_id uuid);
 create table public.restaurant_stock_movements(
@@ -23,7 +31,8 @@ create or replace function public.restaurant_can_write_scoped(_tenant_id uuid,_r
  select exists(select 1 from public.restaurant_members m where m.tenant_id=_tenant_id and m.user_id=auth.uid()
  and m.role=any(_roles) and (_property_id is null or m.property_id is null or m.property_id=_property_id))
 $$;
-create or replace function public.restaurant_is_platform_admin(uuid) returns boolean language sql stable as $$ select false $$;
+create or replace function public.restaurant_is_platform_admin(uuid) returns boolean language sql stable as $fn$ select false $fn$;
+create or replace function public.restaurant_member_active(_user_id uuid,_tenant_id uuid) returns boolean language sql stable as $fn$ select true $fn$;
 do $roles$
 begin
   create role authenticated;
@@ -42,20 +51,51 @@ begin
 exception when duplicate_object then null;
 end
 $roles$;
+-- Roles are cluster-wide across CI databases; normalize an existing fixture role too.
+alter role service_role bypassrls;
 grant usage on schema auth to authenticated,anon,service_role;
+grant usage on schema storage to authenticated,service_role;
+grant select,insert,delete on storage.objects to authenticated,service_role;
 grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0040_operational_cost_intelligence.sql
-\ir ../migrations/0042_cost_reconciliation_variance_intelligence.sql
-\ir ../migrations/0043_cost_reconciliation_baselines.sql
+\ir ../migrations/0120_operational_expense_security_closure.sql
+\ir ../migrations/0121_operational_expense_payment_and_schedule_scope_closure.sql
+\ir ../migrations/0122_operational_expense_property_currency_integrity.sql
+\ir ../migrations/0123_operational_expense_creator_identity_integrity.sql
+\ir ../migrations/0124_operational_expense_read_property_scope_integrity.sql
+\ir ../migrations/0125_operational_expense_complete_workflows.sql
+\ir ../migrations/0126_operational_expense_attachment_and_schedule_hardening.sql
+\ir ../migrations/0127_operational_expense_service_schedule_generation.sql
+\ir ../migrations/0128_operational_expense_automatic_recurring_generation.sql
+\ir ../migrations/0129_operational_expense_approval_lifecycle_transition.sql
+\ir ../migrations/0130_operational_expense_partial_to_paid_transition.sql
+\ir ../migrations/0131_operational_expense_complete_lifecycle_transitions.sql
+\ir ../migrations/0132_operational_expense_scheduler_occurrence_privileges.sql
 
 insert into public.restaurant_tenants values
  ('10000000-0000-0000-0000-000000000001'),('10000000-0000-0000-0000-000000000002');
-insert into public.restaurant_properties values
+insert into public.restaurant_properties(id,tenant_id) values
  ('20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001'),
  ('20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002'),
  ('20000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000001');
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
 insert into public.restaurant_members values
- ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','owner',null);
+ ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','owner',null),
+ ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000003','accountant','20000000-0000-0000-0000-000000000001');
+do $phase2$ begin
+ if public.restaurant_can_write_scoped('10000000-0000-0000-0000-000000000001',ARRAY['owner']::restaurant_role[],'20000000-0000-0000-0000-000000000002') then
+  raise exception 'Cross-tenant property authorization unexpectedly passed';
+ end if;
+ if not public.restaurant_can_write_scoped('10000000-0000-0000-0000-000000000001',ARRAY['owner']::restaurant_role[],'20000000-0000-0000-0000-000000000001') then
+  raise exception 'Valid same-tenant property authorization failed';
+ end if;
+ if public.restaurant_can_read_scoped('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000002') then
+  raise exception 'Cross-tenant property read scope unexpectedly passed';
+ end if;
+ if not public.restaurant_can_read_scoped('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001') then
+  raise exception 'Valid same-tenant property read scope failed';
+ end if;
+end $phase2$;
 insert into public.restaurant_locations values
  ('40000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001');
 insert into public.restaurant_stock_movements values
@@ -77,7 +117,66 @@ insert into public.restaurant_operational_expense_categories(tenant_id,name,cate
 insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
  select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Electricity',100000,'TZS','2026-11-01'
  from public.restaurant_operational_expense_categories where category_key='utilities';
--- Payment trigger derives paid state and rejects overpayment.
+insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
+ select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Self approval rejection',1000,'TZS','2026-11-01'
+ from public.restaurant_operational_expense_categories where category_key='utilities';
+insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
+ select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Pending payment rejection',1000,'TZS','2026-11-01'
+ from public.restaurant_operational_expense_categories where category_key='utilities';
+do $phase2$ begin
+ begin
+  insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on,created_by)
+  select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Forged creator rejection',1000,'TZS','2026-11-01','30000000-0000-0000-0000-000000000003'
+  from public.restaurant_operational_expense_categories where category_key='utilities';
+  raise exception 'Forged expense creator unexpectedly accepted';
+ exception when insufficient_privilege then null;
+ end;
+ begin
+  update public.restaurant_operational_expenses set created_by='30000000-0000-0000-0000-000000000003' where description='Self approval rejection';
+  raise exception 'Expense creator identity unexpectedly mutable';
+ exception when insufficient_privilege then null;
+ end;
+end $phase2$;
+do $phase2$ begin
+ begin
+  insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
+  select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,'Wrong currency rejection',1000,'USD','2026-11-01'
+  from public.restaurant_operational_expense_categories where category_key='utilities';
+  raise exception 'Property currency mismatch unexpectedly accepted';
+ exception when check_violation then null;
+ end;
+end $phase2$;
+do $phase2$ begin
+ if has_table_privilege('authenticated','public.restaurant_operational_expense_payments','UPDATE')
+    or has_table_privilege('authenticated','public.restaurant_operational_expense_payments','DELETE') then
+  raise exception 'Authenticated payment mutation privileges unexpectedly remain';
+ end if;
+end $phase2$;
+do $phase2$ begin
+ begin
+  update public.restaurant_operational_expenses
+     set approval_status='approved',approved_by='30000000-0000-0000-0000-000000000001',approved_at=now()
+   where description='Self approval rejection';
+  raise exception 'Self approval unexpectedly succeeded';
+ exception when insufficient_privilege then null;
+ end;
+end $phase2$;
+-- Approvals require a distinct authorized user, including through direct table writes.
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000003',true);
+set local role authenticated;
+update public.restaurant_operational_expenses set approval_status='approved',approved_by='30000000-0000-0000-0000-000000000003',approved_at=now() where description='Electricity';
+reset role;
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
+-- Direct payment writes against pending expenses must fail.
+do $phase2$ begin
+ begin
+  insert into public.restaurant_operational_expense_payments(tenant_id,expense_id,amount,currency)
+  select tenant_id,id,1,'TZS' from public.restaurant_operational_expenses where description='Pending payment rejection';
+  raise exception 'Pending expense payment unexpectedly succeeded';
+ exception when insufficient_privilege then null;
+ end;
+end $phase2$;
+-- Payment trigger derives paid state, requires approval, and rejects overpayment.
 insert into public.restaurant_operational_expense_payments(tenant_id,expense_id,amount,currency)
  select tenant_id,id,40000,'TZS' from public.restaurant_operational_expenses where description='Electricity';
 do $$ begin
@@ -101,9 +200,7 @@ do $$ begin
 end $$;
 -- Authenticate the owner for the allocation RPC's authorization check.
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
--- Approve and atomically allocate the complete expense to its property.
-update public.restaurant_operational_expenses set approval_status='approved',
- approved_by='30000000-0000-0000-0000-000000000001',approved_at=now() where description='Electricity';
+-- Expense is already independently approved; allocate the complete expense.
 select public.restaurant_commit_expense_allocations(
  (select id from public.restaurant_operational_expenses where description='Electricity'),
  '[{"property_id":"20000000-0000-0000-0000-000000000001","location_id":null,"amount":100000,"currency":"TZS","allocation_method":"direct"}]'::jsonb,
@@ -144,7 +241,9 @@ insert into public.restaurant_cost_allocation_rules(tenant_id,name,currency,effe
 values('10000000-0000-0000-0000-000000000001','Utilities 60/40','TZS',date '2026-01-01',1,
 '[{"property_id":"20000000-0000-0000-0000-000000000001","location_id":null,"weight":60},{"property_id":"20000000-0000-0000-0000-000000000003","location_id":null,"weight":40}]',
 'approved','30000000-0000-0000-0000-000000000001',now());
-update public.restaurant_operational_expenses set approval_status='approved',approved_by='30000000-0000-0000-0000-000000000001',approved_at=now() where description='Shared utilities';
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000003',true);
+update public.restaurant_operational_expenses set approval_status='approved',approved_by='30000000-0000-0000-0000-000000000003',approved_at=now() where description='Shared utilities';
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
 select public.restaurant_commit_expense_allocations(
  (select id from public.restaurant_operational_expenses where description='Shared utilities'),
  jsonb_build_array(
@@ -171,50 +270,11 @@ do $$ begin
  if (select sum(amount) from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002')<>1250 then raise exception 'Activity driver allocation did not reconcile'; end if;
  if (select amount from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002' and property_id='20000000-0000-0000-0000-000000000001')<>750 then raise exception 'Activity driver weight 3/5 was not applied'; end if;
 end $$;
--- Approved budgets are explicit source baselines; property RLS and tenant/category integrity are enforced.
-insert into public.restaurant_operational_cost_budgets(tenant_id,property_id,category_id,period_start,period_end,currency,budget_amount,status,approved_by,approved_at)
-select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,date '2026-11-01',date '2026-11-30','TZS',150000,'approved','30000000-0000-0000-0000-000000000001',now()
-from public.restaurant_operational_expense_categories where category_key='utilities';
-do $$ begin
- if (select count(*) from public.restaurant_operational_cost_budgets where property_id='20000000-0000-0000-0000-000000000001' and status='approved')<>1 then raise exception 'Approved budget baseline was not persisted'; end if;
-end $$;
-
--- Phase 4 additive reconciliation schema and property isolation.
-insert into public.restaurant_members values ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','restaurant_manager','20000000-0000-0000-0000-000000000001');
-insert into public.restaurant_cost_reconciliation_runs(tenant_id,property_id,period_start,period_end,currency,source_fingerprint)
-values
- ('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','2026-11-01','2026-11-30','TZS','fixture-property-1'),
- ('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','2026-11-01','2026-11-30','TZS','fixture-property-3');
-insert into public.restaurant_cost_reconciliation_lines(tenant_id,run_id,property_id,source_type,source_id,variance_kind,currency,expected_amount,actual_amount,variance_amount)
-select tenant_id,id,property_id,'stock_movement','50000000-0000-0000-0000-000000000001','consumption_cost','TZS',100,125,25
-from public.restaurant_cost_reconciliation_runs;
-insert into public.restaurant_cost_variances(tenant_id,property_id,reconciliation_line_id,severity)
-select tenant_id,property_id,id,'medium' from public.restaurant_cost_reconciliation_lines;
--- Property-scoped user must see only the reconciliation and variance for their assigned property.
-select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000002',true);
-set local role authenticated;
-do $phase4$ begin
- if (select count(*) from public.restaurant_cost_reconciliation_runs) <> 1 then raise exception 'Phase 4 run RLS leaked across properties'; end if;
- if (select count(*) from public.restaurant_cost_variances) <> 1 then raise exception 'Phase 4 variance RLS leaked across properties'; end if;
- if (select count(*) from public.restaurant_operational_cost_budgets) <> 1 then raise exception 'Phase 4 approved budget RLS leaked across properties'; end if;
- insert into public.restaurant_operational_cost_budgets(tenant_id,property_id,category_id,period_start,period_end,currency,budget_amount,status,approved_by,approved_at)
- select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,date '2026-12-01',date '2026-12-31','TZS',175000,'approved','30000000-0000-0000-0000-000000000002',now()
- from public.restaurant_operational_expense_categories where category_key='utilities';
- if (select count(*) from public.restaurant_operational_cost_budgets where period_start=date '2026-12-01')<>1 then raise exception 'Authorized property member could not create a budget baseline'; end if;
- -- Authorized property member can create a reconciliation run and update a case within scope.
- insert into public.restaurant_cost_reconciliation_runs(tenant_id,property_id,period_start,period_end,currency,source_fingerprint)
- values('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','2026-12-01','2026-12-31','TZS','fixture-authorized-write');
- update public.restaurant_cost_reconciliation_runs set status='running' where source_fingerprint='fixture-authorized-write';
- update public.restaurant_cost_reconciliation_runs set status='completed' where source_fingerprint='fixture-authorized-write';
- update public.restaurant_cost_variances set investigation_status='under_investigation',updated_at=now()
- where property_id='20000000-0000-0000-0000-000000000001';
- if not exists(select 1 from public.restaurant_cost_variances where property_id='20000000-0000-0000-0000-000000000001' and investigation_status='under_investigation') then
-  raise exception 'Authorized property member could not update a variance case';
- end if;
-end $phase4$;
-
-reset role;
 -- Property-scoped membership cannot read or write another property in the same tenant.
+insert into public.restaurant_operational_expense_schedules(tenant_id,property_id,category_id,description,amount,currency,cadence,next_occurrence)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003',id,'Other property rent',50000,'TZS','monthly',date '2026-11-15'
+from public.restaurant_operational_expense_categories where category_key='utilities';
+select public.restaurant_generate_scheduled_expense((select id from public.restaurant_operational_expense_schedules where description='Other property rent'),date '2026-11-15');
 insert into public.restaurant_members values
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','restaurant_manager','20000000-0000-0000-0000-000000000001');
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000002',true);
@@ -222,6 +282,9 @@ set local role authenticated;
 do $phase3$ begin
  if exists(select 1 from public.restaurant_operational_expenses where property_id='20000000-0000-0000-0000-000000000003') then
   raise exception 'Property-scoped member can read another property expense';
+ end if;
+ if exists(select 1 from public.restaurant_operational_expense_schedule_occurrences o join public.restaurant_operational_expense_schedules s on s.id=o.schedule_id where s.property_id='20000000-0000-0000-0000-000000000003') then
+  raise exception 'Property-scoped member can read another property schedule occurrence';
  end if;
  begin
   insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on)
@@ -236,9 +299,147 @@ reset role;
 set local role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
 do $$ begin
- if (select count(*) from public.restaurant_operational_expenses) <> 3 then
+ if (select count(*) from public.restaurant_operational_expenses) <> 6 then
   raise exception 'tenant member should see exactly own tenant expense';
  end if;
 end $$;
 reset role;
+
+-- Complete Phase 2 workflows: category hierarchy, supplier links, draft/edit/record/reject/cancel,
+-- private evidence storage, audit trail, recurring schedule lifecycle and end-date enforcement.
+SAVEPOINT phase2_complete_workflows;
+insert into public.restaurant_suppliers(id,tenant_id,name,status)
+values('60000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','UAT Utilities Supplier','active');
+insert into public.restaurant_operational_expense_categories(tenant_id,name,category_key,parent_category_id,active)
+values('10000000-0000-0000-0000-000000000001','Facilities','facilities',null,true);
+insert into public.restaurant_operational_expense_categories(tenant_id,name,category_key,parent_category_id,active)
+select '10000000-0000-0000-0000-000000000001','Cleaning','facilities_cleaning',id,true
+from public.restaurant_operational_expense_categories where category_key='facilities';
+insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on,created_by,expense_status)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,
+ 'Cancelled draft expense',3000,'TZS',date '2026-11-16','30000000-0000-0000-0000-000000000001','draft'
+from public.restaurant_operational_expense_categories where category_key='utilities';
+update public.restaurant_operational_expenses
+set expense_status='cancelled',cancelled_by='30000000-0000-0000-0000-000000000001',
+ cancelled_at=now(),cancellation_reason='Duplicate entry'
+where description='Cancelled draft expense';
+
+insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,supplier_id,description,amount,currency,incurred_on,created_by,expense_status)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',c.id,
+ '60000000-0000-0000-0000-000000000001','Draft facilities expense',25000,'TZS',date '2026-11-16',
+ '30000000-0000-0000-0000-000000000001','draft'
+from public.restaurant_operational_expense_categories c where c.category_key='facilities_cleaning';
+update public.restaurant_operational_expenses
+set description='Recorded facilities expense',expense_status='recorded'
+where description='Draft facilities expense';
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000003',true);
+set local role authenticated;
+update public.restaurant_operational_expenses
+set approval_status='rejected',rejected_by='30000000-0000-0000-0000-000000000003',
+ rejected_at=now(),rejection_reason='Insufficient supporting documentation'
+where description='Recorded facilities expense';
+reset role;
+do $phase2$ begin
+ if not exists(select 1 from public.restaurant_operational_expenses where description='Recorded facilities expense' and expense_status='cancelled' and approval_status='rejected') then
+  raise exception 'Independent rejection did not transition the expense to cancelled';
+ end if;
+ if (select count(*) from public.restaurant_operational_expense_audit_events where event_type in ('created','recorded','rejected') and expense_id=(select id from public.restaurant_operational_expenses where description='Recorded facilities expense'))<3 then
+  raise exception 'Expense lifecycle audit history is incomplete';
+ end if;
+end $phase2$;
+
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
+insert into public.restaurant_operational_expenses(tenant_id,property_id,category_id,description,amount,currency,incurred_on,created_by,expense_status)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,
+ 'Evidence attachment expense',5000,'TZS',date '2026-11-16','30000000-0000-0000-0000-000000000001','draft'
+from public.restaurant_operational_expense_categories where category_key='utilities';
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
+set local role authenticated;
+insert into storage.objects(bucket_id,name)
+select 'restaurant-expense-attachments',
+ '10000000-0000-0000-0000-000000000001/'||id::text||'/30000000-0000-0000-0000-000000000001/evidence.pdf'
+from public.restaurant_operational_expenses where description='Evidence attachment expense';
+insert into public.restaurant_operational_expense_attachments(tenant_id,expense_id,storage_path,file_name,mime_type,size_bytes,uploaded_by)
+select tenant_id,id,
+ '10000000-0000-0000-0000-000000000001/'||id::text||'/30000000-0000-0000-0000-000000000001/evidence.pdf',
+ 'evidence.pdf','application/pdf',1024,'30000000-0000-0000-0000-000000000001'
+from public.restaurant_operational_expenses where description='Evidence attachment expense';
+do $phase2$ begin
+ begin
+  insert into storage.objects(bucket_id,name)
+  select 'restaurant-expense-attachments',
+   '10000000-0000-0000-0000-000000000001/'||id::text||'/30000000-0000-0000-0000-000000000003/forged.pdf'
+  from public.restaurant_operational_expenses where description='Evidence attachment expense';
+  raise exception 'Attachment path accepted a different uploader identity';
+ exception when insufficient_privilege then null;
+ end;
+end $phase2$;
+do $phase2$ begin
+ if (select count(*) from public.restaurant_operational_expense_attachments where file_name='evidence.pdf')<>1 then
+  raise exception 'Expense attachment metadata was not persisted';
+ end if;
+ if (select count(*) from public.restaurant_operational_expense_audit_events where event_type='attachment_added')<>1 then
+  raise exception 'Attachment audit event was not recorded';
+ end if;
+end $phase2$;
+delete from storage.objects where name like '%/evidence.pdf';
+delete from public.restaurant_operational_expense_attachments where file_name='evidence.pdf';
+reset role;
+
+insert into public.restaurant_operational_expense_schedules(tenant_id,property_id,category_id,supplier_id,description,amount,currency,cadence,next_occurrence,ends_on,created_by)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,
+ '60000000-0000-0000-0000-000000000001','Facilities quarterly service',75000,'TZS','quarterly',
+ date '2026-11-16',date '2027-05-16','30000000-0000-0000-0000-000000000001'
+from public.restaurant_operational_expense_categories where category_key='utilities';
+do $phase2$ begin
+ if not exists(
+  select 1 from public.restaurant_operational_expense_schedules s
+  join public.restaurant_operational_expense_categories c on c.id=s.category_id
+  where s.description='Facilities quarterly service' and s.active and c.category_key='utilities'
+ ) then raise exception 'Recurring expense schedule fixture was not created'; end if;
+end $phase2$;
+update public.restaurant_operational_expense_schedules set active=false
+where description='Facilities quarterly service';
+update public.restaurant_operational_expense_schedules set active=true
+where description='Facilities quarterly service';
+select public.restaurant_generate_scheduled_expense(
+ (select id from public.restaurant_operational_expense_schedules where description='Facilities quarterly service'),date '2026-11-16');
+select public.restaurant_generate_scheduled_expense(
+ (select id from public.restaurant_operational_expense_schedules where description='Facilities quarterly service'),date '2026-11-16');
+do $phase2$ begin
+ if (select count(*) from public.restaurant_operational_expense_schedule_occurrences o join public.restaurant_operational_expenses e on e.id=o.expense_id where e.description='Facilities quarterly service')<>1 then
+  raise exception 'Recurring schedule generation is not idempotent';
+ end if;
+ if (select count(*) from public.restaurant_operational_expense_audit_events where event_type in ('schedule_created','schedule_paused','schedule_resumed') and schedule_id=(select id from public.restaurant_operational_expense_schedules where description='Facilities quarterly service'))<3 then
+  raise exception 'Recurring schedule audit trail is incomplete';
+ end if;
+end $phase2$;
+-- Trusted service-role generation preserves the schedule creator identity when no JWT user exists.
+insert into public.restaurant_operational_expense_schedules(tenant_id,property_id,category_id,description,amount,currency,cadence,next_occurrence,created_by)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,
+ 'Service generated rent',12000,'TZS','monthly',date '2026-11-17','30000000-0000-0000-0000-000000000001'
+from public.restaurant_operational_expense_categories where category_key='utilities';
+select set_config('request.jwt.claim.sub','',true);
+set local role service_role;
+select public.restaurant_generate_scheduled_expense(
+ (select id from public.restaurant_operational_expense_schedules where description='Service generated rent'),date '2026-11-17');
+reset role;
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
+do $phase2$ begin
+ if not exists(select 1 from public.restaurant_operational_expenses where description='Service generated rent' and created_by='30000000-0000-0000-0000-000000000001') then
+  raise exception 'Service-role schedule generation did not preserve creator identity';
+ end if;
+end $phase2$;
+-- Daily scheduler catches due schedules and records generated expenses without duplicate occurrences.
+insert into public.restaurant_operational_expense_schedules(tenant_id,property_id,category_id,description,amount,currency,cadence,next_occurrence,created_by)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,
+ 'Auto generated rent',18000,'TZS','monthly',date '2026-11-18','30000000-0000-0000-0000-000000000001'
+from public.restaurant_operational_expense_categories where category_key='utilities';
+select public.restaurant_generate_due_operational_expenses(date '2026-11-18');
+do $phase2$ begin
+ if not exists(select 1 from public.restaurant_operational_expenses where description='Auto generated rent' and incurred_on=date '2026-11-18' and created_by='30000000-0000-0000-0000-000000000001') then
+  raise exception 'Automatic recurring scheduler did not create the due expense';
+ end if;
+end $phase2$;
+ROLLBACK TO SAVEPOINT phase2_complete_workflows;
 rollback;
