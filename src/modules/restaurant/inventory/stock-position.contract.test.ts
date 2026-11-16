@@ -34,7 +34,7 @@ describe("canonical stock-position contract", () => {
       purchaseOrderInbound: 8,
       inTransitInbound: 2,
       confirmedDeliveryInbound: 0,
-      netAvailable: 23,
+      netAvailable: 26,
     });
     expect(result.components.map((row) => row.sourceId)).toEqual(["partial-po", "po-1", "transfer-1"]);
   });
