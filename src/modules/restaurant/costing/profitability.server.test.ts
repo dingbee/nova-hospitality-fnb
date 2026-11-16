@@ -108,7 +108,8 @@ describe("computeProfitability operating-cost integration", () => {
     const sb = makeSupabase({
       restaurant_orders: [{
         id: "order-1", currency: "TZS", property_id: "property-1",
-        location_id: "outlet-1", source: "pos",
+        location_id: "outlet-1", source: "pos", total: 1100,
+        discount_total: 100, tax_total: 100, service_charge: 0,
       }],
       restaurant_order_items: [{
         id: "line-1", order_id: "order-1", menu_item_id: "menu-1", description: "Pilau",
