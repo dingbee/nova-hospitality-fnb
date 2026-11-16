@@ -202,7 +202,7 @@ export async function computeProfitability(
       .eq("tenant_id", input.tenantId).in("order_id", orderIds),
     consumptionProfileQuery,
     sb.from("restaurant_consumption_rules")
-      .select("id, profile_id, inventory_item_id, active, effective_from, effective_to")
+      .select("id, profile_id, inventory_item_id, quantity_per_cover, active, effective_from, effective_to")
       .eq("tenant_id", input.tenantId).eq("active", true),
   ]);
   if (itemError) throw new Error(itemError.message);
@@ -274,7 +274,22 @@ export async function computeProfitability(
       applicable.some((profile) => profile.location_id === locationId && hasRule(profile.id))
     );
   });
-  const consumableCoverageIncomplete = !hasConsumptionProfiles || missingConsumableMovements.length > 0;
+  const expectedConsumableCaptureMissing = orderRows.some((order) => {
+    const expectedInventoryIds = new Set(ruleRows.filter((rule) => {
+      const profile = profileById.get(rule.profile_id);
+      return Number(rule.quantity_per_cover ?? 0) > 0 && profile &&
+        (profile.property_id === null || profile.property_id === order.property_id) &&
+        (profile.location_id === null || profile.location_id === order.location_id);
+    }).map((rule) => rule.inventory_item_id));
+    return [...expectedInventoryIds].some((inventoryItemId) =>
+      !movementRows.some((movement) =>
+        movement.reference_id === order.id && movement.inventory_item_id === inventoryItemId
+      )
+    );
+  });
+  const invalidConsumableRule = ruleRows.some((rule) => Number(rule.quantity_per_cover ?? 0) <= 0);
+  const consumableCoverageIncomplete = !hasConsumptionProfiles || missingConsumableMovements.length > 0 ||
+    expectedConsumableCaptureMissing || invalidConsumableRule;
   // Service consumable movements are projected separately by Phase 1;
   // exclude them from recipe COGS so direct costs are never double-counted.
   const actualByItem = new Map<string, number>();
