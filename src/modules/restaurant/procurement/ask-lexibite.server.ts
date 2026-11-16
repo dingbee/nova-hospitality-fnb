@@ -366,8 +366,11 @@ export async function previewIntelligentPurchaseOrders(
         )
       : null;
     const purchaseUnit = ((units ?? []) as any[]).find((row) => row.id === unitId);
-    const currentOrderMultiple = Number(product.order_multiple ??
-      (purchaseUnit && purchaseUnit.dimension !== "count" ? 0.0001 : 1));
+    // A count unit may default to indivisible units; fractional units require
+    // an explicit supplier order multiple and are rejected when unconfigured.
+    const currentOrderMultiple = product.order_multiple == null && purchaseUnit?.dimension === "count"
+      ? 1
+      : Number(product.order_multiple);
     if (!unitId || unitId !== suggestion.purchaseUnitId ||
         currentStockFactor == null || Math.abs(currentStockFactor - stockUnitsPerPurchaseUnit) > 0.000001 ||
         !(stockUnitsPerPurchaseUnit > 0) || !Number.isFinite(purchaseQuantity) ||
