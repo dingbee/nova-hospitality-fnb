@@ -5,6 +5,7 @@
  */
 import type { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
+import { getPurchasingIntelligence } from "../intelligence/purchasing.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import {
   insertWithUniqueDocumentNumber,
@@ -381,6 +382,48 @@ export async function convertRequestToOrder(
     };
   });
   if (orderLines.length === 0) throw new Error("An approved purchase request must contain at least one line.");
+
+  const intelligentLines = orderLines.filter((line) => line.sourceActionId);
+  if (intelligentLines.length > 0) {
+    if (!req.location_id || intelligentLines.length !== 1) {
+      throw new Error("An intelligence-generated request requires one explicit delivery location and one source recommendation.");
+    }
+    const recommendation = (req.metadata as any)?.inventory_recommendation;
+    if (!recommendation || recommendation.inventory_item_id !== intelligentLines[0].inventoryItemId) {
+      throw new Error("The intelligence-generated request is missing its durable recommendation evidence.");
+    }
+    const fresh = await getPurchasingIntelligence(sb, userId, {
+      tenantId: input.tenantId,
+      windowDays: 30,
+      propertyId: req.property_id ?? null,
+      locationId: req.location_id,
+    });
+    const freshSuggestion = fresh.suggestions.find((row) => row.inventoryItemId === intelligentLines[0].inventoryItemId);
+    const sameNumber = (a: unknown, b: unknown) =>
+      Number.isFinite(Number(a)) && Number.isFinite(Number(b)) && Math.abs(Number(a) - Number(b)) <= 0.0001;
+    if (
+      !freshSuggestion ||
+      freshSuggestion.supplierId !== intelligentLines[0].supplierId ||
+      freshSuggestion.supplierProductId !== recommendation.supplier_product_id ||
+      freshSuggestion.purchaseUnitId !== recommendation.purchase_unit_id ||
+      freshSuggestion.stockUnitId !== recommendation.stock_unit_id ||
+      !sameNumber(freshSuggestion.purchaseQuantity, recommendation.purchase_quantity) ||
+      !sameNumber(freshSuggestion.purchaseUnitPrice, recommendation.purchase_unit_price) ||
+      !sameNumber(freshSuggestion.stockUnitsPerPurchaseUnit, recommendation.stock_units_per_purchase_unit) ||
+      !sameNumber(freshSuggestion.minimumOrderQuantity ?? 0, recommendation.minimum_order_quantity ?? 0) ||
+      !sameNumber(freshSuggestion.orderMultiple ?? 1, recommendation.order_multiple ?? 1) ||
+      !sameNumber(freshSuggestion.recommendedQuantity, recommendation.recommended_stock_quantity) ||
+      !sameNumber(freshSuggestion.netAvailable, recommendation.net_available) ||
+      !sameNumber(freshSuggestion.forecastDemand, recommendation.forecast_demand) ||
+      !sameNumber(freshSuggestion.safetyStock, recommendation.safety_stock) ||
+      freshSuggestion.effectivePriceDate !== (recommendation.effective_price_date ?? null) ||
+      freshSuggestion.forecastConfidence !== recommendation.forecast_confidence ||
+      freshSuggestion.purchaseCurrency !== recommendation.currency ||
+      req.currency !== recommendation.currency
+    ) {
+      throw new Error("The approved inventory recommendation is stale. Regenerate and reapprove the request before converting it to a purchase order.");
+    }
+  }
 
   const subtotal = Number(orderLines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0).toFixed(4));
   const { data: existingPo, error: existingPoError } = await sb
