@@ -541,22 +541,20 @@ export async function setInvoicePaymentStatus(
       "Recorded payments cannot be reversed through invoice status; use a separately authorised refund or credit workflow.",
     );
   }
-  if (amountPaid - total > 0.0001) {
-    throw new Error("Amount paid cannot exceed the supplier invoice total.");
+  if (amountPaid - payableTotal > 0.0001) {
+    throw new Error("Amount paid cannot exceed the outstanding invoice balance after supplier credits.");
   }
-  if (input.paymentStatus === "unpaid" && amountPaid > 0.0001) {
-    throw new Error("An invoice with a recorded payment cannot be marked unpaid.");
+  if (input.paymentStatus === "unpaid" && amountPaid + creditApplied > 0.0001) {
+    throw new Error("An invoice with a recorded payment or applied supplier credit cannot be marked unpaid.");
   }
   if (
     input.paymentStatus === "partially_paid" &&
-    !(amountPaid > 0.0001 && amountPaid < total - 0.0001)
+    !(amountPaid + creditApplied > 0.0001 && amountPaid + creditApplied < total - 0.0001)
   ) {
-    throw new Error(
-      "Partially paid status requires a positive balance payment below the invoice total.",
-    );
+    throw new Error("Partially paid status requires settlement by cash or supplier credit below the invoice total.");
   }
-  if (input.paymentStatus === "paid" && Math.abs(amountPaid - total) > 0.01) {
-    throw new Error("Paid status requires the recorded amount to equal the invoice total.");
+  if (input.paymentStatus === "paid" && Math.abs(amountPaid + creditApplied - total) > 0.01) {
+    throw new Error("Paid status requires cash payments plus applied supplier credits to equal the invoice total.");
   }
   if (
     input.paymentStatus === "disputed" &&
@@ -574,6 +572,8 @@ export async function setInvoicePaymentStatus(
     })
     .eq("tenant_id", input.tenantId)
     .eq("id", input.invoiceId)
+    .eq("amount_paid", previousAmountPaid)
+    .eq("payment_status", before.payment_status)
     .select("id, payment_status, amount_paid")
     .single();
   if (error) throw new Error(error.message);
