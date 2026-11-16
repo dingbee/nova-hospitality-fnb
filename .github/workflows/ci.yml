@@ -105,6 +105,11 @@ jobs:
         run: |
           psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-tenant-central-store-migration.sql
 
+      - name: Verify P0-02 inventory and procurement integrity in isolated PostgreSQL
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-p0-02-inventory-integrity.sql
+
       - name: Apply and verify the complete LexiBite LB-02 migration chain
         env:
           PGPASSWORD: postgres
