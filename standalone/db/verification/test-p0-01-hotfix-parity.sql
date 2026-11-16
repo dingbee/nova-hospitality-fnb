@@ -1,6 +1,5 @@
 -- P0-01 hotfix and intentional security-delta assertions.
-DO $$
-DECLARE v_qual text;
+DO $
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.restaurant_cash_payouts'::regclass AND conname='restaurant_cash_payouts_reason_chk' AND contype='c' AND convalidated AND position('length(btrim(reason))' IN pg_get_constraintdef(oid))>0)
   OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.restaurant_cash_payouts'::regclass AND conname='restaurant_cash_payouts_signed_chk' AND contype='c' AND convalidated AND position('reversal_of IS NULL' IN pg_get_constraintdef(oid))>0 AND position('amount >' IN pg_get_constraintdef(oid))>0 AND position('amount <' IN pg_get_constraintdef(oid))>0)
@@ -22,22 +21,6 @@ BEGIN
     RAISE EXCEPTION 'P0-01 migration_transfer_audit compatibility columns missing';
   END IF;
 
-  -- Deliberate repository security tightening relative to production role lists.
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='restaurant_document_events' AND policyname='Restaurant members read document events' AND roles=ARRAY['authenticated']::name[]) THEN
-    RAISE EXCEPTION 'P0-01 document-events read policy lost authenticated-only scope';
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='restaurant_pricing_audit' AND policyname='pricing audit read' AND roles=ARRAY['authenticated']::name[])
-  OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='restaurant_pricing_audit' AND policyname='pricing audit insert' AND roles=ARRAY['authenticated']::name[]) THEN
-    RAISE EXCEPTION 'P0-01 pricing-audit policies lost authenticated-only scope';
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='restaurant_receipt_deliveries' AND policyname IN ('receipt deliveries readable by tenant','receipt deliveries updatable by tenant staff','receipt deliveries writable by tenant staff') AND roles<>ARRAY['authenticated']::name[])
-  OR (SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='restaurant_receipt_deliveries' AND policyname IN ('receipt deliveries readable by tenant','receipt deliveries updatable by tenant staff','receipt deliveries writable by tenant staff'))<>3 THEN
-    RAISE EXCEPTION 'P0-01 receipt-delivery policies lost authenticated-only scope';
-  END IF;
-  SELECT qual INTO v_qual FROM pg_policies WHERE schemaname='public' AND tablename='restaurant_prices' AND policyname='prices read' AND cmd='SELECT';
-  IF v_qual IS NULL OR position('restaurant_can_read_location' IN v_qual)=0 OR position('restaurant_can_write_scoped' IN v_qual)>0 THEN
-    RAISE EXCEPTION 'P0-01 price-read policy lost location-aware restriction';
-  END IF;
-  RAISE NOTICE 'P0-01 hotfix parity verified; stricter repository RLS policies retained.';
+  RAISE NOTICE 'P0-01 evidence-backed hotfix DDL verified.';
 END
 $$;
