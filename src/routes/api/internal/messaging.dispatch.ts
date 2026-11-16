@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { processPendingMetaWebhookEvents } from "@/modules/messaging/webhook-queue.server";
+import { processPendingMetaOutboundJobs } from "@/modules/messaging/outbound-queue.server";
 
 function isAuthorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET ?? "";
@@ -21,11 +22,16 @@ async function dispatch(request: Request) {
 
   try {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const result = await processPendingMetaWebhookEvents(supabaseAdmin, {
+    const workerId = randomUUID();
+    const inbound = await processPendingMetaWebhookEvents(supabaseAdmin, {
       limit: 25,
-      workerId: randomUUID(),
+      workerId,
     });
-    return Response.json(result, {
+    const outbound = await processPendingMetaOutboundJobs(supabaseAdmin, {
+      limit: 25,
+      workerId,
+    });
+    return Response.json({ inbound, outbound }, {
       headers: { "Cache-Control": "no-store, private, max-age=0" },
     });
   } catch {
