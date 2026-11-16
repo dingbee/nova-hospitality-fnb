@@ -54,6 +54,8 @@ create table if not exists public.restaurant_operational_profitability_dimension
  contribution numeric(14,2) not null default 0,
  allocated_operating_expenses numeric(14,2) not null default 0,
  operating_profit numeric(14,2) not null default 0,
+ allocation_method text not null default 'none' check(allocation_method in ('direct','approved_rule','activity_driver','manual','sales_proportional','mixed','none')),
+ confidence_state text not null default 'incomplete_source_data' check(confidence_state in ('fully_reconciled','partially_reconciled','estimated','pending_expense_verification','unallocated_costs_present','incomplete_source_data')),
  source_references jsonb not null default '[]'::jsonb check(jsonb_typeof(source_references)='array'),
  created_at timestamptz not null default now(),
  unique(snapshot_id,dimension_type,dimension_key)
