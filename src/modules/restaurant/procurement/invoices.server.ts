@@ -45,15 +45,45 @@ export async function listSupplierInvoices(
   const { data, error } = await q;
   if (error) throw new Error(error.message);
 
-  const { data: suppliers } = await sb
+  const invoiceRows = (data ?? []) as any[];
+  const invoiceIds = invoiceRows.map((invoice) => invoice.id);
+  let applications: any[] = [];
+  if (invoiceIds.length > 0) {
+    const { data: rows, error: applicationsError } = await sb
+      .from("restaurant_supplier_credit_note_applications")
+      .select("invoice_id, amount")
+      .eq("tenant_id", input.tenantId)
+      .in("invoice_id", invoiceIds);
+    if (applicationsError) {
+      throw new Error("Unable to load supplier credit applications: " + applicationsError.message);
+    }
+    applications = (rows ?? []) as any[];
+  }
+  const creditByInvoice = new Map<string, number>();
+  for (const application of applications) {
+    creditByInvoice.set(
+      application.invoice_id,
+      (creditByInvoice.get(application.invoice_id) ?? 0) + Number(application.amount ?? 0),
+    );
+  }
+
+  const { data: suppliers, error: suppliersError } = await sb
     .from("restaurant_suppliers")
     .select("id, name")
     .eq("tenant_id", input.tenantId);
-  const names = new Map(((suppliers ?? []) as any[]).map((s) => [s.id, s.name]));
-  return ((data ?? []) as any[]).map((i) => ({
-    ...i,
-    supplier_name: names.get(i.supplier_id) ?? "—",
-  }));
+  if (suppliersError) throw new Error("Unable to load invoice suppliers: " + suppliersError.message);
+  const names = new Map(((suppliers ?? []) as any[]).map((supplier) => [supplier.id, supplier.name]));
+  return invoiceRows.map((invoice) => {
+    const creditApplied = creditByInvoice.get(invoice.id) ?? 0;
+    return {
+      ...invoice,
+      supplier_name: names.get(invoice.supplier_id) ?? "—",
+      credit_applied: Number(creditApplied.toFixed(2)),
+      outstanding_balance: Number(
+        Math.max(0, Number(invoice.total ?? 0) - Number(invoice.amount_paid ?? 0) - creditApplied).toFixed(2),
+      ),
+    };
+  });
 }
 
 export async function recordSupplierInvoice(sb: Sb, userId: string, input: RecordInvoiceInput) {
