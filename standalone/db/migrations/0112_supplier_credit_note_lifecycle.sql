@@ -36,6 +36,49 @@ CREATE INDEX IF NOT EXISTS idx_supplier_credit_notes_tenant_date
 CREATE INDEX IF NOT EXISTS idx_supplier_credit_notes_invoice
   ON public.restaurant_supplier_credit_notes (tenant_id, reference_invoice_id);
 
+CREATE OR REPLACE FUNCTION public.restaurant_supplier_credit_note_record_audit()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+BEGIN
+  INSERT INTO public.restaurant_procurement_audit (
+    tenant_id, document_type, document_id, document_number, action,
+    previous_state, new_state, reason, actor_id, metadata
+  ) VALUES (
+    NEW.tenant_id,
+    'supplier_credit_note',
+    NEW.id,
+    NEW.document_number,
+    'recorded',
+    NULL,
+    'recorded',
+    NEW.reason,
+    NEW.recorded_by,
+    jsonb_build_object(
+      'supplier_id', NEW.supplier_id,
+      'reference_invoice_id', NEW.reference_invoice_id,
+      'supplier_credit_note_number', NEW.supplier_credit_note_number,
+      'subtotal', NEW.subtotal,
+      'tax_total', NEW.tax_total,
+      'total', NEW.total,
+      'currency', NEW.currency
+    )
+  );
+  RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS restaurant_supplier_credit_note_record_audit
+  ON public.restaurant_supplier_credit_notes;
+CREATE TRIGGER restaurant_supplier_credit_note_record_audit
+  AFTER INSERT ON public.restaurant_supplier_credit_notes
+  FOR EACH ROW
+  EXECUTE FUNCTION public.restaurant_supplier_credit_note_record_audit();
+
+REVOKE ALL ON FUNCTION public.restaurant_supplier_credit_note_record_audit() FROM PUBLIC, anon, authenticated;
+
 GRANT SELECT, INSERT ON public.restaurant_supplier_credit_notes TO authenticated;
 GRANT ALL ON public.restaurant_supplier_credit_notes TO service_role;
 ALTER TABLE public.restaurant_supplier_credit_notes ENABLE ROW LEVEL SECURITY;
