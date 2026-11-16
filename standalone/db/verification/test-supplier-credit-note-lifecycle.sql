@@ -45,6 +45,8 @@ CREATE TABLE public.restaurant_supplier_invoices (
   id uuid PRIMARY KEY,
   tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id),
   supplier_id uuid NOT NULL REFERENCES public.restaurant_suppliers(id),
+  property_id uuid,
+  location_id uuid,
   currency text NOT NULL,
   total numeric(14,2) NOT NULL,
   amount_paid numeric(14,2) NOT NULL DEFAULT 0,
