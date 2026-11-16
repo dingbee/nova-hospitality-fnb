@@ -67,6 +67,9 @@ export function calculateSupplierInvoiceMatch(evidence: InvoiceMatchEvidence): I
   if (values.some((v) => !valid(v))) {
     add("invoice", "INVALID_HEADER_AMOUNT", "Invoice header contains a negative or non-finite amount.");
   }
+  if (invoiceLines.length === 0 && purchaseOrder) {
+    add("invoice", "EMPTY_INVOICE_LINES", "A purchase-order invoice must contain at least one line before it can be matched.");
+  }
   const computedNet = money(invoiceLines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0));
   const computedTax = money(invoiceLines.reduce((sum, line) => sum + line.taxAmount, 0));
   const computedGross = money(computedNet + computedTax);
