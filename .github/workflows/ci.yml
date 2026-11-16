@@ -68,6 +68,7 @@ jobs:
           NOVA_DB_AUTHENTICATOR: nova_authenticator
           NOVA_DB_AUTHENTICATOR_PASSWORD: migration-replay-test-only
           PGSSLMODE: disable
+          PGPASSWORD: postgres
         run: |
           bash local/scripts/init-db.sh
           psql -h localhost -U postgres -d lexibite_migration_replay -v ON_ERROR_STOP=1 <<'SQL'
