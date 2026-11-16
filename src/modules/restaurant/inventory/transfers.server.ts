@@ -191,6 +191,15 @@ export async function createTransfer(sb: Sb, userId: string, input: CreateTransf
   if (meta.size !== new Set(input.lines.map((l) => l.inventoryItemId)).size) {
     throw new Error("One or more inventory items do not belong to this tenant.");
   }
+  for (const line of input.lines) {
+    const item = meta.get(line.inventoryItemId);
+    if (!item?.unit_id) {
+      throw new Error("Every transferred inventory item must have a configured stock unit.");
+    }
+    if (line.unitId && line.unitId !== item.unit_id) {
+      throw new Error("Stock transfers must be expressed in the inventory item's canonical stock unit.");
+    }
+  }
 
   const number = await nextTransferNumber(sb, input.tenantId);
   const now = new Date().toISOString();
@@ -228,7 +237,7 @@ export async function createTransfer(sb: Sb, userId: string, input: CreateTransf
       tenant_id: input.tenantId,
       transfer_id: transfer.id,
       inventory_item_id: l.inventoryItemId,
-      unit_id: l.unitId ?? meta.get(l.inventoryItemId)?.unit_id ?? null,
+      unit_id: meta.get(l.inventoryItemId)?.unit_id,
       batch_id: l.batchId ?? null,
       requested_quantity: l.requestedQuantity,
       unit_cost: Number(meta.get(l.inventoryItemId)?.average_cost ?? 0),
