@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS public.wa_outbound_jobs (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT wa_outbound_jobs_scope_id_uq UNIQUE (tenant_id, property_id, location_id, id),
+  CONSTRAINT wa_outbound_jobs_conversation_scope_id_uq UNIQUE (tenant_id, property_id, location_id, conversation_id, id),
   CONSTRAINT wa_outbound_jobs_event_conversation_uq UNIQUE (source_event_id, conversation_id),
   CONSTRAINT wa_outbound_jobs_idempotency_uq UNIQUE (tenant_id, idempotency_key),
   CONSTRAINT wa_outbound_jobs_binding_scope_fkey
@@ -65,8 +66,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS wa_messages_outbound_job_uq
 
 ALTER TABLE public.wa_messages
   ADD CONSTRAINT wa_messages_outbound_job_scope_fkey
-  FOREIGN KEY (tenant_id, property_id, location_id, outbound_job_id)
-  REFERENCES public.wa_outbound_jobs (tenant_id, property_id, location_id, id)
+  FOREIGN KEY (tenant_id, property_id, location_id, conversation_id, outbound_job_id)
+  REFERENCES public.wa_outbound_jobs (tenant_id, property_id, location_id, conversation_id, id)
   ON DELETE SET NULL (outbound_job_id);
 
 ALTER TABLE public.wa_outbound_jobs ENABLE ROW LEVEL SECURITY;
