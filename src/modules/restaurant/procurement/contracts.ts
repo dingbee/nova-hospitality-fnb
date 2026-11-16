@@ -297,6 +297,8 @@ export type RecordSupplierCreditNoteInput = z.infer<typeof recordSupplierCreditN
 export const listSupplierCreditNotesSchema = z.object({
   tenantId: uuid,
   supplierId: uuid.optional(),
+  propertyId: uuid.optional(),
+  locationId: uuid.optional(),
   status: z.enum(["recorded", "partially_applied", "applied", "voided"]).optional(),
   limit: z.number().int().min(1).max(200).default(50),
 });
