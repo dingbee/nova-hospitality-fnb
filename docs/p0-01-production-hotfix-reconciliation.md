@@ -75,6 +75,37 @@ All 19 production functions were `SECURITY DEFINER`, configured with `search_pat
 - The concurrent ME-01/ME-02 `0065`/`0066` numeric-prefix collision and subsequent `0065`–`0075` corrective sequence are reconciled in the existing ME-01/02/03 corrective-integration record. Their SQL was captured in production application order; the independent branch versions were not silently overlaid.
 - Production recorded the financial reconstruction and `restaurant_day_is_locked` reconstruction as separate ledger entries. The canonical `0076` file contains the complete 19-function set; the clean replay verifies all 19.
 - The later `0078`–`0082` corrections remain distinct. Reused numeric prefixes (including `0081` and `0082`) are separate, uniquely named migration files; the local replay ledger keys by full filename and checksum, and applies the files in deterministic filename order.
+
+The 159-file replay candidate contains 24 intentionally reused numeric prefixes. The exact filenames were inventoried; none share a full filename, and the replay ledger applied every file once with zero skips:
+
+| Prefix | Distinct migration files |
+|---|---|
+| 0040 | `0040_operational_cost_intelligence.sql`; `0040_p02_commercialization_lifecycle.sql` |
+| 0041 | `0041_operational_cost_intelligence_privilege_hardening.sql`; `0041_p02_commercial_admin_tenant_visibility.sql` |
+| 0042 | `0042_cost_reconciliation_variance_intelligence.sql`; `0042_service_request_lifecycle_and_cooldown.sql` |
+| 0043 | `0043_cost_reconciliation_baselines.sql`; `0043_p04_commercial_intelligence.sql` |
+| 0060 | `0060_p09_quota_usage_ledger.sql`; `0060b_p09_quota_usage_ledger_fix_ambiguous_column.sql` |
+| 0081 | `0081_me05_inventory_document_property_scope.sql`; `0081_me06_payment_refund_integrity_reconstruction.sql` |
+| 0082 | `0082_me06_refund_retry_idempotency.sql`; `0082_p02_lexibite_demo_access.sql` |
+| 0083 | `0083_p02_demo_session_expiry_enforcement.sql`; `0083_repair_classic_chicken_burger_product_bridge.sql` |
+| 0085 | `0085_p08_api_service_role.sql`; `0085_selfpay_guest_payment_session_claim.sql` |
+| 0086 | `0086_p08_api_integration_platform.sql`; `0086_repair_existing_classic_chicken_burger_recipe_link.sql` |
+| 0087 | `0087_me11_activity_logs.sql`; `0087_repair_bar_station_routing.sql` |
+| 0088 | `0088_commercial_capability_activation_reconciliation.sql`; `0088_kitchen_substation_foundation.sql`; `0088_me13_performance_load_certification.sql`; `0088_pos_staff_pin_sessions.sql` |
+| 0089 | `0089_member_station_assignments_foundation.sql`; `0089_pos_pin_only_login.sql` |
+| 0091 | `0091_p13_platform_ai_provider_control.sql`; `0091_pos_staff_pin_sessions.sql` |
+| 0092 | `0092_harden_pos_pin_rpc_grants.sql`; `0092_p13_dynamic_ai_provider_registry.sql` |
+| 0093 | `0093_fix_pgcrypto_schema_for_pos_pin.sql`; `0093_me17r06_security_definer_hardening.sql` |
+| 0094 | `0094_allow_staff_self_pos_session.sql`; `0094_me17r07_performance_hardening.sql` |
+| 0099 | `0099_commercial_customer_invitation_flow.sql`; `0099_commercial_owner_activation.sql` |
+| 0100 | `0100_mobile_money_provider_connections.sql`; `0100_retire_self_service_tenant_bootstrap.sql` |
+| 0104 | `0104_inventory_agent_commercial_entitlement.sql`; `0104_universal_channel_catalogue.sql` |
+| 0112 | `0112_lb01_product_connection_persistence.sql`; `0112_operational_consumables_phase1.sql` |
+| 0120 | `0120_lb02_outlet_source_version.sql`; `0120_operational_expense_security_closure.sql` |
+| 0121 | `0121_lb04_analytical_foundation.sql`; `0121_operational_expense_payment_and_schedule_scope_closure.sql` |
+| 0122 | `0122_lb03_pos_room_charge_ledger.sql`; `0122_operational_expense_property_currency_integrity.sql` |
+
+Other production-ledger aliases were checked against their canonical files or dispositions: the separate LB-01.01 ledger entry is comment-only; LB-01.02 is the durable schema migration; the LB-03 audit-function revoke is present in the canonical LB-03 file; and cost-reconciliation 0042/0043 and Phase 5 ledger names map to their numbered repository migrations.
 - The `0095` owner-POS-PIN recovery migration created `restaurant_bootstrap_owner_pos_pin`; `0096` immediately dropped it. The function is absent from the final production catalogue, so this transient create/drop pair has no final schema object to reconstruct.
 - `lb02_dispatch_scheduler_extensions` and `lb02_dispatch_cron_schedule` are platform extension/scheduler configuration (`pg_cron`, `pg_net`, Vault and a scheduled HTTP dispatch), not application-table schema. They are not replayed as local product-schema migrations; the production extension catalogue was inspected read-only.
 - The separate `lb03_restrict_pos_audit_trigger_function_execution` grant restriction is present in the canonical LB-03 migration.
