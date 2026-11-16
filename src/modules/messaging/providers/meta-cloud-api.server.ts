@@ -124,7 +124,10 @@ async function graphRequest<T>(
       signal: init.signal ?? AbortSignal.timeout(15_000),
     });
   } catch {
-    throw new MetaGraphError("Meta Graph API request failed due to a network or timeout error.", null);
+    throw new MetaGraphError(
+      "Meta Graph API request failed due to a network or timeout error.",
+      null,
+    );
   }
   return readGraphResponse<T>(response);
 }
@@ -156,7 +159,10 @@ export async function exchangeEmbeddedSignupCode(
   try {
     response = await fetch(url, { method: "GET", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
   } catch {
-    throw new MetaGraphError("Meta authorization-code exchange failed due to a network or timeout error.", null);
+    throw new MetaGraphError(
+      "Meta authorization-code exchange failed due to a network or timeout error.",
+      null,
+    );
   }
   const body = await readGraphResponse<{ access_token?: string; token_type?: string; expires_in?: number }>(response);
   if (!body.access_token) throw new MetaGraphError("Meta did not return an access token.", response.status);
@@ -191,7 +197,10 @@ export async function inspectAccessToken(
   try {
     response = await fetch(url, { method: "GET", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
   } catch {
-    throw new MetaGraphError("Meta token inspection failed due to a network or timeout error.", null);
+    throw new MetaGraphError(
+      "Meta token inspection failed due to a network or timeout error.",
+      null,
+    );
   }
   const body = await readGraphResponse<{ data?: MetaTokenInspection }>(response);
   if (!body.data) throw new MetaGraphError("Meta token inspection returned no token data.", response.status);
