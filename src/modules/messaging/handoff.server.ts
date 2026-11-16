@@ -45,19 +45,24 @@ async function buildEncryptedHandoff(admin: Db, event: InboundEvent, conversatio
     throw new Error("portal_handoff_context_unavailable");
   }
 
-  const session = await createWhatsAppGuestPortalSession(admin, {
-    tenantId: event.tenant_id,
-    propertyId: event.property_id,
-    locationId: event.location_id,
-    bindingId: event.binding_id,
-    conversationId,
-    createdByEventId: event.id,
-  });
-
   const settings = (tenant.settings ?? {}) as { business?: { tradingName?: string } };
   const businessName = (settings.business?.tradingName ?? "").trim() || tenant.name;
   const outletLabel = location.name ? ` at ${location.name}` : "";
-  const body = `Welcome to ${businessName}${outletLabel}. Browse the menu and place your order securely here: ${session.portalUrl}`;
+  let session: { sessionId: string; portalUrl: string } | null = null;
+  let body: string;
+  try {
+    session = await createWhatsAppGuestPortalSession(admin, {
+      tenantId: event.tenant_id,
+      propertyId: event.property_id,
+      locationId: event.location_id,
+      bindingId: event.binding_id,
+      conversationId,
+      createdByEventId: event.id,
+    });
+    body = `Welcome to ${businessName}${outletLabel}. Browse the menu and place your order securely here: ${session.portalUrl}`;
+  } catch {
+    body = `Welcome to ${businessName}${outletLabel}. We could not prepare your menu link just now. Please try again shortly or reply HELP for assistance.`;
+  }
   const encrypted = encryptSecret(body);
   return { session, encrypted };
 }
@@ -108,7 +113,7 @@ export async function enqueueWhatsAppGuestPortalHandoff(
     binding_id: event.binding_id,
     conversation_id: conversationId,
     source_event_id: event.id,
-    portal_session_id: session.sessionId,
+    portal_session_id: session?.sessionId ?? null,
     recipient_phone: recipientPhone,
     idempotency_key: `${event.id}:${conversationId}`,
     message_type: "text",
@@ -132,7 +137,7 @@ export async function enqueueWhatsAppGuestPortalHandoff(
       .eq("id", eventJob.id)
       .eq("status", eventJob.status);
     if (error) {
-      await admin.rpc("wa_revoke_guest_portal_session", { _session_id: session.sessionId });
+      if (session) await admin.rpc("wa_revoke_guest_portal_session", { _session_id: session.sessionId });
       throw new Error("portal_handoff_job_requeue_failed");
     }
     return { queued: true, jobId: eventJob.id, sessionId: session.sessionId };
@@ -155,5 +160,5 @@ export async function enqueueWhatsAppGuestPortalHandoff(
     throw new Error("portal_handoff_job_create_failed");
   }
 
-  return { queued: true, jobId: created.id, sessionId: session.sessionId };
+  return { queued: true, jobId: created.id, sessionId: session?.sessionId ?? null, fallback: !session };
 }
