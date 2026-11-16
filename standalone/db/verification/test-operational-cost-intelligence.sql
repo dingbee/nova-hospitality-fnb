@@ -186,7 +186,16 @@ set local role authenticated;
 do $phase4$ begin
  if (select count(*) from public.restaurant_cost_reconciliation_runs) <> 1 then raise exception 'Phase 4 run RLS leaked across properties'; end if;
  if (select count(*) from public.restaurant_cost_variances) <> 1 then raise exception 'Phase 4 variance RLS leaked across properties'; end if;
+ -- Authorized property member can create a reconciliation run and update a case within scope.
+ insert into public.restaurant_cost_reconciliation_runs(tenant_id,property_id,period_start,period_end,currency,source_fingerprint)
+ values('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','2026-12-01','2026-12-31','TZS','fixture-authorized-write');
+ update public.restaurant_cost_variances set investigation_status='under_investigation',updated_at=now()
+ where property_id='20000000-0000-0000-0000-000000000001';
+ if not exists(select 1 from public.restaurant_cost_variances where property_id='20000000-0000-0000-0000-000000000001' and investigation_status='under_investigation') then
+  raise exception 'Authorized property member could not update a variance case';
+ end if;
 end $phase4$;
+
 reset role;
 -- Property-scoped membership cannot read or write another property in the same tenant.
 insert into public.restaurant_members values
