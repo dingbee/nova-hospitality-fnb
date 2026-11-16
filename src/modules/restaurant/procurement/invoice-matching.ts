@@ -263,8 +263,7 @@ export function calculateSupplierInvoiceMatch(evidence: InvoiceMatchEvidence): I
   pendingLineCount += pendingOrderLineIds.size;
 
   const hasMatchedEvidence = acceptedLineCount > 0 || partiallyMatchedLineCount > 0;
-  const hasOutstandingEvidence =
-    pendingLineCount > 0 || partiallyMatchedLineCount > 0;
+  const hasOutstandingEvidence = pendingLineCount > 0 || partiallyMatchedLineCount > 0;
   const matchStatus: InvoiceMatchStatus = dimensions.length
     ? "mismatched"
     : !hasMatchedEvidence
