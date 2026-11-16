@@ -490,10 +490,23 @@ export async function postGoodsReceipt(
   let acceptedValue = 0;
 
   for (const l of rows) {
-    const accepted = Number(l.accepted_quantity ?? 0);
-    const unitCost = Number(l.unit_cost ?? 0);
-    acceptedValue += accepted * unitCost;
-    const stockQuantity = converted.get(l.id) ?? { quantity: accepted, unitCost, stockUnitId: itemById.get(l.inventory_item_id)?.unit_id ?? l.unit_id ?? null };
+    const receiptAccepted = Number(l.accepted_quantity ?? 0);
+    const receiptUnitCost = Number(l.unit_cost ?? 0);
+    acceptedValue += receiptAccepted * receiptUnitCost;
+    const stockQuantity = converted.get(l.id) ?? {
+      quantity: receiptAccepted,
+      unitCost: receiptUnitCost,
+      stockUnitId: itemById.get(l.inventory_item_id)?.unit_id ?? l.unit_id ?? null,
+      poUnitId: l.unit_id ?? null,
+      poUnitCost: receiptUnitCost,
+      poReceivedQuantity: Number(l.received_quantity ?? 0),
+      poAcceptedQuantity: receiptAccepted,
+      poRejectedQuantity: Number(l.rejected_quantity ?? 0) + Number(l.damaged_quantity ?? 0),
+    };
+    const accepted = stockQuantity.poAcceptedQuantity;
+    const unitCost = stockQuantity.poUnitCost;
+    const receivedQty = stockQuantity.poReceivedQuantity;
+    const rejected = stockQuantity.poRejectedQuantity;
 
     // ME-03: whether this line's fulfilment was already posted by an
     // earlier attempt at this exact receipt. `moved` (below) is the
@@ -506,7 +519,7 @@ export async function postGoodsReceipt(
     // already being set is the fallback signal for "this line, specifically,
     // was already processed by a prior successful post."
     let alreadyPosted = Boolean(l.stock_movement_id);
-    if (accepted > 0 && l.inventory_item_id) {
+    if (receiptAccepted > 0 && l.inventory_item_id) {
       const moved = await insertMovement(sb, userId, {
         tenantId,
         propertyId: receipt.property_id,
@@ -555,7 +568,6 @@ export async function postGoodsReceipt(
 
     // ---- variance detection (recorded, never auto-approved) ----
     const orderedQty = Number(l.ordered_quantity ?? 0);
-    const receivedQty = Number(l.received_quantity ?? 0);
     if (orderedQty > 0 && Math.abs(receivedQty - orderedQty) > 0.0001) {
       await raiseVariance(sb, userId, {
         tenantId,
@@ -594,7 +606,6 @@ export async function postGoodsReceipt(
         dedupeKey: `receipt-price:${receipt.id}:${l.id}`,
       });
     }
-    const rejected = Number(l.rejected_quantity ?? 0) + Number(l.damaged_quantity ?? 0);
     if (rejected > 0) {
       await raiseVariance(sb, userId, {
         tenantId,
@@ -608,7 +619,7 @@ export async function postGoodsReceipt(
         receiptItemId: l.id,
         supplierId: receipt.supplier_id,
         expectedValue: receivedQty,
-        actualValue: Number(l.accepted_quantity ?? 0),
+        actualValue: accepted,
         detail: { stage: "receiving", rejected, damaged: Number(l.damaged_quantity ?? 0) },
         dedupeKey: `receipt-quality:${receipt.id}:${l.id}`,
       });
@@ -618,7 +629,7 @@ export async function postGoodsReceipt(
       tenantId,
       supplierId: receipt.supplier_id,
       inventoryItemId: l.inventory_item_id,
-      unitId: l.unit_id,
+      unitId: stockQuantity.poUnitId,
       priceType: "received",
       price: unitCost,
       quantity: receivedQty,
