@@ -474,6 +474,22 @@ export async function setInvoicePaymentStatus(
   ) {
     throw new Error("Invoice balance data is invalid; payment status cannot be changed.");
   }
+  const { data: creditApplications, error: creditApplicationsError } = await sb
+    .from("restaurant_supplier_credit_note_applications")
+    .select("amount")
+    .eq("tenant_id", input.tenantId)
+    .eq("invoice_id", input.invoiceId);
+  if (creditApplicationsError) {
+    throw new Error("Unable to load applied supplier credits: " + creditApplicationsError.message);
+  }
+  const creditApplied = ((creditApplications ?? []) as any[]).reduce(
+    (sum, application) => sum + Number(application.amount ?? 0),
+    0,
+  );
+  if (!Number.isFinite(creditApplied) || creditApplied < 0 || creditApplied - total > 0.0001) {
+    throw new Error("Applied supplier credit data is invalid; payment status cannot be changed.");
+  }
+  const payableTotal = Number((total - creditApplied).toFixed(2));
 
   const settling = input.paymentStatus === "paid" || input.paymentStatus === "partially_paid";
   if (settling && before.match_status !== "matched" && !input.reason) {
@@ -486,7 +502,7 @@ export async function setInvoicePaymentStatus(
   }
 
   const amountPaid =
-    input.amountPaid ?? (input.paymentStatus === "paid" ? total : previousAmountPaid);
+    input.amountPaid ?? (input.paymentStatus === "paid" ? payableTotal : previousAmountPaid);
   if (!Number.isFinite(amountPaid) || amountPaid < 0) {
     throw new Error("Amount paid must be a finite, non-negative value.");
   }
@@ -545,7 +561,8 @@ export async function setInvoicePaymentStatus(
       previous_amount_paid: previousAmountPaid,
       amount_paid: data.amount_paid,
       invoice_total: total,
-      outstanding_balance: Number((total - Number(data.amount_paid ?? 0)).toFixed(2)),
+      credit_applied: creditApplied,
+      outstanding_balance: Number((payableTotal - Number(data.amount_paid ?? 0)).toFixed(2)),
     },
   });
   return data;
