@@ -53,12 +53,12 @@ do $$ begin
   raise exception 'Financial snapshot mutation unexpectedly succeeded';
  exception when insufficient_privilege then null;
  end;
-end $;
+end $$;
 reset role;
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000002',true);
 set local role authenticated;
-do $ begin
+do $$ begin
  if (select count(*) from public.restaurant_operational_profitability_snapshots)<>0 then raise exception 'Chef role must not read financial profitability snapshots'; end if;
-end $;
+end $$;
 reset role;
 rollback;
