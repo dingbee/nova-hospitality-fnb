@@ -199,6 +199,7 @@ export interface IntelligentPurchaseOrderLine {
   description: string;
   quantity: number;
   recommendedPurchaseQuantity: number;
+  overrideApplied?: boolean;
   stockUnitsPerPurchaseUnit: number;
   minimumOrderQuantity: number;
   orderMultiple: number;
@@ -453,6 +454,10 @@ export async function createIntelligentPurchaseOrders(
     );
   }
 
+  const overrideIds = input.lineOverrides.map((row) => row.inventoryItemId);
+  if (new Set(overrideIds).size !== overrideIds.length) {
+    throw new Error("A manual quantity override may be supplied only once per inventory item.");
+  }
   const created = [];
   for (const group of plan.groups) {
     const reference = intelligentPurchaseOrderReference(input.idempotencyKey, group.key);
@@ -461,10 +466,15 @@ export async function createIntelligentPurchaseOrders(
         (item) => item.inventoryItemId === line.inventoryItemId,
       );
       const finalQuantity = override?.quantity ?? line.quantity;
-      if (!Number.isFinite(finalQuantity) || finalQuantity <= 0) {
-        throw new Error("Every intelligent PO line must have a positive quantity.");
+      const orderMultiple = Number(line.orderMultiple ?? 1);
+      const minimumOrderQuantity = Number(line.minimumOrderQuantity ?? 0);
+      if (!Number.isFinite(finalQuantity) || finalQuantity <= 0 ||
+          !Number.isFinite(orderMultiple) || orderMultiple <= 0 ||
+          !Number.isFinite(minimumOrderQuantity) || finalQuantity < minimumOrderQuantity ||
+          Math.abs(finalQuantity / orderMultiple - Math.round(finalQuantity / orderMultiple)) > 0.000001) {
+        throw new Error("Every intelligent PO quantity must satisfy its supplier minimum and configured order multiple.");
       }
-      return { ...line, quantity: finalQuantity };
+      return { ...line, quantity: finalQuantity, overrideApplied: override !== undefined };
     });
 
     const { data: existing, error: existingError } = await sb
@@ -502,7 +512,9 @@ export async function createIntelligentPurchaseOrders(
               Number(saved.unit_price) === Number(line.unitPrice),
           ),
         );
-      if (!lineMatches || existing.supplier_id !== group.supplierId) {
+      if (!lineMatches || existing.supplier_id !== group.supplierId ||
+          existing.property_id !== group.propertyId || existing.location_id !== group.locationId ||
+          existing.currency !== group.currency) {
         throw new Error(
           "An intelligent PO already exists for this request but its persisted lines differ from the current plan. Review the Procurement Centre; the existing order was not changed.",
         );
@@ -530,7 +542,24 @@ export async function createIntelligentPurchaseOrders(
       directReason:
         "Prepared by Ask LexiBite from Purchasing Intelligence replenishment recommendations.",
       notes:
-        "Draft generated from live Purchasing Intelligence. Quantities come from its replenishment recommendation; supplier prices were revalidated against the live supplier catalogue.",
+        "Draft generated from live Purchasing Intelligence. Quantities come from its replenishment recommendation; supplier prices and pack constraints were revalidated. " +
+        (finalLines.some((line) => line.overrideApplied) ? "One or more purchase quantities were manually overridden; see the retained audit metadata." : "No manual quantity overrides were applied."),
+      metadata: {
+        intelligent_replenishment: {
+          engine: "p0-02-stock-position-v1",
+          generated_at: plan.generatedAt,
+          idempotency_key: input.idempotencyKey,
+          lines: finalLines.map((line) => ({
+            inventory_item_id: line.inventoryItemId,
+            supplier_product_id: line.supplierProductId,
+            recommended_purchase_quantity: line.recommendedPurchaseQuantity,
+            final_purchase_quantity: line.quantity,
+            override_applied: Boolean(line.overrideApplied),
+            stock_units_per_purchase_unit: line.stockUnitsPerPurchaseUnit,
+            recommendation_evidence: line.recommendationEvidence,
+          })),
+        },
+      },
       lines: finalLines.map((line) => ({
         inventoryItemId: line.inventoryItemId,
         supplierProductId: line.supplierProductId,
@@ -540,6 +569,25 @@ export async function createIntelligentPurchaseOrders(
         unitPrice: line.unitPrice,
       })),
     });
+
+    const { data: persistedLines, error: persistedError } = await sb
+      .from("restaurant_purchase_order_items")
+      .select("inventory_item_id, supplier_product_id, unit_id, quantity, unit_price")
+      .eq("tenant_id", input.tenantId)
+      .eq("purchase_order_id", po.id);
+    if (persistedError) throw new Error("Unable to verify persisted intelligent PO lines: " + persistedError.message);
+    const persistedRows = (persistedLines ?? []) as any[];
+    const persistedMatches = persistedRows.length === finalLines.length &&
+      finalLines.every((line) => persistedRows.some((saved) =>
+        saved.inventory_item_id === line.inventoryItemId &&
+        saved.supplier_product_id === line.supplierProductId &&
+        saved.unit_id === line.unitId &&
+        Number(saved.quantity) === Number(line.quantity) &&
+        Number(saved.unit_price) === Number(line.unitPrice),
+      ));
+    if (!persistedMatches) {
+      throw new Error("Persisted intelligent PO lines do not match the approved recommendation and quantity overrides.");
+    }
 
     created.push({
       id: po.id as string,
