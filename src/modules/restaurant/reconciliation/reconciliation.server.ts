@@ -557,12 +557,7 @@ async function inventoryFacts(sb: Sb, tenantId: string, businessDate: string, lo
 
 async function procurementFacts(sb: Sb, tenantId: string, businessDate: string) {
   const { from, to } = businessDayWindow(businessDate);
-  const [
-    { data: receipts },
-    { data: invoices },
-    { data: variances },
-    { data: creditApplications },
-  ] = await Promise.all([
+  const [receiptsRes, invoicesRes, variancesRes, creditApplicationsRes] = await Promise.all([
     sb
       .from("restaurant_goods_receipts")
       .select("id, document_number, purchase_order_id, status, accepted_value, currency, posted_at")
@@ -587,11 +582,21 @@ async function procurementFacts(sb: Sb, tenantId: string, businessDate: string) 
       .select("invoice_id, amount")
       .eq("tenant_id", tenantId),
   ]);
+  for (const [label, result] of [
+    ["goods receipts", receiptsRes],
+    ["supplier invoices", invoicesRes],
+    ["procurement variances", variancesRes],
+    ["supplier credit applications", creditApplicationsRes],
+  ] as const) {
+    if (result.error) {
+      throw new Error("Unable to load reconciliation " + label + ": " + result.error.message);
+    }
+  }
   return {
-    receipts: (receipts ?? []) as any[],
-    invoices: (invoices ?? []) as any[],
-    variances: (variances ?? []) as any[],
-    creditApplications: (creditApplications ?? []) as any[],
+    receipts: (receiptsRes.data ?? []) as any[],
+    invoices: (invoicesRes.data ?? []) as any[],
+    variances: (variancesRes.data ?? []) as any[],
+    creditApplications: (creditApplicationsRes.data ?? []) as any[],
   };
 }
 
