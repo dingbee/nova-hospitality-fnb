@@ -46,7 +46,7 @@ do $$ declare t text; begin
  foreach t in array array['restaurant_cost_reconciliation_runs','restaurant_cost_reconciliation_lines','restaurant_cost_variances','restaurant_cost_variance_events','restaurant_cost_variance_evidence','restaurant_cost_variance_thresholds'] loop
  execute format('alter table public.%I enable row level security',t);
  execute format('revoke all on public.%I from public, anon',t);
- execute format('grant select, insert on public.%I to authenticated',t);
+ execute format('grant select on public.%I to authenticated',t);
  execute format('grant all on public.%I to service_role',t);
  end loop;
 end $$;
@@ -58,3 +58,4 @@ create policy restaurant_cost_variance_evidence_read on public.restaurant_cost_v
 create policy restaurant_cost_variance_thresholds_read on public.restaurant_cost_variance_thresholds for select to authenticated using(public.restaurant_can_read_scoped(tenant_id,property_id));
 create policy restaurant_cost_variance_thresholds_write on public.restaurant_cost_variance_thresholds for all to authenticated using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id)) with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id));
 grant update (investigation_status,assigned_to,resolution_details,resolved_at,resolved_by,updated_at) on public.restaurant_cost_variances to authenticated;
+grant insert, update, delete on public.restaurant_cost_variance_thresholds to authenticated;
