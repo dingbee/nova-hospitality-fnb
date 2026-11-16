@@ -81,6 +81,19 @@ jobs:
         if: steps.lint.outcome == 'failure'
         run: echo "::warning::Changed-source lint has existing formatting debt; scoped functional test and build gates remain blocking."
 
+      - name: Initialize dedicated P0-02 PostgreSQL migration replay
+        env:
+          NOVA_DB_HOST: 127.0.0.1
+          NOVA_DB_PORT: 5432
+          NOVA_DB_NAME: lexibite_p0_02_test
+          NOVA_DB_SUPERUSER: postgres
+          NOVA_DB_SUPERUSER_PASSWORD: postgres
+          NOVA_DB_AUTHENTICATOR: nova_authenticator
+          NOVA_DB_AUTHENTICATOR_PASSWORD: p0-02-ci-only-authenticator-password
+        run: |
+          set -euo pipefail
+          ./local/scripts/init-db.sh
+
       - name: Verify service-recovery quantity migration in isolated PostgreSQL
         env:
           PGPASSWORD: postgres
@@ -108,7 +121,7 @@ jobs:
       - name: Verify P0-02 inventory and procurement integrity in isolated PostgreSQL
         env:
           PGPASSWORD: postgres
-        run: psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-p0-02-inventory-integrity.sql
+        run: psql -h localhost -U postgres -d lexibite_p0_02_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-p0-02-inventory-integrity.sql
 
       - name: Apply and verify the complete LexiBite LB-02 migration chain
         env:
