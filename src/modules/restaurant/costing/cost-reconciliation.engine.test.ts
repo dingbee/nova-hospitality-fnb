@@ -8,5 +8,6 @@ describe("Phase 4 reconciliation kernel",()=>{
  it("rejects malformed currency and fractional minor units",()=>{expect(()=>reconcileCost({...base,currency:"TZS "})).toThrow();expect(()=>reconcileCost({...base,actualMinor:1.2})).toThrow()});
  it("requires exact allocation balance",()=>{expect(reconcileAllocation(10000,7000,3000).balanced).toBe(true);expect(()=>reconcileAllocation(10000,7000,2999)).toThrow()});
  it("compares only identical units and currencies",()=>{expect(comparePurchasePrice({expectedUnitMinor:100,actualUnitMinor:120,expectedUnit:"kg",actualUnit:"kg",expectedCurrency:"TZS",actualCurrency:"TZS"}).varianceMinor).toBe(20);expect(comparePurchasePrice({expectedUnitMinor:100,actualUnitMinor:120,expectedUnit:"kg",actualUnit:"g",expectedCurrency:"TZS",actualCurrency:"TZS"}).comparable).toBe(false)});
+ it("supports the sale-time recipe consumption cost classification",()=>expect(reconcileCost({...base,kind:"consumption_cost"})?.kind).toBe("consumption_cost"));
  it("rejects duplicate sources",()=>expect(()=>assertUniqueSources([{tenantId:"t",sourceType:"expense",sourceId:"x"},{tenantId:"t",sourceType:"expense",sourceId:"x"}])).toThrow());
 });
