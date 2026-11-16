@@ -216,7 +216,7 @@ GRANT EXECUTE ON FUNCTION public.wa_validate_webhook_event_binding_scope() TO se
 
 DROP TRIGGER IF EXISTS wa_webhook_event_binding_scope_guard ON public.wa_webhook_events;
 CREATE TRIGGER wa_webhook_event_binding_scope_guard
-BEFORE INSERT OR UPDATE OF binding_id, tenant_id, property_id, location_id, waba_id, phone_number_id, status
+BEFORE INSERT OR UPDATE OF binding_id, tenant_id, property_id, location_id, waba_id, phone_number_id
 ON public.wa_webhook_events
 FOR EACH ROW
 EXECUTE FUNCTION public.wa_validate_webhook_event_binding_scope();
