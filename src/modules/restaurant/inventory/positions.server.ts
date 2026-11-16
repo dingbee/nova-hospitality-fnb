@@ -250,8 +250,8 @@ export async function getStockPositionEvidenceForReplenishment(
     input.locationId
       ? [input.locationId]
       : input.propertyId
-        ? locationRows.filter((row) => row.property_id === input.propertyId && row.status === "active").map((row) => row.id)
-        : locationRows.filter((row) => row.status === "active").map((row) => row.id),
+        ? locationRows.filter((row) => row.property_id === input.propertyId).map((row) => row.id)
+        : locationRows.map((row) => row.id),
   );
   if (input.locationId && !locationById.has(input.locationId)) {
     throw new Error("Requested stock location does not belong to this tenant.");
@@ -310,7 +310,7 @@ export async function getStockPositionEvidenceForReplenishment(
     const inScope = input.locationId
       ? locationId === input.locationId
       : input.propertyId
-        ? (row.property_id === input.propertyId || location?.property_id === input.propertyId) &&
+        ? (row.property_id === input.propertyId && (!locationId || location?.property_id === input.propertyId)) ||
           location?.property_id === input.propertyId
         : locationId === null || allowedLocationIds.has(locationId);
     if (!evidence || !inScope) continue;
@@ -334,8 +334,9 @@ export async function getStockPositionEvidenceForReplenishment(
   const orders = ((ordersRes.data ?? []) as any[]).filter((order) => {
     if (input.locationId) return order.location_id === input.locationId;
     if (input.propertyId) {
-      return order.property_id === input.propertyId ||
-        (order.location_id && locationById.get(order.location_id)?.property_id === input.propertyId);
+      const locationProperty = order.location_id ? locationById.get(order.location_id)?.property_id : null;
+      if (order.property_id === input.propertyId) return !order.location_id || locationProperty === input.propertyId;
+      return !order.property_id && locationProperty === input.propertyId;
     }
     return true;
   });
