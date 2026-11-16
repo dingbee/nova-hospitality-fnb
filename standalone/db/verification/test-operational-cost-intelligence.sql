@@ -170,6 +170,7 @@ do $$ begin
  if (select amount from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002' and property_id='20000000-0000-0000-0000-000000000001')<>750 then raise exception 'Activity driver weight 3/5 was not applied'; end if;
 end $$;
 -- Phase 4 additive reconciliation schema and property isolation.
+insert into public.restaurant_members values ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','restaurant_manager','20000000-0000-0000-0000-000000000001');
 insert into public.restaurant_cost_reconciliation_runs(tenant_id,property_id,period_start,period_end,currency,source_fingerprint)
 values
  ('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','2026-11-01','2026-11-30','TZS','fixture-property-1'),
