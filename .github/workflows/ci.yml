@@ -135,6 +135,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export LC_ALL=C
           replay_migrations="$(mktemp -d)"
           trap 'rm -rf "$replay_migrations"' EXIT
           cp standalone/db/migrations/*.sql "$replay_migrations/"
