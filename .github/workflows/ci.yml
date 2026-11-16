@@ -136,6 +136,7 @@ jobs:
         run: |
           set -euo pipefail
           ./local/scripts/init-db.sh
+          export PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD"
 
           expected="$(find standalone/db/migrations -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
           applied="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'applied'")"
