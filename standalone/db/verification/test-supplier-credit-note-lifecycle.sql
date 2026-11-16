@@ -142,7 +142,8 @@ INSERT INTO public.restaurant_supplier_credit_notes(
  ('40000000-0000-4000-8000-000000000003','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0003','SUP-CN-003',current_date,'USD',100,0,100,'Foreign currency adjustment','50000000-0000-4000-8000-000000000001'),
  ('40000000-0000-4000-8000-000000000004','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000001','SCN-0004','SUP-CN-004',current_date,'TZS',100,0,100,'Invoice-specific adjustment','50000000-0000-4000-8000-000000000001'),
  ('40000000-0000-4000-8000-000000000005','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0005','SUP-CN-005',current_date,'TZS',100,0,100,'Additional supplier adjustment','50000000-0000-4000-8000-000000000001'),
- ('40000000-0000-4000-8000-000000000006','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0006','SUP-CN-006',current_date,'TZS',50,0,50,'Property-specific adjustment','50000000-0000-4000-8000-000000000001');
+ ('40000000-0000-4000-8000-000000000006','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0006','SUP-CN-006',current_date,'TZS',50,0,50,'Property-specific adjustment','50000000-0000-4000-8000-000000000001'),
+ ('40000000-0000-4000-8000-000000000007','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0007','SUP-CN-007',current_date,'TZS',20,0,20,'Final settlement credit','50000000-0000-4000-8000-000000000001');
 UPDATE public.restaurant_supplier_credit_notes SET property_id='70000000-0000-4000-8000-000000000001' WHERE id='40000000-0000-4000-8000-000000000006';
 INSERT INTO public.restaurant_members(tenant_id,user_id,property_id,role,active) VALUES
  ('10000000-0000-4000-8000-000000000001','50000000-0000-4000-8000-000000000001',NULL,'owner',true),
@@ -154,7 +155,7 @@ SELECT set_config('request.test_user_id','50000000-0000-4000-8000-000000000001',
 
 DO $credit_note_rls$
 BEGIN
-  IF (SELECT count(*) FROM public.restaurant_supplier_credit_notes WHERE tenant_id='10000000-0000-4000-8000-000000000001') <> 6 THEN
+  IF (SELECT count(*) FROM public.restaurant_supplier_credit_notes WHERE tenant_id='10000000-0000-4000-8000-000000000001') <> 7 THEN
     RAISE EXCEPTION 'Tenant member cannot read own supplier credit notes';
   END IF;
   IF (SELECT count(*) FROM public.restaurant_supplier_credit_notes WHERE tenant_id='10000000-0000-4000-8000-000000000002') <> 0 THEN
@@ -284,6 +285,12 @@ SELECT public.restaurant_apply_supplier_credit_note(
  '30000000-0000-4000-8000-000000000001',
  10,'Apply remaining credit','60000000-0000-4000-8000-000000000009'
 );
+SELECT public.restaurant_apply_supplier_credit_note(
+ '10000000-0000-4000-8000-000000000001',
+ '40000000-0000-4000-8000-000000000007',
+ '30000000-0000-4000-8000-000000000001',
+ 20,'Settle remaining invoice balance','60000000-0000-4000-8000-000000000010'
+);
 
 RESET ROLE;
 
@@ -296,13 +303,13 @@ BEGIN
     RAISE EXCEPTION 'Idempotent replay or final application count is incorrect';
   END IF;
   IF (SELECT round(total - amount_paid - (SELECT sum(amount) FROM public.restaurant_supplier_credit_note_applications WHERE invoice_id='30000000-0000-4000-8000-000000000001'),2)
-      FROM public.restaurant_supplier_invoices WHERE id='30000000-0000-4000-8000-000000000001') <> 20 THEN
+      FROM public.restaurant_supplier_invoices WHERE id='30000000-0000-4000-8000-000000000001') <> 0 THEN
     RAISE EXCEPTION 'Invoice outstanding balance did not net the full credit application';
   END IF;
-  IF (SELECT payment_status FROM public.restaurant_supplier_invoices WHERE id='30000000-0000-4000-8000-000000000001') <> 'partially_paid' THEN
-    RAISE EXCEPTION 'Invoice payment status did not reflect applied supplier credit';
+  IF (SELECT payment_status FROM public.restaurant_supplier_invoices WHERE id='30000000-0000-4000-8000-000000000001') <> 'paid' THEN
+    RAISE EXCEPTION 'Invoice payment status did not reflect full cash and credit settlement';
   END IF;
-  IF (SELECT count(*) FROM public.restaurant_procurement_audit WHERE document_type='supplier_credit_note' AND action='credit_note_applied') <> 2 THEN
+  IF (SELECT count(*) FROM public.restaurant_procurement_audit WHERE document_type='supplier_credit_note' AND action='credit_note_applied') <> 3 THEN
     RAISE EXCEPTION 'Credit application audit was not written atomically';
   END IF;
 END
