@@ -77,7 +77,18 @@ The live `guests` and `guest_preferences` tables have no tenant_id/property_id c
 - Several existing security-definer helpers are callable by authenticated users with a fixed `search_path=public`; WCE migrations must not broaden their grants or introduce public-executable security-definer functions. Review every new function's owner, search path, EXECUTE grants and authorization checks.
 - WCE-specific inbox, messages, customer consent, campaigns and usage data must have tenant and property scope where applicable, explicit RLS policies, indexes and server-side scope checks. Never trust tenant/property IDs from a WhatsApp message payload.
 
-### 4.4 Migration provenance reconciliation
+### 4.4 Live Supabase Security Advisor baseline
+
+The live Supabase security advisor was also run read-only on 2026-11-16. It reported:
+- 23 public tables with RLS enabled but no policies. The listed tables are predominantly internal idempotency, invitation, migration-audit, credential handoff, integration inbox/outbox, delivery-attempt and reconciliation stores. No-policy RLS is deny-by-default for normal API roles; each table's grants and intended service-role-only access still require verification before it is reused.
+- 2 anonymous-executable SECURITY DEFINER functions: `lb01_revoke_connection_credentials()` and `lb02_publish_approved_outlet()`. Both are trigger functions with fixed `search_path=public`, but their EXECUTE grants to anon/authenticated are unnecessary and should be removed in a separate security-hardening change after confirming trigger execution remains intact.
+- 70 authenticated-executable SECURITY DEFINER functions. This count is not itself proof of a vulnerability; each exposed RPC requires review of caller identity, tenant/property checks, argument trust and grants. WCE must not add a SECURITY DEFINER RPC without explicit authorization tests.
+- 1 mutable-search-path warning for `configure_mobile_money_tenant_provider(...)`. It is SECURITY INVOKER and uses schema-qualified table names, but its search path/grants need hardening review before WCE-04 relies on it directly.
+- Supabase Auth leaked-password protection is disabled. This is an inherited account/project security setting and was not changed during read-only reconnaissance.
+
+The database catalog query found 115 SECURITY DEFINER functions; all had a function-level search_path setting, but Supabase's advisor identified the separate mutable-search-path case above. Do not interpret RLS-enabled/no-policy tables or SECURITY DEFINER counts in isolation as exploit evidence; validate grants, caller context and function bodies.
+
+### 4.5 Migration provenance reconciliation
 
 The live ledger has 171 records while the current repository has 156 migration files. This is explained in part by:
 - the original `0001_fnb_core.sql` being applied in five ledger parts;
