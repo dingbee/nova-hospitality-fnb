@@ -129,6 +129,33 @@ function ProfitabilityPage() {
     onSuccessToast: (d) => `${(d as { rows: unknown[] }).rows.length} menu item(s) analysed`,
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["restaurant.profitability"] }),
   });
+  const validPeriod = Boolean(from && to && Date.parse(`${to}T00:00:00.000Z`) >= Date.parse(`${from}T00:00:00.000Z`));
+  const periodDays = validPeriod
+    ? Math.floor((Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`)) / 86_400_000) + 1
+    : 0;
+  const previousToDate = validPeriod ? new Date(Date.parse(`${from}T00:00:00.000Z`) - 86_400_000) : new Date();
+  const previousFromDate = validPeriod ? new Date(previousToDate.getTime() - (periodDays - 1) * 86_400_000) : new Date();
+  const previousFrom = iso(previousFromDate);
+  const previousTo = iso(previousToDate);
+  const selectedPeriodMatchesResult = Boolean(
+    compute.data &&
+    compute.data.periodStart.slice(0, 10) === from &&
+    compute.data.periodEnd.slice(0, 10) === to
+  );
+  const previousComparison = useQuery({
+    queryKey: ["restaurant.profitability.previous", tenantId, effectivePropertyId, from, to],
+    queryFn: () => computeFn({
+      data: {
+        tenantId: tenantId!,
+        from: `${previousFrom}T00:00:00.000Z`,
+        to: `${previousTo}T23:59:59.999Z`,
+        persist: false,
+        limit: 100,
+        propertyId: effectivePropertyId || undefined,
+      },
+    }),
+    enabled: Boolean(tenantId && validPeriod && selectedPeriodMatchesResult),
+  });
 
   if (!ws.isLoading && !ws.data?.tenant) {
     return (
@@ -247,6 +274,50 @@ function ProfitabilityPage() {
           </Button>
         </div>
       </SectionCard>
+
+      {result && selectedPeriodMatchesResult && (
+        <SectionCard
+          title="Period comparison"
+          description={`Current period ${from} to ${to} compared with ${previousFrom} to ${previousTo}.`}
+        >
+          {previousComparison.isLoading ? (
+            <p className="text-sm text-muted-foreground">Calculating the preceding period…</p>
+          ) : previousComparison.data ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard
+                label="Net sales change"
+                value={money(result.operational.netSales - previousComparison.data.operational.netSales)}
+                hint={previousComparison.data.operational.netSales !== 0
+                  ? `${(((result.operational.netSales - previousComparison.data.operational.netSales) / Math.abs(previousComparison.data.operational.netSales)) * 100).toFixed(1)}% vs previous period`
+                  : "No previous-period sales"}
+              />
+              <StatCard
+                label="Contribution change"
+                value={money(result.operational.contribution - previousComparison.data.operational.contribution)}
+                hint={previousComparison.data.operational.contribution !== 0
+                  ? `${(((result.operational.contribution - previousComparison.data.operational.contribution) / Math.abs(previousComparison.data.operational.contribution)) * 100).toFixed(1)}% vs previous period`
+                  : "No previous-period contribution"}
+              />
+              <StatCard
+                label="Operating profit change"
+                value={money(result.operational.operatingProfit - previousComparison.data.operational.operatingProfit)}
+                hint={previousComparison.data.operational.operatingProfit !== 0
+                  ? `${(((result.operational.operatingProfit - previousComparison.data.operational.operatingProfit) / Math.abs(previousComparison.data.operational.operatingProfit)) * 100).toFixed(1)}% vs previous period`
+                  : "No previous-period operating profit"}
+              />
+              <StatCard
+                label="Operating margin movement"
+                value={result.operational.operatingMarginPercent != null && previousComparison.data.operational.operatingMarginPercent != null
+                  ? `${(result.operational.operatingMarginPercent - previousComparison.data.operational.operatingMarginPercent).toFixed(2)} pp`
+                  : "—"}
+                hint="Percentage-point change"
+              />
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Previous-period comparison is not available for this scope.</p>
+          )}
+        </SectionCard>
+      )}
 
       {result && (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
