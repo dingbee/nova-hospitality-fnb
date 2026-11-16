@@ -418,6 +418,67 @@ export async function computeProfitability(
   });
   const netSalesByLine = new Map<string, number>();
   const dimensionMap = new Map<string, { dimension_type: "channel" | "outlet" | "property"; dimension_key: string; dimension_name: string; property_id: string | null; location_id: string | null; net_sales: number; direct_variable_costs: number; contribution: number; allocated_operating_expenses: number; operating_profit: number }>();
+  const propertyNetSalesById = new Map<string, number>();
+  const locationNetSalesByKey = new Map<string, number>();
+  const channelNetSalesByPropertyKey = new Map<string, number>();
+  const channelNetSalesByLocationKey = new Map<string, number>();
+  const addDimension = (
+    type: "channel" | "outlet" | "property",
+    key: string,
+    name: string,
+    net: number,
+    cost: number,
+    propertyId: string | null,
+    locationId: string | null,
+  ) => {
+    const id = `${type}:${propertyId ?? "tenant"}:${locationId ?? "all"}:${key}`;
+    const current = dimensionMap.get(id) ?? {
+      dimension_type: type,
+      dimension_key: key,
+      dimension_name: name,
+      property_id: propertyId,
+      location_id: locationId,
+      net_sales: 0,
+      direct_variable_costs: 0,
+      contribution: 0,
+      allocated_operating_expenses: 0,
+      operating_profit: 0,
+    };
+    current.net_sales += net;
+    current.direct_variable_costs += cost;
+    current.contribution += net - cost;
+    dimensionMap.set(id, current);
+  };
+  for (const item of itemRows) {
+    const order = orderById.get(item.order_id);
+    if (!order || item.is_comp) continue;
+    const lineGross = Number(item.line_total ?? 0) + Number(item.discount ?? 0);
+    const refundGross = refundByLine.get(item.id) ?? 0;
+    const refundedTaxForLine = Number(item.line_total ?? 0) > 0
+      ? Number(item.tax_amount ?? 0) * (refundGross / Number(item.line_total))
+      : 0;
+    const lineNet = lineGross - Number(item.discount ?? 0) - Number(item.tax_amount ?? 0) - refundGross + refundedTaxForLine;
+    const lineCost = (actualByItem.has(item.id) ? actualByItem.get(item.id)! : Number(item.line_cost ?? 0)) +
+      (consumableCostByOrderItem.get(item.id) ?? 0);
+    netSalesByLine.set(item.id, lineNet);
+    const channel = String(item.channel ?? order.source ?? "unknown");
+    const channelKey = `${order.property_id ?? "tenant"}:${channel}`;
+    addDimension("channel", channelKey, channel, lineNet, lineCost, order.property_id ?? null, null);
+    if (order.property_id) {
+      propertyNetSalesById.set(order.property_id, (propertyNetSalesById.get(order.property_id) ?? 0) + lineNet);
+      channelNetSalesByPropertyKey.set(channelKey, (channelNetSalesByPropertyKey.get(channelKey) ?? 0) + lineNet);
+      if (order.location_id) {
+        const locationKey = `${order.property_id}:${order.location_id}`;
+        locationNetSalesByKey.set(locationKey, (locationNetSalesByKey.get(locationKey) ?? 0) + lineNet);
+        const channelLocationKey = `${locationKey}:${channel}`;
+        channelNetSalesByLocationKey.set(channelLocationKey, (channelNetSalesByLocationKey.get(channelLocationKey) ?? 0) + lineNet);
+      }
+      addDimension("property", order.property_id, order.property_id, lineNet, lineCost, order.property_id, null);
+    }
+    if (order.location_id) {
+      addDimension("outlet", order.location_id, order.location_id, lineNet, lineCost, order.property_id ?? null, order.location_id);
+    }
+  }
   const sumAllocationRows = (rows: any[]) =>
     rows.reduce((sum, row) => sum + prorateMonthlyAmount(Number(row.amount ?? 0), row.period_start), 0);
   const allocationMethodFor = (rows: any[]) => {
