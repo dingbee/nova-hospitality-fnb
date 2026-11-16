@@ -144,6 +144,12 @@ jobs:
           export NOVA_MIGRATIONS_DIR="$replay_migrations"
 
           ./local/scripts/init-db.sh
+          before_ledger="$(PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*)::text || ':' || md5(coalesce(string_agg(filename || ':' || checksum || ':' || status, chr(10) ORDER BY filename), '')) FROM nova_local.schema_migrations")"
+          ./local/scripts/apply-migrations.sh
+          after_ledger="$(PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*)::text || ':' || md5(coalesce(string_agg(filename || ':' || checksum || ':' || status, chr(10) ORDER BY filename), '')) FROM nova_local.schema_migrations")"
+          echo "Full replay repeatability: before=$before_ledger after=$after_ledger"
+          test "$before_ledger" = "$after_ledger"
+
           export PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD"
 
           expected="$(find standalone/db/migrations -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
@@ -294,18 +300,26 @@ jobs:
           # unmodified PR #188 baseline for comparison with production.
           cp standalone/db/migrations/0134_procurement_tenant_referential_integrity.sql "$replay_migrations/"
           cp standalone/db/migrations/0135_member_station_assignment_rls_overlap_cleanup.sql "$replay_migrations/"
+          cp standalone/db/migrations/0136_restore_documented_production_hotfixes.sql "$replay_migrations/"
           ./local/scripts/apply-migrations.sh
+          before_hardened_ledger="$(PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*)::text || ':' || md5(coalesce(string_agg(filename || ':' || checksum || ':' || status, chr(10) ORDER BY filename), '')) FROM nova_local.schema_migrations")"
+          NOVA_MIGRATIONS_DIR="$replay_migrations" ./local/scripts/apply-migrations.sh
+          after_hardened_ledger="$(PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*)::text || ':' || md5(coalesce(string_agg(filename || ':' || checksum || ':' || status, chr(10) ORDER BY filename), '')) FROM nova_local.schema_migrations")"
+          echo "PR188 hardened replay repeatability: before=$before_hardened_ledger after=$after_hardened_ledger"
+          test "$before_hardened_ledger" = "$after_hardened_ledger"
 
-          expected_hardened="$((expected_base + 2))"
+          expected_hardened="$((expected_base + 3))"
           applied_hardened="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'applied'")"
           skipped_hardened="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'skipped'")"
           hardening_migration="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE filename = '0134_procurement_tenant_referential_integrity.sql' AND status = 'applied'")"
           station_policy_migration="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE filename = '0135_member_station_assignment_rls_overlap_cleanup.sql' AND status = 'applied'")"
-          echo "PR #188 hardened: repository files=$expected_hardened; applied=$applied_hardened; skipped=$skipped_hardened; P0-01 migration=$hardening_migration; station policy fix=$station_policy_migration"
+          hotfix_migration="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE filename = '0136_restore_documented_production_hotfixes.sql' AND status = 'applied'")"
+          echo "PR #188 hardened: repository files=$expected_hardened; applied=$applied_hardened; skipped=$skipped_hardened; P0-01 migration=$hardening_migration; station policy fix=$station_policy_migration; hotfix parity=$hotfix_migration"
           test "$applied_hardened" -eq "$((expected_hardened + 1))"
           test "$skipped_hardened" -eq 0
           test "$hardening_migration" -eq 1
           test "$station_policy_migration" -eq 1
+          test "$hotfix_migration" -eq 1
 
           psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
             -c "\\copy (SELECT filename, checksum, status, applied_at, note FROM nova_local.schema_migrations ORDER BY filename) TO STDOUT WITH CSV HEADER" > pr188-hardened-migration-ledger.csv
@@ -346,6 +360,10 @@ jobs:
             -f standalone/db/verification/test-p0-01-tenant-fk-catalog.sql
           psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_pr188_lineage_replay \
             -f standalone/db/verification/test-p0-01-tenant-fk-catalog.sql
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/test-p0-01-hotfix-parity.sql
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_pr188_lineage_replay \
+            -f standalone/db/verification/test-p0-01-hotfix-parity.sql
           psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_full_replay \
             -f standalone/db/verification/test-me03-financial-function-reconstruction.sql
           psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_pr188_lineage_replay \
