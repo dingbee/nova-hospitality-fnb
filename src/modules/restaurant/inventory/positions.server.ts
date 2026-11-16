@@ -458,6 +458,9 @@ export async function getStockPositionEvidenceForReplenishment(
       accepted,
       rejectedOrDamaged,
     });
+    if (rejectedOrDamaged > 0) {
+      evidence.manualReviewReasons.push("PO line " + line.id + " has rejected or damaged receipts requiring supplier reconciliation.");
+    }
     // All received goods (accepted, rejected or damaged) are no longer an
     // outstanding delivery. Only accepted goods have already entered on-hand;
     // rejected/damaged goods remain excluded until a replacement is confirmed.
