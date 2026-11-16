@@ -236,7 +236,7 @@ describe("consumeForRecipeSale — dedupe-key uniqueness when the same childless
 
   it("rejects missing inventory currency instead of silently defaulting to TZS", async () => {
     const fake = makeFakeSupabase();
-    fake.inventoryItems[0].currency = null;
+    (fake.inventoryItems[0] as any).currency = null;
     await expect(consumeForRecipeSale(fake.supabase as any, USER, {
       tenantId: TENANT,
       propertyId: PROPERTY,
