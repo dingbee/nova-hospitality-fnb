@@ -114,6 +114,14 @@ export async function insertMovement(
     dedupeKey?: string | null;
   },
 ) {
+  // Resolve a known idempotency key before evaluating current stock. A
+  // retry must resolve to the original ledger fact, not fail because that
+  // original movement has already reduced the available balance.
+  if (row.dedupeKey) {
+    const existing = await findMovementByDedupeKey(sb, row.tenantId, row.dedupeKey);
+    if (existing) return null;
+  }
+
   // One policy for every stock-affecting path. Corrections and inbound
   // movements pass straight through; an outbound movement that would push the
   // balance below zero is refused unless the item allows it or a supervisor
