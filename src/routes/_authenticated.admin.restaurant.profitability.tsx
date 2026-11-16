@@ -469,11 +469,29 @@ function ProfitabilityPage() {
                   {s.menu_item_name}
                   {s.confidence_state ? <span className="ml-2 text-xs text-muted-foreground">{s.confidence_state.replaceAll("_", " ")}</span> : null}
                 </span>
-                <span className="text-xs text-muted-foreground">
-                  {s.period_start} → {s.period_end} · {s.currency}{" "}
-                  {Number(s.gross_profit).toLocaleString()} {s.snapshot_type === "operational" ? "operating profit" : "contribution"}
-                  {s.food_cost_percent != null ? ` · ${s.food_cost_percent}% direct cost` : ""}
-                </span>
+                <div className="text-right">
+                  <span className="text-xs text-muted-foreground">
+                    {s.period_start} → {s.period_end} · {s.currency}{" "}
+                    {Number(s.gross_profit).toLocaleString()} {s.snapshot_type === "operational" ? "operating profit" : "contribution"}
+                    {s.food_cost_percent != null ? ` · ${s.food_cost_percent}% direct cost` : ""}
+                  </span>
+                  {s.source_counts ? (
+                    <p className="text-xs text-muted-foreground">
+                      {s.source_counts.orders ?? 0} orders · {s.source_counts.stock_movements ?? 0} stock movements · {s.source_counts.expense_allocations ?? 0} expense allocations
+                    </p>
+                  ) : null}
+                  {s.source_references ? (
+                    <details className="mt-1 text-xs text-muted-foreground">
+                      <summary className="cursor-pointer">Source trace</summary>
+                      <div className="mt-1 max-w-xl space-y-1 break-all">
+                        <p>Orders: {(s.source_references.order_ids ?? []).join(", ") || "None"}</p>
+                        <p>Stock movements: {(s.source_references.stock_movement_ids ?? []).join(", ") || "None"}</p>
+                        <p>Consumable events: {(s.source_references.consumable_event_ids ?? []).join(", ") || "None"}</p>
+                        <p>Expense allocations: {(s.source_references.allocation_source_ids ?? []).join(", ") || "None"}</p>
+                      </div>
+                    </details>
+                  ) : null}
+                </div>
               </li>
             ))}
           </ul>
