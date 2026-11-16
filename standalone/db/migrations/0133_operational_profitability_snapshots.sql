@@ -63,7 +63,10 @@ alter table public.restaurant_operational_profitability_snapshots enable row lev
 alter table public.restaurant_operational_profitability_dimensions enable row level security;
 drop policy if exists restaurant_operational_profitability_snapshots_read on public.restaurant_operational_profitability_snapshots;
 create policy restaurant_operational_profitability_snapshots_read on public.restaurant_operational_profitability_snapshots
- for select to authenticated using(public.restaurant_can_read_scoped(tenant_id,property_id));
+ for select to authenticated using(
+  public.restaurant_can_read_scoped(tenant_id,property_id)
+  and public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id)
+ );
 drop policy if exists restaurant_operational_profitability_snapshots_write on public.restaurant_operational_profitability_snapshots;
 create policy restaurant_operational_profitability_snapshots_write on public.restaurant_operational_profitability_snapshots
  for all to authenticated
@@ -71,7 +74,10 @@ create policy restaurant_operational_profitability_snapshots_write on public.res
  with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id));
 drop policy if exists restaurant_operational_profitability_dimensions_read on public.restaurant_operational_profitability_dimensions;
 create policy restaurant_operational_profitability_dimensions_read on public.restaurant_operational_profitability_dimensions
- for select to authenticated using(public.restaurant_can_read_scoped(tenant_id,property_id));
+ for select to authenticated using(
+  public.restaurant_can_read_scoped(tenant_id,property_id)
+  and public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id)
+ );
 drop policy if exists restaurant_operational_profitability_dimensions_write on public.restaurant_operational_profitability_dimensions;
 create policy restaurant_operational_profitability_dimensions_write on public.restaurant_operational_profitability_dimensions
  for all to authenticated
