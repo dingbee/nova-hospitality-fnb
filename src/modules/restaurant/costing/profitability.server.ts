@@ -187,14 +187,8 @@ export async function computeProfitability(
   let consumptionProfileQuery = sb.from("restaurant_consumption_profiles")
     .select("id, cost_class, property_id, location_id")
     .eq("tenant_id", input.tenantId).eq("active", true);
-  if (input.propertyId) {
-    pendingExpenseQuery = pendingExpenseQuery.eq("property_id", input.propertyId);
-    consumptionProfileQuery = consumptionProfileQuery.eq("property_id", input.propertyId);
-  }
-  if (input.locationId) {
-    pendingExpenseQuery = pendingExpenseQuery.eq("location_id", input.locationId);
-    consumptionProfileQuery = consumptionProfileQuery.eq("location_id", input.locationId);
-  }
+  if (input.propertyId) pendingExpenseQuery = pendingExpenseQuery.eq("property_id", input.propertyId);
+  if (input.locationId) pendingExpenseQuery = pendingExpenseQuery.eq("location_id", input.locationId);
   const [{ data: items, error: itemError }, { data: movements, error: movementError }, { data: payments, error: paymentError }, { data: unallocated, error: unallocatedError }, { data: pendingExpenses, error: pendingExpenseError }, { data: consumptionEvents, error: consumptionError }, { data: consumptionProfiles, error: consumptionProfileError }] = await Promise.all([
     sb.from("restaurant_order_items")
       .select("id, order_id, menu_item_id, description, quantity, line_total, line_cost, discount, tax_amount, service_charge_amount, status, is_comp, channel")
@@ -284,7 +278,14 @@ export async function computeProfitability(
   const consumptionEventRows = (consumptionEvents ?? []) as any[];
   const serviceConsumables = consumptionEventRows.filter((e) => e.cost_class === "service_consumable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0);
   const otherDirectVariableCosts = consumptionEventRows.filter((e) => e.cost_class === "other_direct_variable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0);
-  const hasConsumptionProfiles = ((consumptionProfiles ?? []) as any[]).length > 0;
+  const profileRows = (consumptionProfiles ?? []) as any[];
+  const reportPropertyIds = input.propertyId
+    ? [input.propertyId]
+    : [...new Set(orderRows.map((o) => o.property_id).filter(Boolean))];
+  const hasConsumptionProfiles = reportPropertyIds.length > 0 && reportPropertyIds.every((propertyId) =>
+    profileRows.some((p) => p.active !== false && (p.property_id === null || p.property_id === propertyId) &&
+      (!input.locationId || p.location_id === null || p.location_id === input.locationId))
+  );
   const movementRows = (movements ?? []) as any[];
   const paymentRows = (payments ?? []) as any[];
   const currencyRows = [
