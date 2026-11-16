@@ -82,7 +82,7 @@ export async function ingestMetaWhatsAppWebhook(
           : null;
       const eventType = typeof change?.field === "string" ? change.field : "unknown";
 
-      if (!phoneNumberId || !wabaId || !/^\\d{3,32}$/.test(phoneNumberId) || !/^\\d{3,32}$/.test(wabaId)) {
+      if (!phoneNumberId || !wabaId || !/^\d{3,32}$/.test(phoneNumberId) || !/^\d{3,32}$/.test(wabaId)) {
         ignored += 1;
         continue;
       }
