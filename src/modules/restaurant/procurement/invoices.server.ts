@@ -52,6 +52,36 @@ export async function listSupplierInvoices(sb: Sb, userId: string, input: z.infe
 export async function recordSupplierInvoice(sb: Sb, userId: string, input: RecordInvoiceInput) {
   await assertCapability(sb, userId, input.tenantId, "invoice.manage");
 
+  const { data: supplier, error: supplierError } = await sb
+    .from("restaurant_suppliers")
+    .select("id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.supplierId)
+    .single();
+  if (supplierError || !supplier) throw new Error("Supplier is missing or inaccessible in this tenant.");
+
+  if (input.purchaseOrderId) {
+    const { data: linkedOrder, error: orderError } = await sb
+      .from("restaurant_purchase_orders")
+      .select("id, supplier_id, currency, property_id, location_id")
+      .eq("tenant_id", input.tenantId)
+      .eq("id", input.purchaseOrderId)
+      .single();
+    if (orderError || !linkedOrder) throw new Error("Linked purchase order is missing or inaccessible.");
+    if (linkedOrder.supplier_id !== input.supplierId) {
+      throw new Error("Supplier invoice must belong to the same supplier as its purchase order.");
+    }
+    if (String(linkedOrder.currency ?? "").toUpperCase() !== input.currency.toUpperCase()) {
+      throw new Error("Supplier invoice currency must match its purchase order currency; FX conversion is not inferred.");
+    }
+    if (input.propertyId && linkedOrder.property_id && input.propertyId !== linkedOrder.property_id) {
+      throw new Error("Supplier invoice property does not match the linked purchase order.");
+    }
+    if (input.locationId && linkedOrder.location_id && input.locationId !== linkedOrder.location_id) {
+      throw new Error("Supplier invoice location does not match the linked purchase order.");
+    }
+  }
+
   const subtotal = input.lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
   const taxTotal = input.taxTotal || input.lines.reduce((s, l) => s + (l.taxAmount ?? 0), 0);
   const total = subtotal + taxTotal;
