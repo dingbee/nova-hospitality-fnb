@@ -168,7 +168,7 @@ RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $
+AS $wce$
 DECLARE
   bound_tenant uuid;
   bound_property uuid;
@@ -206,7 +206,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$;
+$wce$;
 
 REVOKE ALL ON FUNCTION public.wa_validate_webhook_event_binding_scope() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.wa_validate_webhook_event_binding_scope() TO service_role;
@@ -342,7 +342,7 @@ RETURNS TABLE (
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $
+AS $wce$
   UPDATE public.wa_guest_portal_sessions s
   SET open_count = s.open_count + 1,
       opened_at = coalesce(s.opened_at, now()),
@@ -373,7 +373,7 @@ AS $
   RETURNING s.id, s.tenant_id, s.property_id, s.location_id,
             s.binding_id, s.conversation_id, s.currency,
             s.menu_context, s.expires_at, s.scope;
-$;
+$wce$;
 
 REVOKE ALL ON FUNCTION public.wa_resolve_guest_portal_session(text)
   FROM PUBLIC, anon, authenticated;
@@ -385,7 +385,7 @@ RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $
+AS $wce$
 BEGIN
   UPDATE public.wa_guest_portal_sessions
   SET revoked_at = coalesce(revoked_at, now())
@@ -393,7 +393,7 @@ BEGIN
     AND revoked_at IS NULL;
   RETURN FOUND;
 END;
-$;
+$wce$;
 
 REVOKE ALL ON FUNCTION public.wa_revoke_guest_portal_session(uuid)
   FROM PUBLIC, anon, authenticated;
