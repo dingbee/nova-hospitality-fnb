@@ -423,7 +423,7 @@ export async function getStockPositionEvidenceForReplenishment(
   const confirmationByLine = new Map<string, any>();
   for (const row of (confirmationItemsRes.data ?? []) as any[]) {
     const header = confirmationRows.find((candidate) => candidate.id === row.confirmation_id);
-    if (!header) continue;
+    if (!header || ["pending", "draft"].includes(header.status)) continue;
     const previous = confirmationByLine.get(row.purchase_order_item_id);
     if (!previous || String(header.created_at ?? "") > String(previous.header.created_at ?? "")) {
       confirmationByLine.set(row.purchase_order_item_id, { row, header });
@@ -480,7 +480,7 @@ export async function getStockPositionEvidenceForReplenishment(
       evidence.manualReviewReasons.push("Supplier declined or cancelled confirmation for PO line " + line.id + ".");
       continue;
     }
-    if (confirmation && !["confirmed", "partially_confirmed", "pending", "draft"].includes(confirmationStatus)) {
+    if (confirmation && !["confirmed", "partially_confirmed"].includes(confirmationStatus)) {
       evidence.manualReviewReasons.push("Supplier confirmation for PO line " + line.id + " has an unsupported status.");
       continue;
     }
