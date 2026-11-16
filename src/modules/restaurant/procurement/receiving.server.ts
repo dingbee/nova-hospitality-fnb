@@ -334,6 +334,20 @@ export async function postGoodsReceipt(
     .eq("receipt_id", receipt.id);
 
   const rows = (lines ?? []) as any[];
+  const poItemIds = [...new Set(rows.map((line) => line.purchase_order_item_id).filter(Boolean))] as string[];
+  const { data: poItems, error: poItemsError } = receipt.purchase_order_id && poItemIds.length
+    ? await sb
+        .from("restaurant_purchase_order_items")
+        .select("id, unit_id, stock_unit_id, stock_units_per_purchase_unit, supplier_product_id")
+        .eq("tenant_id", tenantId)
+        .eq("purchase_order_id", receipt.purchase_order_id)
+        .in("id", poItemIds)
+    : { data: [] as any[], error: null };
+  if (poItemsError) throw new Error("Unable to load purchase-order unit snapshots: " + poItemsError.message);
+  const poItemById = new Map(((poItems ?? []) as any[]).map((line) => [line.id, line]));
+  if (poItemIds.some((id) => !poItemById.has(id))) {
+    throw new Error("A goods-receipt line references a missing purchase-order line. Posting was stopped.");
+  }
 
   // ---- unit conversion: what was captured -> what the ledger holds -------
   // A receipt line is captured in whatever unit the delivery note actually
@@ -354,7 +368,8 @@ export async function postGoodsReceipt(
 
   const unitIds = [
     ...new Set(
-      [...rows.map((l) => l.unit_id), ...((items ?? []) as any[]).map((i) => i.unit_id)].filter(
+      [...rows.map((l) => l.unit_id), ...((items ?? []) as any[]).map((i) => i.unit_id),
+        ...((poItems ?? []) as any[]).map((i) => i.unit_id)].filter(
         Boolean,
       ),
     ),
@@ -367,19 +382,49 @@ export async function postGoodsReceipt(
     : { data: [] as any[] };
   const unitById = new Map(((unitRows ?? []) as UnitRow[]).map((u) => [u.id, u]));
 
-  const converted = new Map<string, { quantity: number; unitCost: number }>();
+  const converted = new Map<string, { quantity: number; unitCost: number; stockUnitId: string | null }>();
   for (const l of rows) {
     const accepted = Number(l.accepted_quantity ?? 0);
     const unitCost = Number(l.unit_cost ?? 0);
+    const item = l.inventory_item_id ? itemById.get(l.inventory_item_id) : null;
+    const poItem = l.purchase_order_item_id ? poItemById.get(l.purchase_order_item_id) : null;
     if (accepted <= 0 || !l.inventory_item_id) {
-      converted.set(l.id, { quantity: accepted, unitCost });
+      converted.set(l.id, { quantity: accepted, unitCost, stockUnitId: poItem?.stock_unit_id ?? item?.unit_id ?? l.unit_id ?? null });
       continue;
     }
-    const item = itemById.get(l.inventory_item_id);
-    // No stock unit recorded on the item, or the line was captured directly
-    // in it — nothing to convert.
+
+    if (poItem?.stock_units_per_purchase_unit != null) {
+      const factor = Number(poItem.stock_units_per_purchase_unit);
+      if (!poItem.stock_unit_id || !item?.unit_id || poItem.stock_unit_id !== item.unit_id ||
+          !poItem.unit_id || !Number.isFinite(factor) || factor <= 0) {
+        throw new Error("The purchase-order line has an invalid or obsolete stock-unit conversion snapshot. Reconcile the item unit before posting.");
+      }
+      let purchaseQuantity = accepted;
+      if (l.unit_id !== poItem.unit_id) {
+        const toPurchaseUnit = convertUnits(accepted, unitById.get(l.unit_id), unitById.get(poItem.unit_id));
+        if (!toPurchaseUnit.exact) {
+          throw new Error(
+            '"' + l.description + '": receipt unit cannot be reconciled to the purchase-order unit (' +
+            (toPurchaseUnit.reason ?? "unknown conversion") + ").",
+          );
+        }
+        purchaseQuantity = toPurchaseUnit.quantity;
+      }
+      const stockQuantity = purchaseQuantity * factor;
+      converted.set(l.id, {
+        quantity: stockQuantity,
+        unitCost: (accepted * unitCost) / stockQuantity,
+        stockUnitId: poItem.stock_unit_id,
+      });
+      continue;
+    }
+
+    if (poItem?.supplier_product_id) {
+      throw new Error("A supplier-linked legacy purchase-order line has no immutable conversion snapshot. Manual review is required before receiving.");
+    }
+    // Legacy/manual PO lines retain the existing item-level conversion path.
     if (!item?.unit_id || !l.unit_id || l.unit_id === item.unit_id) {
-      converted.set(l.id, { quantity: accepted, unitCost });
+      converted.set(l.id, { quantity: accepted, unitCost, stockUnitId: item?.unit_id ?? l.unit_id ?? null });
       continue;
     }
     if (l.unit_id === item.purchase_unit_id) {
@@ -387,18 +432,21 @@ export async function postGoodsReceipt(
       converted.set(l.id, {
         quantity: result.quantity,
         unitCost: (accepted * unitCost) / result.quantity,
+        stockUnitId: item.unit_id,
       });
       continue;
     }
     const result = convertUnits(accepted, unitById.get(l.unit_id), unitById.get(item.unit_id));
     if (!result.exact) {
       throw new Error(
-        `"${l.description}": received in a unit that cannot be converted to this item's stock unit (${result.reason ?? "unknown conversion"}). Fix the unit on this line, or the item's purchase unit/pack size, before posting.`,
+        '"' + l.description + '": received in a unit that cannot be converted to this item's stock unit (' +
+        (result.reason ?? "unknown conversion") + "). Fix the unit on this line, or the item's purchase unit/pack size, before posting.",
       );
     }
     converted.set(l.id, {
       quantity: result.quantity,
       unitCost: (accepted * unitCost) / result.quantity,
+      stockUnitId: item.unit_id,
     });
   }
 
@@ -408,7 +456,7 @@ export async function postGoodsReceipt(
     const accepted = Number(l.accepted_quantity ?? 0);
     const unitCost = Number(l.unit_cost ?? 0);
     acceptedValue += accepted * unitCost;
-    const stockQuantity = converted.get(l.id) ?? { quantity: accepted, unitCost };
+    const stockQuantity = converted.get(l.id) ?? { quantity: accepted, unitCost, stockUnitId: itemById.get(l.inventory_item_id)?.unit_id ?? l.unit_id ?? null };
 
     // ME-03: whether this line's fulfilment was already posted by an
     // earlier attempt at this exact receipt. `moved` (below) is the
@@ -427,7 +475,7 @@ export async function postGoodsReceipt(
         propertyId: receipt.property_id,
         locationId: l.storage_location_id ?? receipt.location_id,
         inventoryItemId: l.inventory_item_id,
-        unitId: itemById.get(l.inventory_item_id)?.unit_id ?? l.unit_id,
+        unitId: stockQuantity.stockUnitId ?? itemById.get(l.inventory_item_id)?.unit_id ?? l.unit_id,
         movementType: "purchase_receipt",
         quantity: Math.abs(stockQuantity.quantity),
         unitCost: stockQuantity.unitCost,
@@ -457,6 +505,7 @@ export async function postGoodsReceipt(
           line: l,
           accepted: stockQuantity.quantity,
           unitCost: stockQuantity.unitCost,
+          stockUnitId: stockQuantity.stockUnitId,
         });
       } else {
         // insertMovement returned null: this line's stock was already
@@ -670,9 +719,9 @@ export async function postGoodsReceipt(
 async function persistReceiptBatch(
   sb: Sb,
   userId: string,
-  args: { tenantId: string; receipt: any; line: any; accepted: number; unitCost: number },
+  args: { tenantId: string; receipt: any; line: any; accepted: number; unitCost: number; stockUnitId: string | null },
 ): Promise<void> {
-  const { tenantId, receipt, line, accepted, unitCost } = args;
+  const { tenantId, receipt, line, accepted, unitCost, stockUnitId } = args;
 
   const { data: item } = await sb
     .from("restaurant_inventory_items")
@@ -709,7 +758,7 @@ async function persistReceiptBatch(
       received_date: (receipt.received_at ?? new Date().toISOString()).slice(0, 10),
       expiry_date: line.expiry_date ?? null,
       quantity: accepted,
-      unit_id: line.unit_id ?? null,
+      unit_id: stockUnitId ?? null,
       unit_cost: unitCost,
       status: "active",
       reference_type: "restaurant_goods_receipt_item",
