@@ -21,9 +21,16 @@ describe("PW-08 supplier invoice reconciliation", () => {
     expect(calculateSupplierInvoiceMatch(evidence).dimensions.map((d) => d.code)).toContain("CURRENCY_MISMATCH");
     expect(calculateSupplierInvoiceMatch(evidence).matchStatus).toBe("mismatched");
   });
-  it("does not count unposted receipt lines as accepted evidence", () => {
+  it("rejects an invoice line linked to a receipt that has not been posted", () => {
     const evidence = base();
     evidence.receipts[0]!.posted = false;
+    expect(calculateSupplierInvoiceMatch(evidence).dimensions.map((d) => d.code)).toContain("INVALID_RECEIPT_LINK");
+    expect(calculateSupplierInvoiceMatch(evidence).matchStatus).toBe("mismatched");
+  });
+  it("keeps an invoice pending when no posted receipt exists yet", () => {
+    const evidence = base();
+    evidence.receipts = [];
+    evidence.invoiceLines[0]!.receiptItemId = null;
     expect(calculateSupplierInvoiceMatch(evidence).matchStatus).toBe("unmatched");
   });
   it("rejects a receipt reference belonging to another purchase-order line", () => {
@@ -48,6 +55,17 @@ describe("PW-08 supplier invoice reconciliation", () => {
     evidence.invoice.taxTotal = 20;
     expect(calculateSupplierInvoiceMatch(evidence).dimensions.map((d) => d.code)).toContain("TAX_DOES_NOT_RECONCILE");
     expect(calculateSupplierInvoiceMatch(evidence).matchStatus).toBe("mismatched");
+  });
+  it("aggregates split invoice lines before comparing accepted quantity", () => {
+    const evidence = base();
+    evidence.invoiceLines.push({
+      id: "invoice-line-2", purchaseOrderItemId: "po-line-1", receiptItemId: "receipt-line-1",
+      description: "Cooking oil second line", quantity: 1, unitPrice: 100, taxAmount: 18,
+    });
+    evidence.invoice.subtotal = 300;
+    evidence.invoice.taxTotal = 54;
+    evidence.invoice.total = 354;
+    expect(calculateSupplierInvoiceMatch(evidence).dimensions.map((d) => d.code)).toContain("INVOICED_ABOVE_ACCEPTED");
   });
   it("does not silently accept an invoice line with no PO linkage", () => {
     const evidence = base();
