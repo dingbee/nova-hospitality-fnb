@@ -141,7 +141,10 @@ function seed(options?: {
     restaurant_stock_transfer_lines: [],
     restaurant_supplier_confirmations: [],
     restaurant_supplier_confirmation_items: [],
-    restaurant_inventory_units: [],
+    restaurant_inventory_units: [
+      { id: STOCK_UNIT, dimension: "count", base_unit_id: null, factor: 1 },
+      { id: PURCHASE_UNIT, dimension: "count", base_unit_id: STOCK_UNIT, factor: 5 },
+    ],
     restaurant_supplier_price_history: [],
     restaurant_supplier_products: [
       {
@@ -279,6 +282,25 @@ describe("Purchasing Intelligence procurement integrity", () => {
       locationId: LOCATION,
     });
     expect(result.suggestions).toHaveLength(0);
+  });
+
+  it("requires an explicit supplier order multiple for non-count purchase units", async () => {
+    seed({ packSize: 1 });
+    tables.restaurant_inventory_units = [
+      { id: STOCK_UNIT, dimension: "mass", base_unit_id: null, factor: 1 },
+      { id: PURCHASE_UNIT, dimension: "mass", base_unit_id: STOCK_UNIT, factor: 1 },
+    ];
+    const result = await getPurchasingIntelligence(fakeSupabase(), "user-1", {
+      tenantId: TENANT,
+      windowDays: 30,
+      propertyId: PROPERTY,
+      locationId: LOCATION,
+    });
+    expect(result.suggestions).toHaveLength(0);
+    expect(result.reviewItems?.some((row) =>
+      row.inventoryItemId === ITEM &&
+      /order multiple is not configured/i.test(row.reason),
+    )).toBe(true);
   });
 
   it("fails closed when a critical inventory source query fails", async () => {
