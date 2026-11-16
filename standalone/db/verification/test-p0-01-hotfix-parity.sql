@@ -1,5 +1,5 @@
 -- P0-01 hotfix and intentional security-delta assertions.
-DO $
+DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.restaurant_cash_payouts'::regclass AND conname='restaurant_cash_payouts_reason_chk' AND contype='c' AND convalidated AND position('length(btrim(reason))' IN pg_get_constraintdef(oid))>0)
   OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.restaurant_cash_payouts'::regclass AND conname='restaurant_cash_payouts_signed_chk' AND contype='c' AND convalidated AND position('reversal_of IS NULL' IN pg_get_constraintdef(oid))>0 AND position('amount >' IN pg_get_constraintdef(oid))>0 AND position('amount <' IN pg_get_constraintdef(oid))>0)
