@@ -363,6 +363,13 @@ AS $
         AND b.property_id = s.property_id
         AND b.location_id = s.location_id
     )
+    AND EXISTS (
+      SELECT 1
+      FROM public.restaurant_locations l
+      WHERE l.id = s.location_id
+        AND l.status = 'active'
+        AND l.is_storage = false
+    )
   RETURNING s.id, s.tenant_id, s.property_id, s.location_id,
             s.binding_id, s.conversation_id, s.currency,
             s.menu_context, s.expires_at, s.scope;
