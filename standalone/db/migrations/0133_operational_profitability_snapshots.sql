@@ -22,6 +22,8 @@ create table if not exists public.restaurant_operational_profitability_snapshots
  allocated_operating_expenses numeric(14,2) not null default 0,
  unallocated_operating_expenses numeric(14,2) not null default 0,
  operating_profit numeric(14,2) not null default 0,
+ contribution_margin_percent numeric(6,2),
+ operating_margin_percent numeric(6,2),
  confidence_state text not null check(confidence_state in ('fully_reconciled','partially_reconciled','estimated','pending_expense_verification','unallocated_costs_present','incomplete_source_data')),
  source_counts jsonb not null default '{}'::jsonb check(jsonb_typeof(source_counts)='object'),
  source_references jsonb not null default '{}'::jsonb check(jsonb_typeof(source_references)='object'),
