@@ -192,9 +192,9 @@ Required separation:
 
 | Phase | Main dependency / exit gate |
 |---|---|
-| WCE-00 | Actual repository baseline, portal-first architecture, capability/security matrix, migration provenance plan and external dependency register verified. |
-| WCE-01 | Meta Cloud API client and Embedded Signup v4 browser contracts; token lifecycle/error handling and mocked contract CI. Live onboarding additionally requires Meta app, verified business, configuration, Advanced Access and test WABA/phone. |
-| Migration gate | Reconcile all 171 live ledger records against the current 157 SQL files, resolve duplicate numeric prefixes and historical split/rename/consolidation provenance, then prove isolated clean replay. No WCE DDL before this gate. |
+| WCE-00 | CLOSED — current repository baseline, portal-first architecture, capability/security matrix, external dependency register and migration replay evidence verified. |
+| WCE-01 | CLOSED — Meta Cloud API client, Embedded Signup v4 browser contract, server-side tenant-authorized onboarding, encrypted token persistence/reauthorization and mocked CI verified. Live onboarding additionally requires Meta app, verified business, configuration, Advanced Access and test WABA/phone. |
+| Migration gate | VERIFIED — 171 live ledger rows preserved; six missing applied sources recovered; historical splits/renames/consolidations and repository-only unapplied files recorded; isolated PostgreSQL 17 replay passed (162 applied, one UAT-only data repair not applicable), 217/217 public tables RLS-enabled and security assertions passed. |
 | WCE-02 | Tenant/property/outlet resolution, encrypted credential-vault integration, durable Meta webhook inbox, idempotency/retry/dead-letter and secure non-table-bound Guest Portal sessions. |
 | WCE-03 | WhatsApp-to-Guest-Portal handoff, deep-link/session continuity, branded mobile entry, attribution and failure fallback. |
 | WCE-04 | Unified Guest Commerce using existing menu, modifier, price/tax, inventory, cart/checkout, order and POS contracts; no parallel order engine. |
@@ -205,18 +205,20 @@ Required separation:
 
 ## 9. WCE-00 exit assessment
 
-**Architecture path:** Updated to WhatsApp initiation and Guest Portal completion; baseline closure still pending verification of migration provenance and current branch/CI state.  
-**Reusable domain services:** Identified.  
-**Live project and schema:** Identified and read-only inspected.  
-**WhatsApp-specific schema:** Absent.  
-**Native Meta credentials/approvals:** Not available; external dependency.  
-**Known implementation risks:** Guest CRM RLS is not tenant-safe; Pesapal currently uses global environment credentials; no restaurant reservation service was located; channel category needs a messaging type.  
-**Migration provenance:** Not closed. The live ledger has 171 records and current `main` has 157 SQL files; 14-record count difference is not proof of missing migrations. Exact record-to-file lineage, including duplicate prefixes and historical source-only/live-only records, remains a blocking gate before WCE-02 DDL.
+<badge color="success">CLOSED</badge>
 
-### Required next actions
+**Architecture path:** Verified — WhatsApp initiates acquisition, conversation and identity; the Guest Portal is the primary visual commerce interface; the existing LexiBite Commerce Engine remains authoritative. Conversational ordering remains an alternative interaction over the same domain services.
 
-1. Preserve this report as the WCE-00 baseline.
-2. Complete migration provenance reconciliation before any WCE schema migration.
-3. Begin WCE-01 provider foundation independently of Meta approval, with no false live-success claims.
-4. Do not deploy or promote production.
-5. Continue through WCE-08 only with evidence-backed phase closure and no unresolved P0/P1 defects.
+**Reusable domain services:** Verified — menu/catalogue, modifiers, pricing/tax, order creation, POS routing, Pesapal verification, commercial entitlements, API integration vault and analytics foundations are identified.
+
+**Guest Portal boundary:** The current `/order/$tableId` journey and `restaurant_guest_sessions` are table/QR-bound. They are reusable for menu and commerce services, not for WhatsApp session continuity. A separate short-lived, hashed-token portal session is required.
+
+**Security gaps recorded:** `guests` and `guest_preferences` have no tenant/property ownership and their authenticated policies allow any authenticated user. These remain a WCE-05 P1 remediation gate. Pesapal still has global environment credentials and must be tenant/property-configured in WCE-06. No restaurant table-reservation domain was found; WCE-06 must implement one only after a final domain search.
+
+**Migration provenance:** Verified for WCE-02. Production ledger remains 171 applied records; current main inventory at inspection was 157 SQL files. Six missing applied SQL sources were recovered in PR #193, and ten repository-only migrations were identified as not present in the production ledger. The raw count difference is therefore not interpreted as missing migrations. Clean replay CI run `43955212519` passed: 162 migrations applied, one UAT-only data repair marked not applicable, 217/217 public tables have RLS, station-assignment policies are split, LB-03 direct EXECUTE is revoked, and the temporary owner PIN recovery function is absent. No production ledger/schema changes were made.
+
+**WCE-01:** Verified and closed for software acceptance in CI run `43954209682`. Live Meta API onboarding remains an external WCE-08 acceptance item because Meta app credentials, Business verification, Embedded Signup configuration, Advanced Access and a test WABA/phone have not been supplied.
+
+### Execution decision
+
+WCE-00 is CLOSED. WCE-01 is CLOSED. The migration provenance gate is VERIFIED. WCE-02 may proceed on `wce/wce-02-messaging-sessions`, stacked on `wce/migration-provenance-recovery`. Production migrations, deployment and promotion remain unauthorized.
