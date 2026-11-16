@@ -175,6 +175,14 @@ function ProfitabilityPage() {
     (propertyCurrencies.size === 1 ? [...propertyCurrencies][0] : null);
   const money = (v: number) =>
     currency ? `${currency} ${Number(v).toLocaleString()}` : Number(v).toLocaleString();
+  const confidenceDescriptions: Record<string, string> = {
+    incomplete_source_data: "Source configuration or closed-order fiscal totals are incomplete.",
+    pending_expense_verification: "Pending operating expenses remain outside recognised operating profit.",
+    unallocated_costs_present: "Some recognised operating expenses have not been allocated to a property or outlet.",
+    estimated: "One or more recipe or consumable costs are based on estimates rather than actual stock movements.",
+    partially_reconciled: "At least one property has not completed the Phase 4 reconciliation for this reporting period.",
+    fully_reconciled: "All required source data is present and every property has completed reconciliation.",
+  };
 
   return (
     <div className="space-y-4">
@@ -377,7 +385,7 @@ function ProfitabilityPage() {
             label="Service consumables"
             value={money(result.totals.service_consumables)}
             icon={Calculator}
-            hint="Awaiting Phase 1 source integration"
+            hint="Captured from classified stock movements at order close"
           />
         </div>
       )}
@@ -385,7 +393,7 @@ function ProfitabilityPage() {
       {result && (
         <SectionCard
           title="Operational confidence"
-          description={`Calculation status: ${result.operational?.reconciliationState ?? result.totals.confidence_state}. Figures are not certified as fully reconciled while source coverage is incomplete.`}
+          description={`Data confidence: ${(result.operational?.reconciliationState ?? result.totals.confidence_state).replaceAll("_", " ")}. ${confidenceDescriptions[result.operational?.reconciliationState ?? result.totals.confidence_state] ?? "Review source coverage before relying on this report."}`}
         >
           <div className="grid gap-2 sm:grid-cols-3">
             <div className="rounded-md border p-3 text-sm">
