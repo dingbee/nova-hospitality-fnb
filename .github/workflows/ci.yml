@@ -94,10 +94,52 @@ jobs:
             ) THEN
               RAISE EXCEPTION 'LB-03 audit immutability trigger function is missing';
             END IF;
+            IF EXISTS (
+              SELECT 1
+              FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = 'public'
+                AND c.relkind IN ('r', 'p')
+                AND c.relrowsecurity = false
+            ) THEN
+              RAISE EXCEPTION 'A public application table is missing row-level security';
+            END IF;
+            IF (
+              SELECT count(*)
+              FROM pg_policies
+              WHERE schemaname = 'public'
+                AND tablename = 'restaurant_member_station_assignments'
+                AND policyname IN (
+                  'member station assignments insert',
+                  'member station assignments update',
+                  'member station assignments delete'
+                )
+            ) <> 3 OR EXISTS (
+              SELECT 1
+              FROM pg_policies
+              WHERE schemaname = 'public'
+                AND tablename = 'restaurant_member_station_assignments'
+                AND policyname = 'member station assignments write'
+            ) THEN
+              RAISE EXCEPTION 'Station assignment write policies do not match the least-privilege split';
+            END IF;
+            IF has_function_privilege('anon', 'public.lb03_reject_pos_room_charge_audit_mutation()', 'EXECUTE')
+              OR has_function_privilege('authenticated', 'public.lb03_reject_pos_room_charge_audit_mutation()', 'EXECUTE')
+              OR has_function_privilege('service_role', 'public.lb03_reject_pos_room_charge_audit_mutation()', 'EXECUTE') THEN
+              RAISE EXCEPTION 'LB-03 audit trigger function has direct EXECUTE grants';
+            END IF;
+            IF to_regprocedure('public.restaurant_bootstrap_owner_pos_pin(uuid,uuid,text)') IS NOT NULL THEN
+              RAISE EXCEPTION 'Temporary owner POS PIN recovery function was not removed';
+            END IF;
           END $verify$;
           SELECT count(*) FILTER (WHERE status = 'applied') AS applied_migrations,
                  count(*) FILTER (WHERE status = 'skipped') AS policy_skipped_migrations
           FROM nova_local.schema_migrations;
+          SELECT count(*) AS public_table_count,
+                 count(*) FILTER (WHERE relrowsecurity) AS public_tables_with_rls
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p');
           SQL
 
       - name: Generate production artifacts
