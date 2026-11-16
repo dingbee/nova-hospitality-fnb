@@ -9,7 +9,7 @@
  * The system reports the match; it never silently approves a mismatch.
  */
 import type { z } from "zod";
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import { assertCapability, assertTenantRead, getTenantScope } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { nextDocumentNumber, recordProcurementAuditStrict } from "./audit.server";
 import { recordPriceObservation } from "./pricing.server";
@@ -32,7 +32,17 @@ export async function listSupplierInvoices(
   userId: string,
   input: z.infer<typeof listInvoicesSchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId);
+  const tenantScope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(
+    sb,
+    userId,
+    input.tenantId,
+    {
+      propertyId: input.propertyId,
+      locationId: input.locationId,
+    },
+    tenantScope,
+  );
   let q = sb
     .from("restaurant_supplier_invoices")
     .select(INVOICE_SELECT)
@@ -40,6 +50,17 @@ export async function listSupplierInvoices(
     .order("invoice_date", { ascending: false })
     .limit(input.limit);
   if (input.supplierId) q = q.eq("supplier_id", input.supplierId);
+  if (input.propertyId) {
+    q = q.eq("property_id", input.propertyId);
+  } else if (
+    !tenantScope.platformAdmin &&
+    !tenantScope.grants.some((grant) => grant.propertyId === null)
+  ) {
+    const propertyIds = [...new Set(tenantScope.grants.map((grant) => grant.propertyId).filter(Boolean))] as string[];
+    if (propertyIds.length === 0) return [];
+    q = q.in("property_id", propertyIds);
+  }
+  if (input.locationId) q = q.eq("location_id", input.locationId);
   if (input.status) q = q.eq("status", input.status);
   if (input.paymentStatus) q = q.eq("payment_status", input.paymentStatus);
   const { data, error } = await q;
@@ -135,6 +156,11 @@ export async function recordSupplierInvoice(sb: Sb, userId: string, input: Recor
       location_id: linkedOrder.location_id ?? null,
     };
   }
+
+  await assertCapability(sb, userId, input.tenantId, "invoice.manage", {
+    propertyId: input.propertyId ?? linkedOrderScope.property_id ?? null,
+    locationId: input.locationId ?? linkedOrderScope.location_id ?? null,
+  });
 
   const subtotal = input.lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
   const taxTotal = input.taxTotal || input.lines.reduce((s, l) => s + (l.taxAmount ?? 0), 0);
@@ -258,6 +284,10 @@ export async function matchSupplierInvoice(
     .eq("id", invoiceId)
     .single();
   if (invoiceError || !invoice) throw new Error("Supplier invoice not found.");
+  await assertCapability(sb, userId, tenantId, "invoice.manage", {
+    propertyId: invoice.property_id ?? null,
+    locationId: invoice.location_id ?? null,
+  });
 
   const { data: invoiceLines, error: invoiceLinesError } = await sb
     .from("restaurant_supplier_invoice_items")
@@ -488,11 +518,15 @@ export async function setInvoicePaymentStatus(
   await assertCapability(sb, userId, input.tenantId, "invoice.manage");
   const { data: before, error: readError } = await sb
     .from("restaurant_supplier_invoices")
-    .select("id, payment_status, document_number, total, amount_paid, match_status")
+    .select("id, payment_status, document_number, total, amount_paid, match_status, property_id, location_id")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.invoiceId)
     .single();
   if (readError || !before) throw new Error("Supplier invoice not found.");
+  await assertCapability(sb, userId, input.tenantId, "invoice.manage", {
+    propertyId: before.property_id ?? null,
+    locationId: before.location_id ?? null,
+  });
 
   const total = Number(before.total ?? 0);
   const previousAmountPaid = Number(before.amount_paid ?? 0);
