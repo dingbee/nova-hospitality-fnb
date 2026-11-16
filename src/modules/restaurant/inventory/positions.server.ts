@@ -379,7 +379,7 @@ export async function getStockPositionEvidenceForReplenishment(
           .select("id, purchase_order_id, status, confirmed_delivery_date, created_at")
           .eq("tenant_id", input.tenantId)
           .in("purchase_order_id", orderIds)
-          .in("status", ["confirmed", "partially_confirmed"])
+          
       : Promise.resolve({ data: [], error: null }),
     transferIds.length
       ? sb.from("restaurant_stock_transfer_lines")
@@ -475,12 +475,22 @@ export async function getStockPositionEvidenceForReplenishment(
       continue;
     }
     const confirmation = confirmationByLine.get(line.id);
-    const confirmedTotal = confirmation ? Number(confirmation.row.confirmed_quantity ?? 0) : null;
+    const confirmationStatus = confirmation?.header.status ?? null;
+    if (confirmation && ["declined", "rejected", "cancelled"].includes(confirmationStatus)) {
+      evidence.manualReviewReasons.push("Supplier declined or cancelled confirmation for PO line " + line.id + ".");
+      continue;
+    }
+    if (confirmation && !["confirmed", "partially_confirmed", "pending", "draft"].includes(confirmationStatus)) {
+      evidence.manualReviewReasons.push("Supplier confirmation for PO line " + line.id + " has an unsupported status.");
+      continue;
+    }
+    const isConfirmed = Boolean(confirmation && ["confirmed", "partially_confirmed"].includes(confirmationStatus));
+    const confirmedTotal = isConfirmed ? Number(confirmation.row.confirmed_quantity ?? 0) : null;
     if (confirmedTotal != null && (!Number.isFinite(confirmedTotal) || confirmedTotal < 0 || confirmedTotal > quantity + 1e-8)) {
       evidence.manualReviewReasons.push("Supplier confirmation for PO line " + line.id + " has an invalid confirmed total.");
       continue;
     }
-    if (confirmation) {
+    if (isConfirmed) {
       // Supplier confirmations store the total agreed line quantity, not the
       // remaining balance. Subtract all received goods (accepted/rejected/
       // damaged) exactly once; only the confirmed remainder is eligible.
