@@ -484,7 +484,7 @@ export async function computeProfitability(
     const { error } = await sb.from("restaurant_profitability_snapshots").insert(
       allRows.map((r) => ({
         tenant_id: input.tenantId,
-        property_id: input.propertyId ?? null,
+        property_id: input.propertyId ?? reportingPropertyId,
         location_id: input.locationId ?? null,
         menu_item_id: r.menu_item_id,
         menu_item_name: r.menu_item_name,
@@ -509,7 +509,7 @@ export async function computeProfitability(
       .from("restaurant_operational_profitability_snapshots")
       .insert({
         tenant_id: input.tenantId,
-        property_id: input.propertyId ?? null,
+        property_id: input.propertyId ?? reportingPropertyId,
         location_id: input.locationId ?? null,
         period_start: periodFrom,
         period_end: periodTo,
