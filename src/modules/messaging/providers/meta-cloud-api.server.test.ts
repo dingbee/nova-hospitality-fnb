@@ -1,9 +1,11 @@
+import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MetaGraphError,
   checkPhoneNumberHealth,
   exchangeEmbeddedSignupCode,
   getWabaDetails,
+  listWabaPhoneNumbers,
   registerVerifiedPhoneNumber,
   sendTextMessage,
   subscribeWabaToApp,
@@ -48,7 +50,6 @@ describe("Meta WhatsApp Cloud API foundation", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: "phone-456", quality_rating: "GREEN" }] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "phone-456", display_phone_number: "+255700000000" }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    const { listWabaPhoneNumbers } = await import("./meta-cloud-api.server");
     await expect(listWabaPhoneNumbers(credentials)).resolves.toHaveLength(1);
     await expect(checkPhoneNumberHealth(credentials)).resolves.toMatchObject({ id: "phone-456" });
   });
@@ -94,7 +95,6 @@ describe("Meta WhatsApp Cloud API foundation", () => {
   });
 
   it("verifies Meta webhook signatures over exact raw request bytes", () => {
-    const { createHmac } = require("node:crypto") as typeof import("node:crypto");
     const raw = Buffer.from('{"object":"whatsapp_business_account"}');
     const signature = "sha256=" + createHmac("sha256", "app-secret").update(raw).digest("hex");
     expect(verifyWebhookSignature(raw, signature, "app-secret")).toBe(true);
