@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   approvalRuleSchema,
+  applySupplierCreditNoteSchema,
   convertRequestToOrderSchema,
   createReceiptSchema,
   getPurchaseRequestSchema,
@@ -11,12 +12,14 @@ import {
   listPriceHistorySchema,
   listPurchaseRequestsSchema,
   listReceiptsSchema,
+  listSupplierCreditNotesSchema,
   listVariancesSchema,
   matchInvoiceSchema,
   postReceiptSchema,
   procurementOverviewSchema,
   recordConfirmationSchema,
   recordInvoiceSchema,
+  recordSupplierCreditNoteSchema,
   resolveVarianceSchema,
   savePurchaseRequestSchema,
   setInvoicePaymentStatusSchema,
@@ -186,6 +189,30 @@ export const setRestaurantInvoicePaymentStatusFn = createServerFn({ method: "POS
   .handler(async ({ data, context }) => {
     const mod = await import("./invoices.server");
     return mod.setInvoicePaymentStatus(context.supabase, context.userId, data);
+  });
+
+export const listRestaurantSupplierCreditNotesFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => listSupplierCreditNotesSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./credit-notes.server");
+    return mod.listSupplierCreditNotes(context.supabase, context.userId, data);
+  });
+
+export const recordRestaurantSupplierCreditNoteFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => recordSupplierCreditNoteSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./credit-notes.server");
+    return mod.recordSupplierCreditNote(context.supabase, context.userId, data);
+  });
+
+export const applyRestaurantSupplierCreditNoteFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => applySupplierCreditNoteSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./credit-notes.server");
+    return mod.applySupplierCreditNote(context.supabase, context.userId, data);
   });
 
 /* ---------------- Price history, performance, overview, audit ---------------- */
