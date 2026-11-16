@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Supabase test double mirrors untyped query builders. */
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -64,7 +65,7 @@ function makeAdmin(overrides: Record<string, unknown> = {}) {
     };
     return builder;
   });
-  const rpc = vi.fn(async () => ({ data: true, error: null }));
+  const rpc = vi.fn(async (..._args: unknown[]): Promise<{ data: unknown; error: unknown }> => ({ data: true, error: null }));
   return { admin: { from, rpc }, inserted, rpc };
 }
 
