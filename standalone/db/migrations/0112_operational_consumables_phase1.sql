@@ -151,7 +151,7 @@ begin
   new.inventory_item_id,r.cost_class,abs(new.quantity),new.unit_cost,new.total_cost,new.currency,new.occurred_at
  ) on conflict(tenant_id,stock_movement_id) do nothing;
  return new;
-end $;
+end $$;
 drop trigger if exists restaurant_capture_operational_consumption on public.restaurant_stock_movements;
 create trigger restaurant_capture_operational_consumption
  after insert on public.restaurant_stock_movements
