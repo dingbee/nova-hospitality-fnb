@@ -175,6 +175,10 @@ export interface PurchaseSuggestion {
     inTransitInbound: number;
     netAvailable: number;
     components: Array<{ sourceId: string; sourceType: string; quantityInStockUnits: number; expectedAt: string | null }>;
+    ledgerLocations?: Array<{ locationId: string | null; movementCount: number; lastMovementAt: string | null }>;
+    reservationRecords?: Array<{ id: string; quantity: number; expiresAt: string | null }>;
+    receivingRecords?: Array<{ purchaseOrderItemId: string; ordered: number; received: number; accepted: number; rejectedOrDamaged: number }>;
+    manualReviewReasons?: string[];
   };
 }
 
