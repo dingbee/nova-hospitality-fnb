@@ -141,7 +141,9 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: |
-          psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-supplier-credit-note-lifecycle.sql
+          dropdb -h localhost -U postgres --if-exists lexibite_credit_test
+          createdb -h localhost -U postgres lexibite_credit_test
+          psql -h localhost -U postgres -d lexibite_credit_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-supplier-credit-note-lifecycle.sql
 
       - name: Verify Phase 3 hybrid allocation and operational expense lifecycle in isolated PostgreSQL
         env:
