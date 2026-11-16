@@ -48,6 +48,7 @@ export interface InvoiceMatchResult {
   taxTotal: number;
   grossTotal: number;
   acceptedLineCount: number;
+  partiallyMatchedLineCount: number;
   pendingLineCount: number;
 }
 
@@ -124,6 +125,7 @@ export function calculateSupplierInvoiceMatch(evidence: InvoiceMatchEvidence): I
       taxTotal: computedTax,
       grossTotal: computedGross,
       acceptedLineCount: 0,
+      partiallyMatchedLineCount: 0,
       pendingLineCount: invoiceLines.length,
     };
   }
@@ -162,6 +164,7 @@ export function calculateSupplierInvoiceMatch(evidence: InvoiceMatchEvidence): I
   }
 
   let acceptedLineCount = 0;
+  let partiallyMatchedLineCount = 0;
   let pendingLineCount = 0;
   const invoicedByOrderLine = new Map<string, number>();
   const pendingOrderLineIds = new Set<string>();
@@ -252,20 +255,23 @@ export function calculateSupplierInvoiceMatch(evidence: InvoiceMatchEvidence): I
         cumulativeInvoicedQuantity,
       );
     } else if (cumulativeInvoicedQuantity + EPSILON < acceptedQuantity) {
-      pendingLineCount++;
+      partiallyMatchedLineCount++;
     } else {
       acceptedLineCount++;
     }
   }
   pendingLineCount += pendingOrderLineIds.size;
 
+  const hasMatchedEvidence = acceptedLineCount > 0 || partiallyMatchedLineCount > 0;
+  const hasOutstandingEvidence =
+    pendingLineCount > 0 || partiallyMatchedLineCount > 0;
   const matchStatus: InvoiceMatchStatus = dimensions.length
     ? "mismatched"
-    : pendingLineCount > 0
-      ? acceptedLineCount > 0
+    : !hasMatchedEvidence
+      ? "unmatched"
+      : hasOutstandingEvidence
         ? "partially_matched"
-        : "unmatched"
-      : "matched";
+        : "matched";
   return {
     matchStatus,
     dimensions,
@@ -273,6 +279,7 @@ export function calculateSupplierInvoiceMatch(evidence: InvoiceMatchEvidence): I
     taxTotal: computedTax,
     grossTotal: computedGross,
     acceptedLineCount,
+    partiallyMatchedLineCount,
     pendingLineCount,
   };
 }
