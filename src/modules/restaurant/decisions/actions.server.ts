@@ -722,7 +722,7 @@ async function runProcurementDraftExecution(
     line.stock_unit_id === stockUnitId &&
     Math.abs(Number(line.stock_units_per_purchase_unit) - stockUnitsPerPurchaseUnit) <= 0.000001 &&
     Math.abs(Number(line.minimum_order_quantity ?? 0) - minimumOrderQuantity) <= 0.000001 &&
-    Math.abs(Number(line.order_multiple ?? 1) - orderMultiple) <= 0.000001 &&
+    line.order_multiple != null && Number(line.order_multiple) === orderMultiple &&
     (!compareRequestedQuantity ||
       (Math.abs(Number(line.quantity) - purchaseQuantity) <= 0.0001 &&
        Math.abs(Number(line.estimated_unit_cost) - purchaseUnitPrice) <= 0.0001 &&
