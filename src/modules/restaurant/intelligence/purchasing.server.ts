@@ -301,11 +301,23 @@ export async function getPurchasingIntelligence(
     });
     const minimumOrderQuantity = product.min_order_quantity == null ? 0 : Number(product.min_order_quantity);
     const purchaseUnit = units.find((unit) => unit.id === product.unit_id);
-    const orderMultiple = Number(product.order_multiple ??
-      (purchaseUnit && purchaseUnit.dimension !== "count" ? 0.0001 : 1));
+    // Whole-count purchasing can safely default to one unit. Fractional
+    // purchasing must use a supplier-configured increment; never invent one.
+    const configuredOrderMultiple = product.order_multiple;
+    const orderMultiple = configuredOrderMultiple == null && purchaseUnit?.dimension === "count"
+      ? 1
+      : Number(configuredOrderMultiple);
     if (!Number.isFinite(minimumOrderQuantity) || minimumOrderQuantity < 0 ||
         !Number.isFinite(orderMultiple) || orderMultiple <= 0) {
-      reviewItems.push({ inventoryItemId: item.id, name: item.name, status: "manual_review", reason: "Supplier minimum quantity or order multiple is invalid.", observations: observedDays });
+      reviewItems.push({
+        inventoryItemId: item.id,
+        name: item.name,
+        status: "manual_review",
+        reason: configuredOrderMultiple == null
+          ? "Supplier order multiple is not configured for this non-count or unverified purchase unit."
+          : "Supplier minimum quantity or order multiple is invalid.",
+        observations: observedDays,
+      });
       continue;
     }
     const calculation = calculateReplenishment({
