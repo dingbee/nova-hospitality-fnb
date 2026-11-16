@@ -335,7 +335,9 @@ export async function previewIntelligentPurchaseOrders(
           (units ?? []) as any[],
         )
       : null;
-    const currentOrderMultiple = unitId === item.unit_id ? Number(product.pack_size ?? 1) : 1;
+    const purchaseUnit = ((units ?? []) as any[]).find((row) => row.id === unitId);
+    const currentOrderMultiple = Number(product.order_multiple ??
+      (purchaseUnit && purchaseUnit.dimension !== "count" ? 0.0001 : 1));
     if (!unitId || unitId !== suggestion.purchaseUnitId ||
         currentStockFactor == null || Math.abs(currentStockFactor - stockUnitsPerPurchaseUnit) > 0.000001 ||
         !(stockUnitsPerPurchaseUnit > 0) || !Number.isFinite(purchaseQuantity) ||
