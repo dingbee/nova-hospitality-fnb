@@ -81,7 +81,7 @@ create policy restaurant_operational_profitability_snapshots_rollback_delete on 
  for delete to authenticated
  using(
   computed_by=auth.uid()
-  and not exists(select 1 from public.restaurant_operational_profitability_dimensions d where d.snapshot_id=id)
+  and not exists(select 1 from public.restaurant_operational_profitability_dimensions d where d.snapshot_id=restaurant_operational_profitability_snapshots.id)
  );
 drop policy if exists restaurant_operational_profitability_dimensions_read on public.restaurant_operational_profitability_dimensions;
 create policy restaurant_operational_profitability_dimensions_read on public.restaurant_operational_profitability_dimensions
