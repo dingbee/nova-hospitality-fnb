@@ -140,7 +140,8 @@ function ProfitabilityPage() {
   const selectedPeriodMatchesResult = Boolean(
     compute.data &&
     compute.data.periodStart.slice(0, 10) === from &&
-    compute.data.periodEnd.slice(0, 10) === to
+    compute.data.periodEnd.slice(0, 10) === to &&
+    compute.data.scope?.propertyId === (effectivePropertyId || null)
   );
   const previousComparison = useQuery({
     queryKey: ["restaurant.profitability.previous", tenantId, effectivePropertyId, from, to],
