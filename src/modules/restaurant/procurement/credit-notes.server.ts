@@ -187,6 +187,7 @@ export async function applySupplierCreditNote(
   userId: string,
   input: z.infer<typeof applySupplierCreditNoteSchema>,
 ) {
+  await assertCapability(sb, userId, input.tenantId, "invoice.manage");
   const { data: creditNote, error: creditNoteError } = await sb
     .from("restaurant_supplier_credit_notes")
     .select("id, supplier_id, currency, property_id, location_id, reference_invoice_id")
