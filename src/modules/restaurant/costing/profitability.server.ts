@@ -479,7 +479,8 @@ export async function computeProfitability(
     ...operationalTotals,
   };
 
-  if (input.persist && allRows.length > 0) {
+  const canPersistScopedSnapshot = Boolean(input.propertyId || input.locationId);
+  if (input.persist && canPersistScopedSnapshot && allRows.length > 0) {
     const { error } = await sb.from("restaurant_profitability_snapshots").insert(
       allRows.map((r) => ({
         tenant_id: input.tenantId,
@@ -503,7 +504,7 @@ export async function computeProfitability(
     if (error) throw new Error(error.message);
   }
 
-  if (input.persist) {
+  if (input.persist && canPersistScopedSnapshot) {
     const { data: snapshot, error: snapshotError } = await sb
       .from("restaurant_operational_profitability_snapshots")
       .insert({
