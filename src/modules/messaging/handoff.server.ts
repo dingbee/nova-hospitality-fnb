@@ -77,7 +77,7 @@ export async function enqueueWhatsAppGuestPortalHandoff(
     .maybeSingle();
   if (eventJobError) throw new Error("portal_handoff_job_lookup_failed");
 
-  if (eventJob && (BLOCKING_JOB_STATES.includes(eventJob.status) || eventJob.status === "sent" && await sessionIsActive(admin, eventJob.portal_session_id))) {
+  if (eventJob && (BLOCKING_JOB_STATES.includes(eventJob.status) || eventJob.status === "sent")) {
     return { queued: false, reason: "handoff_already_pending_or_active" as const };
   }
 
