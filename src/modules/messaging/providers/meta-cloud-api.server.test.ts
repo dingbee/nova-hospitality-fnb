@@ -118,4 +118,18 @@ describe("Meta WhatsApp Cloud API foundation", () => {
     expect(verifyWebhookSignature(Buffer.from(raw.toString() + " "), signature, "app-secret")).toBe(false);
     expect(verifyWebhookSignature(raw, "sha256=invalid", "app-secret")).toBe(false);
   });
+  it("marks Meta HTTP 429 responses as retryable and exposes Retry-After", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: "Rate limited", code: 4 } }), {
+        status: 429,
+        headers: { "retry-after": "2" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getWabaDetails(credentials)).rejects.toMatchObject({
+      status: 429,
+      retryable: true,
+      retryAfterMs: 2000,
+    });
+  });
 });
