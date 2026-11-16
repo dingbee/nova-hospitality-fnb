@@ -72,7 +72,13 @@ The canonical isolated harness is the repository's existing local database boots
 6. Confirm local cron is recorded inactive and no network dispatch occurs.
 7. Compare expected application contracts and RLS/policy/function privileges after replay.
 
-A CI workflow step implementing this isolated replay and object assertions has been added on this branch. Its result is **PENDING** until the branch PR CI run completes. No clean replay is claimed before that run is green.
+A CI workflow step implementing this isolated replay and object/security assertions passed on commit `3ba1f88ebc5159f0f4aee2e915c7d5cd22e6d122`, run `43955212519`.
+
+**Replay evidence:** 162 migration files applied, 1 data-only migration marked not applicable, 0 already-present. The single local-only skip is `0087_repair_bar_station_routing.sql`, which repairs a KILI-029 UAT demo order-line fixture and is not schema DDL. It is skipped only in the empty local appliance because that UAT tenant fixture is not seeded; production history is unchanged.
+
+The replay created 217 public tables and verified **217/217 have RLS enabled**, matching the production catalog count. It also verified: the LB-02 cron job is recorded inactive in local compatibility mode; station-assignment write policies are split into insert/update/delete with no broad write policy; the LB-03 audit trigger function has no direct EXECUTE grant to anon/authenticated/service_role; and the temporary owner POS PIN recovery function is absent after 0096.
+
+The first replay attempt also exposed a source divergence in `0088_commercial_capability_activation_reconciliation.sql`: its UPDATE target alias was referenced from a JOIN `ON` clause, which PostgreSQL rejects. The repository-only source was corrected to the comma-FROM/WHERE form present in the applied production ledger statement. The full replay then passed. No clean replay is claimed against production; this is an isolated PostgreSQL 17 result.
 
 ## 6. Rollback and recovery assessment
 
@@ -84,7 +90,12 @@ A CI workflow step implementing this isolated replay and object assertions has b
 
 ## 7. Current disposition
 
-**Migration provenance:** PARTIALLY RECONCILED — 6 previously missing applied SQL sources recovered; historical split/rename/consolidation groups mapped; 171 live ledger rows preserved.  
-**Clean replay:** PENDING CI execution.  
+**Migration provenance:** VERIFIED FOR WCE-02 — 171 live ledger rows preserved; historical split/rename/consolidation groups mapped; 6 missing applied SQL sources recovered; 10 repository-only migrations identified as not present in the production ledger.  
+**Clean replay:** VERIFIED — CI run `43955212519`; 162 applied, 1 UAT-only data repair not applicable; 217/217 public tables RLS-enabled; security policy/function assertions PASS.  
 **Production mutation:** NONE.  
-**WCE-02 database gate:** BLOCKED until replay and schema/RLS acceptance are green.
+**WCE-02 database gate:** VERIFIED — additive WCE schema implementation may proceed on a branch stacked on this recovery branch; production migration execution remains unauthorized.
+
+
+## 8. Follow-on implementation gate
+
+WCE-02 may now introduce additive messaging/session schema on a branch based on this recovery branch. The WCE-02 migration must itself pass the same clean replay, public-table RLS assertion, tenant/property/outlet isolation tests and full CI before WCE-03 begins. The recovered source branch and this provenance PR remain unmerged; no production deployment is implied by the green isolated replay.
