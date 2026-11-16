@@ -54,4 +54,11 @@ describe("PW-08 supplier invoice reconciliation", () => {
     evidence.invoiceLines[0]!.purchaseOrderItemId = null;
     expect(calculateSupplierInvoiceMatch(evidence).dimensions.map((d) => d.code)).toContain("UNLINKED_PURCHASE_ORDER_LINE");
   });
+
+  it("rejects posted receipt evidence in a different currency", () => {
+    const evidence = base();
+    evidence.receiptCurrencies = ["USD"];
+    expect(calculateSupplierInvoiceMatch(evidence).dimensions.map((d) => d.code)).toContain("RECEIPT_CURRENCY_MISMATCH");
+    expect(calculateSupplierInvoiceMatch(evidence).matchStatus).toBe("mismatched");
+  });
 });
