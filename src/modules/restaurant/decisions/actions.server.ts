@@ -1694,7 +1694,11 @@ async function verifyProcurementDraft(
 ): Promise<VerifyRestaurantActionResult> {
   const facts = (decision.context?.finding?.facts ?? {}) as Record<string, unknown>;
   const expectedQuantity =
-    typeof facts.recommendedQuantity === "number" ? facts.recommendedQuantity : undefined;
+    typeof facts.purchaseQuantity === "number"
+      ? facts.purchaseQuantity
+      : typeof facts.recommendedQuantity === "number"
+        ? facts.recommendedQuantity
+        : undefined;
   const expectedItemId =
     typeof facts.inventoryItemId === "string" ? facts.inventoryItemId : undefined;
 
@@ -1709,7 +1713,7 @@ async function verifyProcurementDraft(
 
   const { data: request, error } = await sb
     .from("restaurant_purchase_requests")
-    .select("id, tenant_id, correlation_id, status")
+    .select("id, tenant_id, correlation_id, status, metadata")
     .eq("id", expectedRequestId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -1743,7 +1747,7 @@ async function verifyProcurementDraft(
 
   const { data: items, error: itemsErr } = await sb
     .from("restaurant_purchase_request_items")
-    .select("id, inventory_item_id, quantity")
+    .select("id, inventory_item_id, quantity, source_action_id, preferred_supplier_id, supplier_product_id, unit_id, stock_unit_id, stock_units_per_purchase_unit, minimum_order_quantity, order_multiple, estimated_unit_cost")
     .eq("purchase_request_id", request.id);
   if (itemsErr) throw new Error(itemsErr.message);
   const rows = (items ?? []) as Array<{ inventory_item_id: string | null; quantity: number }>;
@@ -1762,6 +1766,41 @@ async function verifyProcurementDraft(
   }
 
   const actualQuantity = Number(matchingItem.quantity);
+  if (facts.purchaseQuantity != null && matchingItem.source_action_id !== action.id) {
+    return {
+      verified: false,
+      outcome: "line_provenance_mismatch",
+      entityType: "purchase_request",
+      entityId: request.id,
+      reason: "The request line is not durably linked to the executing intelligence action.",
+    };
+  }
+  if (facts.supplierProductId != null &&
+      (matchingItem.supplier_product_id !== facts.supplierProductId ||
+       matchingItem.preferred_supplier_id !== facts.supplierId ||
+       matchingItem.unit_id !== facts.purchaseUnitId ||
+       matchingItem.stock_unit_id !== facts.stockUnitId ||
+       Math.abs(Number(matchingItem.stock_units_per_purchase_unit) - Number(facts.stockUnitsPerPurchaseUnit)) > 0.000001 ||
+       Math.abs(Number(matchingItem.estimated_unit_cost) - Number(facts.purchaseUnitPrice)) > 0.0001 ||
+       Math.abs(Number(matchingItem.minimum_order_quantity ?? 0) - Number(facts.minimumOrderQuantity ?? 0)) > 0.000001 ||
+       Math.abs(Number(matchingItem.order_multiple ?? 1) - Number(facts.orderMultiple ?? 1)) > 0.000001)) {
+    return {
+      verified: false,
+      outcome: "unit_snapshot_mismatch",
+      entityType: "purchase_request",
+      entityId: request.id,
+      reason: "The request line does not preserve the approved supplier product, purchase unit, stock unit, conversion or pack constraints.",
+    };
+  }
+  if (facts.purchaseQuantity != null && !(request.metadata as any)?.inventory_recommendation) {
+    return {
+      verified: false,
+      outcome: "recommendation_evidence_missing",
+      entityType: "purchase_request",
+      entityId: request.id,
+      reason: "The purchase request is missing its durable inventory recommendation evidence.",
+    };
+  }
   if (expectedQuantity != null && actualQuantity !== expectedQuantity) {
     return {
       verified: false,
