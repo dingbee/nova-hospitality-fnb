@@ -338,16 +338,21 @@ export function stockUnitsPerUnit(
   if (sourceUnitId === stockUnitId) return 1;
   const source = units.find((unit) => unit.id === sourceUnitId);
   const stock = units.find((unit) => unit.id === stockUnitId);
+  let factor: number | null = null;
   if (source && stock && source.dimension === stock.dimension && source.base_unit_id === stock.base_unit_id) {
     const sourceFactor = Number(source.factor);
     const stockFactor = Number(stock.factor);
     if (finite(sourceFactor) && finite(stockFactor) && sourceFactor > 0 && stockFactor > 0) {
-      return Number((sourceFactor / stockFactor).toFixed(8));
+      factor = Number((sourceFactor / stockFactor).toFixed(8));
     }
   }
   if (sourceUnitId === purchaseUnitId && configuredPackSize != null) {
     const pack = Number(configuredPackSize);
-    return finite(pack) && pack > 0 ? pack : null;
+    if (!finite(pack) || pack <= 0) return null;
+    // A configured supplier pack may override a generic unit conversion only
+    // when both definitions agree. Conflicting evidence is never guessed.
+    if (factor != null && Math.abs(factor - pack) > 0.000001) return null;
+    return factor ?? pack;
   }
-  return null;
+  return factor;
 }
