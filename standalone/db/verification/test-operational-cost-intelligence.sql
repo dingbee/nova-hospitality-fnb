@@ -45,6 +45,7 @@ grant usage on schema auth to authenticated,anon,service_role;
 grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0040_operational_cost_intelligence.sql
 \ir ../migrations/0042_cost_reconciliation_variance_intelligence.sql
+\ir ../migrations/0043_cost_reconciliation_baselines.sql
 
 insert into public.restaurant_tenants values
  ('10000000-0000-0000-0000-000000000001'),('10000000-0000-0000-0000-000000000002');
@@ -193,6 +194,7 @@ set local role authenticated;
 do $phase4$ begin
  if (select count(*) from public.restaurant_cost_reconciliation_runs) <> 1 then raise exception 'Phase 4 run RLS leaked across properties'; end if;
  if (select count(*) from public.restaurant_cost_variances) <> 1 then raise exception 'Phase 4 variance RLS leaked across properties'; end if;
+ if (select count(*) from public.restaurant_operational_cost_budgets) <> 1 then raise exception 'Phase 4 approved budget RLS leaked across properties'; end if;
  -- Authorized property member can create a reconciliation run and update a case within scope.
  insert into public.restaurant_cost_reconciliation_runs(tenant_id,property_id,period_start,period_end,currency,source_fingerprint)
  values('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','2026-12-01','2026-12-31','TZS','fixture-authorized-write');
