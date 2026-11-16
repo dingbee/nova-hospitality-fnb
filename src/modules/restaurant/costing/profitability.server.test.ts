@@ -72,7 +72,7 @@ describe("computeProfitability operating-cost integration", () => {
   it("calculates contribution profit from all rows, not only the displayed page, and persists the full snapshot", async () => {
     const persisted: unknown[][] = [];
     const sb = makeSupabase({
-      restaurant_orders: [{ id: "order-1", currency: "TZS" }],
+      restaurant_orders: [{ id: "order-1", currency: "TZS", property_id: "property-1", location_id: "outlet-1", source: "pos" }],
       restaurant_cost_allocations: [{ amount: 10000, currency: "TZS", property_id: "property-1", period_start: "2026-11-01" }],
       restaurant_order_items: [
         { id: "line-1", order_id: "order-1", menu_item_id: "menu-1", description: "Pilau", quantity: 2, line_total: 30000, line_cost: 10000, status: "served" },
@@ -83,7 +83,7 @@ describe("computeProfitability operating-cost integration", () => {
         { id: "movement-2", order_item_id: "line-2", total_cost: 4000, currency: "TZS" },
       ],
     }, persisted);
-    const result = await computeProfitability(sb, "user-1", { ...input, persist: true, limit: 1 });
+    const result = await computeProfitability(sb, "user-1", { ...input, persist: true, limit: 1, propertyId: "property-1" });
     expect(result.rows).toHaveLength(1);
     expect(result.totals).toMatchObject({
       quantity_sold: 3,
@@ -101,7 +101,7 @@ describe("computeProfitability operating-cost integration", () => {
     expect(persisted).toHaveLength(3);
     expect(persisted[0]).toHaveLength(2);
     expect(persisted[1]).toMatchObject({ tenant_id: tenantId, currency: "TZS", confidence_state: "incomplete_source_data" });
-    expect(persisted[2]).toHaveLength(1);
+    expect(persisted[2]).toHaveLength(3);
   });
 
   it("nets refunds and tax while including classified service consumables exactly once", async () => {
