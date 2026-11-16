@@ -440,10 +440,11 @@ async function runProcurementDraftExecution(
   const purchaseUnitPrice = Number(facts.purchaseUnitPrice);
   const stockUnitsPerPurchaseUnit = Number(facts.stockUnitsPerPurchaseUnit);
   const minimumOrderQuantity = Number(facts.minimumOrderQuantity ?? 0);
-  const orderMultiple = Number(facts.orderMultiple ?? 1);
+  const orderMultiple = Number(facts.orderMultiple);
   const currency = typeof facts.currency === "string" ? facts.currency : null;
 
   if (typeof facts.purchaseQuantity !== "number" ||
+      typeof facts.orderMultiple !== "number" ||
       typeof purchaseUnitId !== "string" || typeof stockUnitId !== "string") {
     return failAction(
       sb,
