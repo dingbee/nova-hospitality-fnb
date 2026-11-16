@@ -66,7 +66,18 @@ export function loadMetaFacebookSdk(config: MetaEmbeddedSignupConfig): Promise<v
     return Promise.reject(new Error("Meta Embedded Signup is available only in a browser."));
   }
 
-  if (window.FB && initializedAppId === config.appId) return Promise.resolve();
+  if (window.FB) {
+    if (initializedAppId !== config.appId) {
+      window.FB.init({
+        appId: config.appId,
+        autoLogAppEvents: true,
+        xfbml: false,
+        version: config.graphApiVersion,
+      });
+      initializedAppId = config.appId;
+    }
+    return Promise.resolve();
+  }
   if (sdkPromise) return sdkPromise;
 
   sdkPromise = new Promise<void>((resolve, reject) => {
@@ -179,7 +190,7 @@ export function startMetaEmbeddedSignup(
       const code = response.authResponse?.code;
       if (code) {
         handlers.onAuthorizationCode(code);
-      } else if (response.status !== "connected") {
+      } else {
         handlers.onError(new Error("Meta Embedded Signup was cancelled or did not return an authorization code."));
       }
     }, {
