@@ -49,14 +49,14 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
   await assertCapability(sb, userId, input.tenantId, "purchasing.approve");
 
   for (const line of input.lines) {
-    const multiple = line.orderMultiple ?? 1;
-    const minimum = line.minimumOrderQuantity ?? 0;
+    const multiple = line.orderMultiple;
+    const minimum = line.minimumOrderQuantity;
     if (line.stockUnitsPerPurchaseUnit != null && !line.stockUnitId) {
       throw new Error("A stock-unit conversion snapshot requires an explicit stock unit.");
     }
-    if (!Number.isFinite(multiple) || multiple <= 0 || !Number.isFinite(minimum) || minimum < 0 ||
-        line.quantity < minimum ||
-        Math.abs(line.quantity / multiple - Math.round(line.quantity / multiple)) > 0.000001) {
+    if ((minimum != null && (!Number.isFinite(minimum) || minimum < 0 || line.quantity < minimum)) ||
+        (multiple != null && (!Number.isFinite(multiple) || multiple <= 0 ||
+          Math.abs(line.quantity / multiple - Math.round(line.quantity / multiple)) > 0.000001))) {
       throw new Error("Purchase-order quantities must satisfy the stored supplier minimum and order multiple.");
     }
   }
