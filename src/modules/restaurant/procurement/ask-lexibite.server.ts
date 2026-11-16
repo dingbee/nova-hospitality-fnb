@@ -243,7 +243,11 @@ export async function previewIntelligentPurchaseOrders(
   await assertCapability(sb, userId, tenantId, "purchasing.approve");
 
   const scope = await getTenantScope(sb, userId, tenantId);
-  const propertyId = await resolveMultiPropertyScope(sb, tenantId, scope, input.propertyId ?? null);
+  const propertyId = input.propertyId
+    ? await resolveMultiPropertyScope(sb, tenantId, scope, input.propertyId)
+    : input.locationId
+      ? null
+      : await resolveMultiPropertyScope(sb, tenantId, scope, null);
   const intelligence = await getPurchasingIntelligence(sb, userId, {
     tenantId,
     windowDays: 30,
@@ -274,6 +278,7 @@ export async function previewIntelligentPurchaseOrders(
     { data: products, error: productError },
     { data: suppliers, error: supplierError },
     { data: units, error: unitError },
+    { data: selectedLocation, error: locationError },
   ] = await Promise.all([
     sb
       .from("restaurant_inventory_items")
@@ -287,12 +292,18 @@ export async function previewIntelligentPurchaseOrders(
       .in("inventory_item_id", itemIds),
     sb.from("restaurant_suppliers").select("id, name, status").eq("tenant_id", tenantId),
     sb.from("restaurant_inventory_units").select("id, dimension, base_unit_id, factor").or("tenant_id.eq." + tenantId + ",tenant_id.is.null"),
+    input.locationId
+      ? sb.from("restaurant_locations").select("id, property_id, scope, is_storage").eq("tenant_id", tenantId).eq("id", input.locationId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
   ]);
   if (itemError)
     throw new Error("Unable to validate replenishment inventory: " + itemError.message);
   if (productError) throw new Error("Unable to validate supplier pricing: " + productError.message);
   if (supplierError) throw new Error("Unable to validate suppliers: " + supplierError.message);
   if (unitError) throw new Error("Unable to validate supplier unit conversions: " + unitError.message);
+  if (locationError) throw new Error("Unable to validate delivery location: " + locationError.message);
+  if (input.locationId && !selectedLocation) throw new Error("Selected delivery location is not available in this tenant.");
+  const scopedPropertyId = propertyId ?? selectedLocation?.property_id ?? null;
 
   const itemById = new Map(((items ?? []) as any[]).map((x) => [x.id, x]));
   const supplierById = new Map(((suppliers ?? []) as any[]).map((x) => [x.id, x]));
@@ -358,10 +369,10 @@ export async function previewIntelligentPurchaseOrders(
       skipped.push(suggestion.name + ": supplier minimum order quantity or order multiple has changed.");
       continue;
     }
-    const propertyScopeId = item.property_id ?? propertyId ?? null;
+    const propertyScopeId = item.property_id ?? scopedPropertyId;
     const deliveryLocationId = input.locationId ?? item.location_id ?? null;
-    if (!propertyScopeId || !deliveryLocationId) {
-      skipped.push(suggestion.name + ": an explicit purchasing property and delivery location are required.");
+    if (!deliveryLocationId || (!propertyScopeId && !input.locationId)) {
+      skipped.push(suggestion.name + ": an explicit purchasing property or authorized central-store location is required.");
       continue;
     }
 
