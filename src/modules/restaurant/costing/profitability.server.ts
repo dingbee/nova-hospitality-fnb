@@ -52,6 +52,7 @@ export interface ProfitabilityTotals extends Omit<ProfitabilityRow, "menu_item_i
   discounts: number;
   refunds: number;
   tax_collected: number;
+  sales_adjustments: number;
   net_sales: number;
   service_consumables: number;
   other_direct_variable_costs: number;
@@ -68,6 +69,7 @@ export async function computeProfitability(
 ): Promise<{
   periodStart: string;
   periodEnd: string;
+  scope: { propertyId: string | null; locationId: string | null };
   rows: ProfitabilityRow[];
   totals: ProfitabilityTotals;
   operational: ReturnType<typeof calculateOperationalProfitability>;
@@ -78,7 +80,13 @@ export async function computeProfitability(
     net_sales: number;
     direct_variable_costs: number;
     contribution: number;
+    allocated_operating_expenses: number;
     operating_profit: number;
+    property_id: string | null;
+    location_id: string | null;
+    allocation_method: string;
+    confidence_state: string;
+    source_references: string[];
   }>;
 }> {
   await assertCapability(sb, userId, input.tenantId, "profitability.manage", {
@@ -120,7 +128,7 @@ export async function computeProfitability(
   };
   let expenseAllocationQuery = sb
     .from("restaurant_cost_allocations")
-    .select("amount, currency, property_id, location_id, source_id")
+    .select("amount, currency, property_id, location_id, source_id, allocation_method")
     .eq("tenant_id", input.tenantId)
     .eq("source_type", "operational_expense")
     .gte("period_start", allocationPeriodFrom)
@@ -542,7 +550,7 @@ export async function computeProfitability(
   });
   const operationalTotals = {
     gross_sales: operational.grossSales, discounts: operational.discounts, refunds: operational.refunds,
-    tax_collected: operational.taxCollected, net_sales: operational.netSales,
+    sales_adjustments: operational.salesAdjustments, tax_collected: operational.taxCollected, net_sales: operational.netSales,
     service_consumables: operational.serviceConsumables, other_direct_variable_costs: operational.otherDirectVariableCosts,
     direct_variable_costs: operational.directVariableCosts, unallocated_operating_expenses: operational.unallocatedOperatingExpenses,
     pending_expense_amount: operational.pendingExpenseAmount,
@@ -687,7 +695,6 @@ export async function computeProfitability(
           consumable_events: consumptionEventRows.length,
           expense_allocations: allocationRows.length,
           unallocated_costs: unallocatedRows.length,
-          pending_expenses: pendingRows.length,
         },
         source_references: {
           order_ids: orderIds,
@@ -700,7 +707,6 @@ export async function computeProfitability(
           reconciliation_run_ids: ((reconciliationRuns ?? []) as any[]).map((r) => r.id),
           allocation_source_ids: allocationRows.map((a) => a.source_id).filter(Boolean),
           unallocated_source_ids: unallocatedRows.map((a) => a.source_id).filter(Boolean),
-          pending_expense_ids: pendingRows.map((e) => e.id),
         },
         calculation_version: "phase5-v1",
         computed_by: userId,
