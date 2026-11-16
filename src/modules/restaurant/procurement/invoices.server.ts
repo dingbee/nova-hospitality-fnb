@@ -27,7 +27,11 @@ type Sb = any;
 const INVOICE_SELECT =
   "id, document_number, supplier_invoice_number, supplier_id, purchase_order_id, status, payment_status, match_status, matched_at, invoice_date, due_date, currency, subtotal, tax_total, total, amount_paid, attachment_url, notes, created_at";
 
-export async function listSupplierInvoices(sb: Sb, userId: string, input: z.infer<typeof listInvoicesSchema>) {
+export async function listSupplierInvoices(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listInvoicesSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_supplier_invoices")
@@ -46,7 +50,10 @@ export async function listSupplierInvoices(sb: Sb, userId: string, input: z.infe
     .select("id, name")
     .eq("tenant_id", input.tenantId);
   const names = new Map(((suppliers ?? []) as any[]).map((s) => [s.id, s.name]));
-  return ((data ?? []) as any[]).map((i) => ({ ...i, supplier_name: names.get(i.supplier_id) ?? "—" }));
+  return ((data ?? []) as any[]).map((i) => ({
+    ...i,
+    supplier_name: names.get(i.supplier_id) ?? "—",
+  }));
 }
 
 export async function recordSupplierInvoice(sb: Sb, userId: string, input: RecordInvoiceInput) {
@@ -59,7 +66,8 @@ export async function recordSupplierInvoice(sb: Sb, userId: string, input: Recor
     .eq("tenant_id", input.tenantId)
     .eq("id", input.supplierId)
     .single();
-  if (supplierError || !supplier) throw new Error("Supplier is missing or inaccessible in this tenant.");
+  if (supplierError || !supplier)
+    throw new Error("Supplier is missing or inaccessible in this tenant.");
 
   if (input.purchaseOrderId) {
     const { data: linkedOrder, error: orderError } = await sb
@@ -68,17 +76,28 @@ export async function recordSupplierInvoice(sb: Sb, userId: string, input: Recor
       .eq("tenant_id", input.tenantId)
       .eq("id", input.purchaseOrderId)
       .single();
-    if (orderError || !linkedOrder) throw new Error("Linked purchase order is missing or inaccessible.");
+    if (orderError || !linkedOrder)
+      throw new Error("Linked purchase order is missing or inaccessible.");
     if (linkedOrder.supplier_id !== input.supplierId) {
       throw new Error("Supplier invoice must belong to the same supplier as its purchase order.");
     }
     if (String(linkedOrder.currency ?? "").toUpperCase() !== input.currency.toUpperCase()) {
-      throw new Error("Supplier invoice currency must match its purchase order currency; FX conversion is not inferred.");
+      throw new Error(
+        "Supplier invoice currency must match its purchase order currency; FX conversion is not inferred.",
+      );
     }
-    if (input.propertyId && linkedOrder.property_id && input.propertyId !== linkedOrder.property_id) {
+    if (
+      input.propertyId &&
+      linkedOrder.property_id &&
+      input.propertyId !== linkedOrder.property_id
+    ) {
       throw new Error("Supplier invoice property does not match the linked purchase order.");
     }
-    if (input.locationId && linkedOrder.location_id && input.locationId !== linkedOrder.location_id) {
+    if (
+      input.locationId &&
+      linkedOrder.location_id &&
+      input.locationId !== linkedOrder.location_id
+    ) {
       throw new Error("Supplier invoice location does not match the linked purchase order.");
     }
     linkedOrderScope = {
@@ -192,12 +211,19 @@ export async function recordSupplierInvoice(sb: Sb, userId: string, input: Recor
 }
 
 /** Three-way match using only tenant-scoped, posted and currency-consistent evidence. */
-export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: string, invoiceId: string) {
+export async function matchSupplierInvoice(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  invoiceId: string,
+) {
   await assertCapability(sb, userId, tenantId, "invoice.manage");
 
   const { data: invoice, error: invoiceError } = await sb
     .from("restaurant_supplier_invoices")
-    .select("id, tenant_id, supplier_id, purchase_order_id, document_number, subtotal, tax_total, total, currency, property_id, location_id")
+    .select(
+      "id, tenant_id, supplier_id, purchase_order_id, document_number, subtotal, tax_total, total, currency, property_id, location_id",
+    )
     .eq("tenant_id", tenantId)
     .eq("id", invoiceId)
     .single();
@@ -205,10 +231,13 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
 
   const { data: invoiceLines, error: invoiceLinesError } = await sb
     .from("restaurant_supplier_invoice_items")
-    .select("id, purchase_order_item_id, receipt_item_id, description, quantity, unit_price, tax_amount")
+    .select(
+      "id, purchase_order_item_id, receipt_item_id, description, quantity, unit_price, tax_amount",
+    )
     .eq("tenant_id", tenantId)
     .eq("invoice_id", invoice.id);
-  if (invoiceLinesError) throw new Error("Unable to load supplier invoice lines: " + invoiceLinesError.message);
+  if (invoiceLinesError)
+    throw new Error("Unable to load supplier invoice lines: " + invoiceLinesError.message);
 
   let purchaseOrder: { currency: string; lines: any[] } | null = null;
   let orderTotal: number | null = null;
@@ -236,7 +265,8 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
       .eq("tenant_id", tenantId)
       .eq("purchase_order_id", invoice.purchase_order_id)
       .eq("status", "posted");
-    if (receiptsError) throw new Error("Unable to load posted receipt evidence: " + receiptsError.message);
+    if (receiptsError)
+      throw new Error("Unable to load posted receipt evidence: " + receiptsError.message);
     const postedReceipts = (receipts ?? []) as any[];
     receivedValue = postedReceipts.reduce((sum, row) => sum + Number(row.accepted_value ?? 0), 0);
     receiptCurrencies = postedReceipts.map((row) => String(row.currency ?? po.currency ?? ""));
@@ -246,7 +276,8 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
       .select("id, description, quantity, unit_price")
       .eq("tenant_id", tenantId)
       .eq("purchase_order_id", invoice.purchase_order_id);
-    if (orderLinesError) throw new Error("Unable to load purchase-order lines: " + orderLinesError.message);
+    if (orderLinesError)
+      throw new Error("Unable to load purchase-order lines: " + orderLinesError.message);
 
     const { data: priorInvoices, error: priorInvoicesError } = await sb
       .from("restaurant_supplier_invoices")
@@ -255,7 +286,8 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
       .eq("purchase_order_id", invoice.purchase_order_id)
       .neq("id", invoice.id)
       .neq("status", "cancelled");
-    if (priorInvoicesError) throw new Error("Unable to load prior invoice evidence: " + priorInvoicesError.message);
+    if (priorInvoicesError)
+      throw new Error("Unable to load prior invoice evidence: " + priorInvoicesError.message);
     const priorInvoiceIds = ((priorInvoices ?? []) as any[]).map((row) => row.id);
     if (priorInvoiceIds.length > 0) {
       const { data: priorLines, error: priorLinesError } = await sb
@@ -263,7 +295,8 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
         .select("purchase_order_item_id, quantity")
         .eq("tenant_id", tenantId)
         .in("invoice_id", priorInvoiceIds);
-      if (priorLinesError) throw new Error("Unable to load prior invoiced quantities: " + priorLinesError.message);
+      if (priorLinesError)
+        throw new Error("Unable to load prior invoiced quantities: " + priorLinesError.message);
       for (const line of (priorLines ?? []) as any[]) {
         if (!line.purchase_order_item_id) continue;
         const quantity = Number(line.quantity ?? 0);
@@ -281,7 +314,10 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
         .from("restaurant_goods_receipt_items")
         .select("id, receipt_id, purchase_order_item_id, accepted_quantity")
         .eq("tenant_id", tenantId)
-        .in("receipt_id", postedReceipts.map((row) => row.id));
+        .in(
+          "receipt_id",
+          postedReceipts.map((row) => row.id),
+        );
       if (error) throw new Error("Unable to load accepted receipt lines: " + error.message);
       receiptLines = (data ?? []) as any[];
     }
@@ -352,15 +388,17 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
     .update({
       match_status: result.matchStatus,
       matched_at: new Date().toISOString(),
-      status: result.matchStatus === "mismatched"
-        ? "disputed"
-        : result.matchStatus === "matched"
-          ? "matched"
-          : "recorded",
+      status:
+        result.matchStatus === "mismatched"
+          ? "disputed"
+          : result.matchStatus === "matched"
+            ? "matched"
+            : "recorded",
     })
     .eq("tenant_id", tenantId)
     .eq("id", invoice.id);
-  if (updateError) throw new Error("Unable to persist invoice match result: " + updateError.message);
+  if (updateError)
+    throw new Error("Unable to persist invoice match result: " + updateError.message);
 
   await recordProcurementAuditStrict(sb, userId, {
     tenantId,
@@ -428,7 +466,12 @@ export async function setInvoicePaymentStatus(
 
   const total = Number(before.total ?? 0);
   const previousAmountPaid = Number(before.amount_paid ?? 0);
-  if (!Number.isFinite(total) || total < 0 || !Number.isFinite(previousAmountPaid) || previousAmountPaid < 0) {
+  if (
+    !Number.isFinite(total) ||
+    total < 0 ||
+    !Number.isFinite(previousAmountPaid) ||
+    previousAmountPaid < 0
+  ) {
     throw new Error("Invoice balance data is invalid; payment status cannot be changed.");
   }
 
@@ -442,13 +485,15 @@ export async function setInvoicePaymentStatus(
     await assertCapability(sb, userId, input.tenantId, "variance.manage");
   }
 
-  const amountPaid = input.amountPaid ??
-    (input.paymentStatus === "paid" ? total : previousAmountPaid);
+  const amountPaid =
+    input.amountPaid ?? (input.paymentStatus === "paid" ? total : previousAmountPaid);
   if (!Number.isFinite(amountPaid) || amountPaid < 0) {
     throw new Error("Amount paid must be a finite, non-negative value.");
   }
   if (amountPaid + 0.0001 < previousAmountPaid) {
-    throw new Error("Recorded payments cannot be reversed through invoice status; use a separately authorised refund or credit workflow.");
+    throw new Error(
+      "Recorded payments cannot be reversed through invoice status; use a separately authorised refund or credit workflow.",
+    );
   }
   if (amountPaid - total > 0.0001) {
     throw new Error("Amount paid cannot exceed the supplier invoice total.");
@@ -456,13 +501,22 @@ export async function setInvoicePaymentStatus(
   if (input.paymentStatus === "unpaid" && amountPaid > 0.0001) {
     throw new Error("An invoice with a recorded payment cannot be marked unpaid.");
   }
-  if (input.paymentStatus === "partially_paid" && !(amountPaid > 0.0001 && amountPaid < total - 0.0001)) {
-    throw new Error("Partially paid status requires a positive balance payment below the invoice total.");
+  if (
+    input.paymentStatus === "partially_paid" &&
+    !(amountPaid > 0.0001 && amountPaid < total - 0.0001)
+  ) {
+    throw new Error(
+      "Partially paid status requires a positive balance payment below the invoice total.",
+    );
   }
   if (input.paymentStatus === "paid" && Math.abs(amountPaid - total) > 0.01) {
     throw new Error("Paid status requires the recorded amount to equal the invoice total.");
   }
-  if (input.paymentStatus === "disputed" && input.amountPaid != null && amountPaid !== previousAmountPaid) {
+  if (
+    input.paymentStatus === "disputed" &&
+    input.amountPaid != null &&
+    amountPaid !== previousAmountPaid
+  ) {
     throw new Error("Dispute status cannot alter the recorded payment amount.");
   }
 
