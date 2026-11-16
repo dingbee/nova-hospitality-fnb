@@ -239,6 +239,13 @@ export async function getPurchasingIntelligence(
       asOf: new Date(now).toISOString(),
       horizonEnd,
     });
+    const minimumOrderQuantity = product.min_order_quantity == null ? 0 : Number(product.min_order_quantity);
+    const orderMultiple = product.unit_id === item.unit_id ? Number(product.pack_size ?? 1) : 1;
+    if (!Number.isFinite(minimumOrderQuantity) || minimumOrderQuantity < 0 ||
+        !Number.isFinite(orderMultiple) || orderMultiple <= 0) {
+      reviewItems.push({ inventoryItemId: item.id, name: item.name, status: "manual_review", reason: "Supplier minimum quantity or order multiple is invalid.", observations: observedDays });
+      continue;
+    }
     const calculation = calculateReplenishment({
       forecastDemand: forecast.forecastQuantity,
       safetyStock,
@@ -246,8 +253,8 @@ export async function getPurchasingIntelligence(
       leadTimeDays: leadTime,
       targetCoverageDays: COVER_DAYS,
       stockUnitsPerPurchaseUnit: product.stockUnitsPerPurchaseUnit,
-      minimumOrderQuantity: product.min_order_quantity == null ? 0 : Number(product.min_order_quantity),
-      orderMultiple: 1,
+      minimumOrderQuantity,
+      orderMultiple,
     });
     if (calculation.status !== "ready" || calculation.recommendedStockUnits == null || calculation.recommendedPurchaseUnits == null) {
       reviewItems.push({ inventoryItemId: item.id, name: item.name, status: "manual_review", reason: calculation.reason ?? "Replenishment calculation requires manual review.", observations: observedDays });
@@ -274,6 +281,8 @@ export async function getPurchasingIntelligence(
       purchaseUnitPrice: unitPrice,
       purchaseCurrency: product.currency,
       effectivePriceDate: product.effectivePriceDate,
+      minimumOrderQuantity,
+      orderMultiple,
       stockUnitsPerPurchaseUnit: product.stockUnitsPerPurchaseUnit,
       forecastDemand: forecast.forecastQuantity,
       safetyStock,
