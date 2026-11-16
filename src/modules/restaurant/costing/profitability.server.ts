@@ -667,7 +667,15 @@ export async function computeProfitability(
     },
   });
 
-  return { periodStart: input.from, periodEnd: input.to, rows, totals, operational, dimensions };
+  return {
+    periodStart: input.from,
+    periodEnd: input.to,
+    scope: { propertyId: input.propertyId ?? reportingPropertyId, locationId: input.locationId ?? null },
+    rows,
+    totals,
+    operational,
+    dimensions,
+  };
 }
 
 export async function listProfitability(
