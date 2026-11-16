@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS public.wa_outbound_jobs (
   binding_id uuid NOT NULL,
   conversation_id uuid NOT NULL,
   source_event_id uuid NOT NULL,
-  portal_session_id uuid NOT NULL,
+  portal_session_id uuid,
   recipient_phone text NOT NULL CHECK (recipient_phone ~ '^[0-9]{8,15}$'),
   idempotency_key text NOT NULL,
   message_type text NOT NULL DEFAULT 'text' CHECK (message_type = 'text'),
