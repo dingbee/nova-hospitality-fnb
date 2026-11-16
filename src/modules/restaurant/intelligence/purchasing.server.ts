@@ -339,6 +339,7 @@ export async function getPurchasingIntelligence(
       supplierId: supplier?.id ?? null,
       purchaseQuantity: calculation.recommendedPurchaseUnits,
       purchaseUnitId: product.unit_id,
+      stockUnitId: item.unit_id,
       supplierProductId: product.id,
       purchaseUnitPrice: unitPrice,
       purchaseCurrency: product.currency,
