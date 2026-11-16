@@ -7,7 +7,8 @@ on:
       - main
       - "release/**"
       - "feat/operational-cost-intelligence-phase3-workaround"
-      - "fix/phase2-operational-expense-security-closure"
+      - "feat/operational-profitability-phase5"
+      - "integration/phase2-phase5-release-certification"
   pull_request:
     branches:
       - main
@@ -148,6 +149,29 @@ jobs:
       - name: Report full test baseline
         if: steps.full_tests.outcome == 'failure'
         run: echo "::warning::Full repository test suite remains non-clean outside the scoped functional gate; scoped changed-path tests remain blocking."
+
+      - name: Verify Phase 1 operational consumables ledger capture and RLS
+        env:
+          PGPASSWORD: postgres
+        run: |
+          createdb -h localhost -U postgres lexibite_consumables_test
+          psql -h localhost -U postgres -d lexibite_consumables_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-operational-consumables-phase1.sql
+
+      - name: Verify Phase 1 per-cover operational consumption service
+        run: bunx vitest run src/modules/restaurant/inventory/movements.server.test.ts
+
+      - name: Verify pinned recipe consumption cost idempotency and currency integrity
+        run: bunx vitest run src/modules/restaurant/products/consumption.server.test.ts
+
+      - name: Verify operational profitability calculation contract
+        run: bunx vitest run src/modules/restaurant/costing/operational-profitability.calculation.test.ts
+
+      - name: Verify operational profitability snapshot schema and RLS
+        env:
+          PGPASSWORD: postgres
+        run: |
+          createdb -h localhost -U postgres lexibite_profitability_test
+          psql -h localhost -U postgres -d lexibite_profitability_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-operational-profitability-snapshots.sql
 
       - name: Verify bundle origin
         run: bun run verify:bundle -- .output
