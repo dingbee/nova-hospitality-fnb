@@ -39,6 +39,7 @@ do $$ begin
  if exists(select 1 from public.restaurant_operational_profitability_snapshots where currency<>'TZS') then raise exception 'Currency integrity failed'; end if;
  if not exists(select 1 from information_schema.columns where table_schema='public' and table_name='restaurant_operational_profitability_snapshots' and column_name='operating_margin_percent') then raise exception 'Operating margin snapshot column missing'; end if;
  if not exists(select 1 from information_schema.columns where table_schema='public' and table_name='restaurant_operational_profitability_snapshots' and column_name='pending_expense_amount') then raise exception 'Pending expense amount snapshot column missing'; end if;
+ if not exists(select 1 from information_schema.columns where table_schema='public' and table_name='restaurant_operational_profitability_snapshots' and column_name='calculation_inputs') then raise exception 'Reproducible calculation input snapshot column missing'; end if;
  if not exists(select 1 from information_schema.columns where table_schema='public' and table_name='restaurant_operational_profitability_dimensions' and column_name='allocation_method') then raise exception 'Dimension allocation method column missing'; end if;
  if not exists(select 1 from information_schema.columns where table_schema='public' and table_name='restaurant_operational_profitability_dimensions' and column_name='confidence_state') then raise exception 'Dimension confidence column missing'; end if;
 end $$;
@@ -46,6 +47,12 @@ set local role authenticated;
 do $$ begin
  if (select count(*) from public.restaurant_operational_profitability_snapshots)<>1 then raise exception 'Scoped accountant read failed'; end if;
  if exists(select 1 from public.restaurant_operational_profitability_snapshots where tenant_id='10000000-0000-0000-0000-000000000002') then raise exception 'Cross-tenant read isolation failed'; end if;
+ begin
+  update public.restaurant_operational_profitability_snapshots set operating_profit=0
+   where tenant_id='10000000-0000-0000-0000-000000000001';
+  raise exception 'Financial snapshot mutation unexpectedly succeeded';
+ exception when insufficient_privilege then null;
+ end;
 end $;
 reset role;
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000002',true);
