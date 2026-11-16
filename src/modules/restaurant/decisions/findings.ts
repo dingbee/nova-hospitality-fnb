@@ -215,6 +215,14 @@ export function inventoryFindings(
           reorderPoint: row.reorderPoint,
           recommendedQuantity: suggestion?.recommendedQuantity ?? null,
           supplierId: suggestion?.supplierId ?? null,
+          supplierProductId: suggestion?.supplierProductId ?? null,
+          stockUnitId: suggestion?.stockUnitId ?? null,
+          purchaseUnitId: suggestion?.purchaseUnitId ?? null,
+          purchaseQuantity: suggestion?.purchaseQuantity ?? null,
+          purchaseUnitPrice: suggestion?.purchaseUnitPrice ?? null,
+          stockUnitsPerPurchaseUnit: suggestion?.stockUnitsPerPurchaseUnit ?? null,
+          minimumOrderQuantity: suggestion?.minimumOrderQuantity ?? null,
+          orderMultiple: suggestion?.orderMultiple ?? null,
           estimatedUnitCost:
             suggestion && suggestion.recommendedQuantity > 0
               ? round(suggestion.estimatedCost / suggestion.recommendedQuantity, 4)
