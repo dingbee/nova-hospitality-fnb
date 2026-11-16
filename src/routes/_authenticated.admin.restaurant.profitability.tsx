@@ -331,7 +331,7 @@ function ProfitabilityPage() {
       {result && (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
-            label="Revenue"
+            label="Net sales"
             value={money(result.totals.revenue)}
             icon={PiggyBank}
             tone="gold"
