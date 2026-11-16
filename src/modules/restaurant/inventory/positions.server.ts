@@ -154,6 +154,14 @@ export async function listStockPositions(
 
 
 
+function replenishmentDeliveryTimestamp(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const raw = String(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw + "T23:59:59.999Z";
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
 export interface ReplenishmentPositionEvidence {
   itemId: string;
   onHand: number;
@@ -455,7 +463,7 @@ export async function getStockPositionEvidenceForReplenishment(
           sourceId: confirmation.header.id,
           sourceType: "supplier_confirmation",
           quantityInStockUnits: confirmedRemaining * factor,
-          expectedAt: confirmedDate ? new Date(confirmedDate).toISOString() : null,
+          expectedAt: replenishmentDeliveryTimestamp(confirmedDate),
           status: confirmation.header.status,
         });
       }
@@ -468,7 +476,7 @@ export async function getStockPositionEvidenceForReplenishment(
         sourceId: order.id + ":" + line.id,
         sourceType: "purchase_order",
         quantityInStockUnits: outstanding * factor,
-        expectedAt: order.expected_at ? new Date(order.expected_at).toISOString() : null,
+        expectedAt: replenishmentDeliveryTimestamp(order.expected_at),
         status: order.status,
       });
     }
