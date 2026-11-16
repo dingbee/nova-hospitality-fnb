@@ -317,132 +317,288 @@ export async function convertRequestToOrder(
 
   const { data: req, error } = await sb
     .from("restaurant_purchase_requests")
-    .select(
-      "id, status, document_number, currency, property_id, location_id, correlation_id, notes",
-    )
+    .select("id, status, document_number, currency, property_id, location_id, correlation_id, notes, metadata, converted_purchase_order_id")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.requestId)
     .single();
   if (error || !req) throw new Error("Purchase request not found.");
-  if (req.status !== "approved")
+  if (!["approved", "converted_to_po"].includes(req.status)) {
     throw new Error("Only an approved request can become a purchase order.");
+  }
+  if (typeof req.currency !== "string" || !/^[A-Z]{3}$/.test(req.currency)) {
+    throw new Error("The approved request has no valid configured currency.");
+  }
 
-  const { data: lines } = await sb
+  const { data: lines, error: linesError } = await sb
     .from("restaurant_purchase_request_items")
-    .select(
-      "id, inventory_item_id, unit_id, description, quantity, approved_quantity, estimated_unit_cost",
-    )
+    .select("id, inventory_item_id, preferred_supplier_id, supplier_product_id, unit_id, stock_unit_id, stock_units_per_purchase_unit, minimum_order_quantity, order_multiple, source_action_id, description, quantity, approved_quantity, estimated_unit_cost")
     .eq("tenant_id", input.tenantId)
     .eq("purchase_request_id", input.requestId);
+  if (linesError) throw new Error("Unable to load approved purchase-request lines: " + linesError.message);
 
-  const orderLines = ((lines ?? []) as any[]).map((l) => ({
-    quantity: Number(l.approved_quantity ?? l.quantity ?? 0),
-    unitPrice: Number(l.estimated_unit_cost ?? 0),
-    inventoryItemId: l.inventory_item_id,
-    unitId: l.unit_id,
-    description: l.description,
-  }));
+  const orderLines = ((lines ?? []) as any[]).map((line) => {
+    const quantity = Number(line.approved_quantity ?? line.quantity ?? 0);
+    const unitPrice = Number(line.estimated_unit_cost ?? 0);
+    const stockFactor = line.stock_units_per_purchase_unit == null ? null : Number(line.stock_units_per_purchase_unit);
+    const minimumOrderQuantity = line.minimum_order_quantity == null ? null : Number(line.minimum_order_quantity);
+    const orderMultiple = line.order_multiple == null ? null : Number(line.order_multiple);
+    if (!line.inventory_item_id || !Number.isFinite(quantity) || quantity <= 0 ||
+        !Number.isFinite(unitPrice) || unitPrice < 0) {
+      throw new Error("An approved purchase-request line has invalid item, quantity or price data.");
+    }
+    if (line.supplier_product_id && (!line.unit_id || !line.stock_unit_id || stockFactor == null ||
+        !Number.isFinite(stockFactor) || stockFactor <= 0)) {
+      throw new Error("A supplier-linked request line is missing its immutable purchase-to-stock conversion snapshot.");
+    }
+    if (stockFactor != null && (!line.stock_unit_id || !Number.isFinite(stockFactor) || stockFactor <= 0)) {
+      throw new Error("A purchase-request line has an invalid stock-unit conversion snapshot.");
+    }
+    if (minimumOrderQuantity != null && (!Number.isFinite(minimumOrderQuantity) ||
+        minimumOrderQuantity < 0 || quantity < minimumOrderQuantity)) {
+      throw new Error("Approved quantity is below the stored supplier minimum order quantity.");
+    }
+    if (orderMultiple != null && (!Number.isFinite(orderMultiple) || orderMultiple <= 0 ||
+        Math.abs(quantity / orderMultiple - Math.round(quantity / orderMultiple)) > 0.000001)) {
+      throw new Error("Approved quantity does not satisfy the stored supplier order multiple.");
+    }
+    if (line.preferred_supplier_id && line.preferred_supplier_id !== input.supplierId) {
+      throw new Error("The selected PO supplier differs from the supplier approved on a request line.");
+    }
+    return {
+      requestItemId: line.id,
+      inventoryItemId: line.inventory_item_id,
+      supplierProductId: line.supplier_product_id ?? null,
+      supplierId: line.preferred_supplier_id ?? input.supplierId,
+      unitId: line.unit_id ?? null,
+      stockUnitId: line.stock_unit_id ?? null,
+      stockUnitsPerPurchaseUnit: stockFactor,
+      minimumOrderQuantity,
+      orderMultiple,
+      sourceActionId: line.source_action_id ?? null,
+      quantity,
+      unitPrice,
+      description: line.description,
+    };
+  });
+  if (orderLines.length === 0) throw new Error("An approved purchase request must contain at least one line.");
 
-  const subtotal = orderLines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+  const subtotal = Number(orderLines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0).toFixed(4));
+  const { data: existingPo, error: existingPoError } = await sb
+    .from("restaurant_purchase_orders")
+    .select("id, document_number, reference, status, supplier_id, property_id, location_id, purchase_request_id, total, currency, metadata")
+    .eq("tenant_id", input.tenantId)
+    .eq("purchase_request_id", input.requestId)
+    .maybeSingle();
+  if (existingPoError) throw new Error("Unable to check for an existing purchase order: " + existingPoError.message);
+  if (req.status === "converted_to_po" && !existingPo && !req.converted_purchase_order_id) {
+    throw new Error("The request is marked converted but its purchase order cannot be found. Manual reconciliation is required.");
+  }
 
-  // Never a client-supplied reference here — always safe to retry with a
-  // freshly generated document number if it happens to collide with an
-  // existing (tenant_id, reference) row (e.g. legacy/imported data the
-  // sequence doesn't know about).
-  const po = await insertWithUniqueDocumentNumber(
-    sb,
-    input.tenantId,
-    "purchase_order",
-    DOCUMENT_PREFIX.purchase_order,
-    "restaurant_purchase_orders_tenant_id_reference_key",
-    (documentNumber) =>
-      sb
+  let po: any = existingPo;
+  let poCreated = false;
+  if (!po) {
+    try {
+      po = await insertWithUniqueDocumentNumber(
+        sb,
+        input.tenantId,
+        "purchase_order",
+        DOCUMENT_PREFIX.purchase_order,
+        "restaurant_purchase_orders_tenant_id_reference_key",
+        (documentNumber) =>
+          sb
+            .from("restaurant_purchase_orders")
+            .insert({
+              tenant_id: input.tenantId,
+              property_id: req.property_id,
+              location_id: req.location_id,
+              supplier_id: input.supplierId,
+              purchase_request_id: input.requestId,
+              reference: documentNumber,
+              document_number: documentNumber,
+              status: "draft",
+              buyer_id: userId,
+              requested_delivery_date: input.requestedDeliveryDate ?? null,
+              payment_terms: input.paymentTerms ?? null,
+              subtotal,
+              total: subtotal,
+              currency: req.currency,
+              notes: input.notes ?? req.notes ?? null,
+              created_by: userId,
+              correlation_id: req.correlation_id,
+              metadata: {
+                source: "purchase_request",
+                purchase_request_id: input.requestId,
+                decision_id: (req.metadata as any)?.decision_id ?? null,
+                action_id: (req.metadata as any)?.action_id ?? null,
+              },
+            })
+            .select("id, document_number, total, currency, status, supplier_id, property_id, location_id, purchase_request_id, metadata")
+            .single(),
+      );
+      poCreated = true;
+    } catch (createError) {
+      const message = (createError as Error).message ?? "Purchase order creation failed.";
+      if (!message.includes("idx_restaurant_purchase_orders_purchase_request")) throw createError;
+      const { data: recoveredPo, error: recoverError } = await sb
         .from("restaurant_purchase_orders")
-        .insert({
-          tenant_id: input.tenantId,
-          property_id: req.property_id,
-          location_id: req.location_id,
-          supplier_id: input.supplierId,
-          purchase_request_id: input.requestId,
-          reference: documentNumber,
-          document_number: documentNumber,
-          status: "draft",
-          buyer_id: userId,
-          requested_delivery_date: input.requestedDeliveryDate ?? null,
-          payment_terms: input.paymentTerms ?? null,
-          subtotal,
-          total: subtotal,
-          currency: req.currency ?? "TZS",
-          notes: input.notes ?? req.notes ?? null,
-          created_by: userId,
-          correlation_id: req.correlation_id,
-        })
-        .select("id, document_number, total, currency")
-        .single(),
-  );
-
-  if (orderLines.length > 0) {
-    const { error: liErr } = await sb.from("restaurant_purchase_order_items").insert(
-      orderLines.map((l) => ({
-        tenant_id: input.tenantId,
-        purchase_order_id: po.id,
-        inventory_item_id: l.inventoryItemId,
-        unit_id: l.unitId,
-        description: l.description,
-        quantity: l.quantity,
-        unit_price: l.unitPrice,
-        line_total: l.quantity * l.unitPrice,
-      })),
-    );
-    if (liErr) throw new Error(liErr.message);
-
-    for (const l of orderLines) {
-      await recordPriceObservation(sb, {
-        tenantId: input.tenantId,
-        supplierId: input.supplierId,
-        inventoryItemId: l.inventoryItemId,
-        unitId: l.unitId,
-        priceType: "ordered",
-        price: l.unitPrice,
-        quantity: l.quantity,
-        currency: req.currency ?? "TZS",
-        sourceType: "purchase_order",
-        sourceId: po.id,
-      });
+        .select("id, document_number, reference, status, supplier_id, property_id, location_id, purchase_request_id, total, currency, metadata")
+        .eq("tenant_id", input.tenantId)
+        .eq("purchase_request_id", input.requestId)
+        .maybeSingle();
+      if (recoverError || !recoveredPo) {
+        throw new Error(recoverError?.message ?? "Concurrent purchase-order creation could not be recovered.");
+      }
+      po = recoveredPo;
     }
   }
 
-  await sb
-    .from("restaurant_purchase_requests")
-    .update({
-      status: "converted_to_po",
-      converted_purchase_order_id: po.id,
-      converted_at: new Date().toISOString(),
-    })
-    .eq("id", input.requestId)
-    .eq("tenant_id", input.tenantId);
+  if (po.purchase_request_id !== input.requestId || po.supplier_id !== input.supplierId ||
+      po.property_id !== req.property_id || po.location_id !== req.location_id || po.currency !== req.currency) {
+    throw new Error("An existing purchase order linked to this request has conflicting supplier, property, location or currency scope.");
+  }
 
-  await recordProcurementAudit(sb, userId, {
-    tenantId: input.tenantId,
-    documentType: "purchase_request",
-    documentId: input.requestId,
-    documentNumber: req.document_number,
-    action: "converted_to_po",
-    previousState: "approved",
-    newState: "converted_to_po",
-    correlationId: req.correlation_id,
-    metadata: { purchase_order_id: po.id, purchase_order_number: po.document_number },
+  const { data: existingLines, error: existingLinesError } = await sb
+    .from("restaurant_purchase_order_items")
+    .select("id, source_request_item_id, source_action_id, inventory_item_id, supplier_product_id, unit_id, stock_unit_id, stock_units_per_purchase_unit, minimum_order_quantity, order_multiple, quantity, unit_price")
+    .eq("tenant_id", input.tenantId)
+    .eq("purchase_order_id", po.id);
+  if (existingLinesError) throw new Error("Unable to verify existing purchase-order lines: " + existingLinesError.message);
+  const existingByRequestItem = new Map(
+    ((existingLines ?? []) as any[])
+      .filter((line) => line.source_request_item_id)
+      .map((line) => [line.source_request_item_id, line]),
+  );
+  const expectedRequestItemIds = new Set(orderLines.map((line) => line.requestItemId));
+  if (((existingLines ?? []) as any[]).some((line) =>
+    !line.source_request_item_id || !expectedRequestItemIds.has(line.source_request_item_id))) {
+    throw new Error("Existing purchase-order lines cannot be reconciled to the approved request items. Manual review is required.");
+  }
+
+  const lineMatches = (saved: any, line: (typeof orderLines)[number]) =>
+    saved.inventory_item_id === line.inventoryItemId &&
+    saved.supplier_product_id === line.supplierProductId &&
+    saved.source_action_id === line.sourceActionId &&
+    saved.unit_id === line.unitId &&
+    saved.stock_unit_id === line.stockUnitId &&
+    Number(saved.stock_units_per_purchase_unit ?? 0) === Number(line.stockUnitsPerPurchaseUnit ?? 0) &&
+    Number(saved.minimum_order_quantity ?? 0) === Number(line.minimumOrderQuantity ?? 0) &&
+    Number(saved.order_multiple ?? 0) === Number(line.orderMultiple ?? 0) &&
+    Math.abs(Number(saved.quantity) - line.quantity) <= 0.0001 &&
+    Math.abs(Number(saved.unit_price) - line.unitPrice) <= 0.0001;
+
+  const missingLines = orderLines.filter((line) => {
+    const saved = existingByRequestItem.get(line.requestItemId);
+    if (!saved) return true;
+    if (!lineMatches(saved, line)) {
+      throw new Error("An existing purchase-order line differs from its approved request line. Manual reconciliation is required.");
+    }
+    return false;
   });
-  await recordProcurementAudit(sb, userId, {
-    tenantId: input.tenantId,
-    documentType: "purchase_order",
-    documentId: po.id,
-    documentNumber: po.document_number,
-    action: "created",
-    newState: "draft",
-    correlationId: req.correlation_id,
-    metadata: { from_request: req.document_number, subtotal },
-  });
+  if (missingLines.length > 0 && po.status !== "draft") {
+    throw new Error("A non-draft purchase order is missing approved request lines. Manual recovery is required.");
+  }
+
+  if (missingLines.length > 0) {
+    const { error: insertLinesError } = await sb.from("restaurant_purchase_order_items").insert(
+      missingLines.map((line) => ({
+        tenant_id: input.tenantId,
+        purchase_order_id: po.id,
+        purchase_request_id: input.requestId,
+        source_request_item_id: line.requestItemId,
+        source_action_id: line.sourceActionId,
+        inventory_item_id: line.inventoryItemId,
+        supplier_product_id: line.supplierProductId,
+        unit_id: line.unitId,
+        stock_unit_id: line.stockUnitId,
+        stock_units_per_purchase_unit: line.stockUnitsPerPurchaseUnit,
+        minimum_order_quantity: line.minimumOrderQuantity,
+        order_multiple: line.orderMultiple,
+        description: line.description,
+        quantity: line.quantity,
+        unit_price: line.unitPrice,
+        line_total: Number((line.quantity * line.unitPrice).toFixed(4)),
+      })),
+    );
+    if (insertLinesError && String((insertLinesError as any).code) !== "23505") {
+      throw new Error(insertLinesError.message);
+    }
+  }
+
+  const { data: persistedLines, error: persistedLinesError } = await sb
+    .from("restaurant_purchase_order_items")
+    .select("id, source_request_item_id, source_action_id, inventory_item_id, supplier_product_id, unit_id, stock_unit_id, stock_units_per_purchase_unit, minimum_order_quantity, order_multiple, quantity, unit_price")
+    .eq("tenant_id", input.tenantId)
+    .eq("purchase_order_id", po.id);
+  if (persistedLinesError) throw new Error("Unable to verify persisted purchase-order lines: " + persistedLinesError.message);
+  const persistedByRequestItem = new Map(
+    ((persistedLines ?? []) as any[]).map((line) => [line.source_request_item_id, line]),
+  );
+  if (persistedByRequestItem.size !== orderLines.length ||
+      orderLines.some((line) => !lineMatches(persistedByRequestItem.get(line.requestItemId), line))) {
+    throw new Error("Persisted purchase-order lines do not reconcile with approved purchase-request quantities and unit snapshots.");
+  }
+
+  for (const line of missingLines) {
+    await recordPriceObservation(sb, {
+      tenantId: input.tenantId,
+      supplierId: input.supplierId,
+      inventoryItemId: line.inventoryItemId,
+      unitId: line.unitId,
+      priceType: "ordered",
+      price: line.unitPrice,
+      quantity: line.quantity,
+      currency: req.currency,
+      sourceType: "purchase_order",
+      sourceId: po.id,
+    });
+  }
+
+  if (req.status !== "converted_to_po") {
+    await sb
+      .from("restaurant_purchase_requests")
+      .update({
+        status: "converted_to_po",
+        converted_purchase_order_id: po.id,
+        converted_at: new Date().toISOString(),
+      })
+      .eq("id", input.requestId)
+      .eq("tenant_id", input.tenantId);
+    await recordProcurementAudit(sb, userId, {
+      tenantId: input.tenantId,
+      documentType: "purchase_request",
+      documentId: input.requestId,
+      documentNumber: req.document_number,
+      action: "converted_to_po",
+      previousState: "approved",
+      newState: "converted_to_po",
+      correlationId: req.correlation_id,
+      metadata: { purchase_order_id: po.id, purchase_order_number: po.document_number },
+    });
+  }
+
+  if (poCreated) {
+    await recordProcurementAudit(sb, userId, {
+      tenantId: input.tenantId,
+      documentType: "purchase_order",
+      documentId: po.id,
+      documentNumber: po.document_number,
+      action: "created",
+      newState: "draft",
+      correlationId: req.correlation_id,
+      metadata: { from_request: req.document_number, subtotal },
+    });
+  } else if (missingLines.length > 0) {
+    await recordProcurementAudit(sb, userId, {
+      tenantId: input.tenantId,
+      documentType: "purchase_order",
+      documentId: po.id,
+      documentNumber: po.document_number,
+      action: "recovered_missing_request_lines",
+      newState: po.status,
+      correlationId: req.correlation_id,
+      metadata: { from_request: req.document_number, recovered_line_count: missingLines.length },
+    });
+  }
 
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.purchase.order.created",
@@ -453,10 +609,10 @@ export async function convertRequestToOrder(
     entityId: po.id,
     source: "restaurant-os",
     correlationId: req.correlation_id ?? undefined,
-    dedupeKey: `restaurant.po.${po.id}.created`,
+    dedupeKey: "restaurant.po." + po.id + ".created",
     payload: {
       document_number: po.document_number,
-      total: Number(po.total ?? 0),
+      total: Number(po.total ?? subtotal),
       from_request: req.document_number,
     },
   });
