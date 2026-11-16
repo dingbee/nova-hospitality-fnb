@@ -82,7 +82,10 @@ export async function getWhatsAppGuestPortalPage(admin: Db, token: string) {
     expiresAt: session.expiresAt,
     categories: catalog.categories,
     items: catalog.items.filter(
-      (item: any) => item.available !== false && item.priceConfigured !== false && item.price !== null,
+      (item: any) => item.available !== false &&
+        item.priceConfigured !== false &&
+        typeof item.price === "number" &&
+        Number.isFinite(item.price),
     ),
   };
 }
