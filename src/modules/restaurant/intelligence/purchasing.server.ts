@@ -5,7 +5,9 @@
  * expected cost impact of next month's consumption.
  */
 import { assertTenantRead } from "../core/access.server";
-import { percentChange, recommendedPurchaseQuantity, reliabilityScore, round } from "./analysis";
+import { getStockPositionEvidenceForReplenishment } from "../inventory/positions.server";
+import { calculateReplenishment, calculateStockPosition, comparableSupplierUnitCost, forecastDailyDemand, stockUnitsPerUnit } from "../inventory/stock-position.contract";
+import { percentChange, reliabilityScore, round } from "./analysis";
 import type {
   PurchaseSuggestion,
   PurchasingIntelligence,
@@ -16,7 +18,6 @@ import type {
 type Sb = any;
 const DAY = 864e5;
 const COVER_DAYS = 7;
-const DEFAULT_LEAD_TIME = 3;
 
 export async function getPurchasingIntelligence(
   sb: Sb,
@@ -45,7 +46,7 @@ export async function getPurchasingIntelligence(
   let itemsQuery = sb
     .from("restaurant_inventory_items")
     .select(
-      "id, name, current_quantity, average_cost, currency, unit_id, purchase_unit_id, pack_size",
+      "id, name, property_id, location_id, current_quantity, average_cost, currency, unit_id, purchase_unit_id, pack_size, reorder_point, par_level, metadata, updated_at",
     )
     .eq("tenant_id", tenantId);
   if (input.propertyId) itemsQuery = itemsQuery.eq("property_id", input.propertyId);
@@ -59,13 +60,13 @@ export async function getPurchasingIntelligence(
   if (input.propertyId) movesQuery = movesQuery.eq("property_id", input.propertyId);
   if (input.locationId) movesQuery = movesQuery.eq("location_id", input.locationId);
 
-  const [itemsRes, movesRes, productsRes, suppliersRes, poRes] = await Promise.all([
+  const [itemsRes, movesRes, productsRes, suppliersRes, poRes, unitsRes] = await Promise.all([
     itemsQuery,
     movesQuery,
     sb
       .from("restaurant_supplier_products")
       .select(
-        "supplier_id, inventory_item_id, unit_id, pack_size, unit_price, lead_time_days, active",
+        "id, supplier_id, inventory_item_id, unit_id, pack_size, unit_price, currency, min_order_quantity, lead_time_days, last_price_at, active",
       )
       .eq("tenant_id", tenantId),
     sb
@@ -83,6 +84,7 @@ export async function getPurchasingIntelligence(
       if (input.locationId) q = q.eq("location_id", input.locationId);
       return q;
     })(),
+    sb.from("restaurant_inventory_units").select("id, dimension, base_unit_id, factor").eq("tenant_id", tenantId),
   ]);
 
   for (const [label, result] of [
@@ -91,6 +93,7 @@ export async function getPurchasingIntelligence(
     ["supplier products", productsRes],
     ["suppliers", suppliersRes],
     ["purchase orders", poRes],
+    ["inventory units", unitsRes],
   ] as const) {
     if (result.error)
       throw new Error(
@@ -101,148 +104,179 @@ export async function getPurchasingIntelligence(
   const items = (itemsRes.data ?? []) as any[];
   const moves = (movesRes.data ?? []) as any[];
   const orders = (poRes.data ?? []) as any[];
-  const eligibleOrderIds = orders
-    .filter((order) => order.status === "approved" || order.status === "partially_received")
-    .map((order) => order.id);
-  let openOrderLines: any[] = [];
-  if (eligibleOrderIds.length > 0) {
-    const { data, error } = await sb
-      .from("restaurant_purchase_order_items")
-      .select(
-        "purchase_order_id, inventory_item_id, unit_id, quantity, received_quantity, accepted_quantity",
-      )
-      .eq("tenant_id", tenantId)
-      .in("purchase_order_id", eligibleOrderIds);
-    if (error)
-      throw new Error("Unable to account for outstanding purchase orders: " + error.message);
-    openOrderLines = (data ?? []) as any[];
-  }
-  const itemById = new Map(items.map((item) => [item.id, item]));
-  const outstandingByItem = new Map<string, number>();
-  const unsafeUnitItems = new Set<string>();
-  for (const line of openOrderLines) {
-    const item = itemById.get(line.inventory_item_id);
-    if (!item) continue;
-    const orderedQuantity = Number(line.quantity);
-    const acceptedQuantity = Number(line.accepted_quantity ?? 0);
-    if (
-      !Number.isFinite(orderedQuantity) ||
-      !Number.isFinite(acceptedQuantity) ||
-      orderedQuantity < 0 ||
-      acceptedQuantity < 0 ||
-      acceptedQuantity > orderedQuantity + 0.0001
-    ) {
-      throw new Error(
-        "Unable to safely net an outstanding purchase order with invalid line quantities.",
-      );
-    }
-    const remaining = Math.max(0, orderedQuantity - acceptedQuantity);
-    if (remaining <= 0) continue;
-    // Convert outstanding PO quantities into the inventory stock unit
-    // using the item's configured purchase-unit relationship. Never infer a
-    // conversion from supplier price or unit names.
-    let stockFactor = 1;
-    if (line.unit_id === item.unit_id) {
-      stockFactor = 1;
-    } else if (
-      line.unit_id &&
-      item.purchase_unit_id &&
-      line.unit_id === item.purchase_unit_id &&
-      Number(item.pack_size) > 0
-    ) {
-      stockFactor = Number(item.pack_size);
-    } else {
-      unsafeUnitItems.add(item.id);
-      continue;
-    }
-    outstandingByItem.set(item.id, (outstandingByItem.get(item.id) ?? 0) + remaining * stockFactor);
-  }
+  const suppliers = ((suppliersRes.data ?? []) as any[]).filter((s) => s.status === "active");
+  const products = ((productsRes.data ?? []) as any[]).filter((p) => p.active === true);
+  const units = (unitsRes.data ?? []) as any[];
   const currency = (items[0]?.currency as string) ?? "TZS";
-  const suppliers = (suppliersRes.data ?? []) as any[];
-  const products = ((productsRes.data ?? []) as any[]).filter((p) => p.active !== false);
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const stockEvidence = await getStockPositionEvidenceForReplenishment(sb, userId, {
+    tenantId,
+    itemIds: items.map((item) => item.id),
+    items,
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+    asOf: new Date(now).toISOString(),
+  });
 
-  const supplierById = new Map(suppliers.map((s) => [s.id, s]));
-  const bestProduct = new Map<string, any>();
-  for (const p of products) {
-    if (!p.inventory_item_id || !p.unit_id) continue;
-    const inventoryItem = items.find((item) => item.id === p.inventory_item_id);
-    if (!inventoryItem?.unit_id) continue;
-    let stockUnitsPerPurchaseUnit = 1;
-    if (p.unit_id === inventoryItem.unit_id) {
-      stockUnitsPerPurchaseUnit = 1;
-    } else if (
-      inventoryItem.purchase_unit_id &&
-      p.unit_id === inventoryItem.purchase_unit_id &&
-      Number(inventoryItem.pack_size) > 0
-    ) {
-      stockUnitsPerPurchaseUnit = Number(inventoryItem.pack_size);
-    } else {
-      continue;
-    }
-    const price = Number(p.unit_price);
-    if (!Number.isFinite(price) || price < 0) continue;
-    const normalized = {
-      ...p,
-      stockUnitsPerPurchaseUnit,
-      normalizedStockUnitPrice: price / stockUnitsPerPurchaseUnit,
-    };
-    const prev = bestProduct.get(p.inventory_item_id);
-    if (!prev || normalized.normalizedStockUnitPrice < prev.normalizedStockUnitPrice) {
-      bestProduct.set(p.inventory_item_id, normalized);
+  const productIds = products.map((product) => product.id);
+  const historyRes = productIds.length
+    ? await sb.from("restaurant_supplier_price_history")
+        .select("supplier_product_id, unit_id, price, currency, effective_date, price_type")
+        .eq("tenant_id", tenantId)
+        .in("supplier_product_id", productIds)
+        .lte("effective_date", new Date(now).toISOString().slice(0, 10))
+    : { data: [], error: null };
+  if (historyRes.error) throw new Error("Unable to load effective supplier price history: " + historyRes.error.message);
+  const historyRows = (historyRes.data ?? []) as any[];
+  const latestPriceByProduct = new Map<string, any>();
+  for (const row of historyRows) {
+    const previous = latestPriceByProduct.get(row.supplier_product_id);
+    if (!previous || String(row.effective_date) > String(previous.effective_date)) {
+      latestPriceByProduct.set(row.supplier_product_id, row);
     }
   }
 
-  const consumed = new Map<string, number>();
-  for (const m of moves) {
-    if (m.occurred_at < start) continue;
-    if (m.movement_type !== "consumption" && m.movement_type !== "wastage") continue;
-    const quantity = Number(m.quantity ?? 0);
-    if (!Number.isFinite(quantity)) {
-      throw new Error("Purchasing intelligence encountered a non-finite stock movement quantity.");
-    }
-    consumed.set(
-      m.inventory_item_id,
-      (consumed.get(m.inventory_item_id) ?? 0) + Math.abs(quantity),
+  const supplierById = new Map(suppliers.map((supplier) => [supplier.id, supplier]));
+  const bestProduct = new Map<string, any>();
+  for (const product of products) {
+    const item = itemById.get(product.inventory_item_id);
+    const supplier = supplierById.get(product.supplier_id);
+    if (!item || !supplier || !item.unit_id || !product.unit_id) continue;
+    const stockFactor = stockUnitsPerUnit(
+      product.unit_id,
+      item.unit_id,
+      product.unit_id === item.purchase_unit_id ? product.unit_id : null,
+      Number(product.pack_size),
+      units,
     );
+    if (stockFactor == null) continue;
+    const history = latestPriceByProduct.get(product.id);
+    const effectivePrice = history ?? product;
+    if (history && (history.unit_id !== product.unit_id || history.currency !== product.currency)) continue;
+    const price = Number(effectivePrice.price ?? effectivePrice.unit_price);
+    const normalizedStockUnitPrice = comparableSupplierUnitCost(
+      price,
+      effectivePrice.currency,
+      item.currency ?? currency,
+      stockFactor,
+    );
+    if (normalizedStockUnitPrice == null) continue;
+    const normalized = {
+      ...product,
+      effectiveUnitPrice: price,
+      effectivePriceDate: history?.effective_date ?? product.last_price_at ?? null,
+      stockUnitsPerPurchaseUnit: stockFactor,
+      normalizedStockUnitPrice,
+    };
+    const previous = bestProduct.get(item.id);
+    if (!previous || normalized.normalizedStockUnitPrice < previous.normalizedStockUnitPrice) {
+      bestProduct.set(item.id, normalized);
+    }
+  }
+
+  const dailyByItem = new Map<string, number[]>();
+  const observedDaysByItem = new Map<string, Set<string>>();
+  const observedStart = new Date(now - windowDays * DAY);
+  for (const item of items) dailyByItem.set(item.id, Array.from({ length: Math.ceil(windowDays) }, () => 0));
+  for (const movement of moves) {
+    if (movement.movement_type !== "consumption") continue;
+    const occurred = Date.parse(movement.occurred_at);
+    if (!Number.isFinite(occurred) || occurred < observedStart.getTime() || occurred > now) continue;
+    const dayKey = new Date(occurred).toISOString().slice(0, 10);
+    const index = Math.floor((occurred - observedStart.getTime()) / DAY);
+    const series = dailyByItem.get(movement.inventory_item_id);
+    if (!series || index < 0 || index >= series.length) continue;
+    const quantity = Math.abs(Number(movement.quantity ?? 0));
+    if (!Number.isFinite(quantity)) throw new Error("Purchasing intelligence encountered a non-finite consumption quantity.");
+    series[index] = (series[index] ?? 0) + quantity;
+    const observed = observedDaysByItem.get(movement.inventory_item_id) ?? new Set<string>();
+    observed.add(dayKey);
+    observedDaysByItem.set(movement.inventory_item_id, observed);
   }
 
   const suggestions: PurchaseSuggestion[] = [];
+  const reviewItems: NonNullable<PurchasingIntelligence["reviewItems"]> = [];
   let expectedMonthlySpend = 0;
-  for (const it of items) {
-    if (unsafeUnitItems.has(it.id)) continue;
-    const currentQuantity = Number(it.current_quantity ?? 0);
-    if (!Number.isFinite(currentQuantity)) {
-      throw new Error(
-        "Purchasing intelligence encountered an invalid on-hand quantity for " + it.name + ".",
-      );
+  for (const item of items) {
+    const evidence = stockEvidence.get(item.id);
+    if (!evidence) {
+      reviewItems.push({ inventoryItemId: item.id, name: item.name, status: "manual_review", reason: "Stock-position evidence was unavailable.", observations: 0 });
+      continue;
     }
-    const velocity = round((consumed.get(it.id) ?? 0) / windowDays, 3);
-    if (velocity <= 0) continue;
-    const product = bestProduct.get(it.id);
+    const product = bestProduct.get(item.id);
     const supplier = product ? supplierById.get(product.supplier_id) : null;
-    const leadTime =
-      Number(product?.lead_time_days ?? supplier?.lead_time_days ?? DEFAULT_LEAD_TIME) ||
-      DEFAULT_LEAD_TIME;
-    const unitPrice = Number(product?.normalizedStockUnitPrice ?? it.average_cost ?? 0);
-    const qty = recommendedPurchaseQuantity(
-      currentQuantity + (outstandingByItem.get(it.id) ?? 0),
-      velocity,
-      leadTime,
-      COVER_DAYS,
-    );
-    expectedMonthlySpend += velocity * 30 * unitPrice;
-    if (qty <= 0) continue;
+    const leadTimeRaw = product?.lead_time_days ?? supplier?.lead_time_days ?? null;
+    const leadTime = leadTimeRaw == null ? null : Number(leadTimeRaw);
+    if (leadTime == null || !Number.isFinite(leadTime) || leadTime < 0) {
+      reviewItems.push({ inventoryItemId: item.id, name: item.name, status: "manual_review", reason: "No valid supplier lead time is configured.", observations: observedDaysByItem.get(item.id)?.size ?? 0 });
+      continue;
+    }
+    const horizonDays = leadTime + COVER_DAYS;
+    const daily = dailyByItem.get(item.id) ?? [];
+    const observedDays = observedDaysByItem.get(item.id)?.size ?? 0;
+    const forecast = forecastDailyDemand(daily, horizonDays, 7, observedDays);
+    if (forecast.status !== "ready" || forecast.forecastQuantity == null || forecast.dailyAverage == null) {
+      reviewItems.push({ inventoryItemId: item.id, name: item.name, status: "insufficient_history", reason: "At least seven distinct consumption days are required; no demand quantity is fabricated.", observations: observedDays });
+      continue;
+    }
+    const metadata = (item.metadata ?? {}) as Record<string, unknown>;
+    const safetyValue = metadata.safety_stock_quantity ?? metadata.safetyStockQuantity ?? metadata.safety_stock;
+    const safetyStock = safetyValue == null ? null : Number(safetyValue);
+    if (safetyStock == null || !Number.isFinite(safetyStock) || safetyStock < 0) {
+      reviewItems.push({ inventoryItemId: item.id, name: item.name, status: "manual_review", reason: "Safety-stock quantity is not configured or is invalid.", observations: observedDays });
+      continue;
+    }
+    const reasons = [...evidence.manualReviewReasons];
+    if (!product || !supplier) reasons.push("No active supplier product with a comparable price is configured.");
+    if (reasons.length > 0) {
+      reviewItems.push({ inventoryItemId: item.id, name: item.name, status: "manual_review", reason: [...new Set(reasons)].join(" "), observations: observedDays });
+      continue;
+    }
+    const horizonEnd = new Date(now + horizonDays * DAY).toISOString();
+    const stockPosition = calculateStockPosition({
+      onHand: evidence.onHand,
+      reservations: evidence.reservations,
+      inbound: evidence.inbound,
+      asOf: new Date(now).toISOString(),
+      horizonEnd,
+    });
+    const calculation = calculateReplenishment({
+      forecastDemand: forecast.forecastQuantity,
+      safetyStock,
+      netAvailable: stockPosition.netAvailable,
+      leadTimeDays: leadTime,
+      targetCoverageDays: COVER_DAYS,
+      stockUnitsPerPurchaseUnit: product.stockUnitsPerPurchaseUnit,
+      minimumOrderQuantity: product.min_order_quantity == null ? 0 : Number(product.min_order_quantity),
+      orderMultiple: 1,
+    });
+    if (calculation.status !== "ready" || calculation.recommendedStockUnits == null || calculation.recommendedPurchaseUnits == null) {
+      reviewItems.push({ inventoryItemId: item.id, name: item.name, status: "manual_review", reason: calculation.reason ?? "Replenishment calculation requires manual review.", observations: observedDays });
+      continue;
+    }
+    const unitPrice = Number(product.effectiveUnitPrice);
+    expectedMonthlySpend += forecast.dailyAverage * 30 * product.normalizedStockUnitPrice;
+    if (calculation.recommendedStockUnits <= 0) continue;
+    const estimatedCost = Number((calculation.recommendedPurchaseUnits * unitPrice).toFixed(2));
     suggestions.push({
-      inventoryItemId: it.id,
-      name: it.name,
-      currentQuantity: round(currentQuantity, 2),
-      dailyVelocity: velocity,
+      inventoryItemId: item.id,
+      name: item.name,
+      currentQuantity: round(stockPosition.onHand, 4),
+      dailyVelocity: forecast.dailyAverage,
       leadTimeDays: leadTime,
       coverDays: COVER_DAYS,
-      recommendedQuantity: qty,
-      estimatedCost: round(qty * unitPrice),
+      recommendedQuantity: calculation.recommendedStockUnits,
+      estimatedCost,
       supplierName: supplier?.name ?? null,
       supplierId: supplier?.id ?? null,
+      purchaseQuantity: calculation.recommendedPurchaseUnits,
+      stockUnitsPerPurchaseUnit: product.stockUnitsPerPurchaseUnit,
+      forecastDemand: forecast.forecastQuantity,
+      safetyStock,
+      netAvailable: stockPosition.netAvailable,
+      demandObservations: forecast.observations,
+      forecastConfidence: forecast.confidence,
+      stockPositionEvidence: stockPosition,
     });
   }
   suggestions.sort((a, b) => b.estimatedCost - a.estimatedCost);
@@ -287,6 +321,16 @@ export async function getPurchasingIntelligence(
   const spendChange = percentChange(expectedMonthlySpend, previousMonthlySpend);
 
   const insights: RestaurantInsight[] = [];
+  if (reviewItems.length > 0) {
+    insights.push({
+      key: "purchasing.manual_review",
+      severity: "high",
+      title: reviewItems.length + " inventory items require manual replenishment review",
+      detail: reviewItems.slice(0, 5).map((row) => row.name + ": " + row.reason).join("; "),
+      metric: reviewItems.length + " items",
+      recommendation: "Resolve missing demand, safety-stock, supplier, unit-conversion or delivery evidence before creating purchase proposals.",
+    });
+  }
   if (suggestions.length > 0) {
     const top = suggestions.slice(0, 3);
     insights.push({
@@ -339,5 +383,6 @@ export async function getPurchasingIntelligence(
     previousMonthlySpend: round(previousMonthlySpend),
     spendChangePercent: spendChange,
     insights,
+    reviewItems,
   };
 }
