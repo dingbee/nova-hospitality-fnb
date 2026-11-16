@@ -17,6 +17,7 @@ import type {
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { evaluateNegativeStock } from "./policy";
+import { convertUnits, purchaseToStock } from "./units";
 import { componentToStock, type UnitRow } from "./units";
 import { assertLocationInTenant } from "./locations.server";
 
@@ -227,7 +228,7 @@ export async function movementHasReversal(sb: Sb, movementId: string): Promise<b
 export async function recordMovement(sb: Sb, userId: string, input: RecordMovementInput) {
   const { data: item, error: itemErr } = await sb
     .from("restaurant_inventory_items")
-    .select("id, name, average_cost, currency, reorder_point, unit_id, location_id, property_id")
+    .select("id, name, average_cost, currency, reorder_point, unit_id, purchase_unit_id, pack_size, location_id, property_id")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.inventoryItemId)
     .single();
@@ -241,15 +242,49 @@ export async function recordMovement(sb: Sb, userId: string, input: RecordMoveme
     locationId: input.locationId ?? item.location_id,
   });
 
-  const unitCost = input.unitCost ?? Number(item.average_cost ?? 0);
-  const quantity = signedQuantity(input.movementType, input.quantity);
+  if (!item.unit_id) {
+    throw new Error("Inventory item has no configured stock unit. Configure the stock unit before recording a movement.");
+  }
+
+  const inputUnitId = input.unitId ?? item.unit_id;
+  let stockQuantity = input.quantity;
+  if (inputUnitId !== item.unit_id) {
+    if (inputUnitId === item.purchase_unit_id) {
+      const packSize = Number(item.pack_size);
+      if (!Number.isFinite(packSize) || packSize <= 0) {
+        throw new Error("The item's purchase pack size is missing or invalid. Manual unit review is required.");
+      }
+      stockQuantity = purchaseToStock(input.quantity, packSize).quantity;
+    } else {
+      const { data: unitRows, error: unitsError } = await sb
+        .from("restaurant_inventory_units")
+        .select("id, code, name, dimension, factor, base_unit_id")
+        .in("id", [inputUnitId, item.unit_id])
+        .or("tenant_id.is.null,tenant_id.eq." + input.tenantId);
+      if (unitsError) throw new Error(unitsError.message);
+      const unitById = new Map(((unitRows ?? []) as any[]).map((unit) => [unit.id, unit]));
+      const from = unitById.get(inputUnitId);
+      const to = unitById.get(item.unit_id);
+      if (!from || !to) throw new Error("The selected movement unit or stock unit is not available in this tenant.");
+      const converted = convertUnits(input.quantity, from, to);
+      if (!converted.exact) throw new Error(converted.reason ?? "Movement unit cannot be converted to the stock unit.");
+      stockQuantity = converted.quantity;
+    }
+  }
+
+  const quantity = signedQuantity(input.movementType, stockQuantity);
+  const unitCost = input.unitCost == null
+    ? Number(item.average_cost ?? 0)
+    : input.quantity > 0
+      ? (input.quantity * input.unitCost) / stockQuantity
+      : Number(item.average_cost ?? 0);
 
   const moved = await insertMovement(sb, userId, {
     tenantId: input.tenantId,
     propertyId: input.propertyId ?? item.property_id,
     locationId: input.locationId ?? item.location_id,
     inventoryItemId: input.inventoryItemId,
-    unitId: input.unitId ?? item.unit_id,
+    unitId: item.unit_id,
     movementType: input.movementType,
     quantity,
     unitCost,
