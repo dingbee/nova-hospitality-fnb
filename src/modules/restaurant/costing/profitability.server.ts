@@ -349,14 +349,18 @@ export async function computeProfitability(
     if (order.location_id) addDimension("outlet", order.location_id, order.location_id, lineNet, lineCost, order.property_id ?? null, order.location_id);
     if (order.property_id) addDimension("property", order.property_id, order.property_id, lineNet, lineCost, order.property_id, null);
   }
+  const propertyNetSalesById = new Map<string, number>();
+  for (const d of dimensionMap.values()) {
+    if (d.dimension_type === "outlet" && d.property_id) {
+      propertyNetSalesById.set(d.property_id, (propertyNetSalesById.get(d.property_id) ?? 0) + d.net_sales);
+    }
+  }
   const dimensions = [...dimensionMap.values()].map((d) => {
     const matchingOpex = allocationRows.filter((a) =>
       d.dimension_type === "outlet" ? a.location_id === d.dimension_key :
       d.dimension_type === "property" ? a.property_id === d.dimension_key : false
     ).reduce((sum, a) => sum + Number(a.amount ?? 0), 0);
-    const propertyNetSales = dimensions
-      .filter((candidate) => candidate.property_id === d.property_id && candidate.dimension_type === "outlet")
-      .reduce((sum, candidate) => sum + candidate.net_sales, 0);
+    const propertyNetSales = d.property_id ? propertyNetSalesById.get(d.property_id) ?? 0 : 0;
     const propertyAllocatedOpex = allocationRows
       .filter((a) => a.property_id === d.property_id)
       .reduce((sum, a) => sum + Number(a.amount ?? 0), 0);
