@@ -16,6 +16,11 @@ import {
   computeRestaurantProfitabilityFn,
   listRestaurantProfitabilityFn,
 } from "@/modules/restaurant/costing/profitability.functions";
+import {
+  listOperationalConsumptionProfilesFn,
+  saveOperationalConsumptionProfileFn,
+} from "@/modules/restaurant/costing/consumables.functions";
+import { listRestaurantInventoryFn } from "@/modules/restaurant/inventory/inventory.functions";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/profitability")({
   head: () => ({
@@ -51,6 +56,13 @@ function ProfitabilityPage() {
 
   const listFn = useServerFn(listRestaurantProfitabilityFn);
   const computeFn = useServerFn(computeRestaurantProfitabilityFn);
+  const inventoryFn = useServerFn(listRestaurantInventoryFn);
+  const listConsumptionProfilesFn = useServerFn(listOperationalConsumptionProfilesFn);
+  const saveConsumptionProfileFn = useServerFn(saveOperationalConsumptionProfileFn);
+  const [consumableName, setConsumableName] = useState("Guest service supplies");
+  const [consumableItemId, setConsumableItemId] = useState("");
+  const [consumableCostClass, setConsumableCostClass] = useState<"service_consumable" | "other_direct_variable">("service_consumable");
+  const [quantityPerCover, setQuantityPerCover] = useState("1");
 
   const snapshots = useQuery({
     queryKey: ["restaurant.profitability", tenantId, effectivePropertyId],
@@ -63,6 +75,43 @@ function ProfitabilityPage() {
         },
       }),
     enabled: Boolean(tenantId),
+  });
+  const inventory = useQuery({
+    queryKey: ["restaurant.consumables.inventory", tenantId, effectivePropertyId],
+    queryFn: () => inventoryFn({
+      data: { tenantId: tenantId!, propertyId: effectivePropertyId, limit: 500, lowOnly: false },
+    }),
+    enabled: Boolean(tenantId && effectivePropertyId),
+  });
+  const consumptionProfiles = useQuery({
+    queryKey: ["restaurant.consumables.profiles", tenantId, effectivePropertyId],
+    queryFn: () => listConsumptionProfilesFn({
+      data: { tenantId: tenantId!, propertyId: effectivePropertyId },
+    }),
+    enabled: Boolean(tenantId && effectivePropertyId),
+  });
+  const saveConsumable = useAdminMutation({
+    mutationFn: () => {
+      const item = (inventory.data ?? []).find((row: any) => row.id === consumableItemId);
+      if (!item) throw new Error("Select an inventory item before saving.");
+      const quantity = Number(quantityPerCover);
+      if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("Quantity per cover must be greater than zero.");
+      return saveConsumptionProfileFn({
+        data: {
+          tenantId: tenantId!,
+          propertyId: effectivePropertyId,
+          name: consumableName,
+          costClass: consumableCostClass,
+          inventoryItemId: consumableItemId,
+          unitId: item.unit_id ?? undefined,
+          quantityPerCover: quantity,
+        },
+      });
+    },
+    onSuccessToast: "Operational consumable rule saved",
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["restaurant.consumables.profiles"] });
+    },
   });
 
   const compute = useAdminMutation({
@@ -106,6 +155,63 @@ function ProfitabilityPage() {
         title="Menu profitability"
         description="Recipe → consumption → actual food cost → margin. Theoretical cost comes from recipe costing at the time of sale; actual cost from the stock consumed."
       />
+
+      <SectionCard
+        title="Operational consumables"
+        description="Configure per-cover stock usage. Each order close consumes the configured quantity once, and the resulting stock movement is classified in profitability."
+      >
+        {!effectivePropertyId ? (
+          <EmptyState title="Select a property" description="Choose a property to configure its operational consumables." />
+        ) : (
+          <div className="space-y-3">
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="space-y-1">
+                <span className="text-xs text-muted-foreground">Profile</span>
+                <Input value={consumableName} onChange={(e) => setConsumableName(e.target.value)} placeholder="Guest service supplies" />
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs text-muted-foreground">Cost classification</span>
+                <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={consumableCostClass} onChange={(e) => setConsumableCostClass(e.target.value as "service_consumable" | "other_direct_variable")}>
+                  <option value="service_consumable">Service consumable</option>
+                  <option value="other_direct_variable">Other direct variable cost</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs text-muted-foreground">Inventory item</span>
+                <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={consumableItemId} onChange={(e) => setConsumableItemId(e.target.value)}>
+                  <option value="">Choose inventory item</option>
+                  {(inventory.data ?? []).map((item: any) => <option key={item.id} value={item.id}>{item.name} · {item.currency}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs text-muted-foreground">Quantity per cover (stock unit)</span>
+                <Input type="number" min="0.0001" step="0.0001" value={quantityPerCover} onChange={(e) => setQuantityPerCover(e.target.value)} />
+              </div>
+            </div>
+            <Button size="sm" disabled={saveConsumable.isPending || !consumableItemId || !consumableName.trim()} onClick={() => saveConsumable.mutate(undefined)}>
+              Save consumable rule
+            </Button>
+            {(consumptionProfiles.data ?? []).length > 0 ? (
+              <ul className="divide-y text-sm">
+                {(consumptionProfiles.data ?? []).map((profile: any) => (
+                  <li key={profile.id} className="py-2">
+                    <span className="font-medium">{profile.name}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">{profile.cost_class.replaceAll("_", " ")}</span>
+                    <ul className="mt-1 space-y-1 pl-3 text-xs text-muted-foreground">
+                      {(profile.rules ?? []).map((rule: any) => {
+                        const item = (inventory.data ?? []).find((row: any) => row.id === rule.inventory_item_id);
+                        return <li key={rule.id}>{item?.name ?? rule.inventory_item_id} · {rule.quantity_per_cover} per cover</li>;
+                      })}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-muted-foreground">No operational consumable rules configured for this property.</p>
+            )}
+          </div>
+        )}
+      </SectionCard>
 
       <SectionCard title="Analysis period" description="Only closed orders are included.">
         <div className="flex flex-wrap items-end gap-2">
