@@ -108,7 +108,7 @@ function ProfitabilityPage() {
         },
       });
     },
-    onSuccessToast: "Operational consumable rule saved",
+    onSuccessToast: () => "Operational consumable rule saved",
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["restaurant.consumables.profiles"] });
     },
