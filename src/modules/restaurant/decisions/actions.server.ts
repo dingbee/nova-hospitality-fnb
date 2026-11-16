@@ -65,6 +65,7 @@
  */
 import { getTenantScopeChecker } from "@/modules/intelligence/core/registry";
 import { assertCapability } from "../core/access.server";
+import { getPurchasingIntelligence } from "../intelligence/purchasing.server";
 import { nextDocumentNumber, recordProcurementAudit } from "../procurement/audit.server";
 import { DOCUMENT_PREFIX } from "../procurement/contracts";
 import { roundTo } from "../pricing/decimal";
@@ -470,6 +471,65 @@ async function runProcurementDraftExecution(
       tenantId,
       module,
       "The owning decision lacks a complete, comparable purchase-unit recommendation. Manual review is required; no procurement request was created.",
+    );
+  }
+
+  if (typeof decision.location_id !== "string") {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The inventory decision has no explicit delivery location. Select an active stock location and regenerate the recommendation.",
+    );
+  }
+
+  let freshSuggestion: any;
+  try {
+    const fresh = await getPurchasingIntelligence(sb, userId, {
+      tenantId,
+      windowDays: 30,
+      propertyId: decision.property_id ?? null,
+      locationId: decision.location_id,
+    });
+    freshSuggestion = fresh.suggestions.find((row) => row.inventoryItemId === inventoryItemId);
+  } catch (err) {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "Unable to revalidate the inventory recommendation before procurement execution: " + (err as Error).message,
+    );
+  }
+  const sameNumber = (a: unknown, b: unknown) =>
+    Number.isFinite(Number(a)) && Number.isFinite(Number(b)) && Math.abs(Number(a) - Number(b)) <= 0.0001;
+  if (
+    !freshSuggestion ||
+    freshSuggestion.supplierId !== supplierId ||
+    freshSuggestion.supplierProductId !== supplierProductId ||
+    freshSuggestion.purchaseUnitId !== purchaseUnitId ||
+    freshSuggestion.stockUnitId !== stockUnitId ||
+    !sameNumber(freshSuggestion.purchaseQuantity, purchaseQuantity) ||
+    !sameNumber(freshSuggestion.purchaseUnitPrice, purchaseUnitPrice) ||
+    !sameNumber(freshSuggestion.stockUnitsPerPurchaseUnit, stockUnitsPerPurchaseUnit) ||
+    !sameNumber(freshSuggestion.recommendedQuantity, recommendedStockQuantity) ||
+    !sameNumber(freshSuggestion.netAvailable, facts.netAvailable) ||
+    !sameNumber(freshSuggestion.forecastDemand, facts.forecastDemand) ||
+    !sameNumber(freshSuggestion.safetyStock, facts.safetyStock) ||
+    freshSuggestion.effectivePriceDate !== (facts.effectivePriceDate ?? null) ||
+    freshSuggestion.forecastConfidence !== facts.forecastConfidence ||
+    freshSuggestion.currency !== currency
+  ) {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The inventory recommendation is stale or its supplier/stock evidence has changed. Regenerate and reapprove the decision before creating a procurement request.",
     );
   }
 
