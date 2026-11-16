@@ -210,6 +210,7 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
   let receivedValue: number | null = null;
   let receiptCurrencies: string[] = [];
   let receiptEvidence: any[] = [];
+  const previouslyInvoicedQuantities: Record<string, number> = {};
 
   if (invoice.purchase_order_id) {
     const { data: po, error: poError } = await sb
@@ -241,6 +242,33 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
       .eq("tenant_id", tenantId)
       .eq("purchase_order_id", invoice.purchase_order_id);
     if (orderLinesError) throw new Error("Unable to load purchase-order lines: " + orderLinesError.message);
+
+    const { data: priorInvoices, error: priorInvoicesError } = await sb
+      .from("restaurant_supplier_invoices")
+      .select("id")
+      .eq("tenant_id", tenantId)
+      .eq("purchase_order_id", invoice.purchase_order_id)
+      .neq("id", invoice.id)
+      .neq("status", "cancelled");
+    if (priorInvoicesError) throw new Error("Unable to load prior invoice evidence: " + priorInvoicesError.message);
+    const priorInvoiceIds = ((priorInvoices ?? []) as any[]).map((row) => row.id);
+    if (priorInvoiceIds.length > 0) {
+      const { data: priorLines, error: priorLinesError } = await sb
+        .from("restaurant_supplier_invoice_items")
+        .select("purchase_order_item_id, quantity")
+        .eq("tenant_id", tenantId)
+        .in("invoice_id", priorInvoiceIds);
+      if (priorLinesError) throw new Error("Unable to load prior invoiced quantities: " + priorLinesError.message);
+      for (const line of (priorLines ?? []) as any[]) {
+        if (!line.purchase_order_item_id) continue;
+        const quantity = Number(line.quantity ?? 0);
+        if (!Number.isFinite(quantity) || quantity < 0) {
+          throw new Error("Prior supplier invoice contains an invalid line quantity.");
+        }
+        previouslyInvoicedQuantities[line.purchase_order_item_id] =
+          (previouslyInvoicedQuantities[line.purchase_order_item_id] ?? 0) + quantity;
+      }
+    }
 
     let receiptLines: any[] = [];
     if (postedReceipts.length > 0) {
@@ -279,6 +307,7 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
     purchaseOrder,
     receipts: receiptEvidence,
     receiptCurrencies,
+    previouslyInvoicedQuantities,
     invoiceLines: ((invoiceLines ?? []) as any[]).map((line) => ({
       id: line.id,
       purchaseOrderItemId: line.purchase_order_item_id ?? null,
