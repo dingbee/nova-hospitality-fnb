@@ -443,6 +443,17 @@ async function runProcurementDraftExecution(
   const orderMultiple = Number(facts.orderMultiple ?? 1);
   const currency = typeof facts.currency === "string" ? facts.currency : null;
 
+  if (typeof supplierId !== "string" || typeof supplierProductId !== "string") {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "No supplier product on file for this inventory item. Manual supplier selection is required.",
+    );
+  }
+
   if (
     typeof inventoryItemId !== "string" ||
     !Number.isFinite(recommendedStockQuantity) ||
@@ -470,7 +481,7 @@ async function runProcurementDraftExecution(
       action,
       tenantId,
       module,
-      "The owning decision lacks a complete, comparable purchase-unit recommendation. Manual review is required; no procurement request was created.",
+      "The owning decision has no structured purchasing data or complete, comparable purchase-unit evidence. Manual review is required; no procurement request was created.",
     );
   }
 
