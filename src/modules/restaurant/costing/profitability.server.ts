@@ -611,6 +611,7 @@ export async function computeProfitability(
         source_references: {
           order_ids: orderIds,
           order_source_mismatch_ids: orderSourceMismatchIds,
+          pending_expense_ids: pendingRows.map((expense) => expense.id),
           stock_movement_ids: ((movements ?? []) as any[]).map((m) => m.id),
           payment_ids: ((payments ?? []) as any[]).map((p: any) => p.id),
           consumable_event_ids: consumptionEventRows.map((e) => e.id),
