@@ -40,7 +40,7 @@ export class MetaGraphError extends Error {
 
 function graphVersion(config?: Pick<MetaPlatformConfig, "graphApiVersion">): string {
   const candidate = config?.graphApiVersion ?? process.env.META_GRAPH_API_VERSION ?? DEFAULT_META_GRAPH_API_VERSION;
-  if (!/^v\\d+\\.\\d+$/.test(candidate)) {
+  if (!/^v\d+\.\d+$/.test(candidate)) {
     throw new Error("META_GRAPH_API_VERSION must use the format vNN.NN.");
   }
   return candidate;
@@ -53,7 +53,7 @@ function required(value: string | undefined, name: string): string {
 }
 
 function graphUrl(path: string, config?: Pick<MetaPlatformConfig, "graphApiVersion">): URL {
-  const cleanPath = path.replace(/^\\/+/, "");
+  const cleanPath = path.replace(/^\/+/, "");
   return new URL(`/${graphVersion(config)}/${cleanPath}`, "https://graph.facebook.com");
 }
 
@@ -221,7 +221,7 @@ export async function registerVerifiedPhoneNumber(
   pin: string,
   platform?: Pick<MetaPlatformConfig, "graphApiVersion">,
 ): Promise<{ success: boolean }> {
-  if (!/^\\d{6}$/.test(pin)) throw new Error("WhatsApp phone registration PIN must contain exactly six digits.");
+  if (!/^\d{6}$/.test(pin)) throw new Error("WhatsApp phone registration PIN must contain exactly six digits.");
   const id = encodeURIComponent(required(credentials.phoneNumberId, "Phone number ID"));
   return graphRequest<{ success: boolean }>(`${id}/register`, credentials.accessToken, {
     method: "POST",
@@ -261,8 +261,8 @@ export async function sendTextMessage(
   body: string,
   platform?: Pick<MetaPlatformConfig, "graphApiVersion">,
 ): Promise<MetaSendTextResult> {
-  const recipient = recipientE164.replace(/[^\\d]/g, "");
-  if (!/^\\d{8,15}$/.test(recipient)) throw new Error("WhatsApp recipient must be an E.164 phone number.");
+  const recipient = recipientE164.replace(/[^\d]/g, "");
+  if (!/^\d{8,15}$/.test(recipient)) throw new Error("WhatsApp recipient must be an E.164 phone number.");
   const text = body.trim();
   if (!text || text.length > 4096) throw new Error("WhatsApp text message must contain 1–4096 characters.");
   const id = encodeURIComponent(required(credentials.phoneNumberId, "Phone number ID"));
