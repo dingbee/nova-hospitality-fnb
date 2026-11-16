@@ -232,3 +232,33 @@ $$;
 REVOKE ALL ON FUNCTION public.restaurant_apply_po_receipt_fulfilment(uuid, uuid, uuid, numeric, numeric, numeric) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.restaurant_apply_po_receipt_fulfilment(uuid, uuid, uuid, numeric, numeric, numeric) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.restaurant_apply_po_receipt_fulfilment(uuid, uuid, uuid, numeric, numeric, numeric) TO service_role;
+
+
+-- The stock-position ledger sums quantities by item/location. Changing the
+-- item's canonical stock unit after movements exist would mix dimensions in
+-- that ledger, so it must be handled as a separately reconciled migration.
+CREATE OR REPLACE FUNCTION public.restaurant_prevent_stock_unit_change_with_ledger()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.unit_id IS DISTINCT FROM OLD.unit_id
+     AND EXISTS (
+       SELECT 1
+       FROM public.restaurant_stock_movements m
+       WHERE m.tenant_id = OLD.tenant_id
+         AND m.inventory_item_id = OLD.id
+     ) THEN
+    RAISE EXCEPTION 'Cannot change an inventory item stock unit after stock movements exist. Reconcile and migrate the stock ledger first.';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS restaurant_inventory_items_stock_unit_immutable
+  ON public.restaurant_inventory_items;
+CREATE TRIGGER restaurant_inventory_items_stock_unit_immutable
+  BEFORE UPDATE OF unit_id ON public.restaurant_inventory_items
+  FOR EACH ROW
+  EXECUTE FUNCTION public.restaurant_prevent_stock_unit_change_with_ledger();
