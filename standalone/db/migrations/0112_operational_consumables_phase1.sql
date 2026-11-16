@@ -57,7 +57,7 @@ create index if not exists restaurant_consumption_events_order_idx
 create index if not exists restaurant_consumption_rules_item_idx
  on public.restaurant_consumption_rules(tenant_id,inventory_item_id,active);
 create or replace function public.restaurant_validate_consumption_profile_scope()
-returns trigger language plpgsql security invoker set search_path=public as $
+returns trigger language plpgsql security invoker set search_path=public as $$
 begin
  if new.property_id is not null and not exists(
   select 1 from public.restaurant_properties p where p.id=new.property_id and p.tenant_id=new.tenant_id
@@ -66,14 +66,14 @@ begin
   select 1 from public.restaurant_locations l where l.id=new.location_id and l.tenant_id=new.tenant_id and l.property_id=new.property_id
  ) then raise exception 'Consumption profile location is outside its property'; end if;
  return new;
-end $;
+end $$;
 drop trigger if exists restaurant_consumption_profile_scope_guard on public.restaurant_consumption_profiles;
 create trigger restaurant_consumption_profile_scope_guard
  before insert or update on public.restaurant_consumption_profiles
  for each row execute function public.restaurant_validate_consumption_profile_scope();
 
 create or replace function public.restaurant_validate_consumption_rule_scope()
-returns trigger language plpgsql security invoker set search_path=public as $
+returns trigger language plpgsql security invoker set search_path=public as $$
 declare profile_tenant uuid; profile_property uuid; item_tenant uuid; item_property uuid;
 begin
  select tenant_id,property_id into profile_tenant,profile_property
@@ -86,7 +86,7 @@ begin
   raise exception 'Consumption rule inventory item is outside its profile property';
  end if;
  return new;
-end $;
+end $$;
 drop trigger if exists restaurant_consumption_rule_scope_guard on public.restaurant_consumption_rules;
 create trigger restaurant_consumption_rule_scope_guard
  before insert or update on public.restaurant_consumption_rules
@@ -114,7 +114,7 @@ grant select on public.restaurant_consumption_events to authenticated;
 grant all on public.restaurant_consumption_profiles,public.restaurant_consumption_rules,public.restaurant_consumption_events to service_role;
 
 create or replace function public.restaurant_capture_operational_consumption()
-returns trigger language plpgsql security definer set search_path=public as $
+returns trigger language plpgsql security definer set search_path=public as $$
 declare r record;
 begin
  if new.movement_type::text not in ('consumption','wastage') or new.reference_type is distinct from 'restaurant_order' or new.reference_id is null then
@@ -151,7 +151,7 @@ begin
   new.inventory_item_id,r.cost_class,abs(new.quantity),new.unit_cost,new.total_cost,new.currency,new.occurred_at
  ) on conflict(tenant_id,stock_movement_id) do nothing;
  return new;
-end $$;
+end $$$;
 drop trigger if exists restaurant_capture_operational_consumption on public.restaurant_stock_movements;
 create trigger restaurant_capture_operational_consumption
  after insert on public.restaurant_stock_movements
