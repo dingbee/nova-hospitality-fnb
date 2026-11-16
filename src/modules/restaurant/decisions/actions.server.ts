@@ -521,6 +521,10 @@ async function runProcurementDraftExecution(
     !sameNumber(freshSuggestion.netAvailable, facts.netAvailable) ||
     !sameNumber(freshSuggestion.forecastDemand, facts.forecastDemand) ||
     !sameNumber(freshSuggestion.safetyStock, facts.safetyStock) ||
+    !sameNumber(freshSuggestion.dailyVelocity, facts.dailyVelocity) ||
+    !sameNumber(freshSuggestion.leadTimeDays, facts.leadTimeDays) ||
+    !sameNumber(freshSuggestion.targetCoverageDays, facts.targetCoverageDays) ||
+    freshSuggestion.demandObservations !== facts.demandObservations ||
     freshSuggestion.effectivePriceDate !== (facts.effectivePriceDate ?? null) ||
     freshSuggestion.forecastConfidence !== facts.forecastConfidence ||
     freshSuggestion.purchaseCurrency !== currency
