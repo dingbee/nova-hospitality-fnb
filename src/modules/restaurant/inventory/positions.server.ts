@@ -437,29 +437,36 @@ export async function getStockPositionEvidenceForReplenishment(
       continue;
     }
     const confirmation = confirmationByLine.get(line.id);
-    const confirmedQty = confirmation ? Number(confirmation.row.confirmed_quantity ?? 0) : 0;
-    if (!Number.isFinite(confirmedQty) || confirmedQty < 0 || confirmedQty > outstanding + 1e-8) {
-      evidence.manualReviewReasons.push("Supplier confirmation for PO line " + line.id + " exceeds the outstanding quantity.");
+    const confirmedTotal = confirmation ? Number(confirmation.row.confirmed_quantity ?? 0) : null;
+    if (confirmedTotal != null && (!Number.isFinite(confirmedTotal) || confirmedTotal < 0 || confirmedTotal > quantity + 1e-8)) {
+      evidence.manualReviewReasons.push("Supplier confirmation for PO line " + line.id + " has an invalid confirmed total.");
       continue;
     }
-    const confirmedDate = confirmation?.row.confirmed_delivery_date ?? confirmation?.header.confirmed_delivery_date ?? order.expected_at ?? null;
-    if (confirmedQty > 0) {
-      if (!confirmedDate) evidence.manualReviewReasons.push("Supplier confirmation for PO line " + line.id + " has no delivery date.");
-      evidence.inbound.push({
-        sourceId: confirmation.header.id,
-        sourceType: "supplier_confirmation",
-        quantityInStockUnits: confirmedQty * factor,
-        expectedAt: confirmedDate ? new Date(confirmedDate).toISOString() : null,
-        status: confirmation.header.status,
-      });
-    }
-    const unconfirmed = outstanding - confirmedQty;
-    if (unconfirmed > 0) {
+    if (confirmation) {
+      // Supplier confirmations store the total agreed line quantity, not the
+      // remaining balance. Subtract all received goods (accepted/rejected/
+      // damaged) exactly once; only the confirmed remainder is eligible.
+      const confirmedRemaining = Math.min(outstanding, Math.max(0, Number(confirmedTotal) - received));
+      const confirmedDate = confirmation.row.confirmed_delivery_date ?? confirmation.header.confirmed_delivery_date ?? order.expected_at ?? null;
+      if (confirmedRemaining > 0) {
+        if (!confirmedDate) evidence.manualReviewReasons.push("Supplier confirmation for PO line " + line.id + " has no delivery date.");
+        evidence.inbound.push({
+          sourceId: confirmation.header.id,
+          sourceType: "supplier_confirmation",
+          quantityInStockUnits: confirmedRemaining * factor,
+          expectedAt: confirmedDate ? new Date(confirmedDate).toISOString() : null,
+          status: confirmation.header.status,
+        });
+      }
+      if (confirmedRemaining + 1e-8 < outstanding) {
+        evidence.manualReviewReasons.push("Supplier has not confirmed the full outstanding quantity for PO line " + line.id + ".");
+      }
+    } else if (outstanding > 0) {
       if (!order.expected_at) evidence.manualReviewReasons.push("Outstanding PO line " + line.id + " has no expected delivery date.");
       evidence.inbound.push({
         sourceId: order.id + ":" + line.id,
         sourceType: "purchase_order",
-        quantityInStockUnits: unconfirmed * factor,
+        quantityInStockUnits: outstanding * factor,
         expectedAt: order.expected_at ? new Date(order.expected_at).toISOString() : null,
         status: order.status,
       });
