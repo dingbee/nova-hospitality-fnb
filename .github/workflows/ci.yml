@@ -236,7 +236,7 @@ jobs:
           path: .p0-01-pr188
           fetch-depth: 1
 
-      - name: Replay PR #188 production operational-expense lineage on isolated PostgreSQL 17
+      - name: Replay PR #188 production lineage, fingerprint baseline, then apply P0-01 hardening
         env:
           NOVA_DB_HOST: 127.0.0.1
           NOVA_DB_PORT: 5432
@@ -252,6 +252,8 @@ jobs:
           replay_migrations="$(mktemp -d)"
           trap 'rm -rf "$replay_migrations"' EXIT
           cp .p0-01-pr188/standalone/db/migrations/*.sql "$replay_migrations/"
+          # Use the verified production-v2 correction already fixed on PW-07.
+          cp standalone/db/migrations/0088_commercial_capability_activation_reconciliation.sql "$replay_migrations/"
           cp standalone/db/verification/fixtures/p0-01-uat-bar-station-replay-fixture.sql \
             "$replay_migrations/0086zz_p0-01_uat_bar_station_fixture.sql"
           export NOVA_MIGRATIONS_DIR="$replay_migrations"
@@ -259,37 +261,59 @@ jobs:
           ./local/scripts/init-db.sh
           export PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD"
 
-          expected="$(find .p0-01-pr188/standalone/db/migrations -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
-          applied="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'applied'")"
-          skipped="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'skipped'")"
+          expected_base="$(find .p0-01-pr188/standalone/db/migrations -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
+          applied_base="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'applied'")"
+          skipped_base="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'skipped'")"
           fixture="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE filename = '0086zz_p0-01_uat_bar_station_fixture.sql' AND status = 'applied'")"
           version="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SHOW server_version_num")"
           expense_tables="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('restaurant_operational_expense_attachments','restaurant_operational_expense_audit_events')")"
           bar_station="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM public.restaurant_stations s JOIN public.restaurant_tenants t ON t.id = s.tenant_id WHERE t.slug = 'p0-01-uat-fixture' AND s.code = 'UAT-BAR'")"
 
-          echo "PostgreSQL server_version_num=$version"
-          echo "PR #188 migration files=$expected; applied=$applied; skipped=$skipped; test fixture=$fixture"
+          echo "PR #188 baseline: PostgreSQL=$version; repository files=$expected_base; applied=$applied_base; skipped=$skipped_base; fixture=$fixture"
           echo "Operational-expense extension tables=$expense_tables; UAT bar-station repair assertion=$bar_station"
           test "$version" -ge 170000
-          test "$applied" -eq "$((expected + 1))"
-          test "$skipped" -eq 0
+          test "$applied_base" -eq "$((expected_base + 1))"
+          test "$skipped_base" -eq 0
           test "$fixture" -eq 1
           test "$expense_tables" -eq 2
           test "$bar_station" -eq 1
 
-          psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "\\copy (SELECT filename, checksum, status, applied_at, note FROM nova_local.schema_migrations ORDER BY filename) TO STDOUT WITH CSV HEADER" > pr188-migration-replay-ledger.csv
-
+          psql -X -A -t -F ',' -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -f standalone/db/verification/p0-01-schema-fingerprint.sql > pr188-baseline-schema-fingerprint.csv
+          psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -c "\\copy (SELECT filename, checksum, status, applied_at, note FROM nova_local.schema_migrations ORDER BY filename) TO STDOUT WITH CSV HEADER" > pr188-baseline-migration-ledger.csv
           pg_container="$(docker ps -q --filter ancestor=postgres:17 | head -1)"
           test -n "$pg_container"
-          docker exec -e PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" "$pg_container" pg_dump -h localhost -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" --schema-only --no-owner --no-privileges > pr188-migration-replay-schema.sql
+          docker exec -e PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" "$pg_container" pg_dump -h localhost -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" --schema-only --no-owner --no-privileges > pr188-baseline-schema.sql
 
-      - name: Upload PR #188 isolated migration replay evidence
+          # Apply the exact P0-01 corrective migration only after capturing the
+          # unmodified PR #188 baseline for comparison with production.
+          cp standalone/db/migrations/0134_procurement_tenant_referential_integrity.sql "$replay_migrations/"
+          ./local/scripts/apply-migrations.sh
+
+          expected_hardened="$((expected_base + 1))"
+          applied_hardened="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'applied'")"
+          skipped_hardened="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'skipped'")"
+          hardening_migration="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE filename = '0134_procurement_tenant_referential_integrity.sql' AND status = 'applied'")"
+          echo "PR #188 hardened: repository files=$expected_hardened; applied=$applied_hardened; skipped=$skipped_hardened; P0-01 migration=$hardening_migration"
+          test "$applied_hardened" -eq "$((expected_hardened + 1))"
+          test "$skipped_hardened" -eq 0
+          test "$hardening_migration" -eq 1
+
+          psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -c "\\copy (SELECT filename, checksum, status, applied_at, note FROM nova_local.schema_migrations ORDER BY filename) TO STDOUT WITH CSV HEADER" > pr188-hardened-migration-ledger.csv
+          docker exec -e PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" "$pg_container" pg_dump -h localhost -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" --schema-only --no-owner --no-privileges > pr188-hardened-schema.sql
+
+      - name: Upload PR #188 baseline and hardened replay evidence
         uses: actions/upload-artifact@v4
         with:
           name: p0-01-pr188-lineage-replay-${{ github.sha }}
           path: |
-            pr188-migration-replay-ledger.csv
-            pr188-migration-replay-schema.sql
+            pr188-baseline-migration-ledger.csv
+            pr188-baseline-schema.sql
+            pr188-baseline-schema-fingerprint.csv
+            pr188-hardened-migration-ledger.csv
+            pr188-hardened-schema.sql
           if-no-files-found: error
           retention-days: 14
 
