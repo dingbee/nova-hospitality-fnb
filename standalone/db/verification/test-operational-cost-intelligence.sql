@@ -2,6 +2,8 @@
 begin;
 create extension if not exists pgcrypto;
 create schema if not exists auth;
+create table auth.users(id uuid primary key);
+insert into auth.users values ('30000000-0000-0000-0000-000000000001'),('30000000-0000-0000-0000-000000000002');
 do $$ begin create type public.restaurant_role as enum('owner','general_manager','restaurant_manager','accountant'); exception when duplicate_object then null; end $$;
 create table public.restaurant_tenants(id uuid primary key);
 create table public.restaurant_properties(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id));
@@ -43,6 +45,8 @@ $roles$;
 grant usage on schema auth to authenticated,anon,service_role;
 grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0040_operational_cost_intelligence.sql
+\ir ../migrations/0042_cost_reconciliation_variance_intelligence.sql
+\ir ../migrations/0043_cost_reconciliation_baselines.sql
 
 insert into public.restaurant_tenants values
  ('10000000-0000-0000-0000-000000000001'),('10000000-0000-0000-0000-000000000002');
@@ -167,6 +171,49 @@ do $$ begin
  if (select sum(amount) from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002')<>1250 then raise exception 'Activity driver allocation did not reconcile'; end if;
  if (select amount from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002' and property_id='20000000-0000-0000-0000-000000000001')<>750 then raise exception 'Activity driver weight 3/5 was not applied'; end if;
 end $$;
+-- Approved budgets are explicit source baselines; property RLS and tenant/category integrity are enforced.
+insert into public.restaurant_operational_cost_budgets(tenant_id,property_id,category_id,period_start,period_end,currency,budget_amount,status,approved_by,approved_at)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,date '2026-11-01',date '2026-11-30','TZS',150000,'approved','30000000-0000-0000-0000-000000000001',now()
+from public.restaurant_operational_expense_categories where category_key='utilities';
+do $$ begin
+ if (select count(*) from public.restaurant_operational_cost_budgets where property_id='20000000-0000-0000-0000-000000000001' and status='approved')<>1 then raise exception 'Approved budget baseline was not persisted'; end if;
+end $$;
+
+-- Phase 4 additive reconciliation schema and property isolation.
+insert into public.restaurant_members values ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','restaurant_manager','20000000-0000-0000-0000-000000000001');
+insert into public.restaurant_cost_reconciliation_runs(tenant_id,property_id,period_start,period_end,currency,source_fingerprint)
+values
+ ('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','2026-11-01','2026-11-30','TZS','fixture-property-1'),
+ ('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','2026-11-01','2026-11-30','TZS','fixture-property-3');
+insert into public.restaurant_cost_reconciliation_lines(tenant_id,run_id,property_id,source_type,source_id,variance_kind,currency,expected_amount,actual_amount,variance_amount)
+select tenant_id,id,property_id,'stock_movement','50000000-0000-0000-0000-000000000001','consumption_cost','TZS',100,125,25
+from public.restaurant_cost_reconciliation_runs;
+insert into public.restaurant_cost_variances(tenant_id,property_id,reconciliation_line_id,severity)
+select tenant_id,property_id,id,'medium' from public.restaurant_cost_reconciliation_lines;
+-- Property-scoped user must see only the reconciliation and variance for their assigned property.
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000002',true);
+set local role authenticated;
+do $phase4$ begin
+ if (select count(*) from public.restaurant_cost_reconciliation_runs) <> 1 then raise exception 'Phase 4 run RLS leaked across properties'; end if;
+ if (select count(*) from public.restaurant_cost_variances) <> 1 then raise exception 'Phase 4 variance RLS leaked across properties'; end if;
+ if (select count(*) from public.restaurant_operational_cost_budgets) <> 1 then raise exception 'Phase 4 approved budget RLS leaked across properties'; end if;
+ insert into public.restaurant_operational_cost_budgets(tenant_id,property_id,category_id,period_start,period_end,currency,budget_amount,status,approved_by,approved_at)
+ select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,date '2026-12-01',date '2026-12-31','TZS',175000,'approved','30000000-0000-0000-0000-000000000002',now()
+ from public.restaurant_operational_expense_categories where category_key='utilities';
+ if (select count(*) from public.restaurant_operational_cost_budgets where period_start=date '2026-12-01')<>1 then raise exception 'Authorized property member could not create a budget baseline'; end if;
+ -- Authorized property member can create a reconciliation run and update a case within scope.
+ insert into public.restaurant_cost_reconciliation_runs(tenant_id,property_id,period_start,period_end,currency,source_fingerprint)
+ values('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','2026-12-01','2026-12-31','TZS','fixture-authorized-write');
+ update public.restaurant_cost_reconciliation_runs set status='running' where source_fingerprint='fixture-authorized-write';
+ update public.restaurant_cost_reconciliation_runs set status='completed' where source_fingerprint='fixture-authorized-write';
+ update public.restaurant_cost_variances set investigation_status='under_investigation',updated_at=now()
+ where property_id='20000000-0000-0000-0000-000000000001';
+ if not exists(select 1 from public.restaurant_cost_variances where property_id='20000000-0000-0000-0000-000000000001' and investigation_status='under_investigation') then
+  raise exception 'Authorized property member could not update a variance case';
+ end if;
+end $phase4$;
+
+reset role;
 -- Property-scoped membership cannot read or write another property in the same tenant.
 insert into public.restaurant_members values
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','restaurant_manager','20000000-0000-0000-0000-000000000001');

@@ -262,6 +262,13 @@ export const NAV_GROUPS: NavGroup[] = [
         hint: "Contribution by item and outlet",
       },
       {
+        to: "/admin/restaurant/cost-reconciliation",
+        label: "Cost reconciliation",
+        icon: Scale,
+        permission: "FINANCE:READ",
+        hint: "Operating expense allocation and variance investigations",
+      },
+      {
         to: "/admin/restaurant/documents",
         label: "Documents",
         icon: FileText,
