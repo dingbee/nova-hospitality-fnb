@@ -90,9 +90,10 @@ async function graphRequest<T>(
   if (init.body) headers.set("Content-Type", "application/json");
   headers.set("Authorization", `Bearer ${token}`);
 
+  const url = graphUrl(path, config);
   let response: Response;
   try {
-    response = await fetch(graphUrl(path, config), {
+    response = await fetch(url, {
       ...init,
       headers,
       signal: init.signal ?? AbortSignal.timeout(15_000),
