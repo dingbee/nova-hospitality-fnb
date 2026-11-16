@@ -23,6 +23,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_scope_purchase_requests_id ON public
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_scope_stock_movements_id ON public.restaurant_stock_movements (tenant_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_scope_stock_transfer_lines_id ON public.restaurant_stock_transfer_lines (tenant_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_scope_stock_transfers_id ON public.restaurant_stock_transfers (tenant_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS restaurant_suppliers_tenant_id_id_uq ON public.restaurant_suppliers (tenant_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_scope_stocktakes_id ON public.restaurant_stocktakes (tenant_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_scope_supplier_invoices_id ON public.restaurant_supplier_invoices (tenant_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_scope_supplier_products_id ON public.restaurant_supplier_products (tenant_id, id);
