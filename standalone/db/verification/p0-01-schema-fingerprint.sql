@@ -79,7 +79,7 @@ routine_objects AS (
       coalesce(p.proacl::text, '<default>'))) AS definition_hash
   FROM pg_proc p
   JOIN pg_namespace n ON n.oid = p.pronamespace
-  WHERE n.nspname = 'public'
+  WHERE n.nspname = 'public' AND p.prokind IN ('f', 'p', 'w')
 ),
 type_objects AS (
   SELECT
