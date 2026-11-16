@@ -426,20 +426,42 @@ async function runProcurementDraftExecution(
   const finding = (decision.context?.finding ?? {}) as {
     subject?: string;
     headline?: string;
-    facts?: Record<string, unknown>;
+    facts?: Record<string, any>;
   };
   const facts = finding.facts ?? {};
   const inventoryItemId = facts.inventoryItemId;
-  const recommendedQuantity = facts.recommendedQuantity;
+  const recommendedStockQuantity = Number(facts.recommendedQuantity);
   const supplierId = facts.supplierId;
-  const estimatedUnitCost = facts.estimatedUnitCost;
-  const estimatedCost = facts.estimatedCost;
-  const currency = typeof facts.currency === "string" ? facts.currency : "TZS";
+  const supplierProductId = facts.supplierProductId;
+  const purchaseUnitId = facts.purchaseUnitId;
+  const stockUnitId = facts.stockUnitId;
+  const purchaseQuantity = Number(facts.purchaseQuantity);
+  const purchaseUnitPrice = Number(facts.purchaseUnitPrice);
+  const stockUnitsPerPurchaseUnit = Number(facts.stockUnitsPerPurchaseUnit);
+  const minimumOrderQuantity = Number(facts.minimumOrderQuantity ?? 0);
+  const orderMultiple = Number(facts.orderMultiple ?? 1);
+  const currency = typeof facts.currency === "string" ? facts.currency : null;
 
   if (
     typeof inventoryItemId !== "string" ||
-    typeof recommendedQuantity !== "number" ||
-    recommendedQuantity <= 0
+    !Number.isFinite(recommendedStockQuantity) ||
+    recommendedStockQuantity <= 0 ||
+    typeof supplierId !== "string" ||
+    typeof supplierProductId !== "string" ||
+    typeof purchaseUnitId !== "string" ||
+    typeof stockUnitId !== "string" ||
+    !Number.isFinite(purchaseQuantity) ||
+    purchaseQuantity <= 0 ||
+    !Number.isFinite(purchaseUnitPrice) ||
+    purchaseUnitPrice <= 0 ||
+    !Number.isFinite(stockUnitsPerPurchaseUnit) ||
+    stockUnitsPerPurchaseUnit <= 0 ||
+    !Number.isFinite(minimumOrderQuantity) ||
+    minimumOrderQuantity < 0 ||
+    !Number.isFinite(orderMultiple) ||
+    orderMultiple <= 0 ||
+    typeof currency !== "string" ||
+    !/^[A-Z]{3}$/.test(currency)
   ) {
     return failAction(
       sb,
@@ -447,23 +469,41 @@ async function runProcurementDraftExecution(
       action,
       tenantId,
       module,
-      "The owning decision has no structured purchasing data (inventory item / quantity) — cannot build a procurement request line.",
+      "The owning decision lacks a complete, comparable purchase-unit recommendation. Manual review is required; no procurement request was created.",
     );
   }
-  if (typeof supplierId !== "string") {
+
+  if (
+    purchaseQuantity < minimumOrderQuantity ||
+    Math.abs(purchaseQuantity / orderMultiple - Math.round(purchaseQuantity / orderMultiple)) > 0.000001 ||
+    Math.abs(purchaseQuantity * stockUnitsPerPurchaseUnit - recommendedStockQuantity) > 0.0001
+  ) {
     return failAction(
       sb,
       userId,
       action,
       tenantId,
       module,
-      "No supplier product on file for this item — a procurement draft cannot be created until a supplier price is added.",
+      "The recommended purchase quantity no longer reconciles to its stock-unit quantity, supplier minimum or pack multiple.",
+    );
+  }
+
+  const estimatedTotal = Number((purchaseQuantity * purchaseUnitPrice).toFixed(4));
+  if (typeof facts.estimatedCost === "number" &&
+      Math.abs(estimatedTotal - facts.estimatedCost) > 0.01) {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The persisted supplier price no longer reconciles to the recommendation's estimated total.",
     );
   }
 
   const { data: existingByCorrelation, error: correlationErr } = await sb
     .from("restaurant_purchase_requests")
-    .select("id, status")
+    .select("id, status, metadata")
     .eq("tenant_id", tenantId)
     .eq("correlation_id", action.id)
     .maybeSingle();
@@ -473,6 +513,7 @@ async function runProcurementDraftExecution(
 
   let requestId: string;
   let requestStatus: string;
+  let requestCreated = false;
 
   if (existingByCorrelation) {
     requestId = existingByCorrelation.id;
@@ -484,21 +525,12 @@ async function runProcurementDraftExecution(
       return failAction(sb, userId, action, tenantId, module, (err as Error).message);
     }
 
-    const unitCost =
-      typeof estimatedUnitCost === "number" && estimatedUnitCost > 0
-        ? estimatedUnitCost
-        : typeof estimatedCost === "number"
-          ? estimatedCost / recommendedQuantity
-          : 0;
-    const estimatedTotal = recommendedQuantity * unitCost;
-
     const documentNumber = await nextDocumentNumber(
       sb,
       tenantId,
       "purchase_request",
       DOCUMENT_PREFIX.purchase_request,
     );
-
     const { data: created, error: createErr } = await sb
       .from("restaurant_purchase_requests")
       .insert({
@@ -511,8 +543,8 @@ async function runProcurementDraftExecution(
         category: "intelligence",
         reason: decision.decision_key,
         notes:
-          `Raised automatically from a governed intelligence decision (${decision.decision_key}). ` +
-          "Requires review, submission and approval like any other purchase request.",
+          "Raised from governed inventory intelligence (" + decision.decision_key + "). " +
+          "This is a draft request and requires review, submission and approval before a purchase order can be created.",
         currency,
         estimated_total: estimatedTotal,
         requested_by: userId,
@@ -522,86 +554,178 @@ async function runProcurementDraftExecution(
           decision_id: decision.id,
           action_id: action.id,
           decision_key: decision.decision_key,
+          inventory_recommendation: {
+            inventory_item_id: inventoryItemId,
+            supplier_product_id: supplierProductId,
+            recommended_stock_quantity: recommendedStockQuantity,
+            purchase_quantity: purchaseQuantity,
+            purchase_unit_id: purchaseUnitId,
+            stock_unit_id: stockUnitId,
+            stock_units_per_purchase_unit: stockUnitsPerPurchaseUnit,
+            minimum_order_quantity: minimumOrderQuantity,
+            order_multiple: orderMultiple,
+            effective_price_date: facts.effectivePriceDate ?? null,
+            stock_position_evidence: facts.stockPositionEvidence ?? null,
+            forecast_confidence: facts.forecastConfidence ?? null,
+            demand_observations: facts.demandObservations ?? null,
+          },
         },
       })
       .select("id")
       .single();
+
     if (createErr) {
-      // Another concurrent execution of this exact action won the race and
-      // already inserted the (tenant_id, correlation_id)-unique row — the
-      // same "already happened, not an error" pattern movements.server.ts's
-      // insertMovement uses for its own dedupe key. Recover the winner's
-      // request instead of failing or duplicating.
-      if (String((createErr as any).code) === "23505") {
-        const { data: recovered, error: recoverErr } = await sb
-          .from("restaurant_purchase_requests")
-          .select("id, status")
-          .eq("tenant_id", tenantId)
-          .eq("correlation_id", action.id)
-          .maybeSingle();
-        if (recoverErr || !recovered) {
-          return failAction(
-            sb,
-            userId,
-            action,
-            tenantId,
-            module,
-            recoverErr?.message ??
-              "Concurrent insert detected but the winning request could not be recovered.",
-          );
-        }
-        requestId = recovered.id as string;
-        requestStatus = recovered.status as string;
-        return finishExecution(
+      if (String((createErr as any).code) !== "23505") {
+        return failAction(sb, userId, action, tenantId, module, createErr.message);
+      }
+      const { data: recovered, error: recoverErr } = await sb
+        .from("restaurant_purchase_requests")
+        .select("id, status, metadata")
+        .eq("tenant_id", tenantId)
+        .eq("correlation_id", action.id)
+        .maybeSingle();
+      if (recoverErr || !recovered) {
+        return failAction(
           sb,
           userId,
           action,
-          decision,
           tenantId,
           module,
-          requestId,
-          requestStatus,
+          recoverErr?.message ?? "Concurrent request creation could not be recovered.",
         );
       }
-      return failAction(sb, userId, action, tenantId, module, createErr.message);
+      requestId = recovered.id;
+      requestStatus = recovered.status;
+    } else if (!created) {
+      return failAction(sb, userId, action, tenantId, module, "Failed to create the procurement request.");
+    } else {
+      requestId = created.id;
+      requestStatus = "draft";
+      requestCreated = true;
     }
-    if (!created) {
+  }
+
+  const { data: existingLine, error: lineReadErr } = await sb
+    .from("restaurant_purchase_request_items")
+    .select("id, purchase_request_id, inventory_item_id, preferred_supplier_id, supplier_product_id, unit_id, stock_unit_id, stock_units_per_purchase_unit, minimum_order_quantity, order_multiple, quantity, estimated_unit_cost, estimated_total, source_action_id")
+    .eq("tenant_id", tenantId)
+    .eq("source_action_id", action.id)
+    .maybeSingle();
+  if (lineReadErr) {
+    return failAction(sb, userId, action, tenantId, module, lineReadErr.message);
+  }
+
+  const matchesRecommendation = (line: Record<string, any>, compareRequestedQuantity: boolean) =>
+    line.purchase_request_id === requestId &&
+    line.inventory_item_id === inventoryItemId &&
+    line.preferred_supplier_id === supplierId &&
+    line.supplier_product_id === supplierProductId &&
+    line.unit_id === purchaseUnitId &&
+    line.stock_unit_id === stockUnitId &&
+    Math.abs(Number(line.stock_units_per_purchase_unit) - stockUnitsPerPurchaseUnit) <= 0.000001 &&
+    Math.abs(Number(line.minimum_order_quantity ?? 0) - minimumOrderQuantity) <= 0.000001 &&
+    Math.abs(Number(line.order_multiple ?? 1) - orderMultiple) <= 0.000001 &&
+    (!compareRequestedQuantity ||
+      (Math.abs(Number(line.quantity) - purchaseQuantity) <= 0.0001 &&
+       Math.abs(Number(line.estimated_unit_cost) - purchaseUnitPrice) <= 0.0001 &&
+       Math.abs(Number(line.estimated_total) - estimatedTotal) <= 0.01));
+
+  let lineCreated = false;
+  if (existingLine) {
+    if (!matchesRecommendation(existingLine, requestStatus === "draft")) {
       return failAction(
         sb,
         userId,
         action,
         tenantId,
         module,
-        "Failed to create the procurement request.",
+        "An existing procurement line for this intelligence action does not match its stored recommendation. Manual reconciliation is required.",
       );
     }
-    requestId = created.id as string;
-    requestStatus = "draft";
+  } else {
+    if (requestStatus !== "draft") {
+      return failAction(
+        sb,
+        userId,
+        action,
+        tenantId,
+        module,
+        "The request is no longer a draft but its intelligence-linked line is missing. Manual recovery is required.",
+      );
+    }
+    try {
+      await assertCapability(sb, userId, tenantId, "purchase.request");
+    } catch (err) {
+      return failAction(sb, userId, action, tenantId, module, (err as Error).message);
+    }
 
     const { error: lineErr } = await sb.from("restaurant_purchase_request_items").insert({
       tenant_id: tenantId,
       purchase_request_id: requestId,
       inventory_item_id: inventoryItemId,
       preferred_supplier_id: supplierId,
+      supplier_product_id: supplierProductId,
+      unit_id: purchaseUnitId,
+      stock_unit_id: stockUnitId,
+      stock_units_per_purchase_unit: stockUnitsPerPurchaseUnit,
+      minimum_order_quantity: minimumOrderQuantity,
+      order_multiple: orderMultiple,
+      source_action_id: action.id,
       description: finding.subject ?? "Replenishment",
-      quantity: recommendedQuantity,
-      estimated_unit_cost: unitCost,
+      quantity: purchaseQuantity,
+      estimated_unit_cost: purchaseUnitPrice,
       estimated_total: estimatedTotal,
-      justification: finding.headline ?? null,
+      justification:
+        (finding.headline ?? "Inventory replenishment") +
+        " — " + recommendedStockQuantity + " stock units; " +
+        purchaseQuantity + " purchase units × " + stockUnitsPerPurchaseUnit + ".",
       recommendation_ref: decision.decision_key,
     });
     if (lineErr) {
-      return failAction(sb, userId, action, tenantId, module, lineErr.message);
+      if (String((lineErr as any).code) !== "23505") {
+        return failAction(sb, userId, action, tenantId, module, lineErr.message);
+      }
+      const { data: recoveredLine, error: recoverLineErr } = await sb
+        .from("restaurant_purchase_request_items")
+        .select("id, purchase_request_id, inventory_item_id, preferred_supplier_id, supplier_product_id, unit_id, stock_unit_id, stock_units_per_purchase_unit, minimum_order_quantity, order_multiple, quantity, estimated_unit_cost, estimated_total, source_action_id")
+        .eq("tenant_id", tenantId)
+        .eq("source_action_id", action.id)
+        .maybeSingle();
+      if (recoverLineErr || !recoveredLine || !matchesRecommendation(recoveredLine, requestStatus === "draft")) {
+        return failAction(
+          sb,
+          userId,
+          action,
+          tenantId,
+          module,
+          recoverLineErr?.message ?? "Concurrent procurement line creation could not be reconciled.",
+        );
+      }
+    } else {
+      lineCreated = true;
     }
+  }
 
+  if (requestCreated || lineCreated) {
     await recordProcurementAudit(sb, userId, {
       tenantId,
       documentType: "purchase_request",
       documentId: requestId,
-      documentNumber,
-      action: "created",
-      newState: "draft",
-      metadata: { origin: "intelligence", decision_id: decision.id, action_id: action.id },
+      action: requestCreated ? "created_from_inventory_intelligence" : "recovered_inventory_intelligence_line",
+      newState: requestStatus,
+      correlationId: action.id,
+      metadata: {
+        origin: "intelligence",
+        decision_id: decision.id,
+        action_id: action.id,
+        inventory_item_id: inventoryItemId,
+        supplier_product_id: supplierProductId,
+        recommended_stock_quantity: recommendedStockQuantity,
+        purchase_quantity: purchaseQuantity,
+        purchase_unit_id: purchaseUnitId,
+        stock_unit_id: stockUnitId,
+        stock_units_per_purchase_unit: stockUnitsPerPurchaseUnit,
+      },
     });
   }
 
