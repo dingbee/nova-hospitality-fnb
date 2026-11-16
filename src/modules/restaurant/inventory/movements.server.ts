@@ -579,6 +579,9 @@ export async function consumeForOrderItem(
   for (const c of rows) {
     const meta = costs.get(c.inventory_item_id);
     const unitCost = Number(meta?.average_cost ?? 0);
+    if (!/^[A-Z]{3}$/.test(String(meta?.currency ?? ""))) {
+      throw new Error(`Sales consumption blocked: "${meta?.name ?? c.inventory_item_id}" has no valid inventory currency.`);
+    }
     const perServing = Number(c.quantity) / (Number(c.yield_percent ?? 100) / 100);
     const consumed = perServing * args.quantity;
     if (consumed <= 0) continue;
@@ -599,7 +602,7 @@ export async function consumeForOrderItem(
       movementType: "consumption",
       quantity: -converted.quantity,
       unitCost,
-      currency: meta?.currency ?? "TZS",
+      currency: meta.currency,
       reason: "Sales consumption",
       referenceType: "restaurant_order",
       referenceId: args.orderId,
@@ -607,9 +610,18 @@ export async function consumeForOrderItem(
       occurredAt: args.occurredAt,
       dedupeKey: `consume:${args.orderItemId}:${c.id}`,
     });
-    // Duplicate (already consumed) still contributes to the recorded cost figure.
-    actualCost += converted.quantity * unitCost;
-    if (!moved) continue;
+    // A retry must use the original ledger cost, not today's average cost.
+    // Average cost may have changed since the first attempt; recomputing it
+    // would make order.cost_total diverge from the immutable stock movement.
+    const committedMovement = moved ?? await findMovementByDedupeKey(
+      sb,
+      args.tenantId,
+      `consume:${args.orderItemId}:${c.id}`,
+    );
+    if (!committedMovement) {
+      throw new Error(`Sales consumption for "${meta?.name ?? c.inventory_item_id}" could not be verified.`);
+    }
+    actualCost += Number(committedMovement.total_cost ?? 0);
   }
   return Number(actualCost.toFixed(4));
 }
