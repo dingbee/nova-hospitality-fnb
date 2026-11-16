@@ -105,12 +105,13 @@ export async function computeProfitability(
   if (orderCurrencies.size > 1) throw new Error("Profitability cannot combine sales across currencies.");
   const periodFrom = input.from.slice(0, 10);
   const periodTo = input.to.slice(0, 10);
+  const allocationPeriodFrom = `${periodFrom.slice(0, 7)}-01`;
   let expenseAllocationQuery = sb
     .from("restaurant_cost_allocations")
     .select("amount, currency, property_id, location_id, source_id")
     .eq("tenant_id", input.tenantId)
     .eq("source_type", "operational_expense")
-    .gte("period_start", periodFrom)
+    .gte("period_start", allocationPeriodFrom)
     .lte("period_start", periodTo);
   if (input.propertyId) expenseAllocationQuery = expenseAllocationQuery.eq("property_id", input.propertyId);
   if (input.locationId) expenseAllocationQuery = expenseAllocationQuery.eq("location_id", input.locationId);
@@ -155,7 +156,7 @@ export async function computeProfitability(
   let unallocatedQuery = sb.from("restaurant_cost_allocation_exceptions")
     .select("id, source_id, source_amount, currency, source_type")
     .eq("tenant_id", input.tenantId).eq("source_type", "operational_expense")
-    .gte("period_start", periodFrom).lte("period_start", periodTo);
+    .gte("period_start", allocationPeriodFrom).lte("period_start", periodTo);
   let pendingExpenseQuery = sb.from("restaurant_operational_expenses")
     .select("id, amount, currency, approval_status, property_id, location_id")
     .eq("tenant_id", input.tenantId).gte("incurred_on", periodFrom).lte("incurred_on", periodTo).eq("approval_status", "pending");
