@@ -126,7 +126,21 @@ export async function getPurchasingIntelligence(
   const suppliers = ((suppliersRes.data ?? []) as any[]).filter((s) => s.status === "active");
   const products = ((productsRes.data ?? []) as any[]).filter((p) => p.active === true);
   const units = (unitsRes.data ?? []) as any[];
-  const currency = (items[0]?.currency as string) ?? "TZS";
+  const [propertyCurrencyRes, tenantSettingsRes] = await Promise.all([
+    propertyId
+      ? sb.from("restaurant_properties").select("currency").eq("tenant_id", tenantId).eq("id", propertyId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    sb.from("restaurant_tenants").select("settings").eq("id", tenantId).maybeSingle(),
+  ]);
+  if (propertyCurrencyRes.error) throw new Error("Unable to load property currency: " + propertyCurrencyRes.error.message);
+  if (tenantSettingsRes.error) throw new Error("Unable to load tenant currency settings: " + tenantSettingsRes.error.message);
+  const configuredCurrency = propertyId
+    ? propertyCurrencyRes.data?.currency
+    : (tenantSettingsRes.data?.settings as any)?.business?.defaultCurrency;
+  if (typeof configuredCurrency !== "string" || !/^[A-Z]{3}$/.test(configuredCurrency)) {
+    throw new Error("A valid property or tenant currency must be configured before replenishment.");
+  }
+  const currency = configuredCurrency;
   const itemById = new Map(items.map((item) => [item.id, item]));
   const stockEvidence = await getStockPositionEvidenceForReplenishment(sb, userId, {
     tenantId,
@@ -167,8 +181,8 @@ export async function getPurchasingIntelligence(
       supplierIssues.set(item.id, "Supplier lead time is missing or invalid.");
       continue;
     }
-    if (!item.currency) {
-      supplierIssues.set(item.id, "Property stock currency is not configured.");
+    if (!item.currency || item.currency !== currency) {
+      supplierIssues.set(item.id, "Inventory-item currency is missing or differs from the selected property's currency.");
       continue;
     }
     const stockFactor = stockUnitsPerUnit(
