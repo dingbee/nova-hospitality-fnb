@@ -302,10 +302,56 @@ export async function computeProfitability(
   }
 
   const orderById = new Map(orderRows.map((o) => [o.id, o]));
-  const refundByOrder = new Map<string, number>();
+  // Discounts and refunds are the complete adjustment scope for this release.
+  // Discounts are sourced from persisted order-item discount amounts. Refunds
+  // are sourced from the payment ledger: child refund rows are summed against
+  // their original payment; a fully-refunded original payment (used by some
+  // payment-provider callbacks) is recognised at its original amount. When
+  // both representations exist, use the greater committed amount, never add
+  // the same refund twice.
+  const refundByPayment = new Map<string, {
+    orderId: string;
+    originalAmount: number;
+    originalRefunded: boolean;
+    childRefundAmount: number;
+  }>();
   for (const payment of (payments ?? []) as any[]) {
-    if (payment.refund_of && payment.state === "refunded") {
-      refundByOrder.set(payment.order_id, (refundByOrder.get(payment.order_id) ?? 0) + Math.abs(Number(payment.amount ?? 0)));
+    if (payment.refund_of) {
+      const originalId = String(payment.refund_of);
+      const entry = refundByPayment.get(originalId) ?? {
+        orderId: payment.order_id,
+        originalAmount: 0,
+        originalRefunded: false,
+        childRefundAmount: 0,
+      };
+      if (payment.state === "refunded") {
+        entry.childRefundAmount += Math.abs(Number(payment.amount ?? 0));
+      }
+      refundByPayment.set(originalId, entry);
+      continue;
+    }
+    const entry = refundByPayment.get(String(payment.id)) ?? {
+      orderId: payment.order_id,
+      originalAmount: 0,
+      originalRefunded: false,
+      childRefundAmount: 0,
+    };
+    entry.orderId = payment.order_id;
+    entry.originalAmount = Math.abs(Number(payment.amount ?? 0));
+    entry.originalRefunded = payment.state === "refunded";
+    refundByPayment.set(String(payment.id), entry);
+  }
+  const refundByOrder = new Map<string, number>();
+  for (const refund of refundByPayment.values()) {
+    const recognisedRefund = Math.max(
+      refund.childRefundAmount,
+      refund.originalRefunded ? refund.originalAmount : 0,
+    );
+    if (recognisedRefund > 0) {
+      refundByOrder.set(
+        refund.orderId,
+        (refundByOrder.get(refund.orderId) ?? 0) + recognisedRefund,
+      );
     }
   }
   const lineRevenueByOrder = new Map<string, number>();
@@ -421,6 +467,10 @@ export async function computeProfitability(
       Number(movement.total_cost ?? 0),
     );
   }
+  // No separate sales-adjustment ledger exists in the current POS contract.
+  // Discounts and refunds above are the complete adjustment scope; keep the
+  // explicit calculation input at zero rather than inventing an untraceable
+  // adjustment amount.
   const operational = calculateOperationalProfitability({
     currency,
     grossSales: Number(grossSales.toFixed(2)),
