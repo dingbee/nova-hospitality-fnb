@@ -28,8 +28,8 @@ insert into public.restaurant_members values
 ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','accountant',null),
 ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','chef',null);
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
-insert into public.restaurant_operational_profitability_snapshots(tenant_id,property_id,period_start,period_end,currency,net_sales,contribution,operating_profit,confidence_state,calculation_version)
-values('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','2026-11-01','2026-11-30','TZS',20000,12050,8050,'estimated','phase5-v1');
+insert into public.restaurant_operational_profitability_snapshots(tenant_id,property_id,period_start,period_end,currency,net_sales,contribution,operating_profit,confidence_state,calculation_inputs,calculation_version)
+values('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','2026-11-01','2026-11-30','TZS',20000,12050,8050,'estimated','{""net_sales"":20000,""recipe_cogs"":7000,""service_consumables"":950}', 'phase5-v1');
 insert into public.restaurant_operational_profitability_dimensions(tenant_id,snapshot_id,property_id,dimension_type,dimension_key,dimension_name,currency,net_sales,direct_variable_costs,contribution,operating_profit)
 select tenant_id,id,property_id,'menu_item','pilau','Pilau','TZS',20000,7950,12050,8050
 from public.restaurant_operational_profitability_snapshots;
