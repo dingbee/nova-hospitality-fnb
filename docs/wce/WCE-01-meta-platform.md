@@ -41,8 +41,7 @@ Both test files are included in the mandatory scoped CI functional test command 
 ## Not yet complete
 
 WCE-01 remains open pending:
-1. Facebook Login for Business Embedded Signup v4 client flow and safe session-info handling.
-2. Server-side onboarding callback that validates returned WABA/phone assets and binds them to an authorized tenant/property.
+1. Server-side onboarding callback that validates returned WABA/phone assets and binds them to an authorized tenant/property.
 3. Meta app configuration and external Advanced Access/App Review/business verification.
 4. Real test WABA and phone number for end-to-end onboarding, registration, webhook subscription, send and delivery-status validation.
 5. Operational token rotation/revocation and integration-health state persistence.
