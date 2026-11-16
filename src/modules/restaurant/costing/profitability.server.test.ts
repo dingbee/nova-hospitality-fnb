@@ -79,8 +79,8 @@ describe("computeProfitability operating-cost integration", () => {
         { id: "line-2", menu_item_id: "menu-2", description: "Juice", quantity: 1, line_total: 10000, line_cost: 3000, status: "served" },
       ],
       restaurant_stock_movements: [
-        { order_item_id: "line-1", total_cost: 12000 },
-        { order_item_id: "line-2", total_cost: 4000 },
+        { id: "movement-1", order_item_id: "line-1", total_cost: 12000, currency: "TZS" },
+        { id: "movement-2", order_item_id: "line-2", total_cost: 4000, currency: "TZS" },
       ],
     }, persisted);
     const result = await computeProfitability(sb, "user-1", { ...input, persist: true, limit: 1 });
