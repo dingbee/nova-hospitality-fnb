@@ -111,6 +111,7 @@ export function calculateSupplierInvoiceMatch(evidence: InvoiceMatchEvidence): I
   let acceptedLineCount = 0;
   let pendingLineCount = 0;
   const invoicedByOrderLine = new Map<string, number>();
+  const pendingOrderLineIds = new Set<string>();
   for (const line of invoiceLines) {
     if (!valid(line.quantity) || line.quantity <= 0 || !valid(line.unitPrice) || !valid(line.taxAmount)) {
       add("invoice", "INVALID_LINE_AMOUNT", line.description + ": invoice line has invalid quantity, price or tax.");
@@ -134,22 +135,32 @@ export function calculateSupplierInvoiceMatch(evidence: InvoiceMatchEvidence): I
     }
     const accepted = acceptedByOrderLine.get(line.purchaseOrderItemId) ?? 0;
     if (accepted <= EPSILON) {
-      pendingLineCount++;
-      continue;
+      pendingOrderLineIds.add(line.purchaseOrderItemId);
     }
     const invoiced = (invoicedByOrderLine.get(line.purchaseOrderItemId) ?? 0) + line.quantity;
     invoicedByOrderLine.set(line.purchaseOrderItemId, invoiced);
-    if (invoiced - accepted > EPSILON) {
-      add("quantity", "INVOICED_ABOVE_ACCEPTED", line.description + ": invoiced quantity exceeds posted accepted quantity.", accepted, invoiced);
-    } else if (invoiced + EPSILON < accepted) {
-      pendingLineCount++;
-    } else {
-      acceptedLineCount++;
-    }
     if (Math.abs(line.unitPrice - orderLine.unitPrice) > Math.max(Math.abs(orderLine.unitPrice), 1) * 0.01 + 0.0001) {
       add("price", "INVOICED_PRICE_DIFFERS", line.description + ": invoiced unit price differs from the purchase-order price.", orderLine.unitPrice, line.unitPrice);
     }
   }
+
+  for (const [orderLineId, invoicedQuantity] of invoicedByOrderLine) {
+    const acceptedQuantity = acceptedByOrderLine.get(orderLineId) ?? 0;
+    if (invoicedQuantity - acceptedQuantity > EPSILON) {
+      add(
+        "quantity",
+        "INVOICED_ABOVE_ACCEPTED",
+        "Purchase-order line " + orderLineId + ": invoiced quantity exceeds posted accepted quantity.",
+        acceptedQuantity,
+        invoicedQuantity,
+      );
+    } else if (invoicedQuantity + EPSILON < acceptedQuantity) {
+      pendingLineCount++;
+    } else {
+      acceptedLineCount++;
+    }
+  }
+  pendingLineCount += pendingOrderLineIds.size;
 
   const matchStatus: InvoiceMatchStatus = dimensions.length
     ? "mismatched"
