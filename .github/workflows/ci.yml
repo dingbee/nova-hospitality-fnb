@@ -293,6 +293,17 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Verify procurement tenant referential integrity in isolated replays
+        env:
+          PGPASSWORD: postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/test-procurement-tenant-referential-integrity.sql
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_pr188_lineage_replay \
+            -f standalone/db/verification/test-procurement-tenant-referential-integrity.sql
+
       - name: Fingerprint both isolated replay schemas for live comparison
         env:
           PGPASSWORD: postgres
