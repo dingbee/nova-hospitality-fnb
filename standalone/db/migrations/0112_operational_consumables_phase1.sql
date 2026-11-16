@@ -81,10 +81,20 @@ grant select,insert,update,delete on public.restaurant_consumption_profiles,publ
 grant all on public.restaurant_consumption_profiles,public.restaurant_consumption_rules,public.restaurant_consumption_events to service_role;
 
 create or replace function public.restaurant_capture_operational_consumption()
-returns trigger language plpgsql security invoker set search_path=public as $$
+returns trigger language plpgsql security definer set search_path=public as $
 declare r record;
 begin
- if new.movement_type::text not in ('consumption','wastage') or new.reference_type<>'restaurant_order' or new.reference_id is null then
+ if new.movement_type::text not in ('consumption','wastage') or new.reference_type is distinct from 'restaurant_order' or new.reference_id is null then
+  return new;
+ end if;
+ -- The trigger must never block a valid stock movement because its caller
+ -- lacks finance-report write access. Only capture for authenticated tenant
+ -- members with an operational stock/sales role and matching property scope.
+ if auth.uid() is null or not public.restaurant_can_write_scoped(
+  new.tenant_id,
+  array['owner','general_manager','restaurant_manager','chef','kitchen_manager','bartender','inventory_manager','purchasing_officer','accountant']::restaurant_role[],
+  new.property_id
+ ) then
   return new;
  end if;
  select p.id profile_id,p.cost_class,rr.id rule_id,rr.inventory_item_id
