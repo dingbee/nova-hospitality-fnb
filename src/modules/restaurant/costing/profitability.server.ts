@@ -20,6 +20,7 @@ import {
   NO_MATCH_ID,
 } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
+import { calculateOperationalProfitability } from "./operational-profitability.calculation";
 
 type Sb = any;
 
@@ -35,6 +36,9 @@ export interface ProfitabilityRow {
   margin_percent: number | null;
   food_cost_percent: number | null;
   currency: string;
+  channel?: string;
+  property_id?: string | null;
+  location_id?: string | null;
 }
 
 export interface ProfitabilityTotals extends Omit<ProfitabilityRow, "menu_item_id" | "menu_item_name"> {
@@ -43,6 +47,16 @@ export interface ProfitabilityTotals extends Omit<ProfitabilityRow, "menu_item_i
   contribution_margin_percent: number | null;
   operating_profit: number;
   operating_margin_percent: number | null;
+  gross_sales: number;
+  discounts: number;
+  refunds: number;
+  tax_collected: number;
+  net_sales: number;
+  service_consumables: number;
+  other_direct_variable_costs: number;
+  direct_variable_costs: number;
+  unallocated_operating_expenses: number;
+  confidence_state: string;
 }
 
 export async function computeProfitability(
@@ -54,6 +68,16 @@ export async function computeProfitability(
   periodEnd: string;
   rows: ProfitabilityRow[];
   totals: ProfitabilityTotals;
+  operational: ReturnType<typeof calculateOperationalProfitability>;
+  dimensions: Array<{
+    dimension_type: "channel" | "outlet" | "property";
+    dimension_key: string;
+    dimension_name: string;
+    net_sales: number;
+    direct_variable_costs: number;
+    contribution: number;
+    operating_profit: number;
+  }>;
 }> {
   await assertCapability(sb, userId, input.tenantId, "profitability.manage", {
     propertyId: input.propertyId ?? null,
@@ -62,7 +86,7 @@ export async function computeProfitability(
 
   let orderQuery = sb
     .from("restaurant_orders")
-    .select("id, currency")
+    .select("id, currency, property_id, location_id, source, subtotal, discount_total, tax_total, service_charge")
     .eq("tenant_id", input.tenantId)
     .eq("status", "closed")
     .gte("opened_at", input.from)
@@ -151,7 +175,7 @@ export async function computeProfitability(
     throw new Error("A valid property reporting currency is required.");
   }
   const allocatedOperatingExpenses = Number(
-    ((expenseAllocations ?? []) as any[]).reduce((sum, row) => sum + Number(row.amount ?? 0), 0).toFixed(2),
+    allocationRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0).toFixed(2),
   );
   if (orderIds.length === 0) {
     return {
@@ -171,19 +195,29 @@ export async function computeProfitability(
     };
   }
 
-  const [{ data: items }, { data: movements }] = await Promise.all([
-    sb
-      .from("restaurant_order_items")
-      .select("id, menu_item_id, description, quantity, line_total, line_cost, status")
-      .eq("tenant_id", input.tenantId)
-      .in("order_id", orderIds),
-    sb
-      .from("restaurant_stock_movements")
-      .select("order_item_id, total_cost")
-      .eq("tenant_id", input.tenantId)
-      .eq("movement_type", "consumption")
+  const [{ data: items, error: itemError }, { data: movements, error: movementError }, { data: payments, error: paymentError }, { data: unallocated, error: unallocatedError }, { data: pendingExpenses, error: pendingExpenseError }] = await Promise.all([
+    sb.from("restaurant_order_items")
+      .select("id, order_id, menu_item_id, description, quantity, line_total, line_cost, discount, tax_amount, service_charge_amount, status, is_comp, channel")
+      .eq("tenant_id", input.tenantId).in("order_id", orderIds),
+    sb.from("restaurant_stock_movements")
+      .select("id, order_item_id, total_cost, currency, reference_id")
+      .eq("tenant_id", input.tenantId).eq("movement_type", "consumption")
       .in("reference_id", orderIds),
+    sb.from("restaurant_payments")
+      .select("id, order_id, amount, state, refund_of, currency")
+      .eq("tenant_id", input.tenantId).in("order_id", orderIds),
+    sb.from("restaurant_cost_allocation_exceptions")
+      .select("id, source_id, source_amount, currency, property_id")
+      .eq("tenant_id", input.tenantId).gte("period_start", periodFrom).lte("period_start", periodTo),
+    sb.from("restaurant_operational_expenses")
+      .select("id, amount, currency, approval_status, property_id, location_id")
+      .eq("tenant_id", input.tenantId).gte("incurred_on", periodFrom).lte("incurred_on", periodTo).eq("approval_status", "pending"),
   ]);
+  if (itemError) throw new Error(itemError.message);
+  if (movementError) throw new Error(movementError.message);
+  if (paymentError) throw new Error(paymentError.message);
+  if (unallocatedError) throw new Error(unallocatedError.message);
+  if (pendingExpenseError) throw new Error(pendingExpenseError.message);
 
   // Actual cost is attributed back to the exact order line that consumed it.
   const actualByItem = new Map<string, number>();
@@ -195,6 +229,82 @@ export async function computeProfitability(
     );
   }
 
+  const itemRows = ((items ?? []) as any[]).filter((i) => i.status !== "voided");
+  const orderById = new Map(orderRows.map((o) => [o.id, o]));
+  const refundByOrder = new Map<string, number>();
+  for (const payment of (payments ?? []) as any[]) {
+    if (payment.refund_of && payment.state === "refunded") {
+      refundByOrder.set(payment.order_id, (refundByOrder.get(payment.order_id) ?? 0) + Math.abs(Number(payment.amount ?? 0)));
+    }
+  }
+  const lineRevenueByOrder = new Map<string, number>();
+  for (const item of itemRows) {
+    if (item.is_comp) continue;
+    lineRevenueByOrder.set(item.order_id, (lineRevenueByOrder.get(item.order_id) ?? 0) + Math.max(0, Number(item.line_total ?? 0)));
+  }
+  const refundByLine = new Map<string, number>();
+  for (const item of itemRows) {
+    if (item.is_comp) continue;
+    const orderRefund = refundByOrder.get(item.order_id) ?? 0;
+    const orderRevenue = lineRevenueByOrder.get(item.order_id) ?? 0;
+    if (orderRefund > 0 && orderRevenue > 0) {
+      refundByLine.set(item.id, orderRefund * (Number(item.line_total ?? 0) / orderRevenue));
+    }
+  }
+  const grossSales = itemRows.filter((i) => !i.is_comp).reduce((sum, i) => sum + Number(i.line_total ?? 0) + Number(i.discount ?? 0), 0);
+  const discounts = itemRows.filter((i) => !i.is_comp).reduce((sum, i) => sum + Number(i.discount ?? 0), 0);
+  const refunds = [...refundByOrder.values()].reduce((sum, amount) => sum + amount, 0);
+  const taxCollected = itemRows.filter((i) => !i.is_comp).reduce((sum, i) => sum + Number(i.tax_amount ?? 0), 0);
+  const recipeCogs = itemRows.reduce((sum, i) => sum + (actualByItem.has(i.id) ? actualByItem.get(i.id)! : Number(i.line_cost ?? 0)), 0);
+  const allLinesHaveActualMovements = itemRows.every((i) => actualByItem.has(i.id));
+  const unallocatedRows = (unallocated ?? []) as any[];
+  const pendingRows = (pendingExpenses ?? []) as any[];
+  const unallocatedOperatingExpenses = unallocatedRows.reduce((sum, r) => sum + Number(r.source_amount ?? 0), 0);
+  const pendingExpenseVerification = pendingRows.length > 0;
+  const operational = calculateOperationalProfitability({
+    currency,
+    grossSales: Number(grossSales.toFixed(2)),
+    discounts: Number(discounts.toFixed(2)),
+    refunds: Number(refunds.toFixed(2)),
+    salesAdjustments: 0,
+    taxCollected: Number(taxCollected.toFixed(2)),
+    recipeCogs: Number(recipeCogs.toFixed(2)),
+    recipeCostBasis: allLinesHaveActualMovements ? "actual" : "standard",
+    serviceConsumables: 0,
+    consumablesCostBasis: "estimated",
+    otherDirectVariableCosts: 0,
+    allocatedOperatingExpenses,
+    unallocatedOperatingExpenses: Number(unallocatedOperatingExpenses.toFixed(2)),
+    pendingExpenseVerification,
+    incompleteSourceData: true,
+  });
+  const dimensionMap = new Map<string, { dimension_type: "channel" | "outlet" | "property"; dimension_key: string; dimension_name: string; net_sales: number; direct_variable_costs: number; contribution: number; operating_profit: number }>();
+  const addDimension = (type: "channel" | "outlet" | "property", key: string, name: string, net: number, cost: number) => {
+    const id = `${type}:${key}`;
+    const current = dimensionMap.get(id) ?? { dimension_type: type, dimension_key: key, dimension_name: name, net_sales: 0, direct_variable_costs: 0, contribution: 0, operating_profit: 0 };
+    current.net_sales += net;
+    current.direct_variable_costs += cost;
+    current.contribution += net - cost;
+    dimensionMap.set(id, current);
+  };
+  for (const item of itemRows) {
+    const order = orderById.get(item.order_id);
+    if (!order || item.is_comp) continue;
+    const lineGross = Number(item.line_total ?? 0) + Number(item.discount ?? 0);
+    const lineNet = lineGross - Number(item.discount ?? 0) - Number(item.tax_amount ?? 0) - (refundByLine.get(item.id) ?? 0);
+    const lineCost = actualByItem.has(item.id) ? actualByItem.get(item.id)! : Number(item.line_cost ?? 0);
+    addDimension("channel", String(item.channel ?? order.source ?? "unknown"), String(item.channel ?? order.source ?? "Unknown channel"), lineNet, lineCost);
+    if (order.location_id) addDimension("outlet", order.location_id, order.location_id, lineNet, lineCost);
+    if (order.property_id) addDimension("property", order.property_id, order.property_id, lineNet, lineCost);
+  }
+  const dimensions = [...dimensionMap.values()].map((d) => ({ ...d, net_sales: Number(d.net_sales.toFixed(2)), direct_variable_costs: Number(d.direct_variable_costs.toFixed(2)), contribution: Number(d.contribution.toFixed(2)), operating_profit: Number((d.contribution - allocatedOperatingExpenses * (d.net_sales / Math.max(operational.netSales, 0.01))).toFixed(2)) }));
+  const operationalTotals = {
+    gross_sales: operational.grossSales, discounts: operational.discounts, refunds: operational.refunds,
+    tax_collected: operational.taxCollected, net_sales: operational.netSales,
+    service_consumables: operational.serviceConsumables, other_direct_variable_costs: operational.otherDirectVariableCosts,
+    direct_variable_costs: operational.directVariableCosts, unallocated_operating_expenses: operational.unallocatedOperatingExpenses,
+    confidence_state: operational.reconciliationState,
+  };
   const agg = new Map<string, ProfitabilityRow>();
   for (const item of ((items ?? []) as any[]).filter((i) => i.status !== "voided")) {
     const key = item.menu_item_id ?? `adhoc:${item.description}`;
