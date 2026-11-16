@@ -178,10 +178,10 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         to: "/admin/restaurant/costing",
-        label: "Costing",
+        label: "Expense Centre",
         icon: Calculator,
         permission: "COSTING:READ",
-        hint: "Recipe cost, yield and margin",
+        hint: "Operating expenses, recurring costs and recipe costing",
       },
     ],
   },

@@ -11,7 +11,7 @@
  * Consumption happens once, on order close, and is idempotent by dedupe key —
  * voids and reversals therefore never create unexplained stock loss.
  */
-import { insertMovement } from "../inventory/movements.server";
+import { findMovementByDedupeKey, insertMovement } from "../inventory/movements.server";
 import { componentToStock, type UnitRow } from "../inventory/units";
 import { CircularRecipeError } from "./recipe-cost.server";
 
@@ -214,13 +214,17 @@ export async function consumeForRecipeSale(
   for (const line of demand) {
     const info = meta.get(line.inventoryItemId);
     const unitCost = Number(info?.average_cost ?? 0);
+    if (!/^[A-Z]{3}$/.test(String(info?.currency ?? ""))) {
+      throw new Error(`Recipe consumption blocked: "${info?.name ?? line.inventoryItemId}" has no valid inventory currency.`);
+    }
     const converted = componentToStock(line.quantity, line.unitId, info ?? {}, unitById);
     if (!converted.exact) {
       throw new Error(
         `"${info?.name ?? line.inventoryItemId}": recipe line is in a unit that cannot be converted to this item's stock unit (${converted.reason ?? "unknown conversion"}). Fix the recipe line's unit, or the item's stock unit, before this order can close.`,
       );
     }
-    await insertMovement(sb, userId, {
+    const dedupeKey = `consume:${args.orderItemId}:${line.key}`;
+    const inserted = await insertMovement(sb, userId, {
       tenantId: args.tenantId,
       propertyId: orderPropertyId,
       locationId: consumptionLocationId,
@@ -229,15 +233,21 @@ export async function consumeForRecipeSale(
       movementType: "consumption",
       quantity: -converted.quantity,
       unitCost,
-      currency: info?.currency ?? "TZS",
+      currency: info.currency,
       reason: "Sales consumption",
       referenceType: "restaurant_order",
       referenceId: args.orderId,
       orderItemId: args.orderItemId,
       occurredAt: args.occurredAt,
-      dedupeKey: `consume:${args.orderItemId}:${line.key}`,
+      dedupeKey,
     });
-    actualCost += converted.quantity * unitCost;
+    const committedMovement = inserted ?? await findMovementByDedupeKey(sb, args.tenantId, dedupeKey);
+    if (!committedMovement) {
+      throw new Error(`Recipe consumption for "${info?.name ?? line.inventoryItemId}" could not be verified.`);
+    }
+    // Re-close retries must reuse the immutable movement cost. The current
+    // average_cost can differ from the value committed on the first attempt.
+    actualCost += Number(committedMovement.total_cost ?? 0);
   }
   return Number(actualCost.toFixed(4));
 }

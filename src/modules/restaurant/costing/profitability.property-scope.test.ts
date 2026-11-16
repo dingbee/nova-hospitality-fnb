@@ -51,6 +51,10 @@ function makeFixture() {
     },
   ];
   const orders: any[] = [];
+  const properties = [
+    { id: PROPERTY_A1, tenant_id: TENANT_A, currency: "TZS" },
+    { id: PROPERTY_A2, tenant_id: TENANT_A, currency: "TZS" },
+  ];
 
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
@@ -78,6 +82,7 @@ function makeFixture() {
     function rowsFor(): any[] {
       if (table === "restaurant_members") return members;
       if (table === "restaurant_locations") return locations;
+      if (table === "restaurant_properties") return properties;
       if (table === "restaurant_profitability_snapshots") return snapshots;
       if (table === "restaurant_orders") return orders;
       if (table === "restaurant_order_items") return [];

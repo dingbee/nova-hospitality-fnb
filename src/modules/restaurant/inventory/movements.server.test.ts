@@ -12,7 +12,7 @@
  * number is used.
  */
 import { describe, expect, it } from "vitest";
-import { consumeForOrderItem } from "./movements.server";
+import { consumeForOrderItem, consumeOperationalConsumablesForOrder } from "./movements.server";
 
 const TENANT = "11111111-1111-1111-1111-111111111111";
 const USER = "22222222-2222-2222-2222-222222222222";
@@ -21,7 +21,7 @@ const KG = { id: "unit-kg", code: "KG", name: "Kilogram", dimension: "mass", fac
 const G = { id: "unit-g", code: "G", name: "Gram", dimension: "mass", factor: 1 };
 const PC = { id: "unit-pc", code: "PC", name: "Piece", dimension: "count", factor: 1 };
 
-function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[] }) {
+function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[]; profiles?: any[]; rules?: any[] }) {
   const movements: any[] = [];
   const inventoryItems = opts.items.map((item) =>
     Object.prototype.hasOwnProperty.call(item, "property_id")
@@ -54,6 +54,8 @@ function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[] 
     };
 
     async function resolve(isSingleInsert: boolean) {
+      if (table === "restaurant_consumption_profiles") return { data: opts.profiles ?? [], error: null };
+      if (table === "restaurant_consumption_rules") return { data: opts.rules ?? [], error: null };
       if (table === "restaurant_recipe_components") {
         const rows = opts.components.filter((c) => c.menu_item_id === filters.menu_item_id);
         return { data: rows, error: null };
@@ -79,11 +81,20 @@ function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[] 
       }
       if (table === "restaurant_stock_movements") {
         const row = (api as any)._insertRow;
+        if (!row) {
+          const existing = movements.find((movement) => movement.dedupe_key === filters.dedupe_key) ?? null;
+          return { data: existing, error: null };
+        }
         if (row.dedupe_key && movements.some((m) => m.dedupe_key === row.dedupe_key)) {
           return { data: null, error: { code: "23505", message: "duplicate" } };
         }
         seq += 1;
-        const stored = { ...row, id: `mv-${seq}`, balance_after: 0 };
+        const stored = {
+          ...row,
+          id: `mv-${seq}`,
+          total_cost: Math.abs(Number(row.quantity)) * Number(row.unit_cost),
+          balance_after: 0,
+        };
         movements.push(stored);
         return isSingleInsert ? { data: stored, error: null } : { data: [stored], error: null };
       }
@@ -96,6 +107,7 @@ function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[] 
   return {
     supabase: { from: (table: string) => builder(table) },
     movements,
+    inventoryItems,
   };
 }
 
@@ -277,6 +289,47 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
     expect(fake.movements).toHaveLength(1);
   });
 
+  it("reuses the committed recipe movement cost when average cost changes before a close retry", async () => {
+    const fake = makeFakeSupabase({
+      items: [{
+        id: "item-chicken",
+        name: "Chicken Breast",
+        average_cost: 14000,
+        currency: "TZS",
+        unit_id: KG.id,
+        allow_negative: true,
+        current_quantity: 100,
+      }],
+      components: [{
+        id: "comp-1",
+        menu_item_id: "menu-burger",
+        inventory_item_id: "item-chicken",
+        quantity: 180,
+        unit_id: G.id,
+        yield_percent: 100,
+      }],
+      units: [KG, G],
+    });
+    const args = {
+      tenantId: TENANT,
+      locationId: "location-1",
+      propertyId: "property-1",
+      orderId: "order-retry",
+      orderItemId: "item-retry",
+      menuItemId: "menu-burger",
+      quantity: 1,
+    };
+
+    const firstCost = await consumeForOrderItem(fake.supabase, USER, args);
+    fake.inventoryItems[0].average_cost = 20000;
+    const retryCost = await consumeForOrderItem(fake.supabase, USER, args);
+
+    expect(firstCost).toBe(2520);
+    expect(retryCost).toBe(2520);
+    expect(fake.movements).toHaveLength(1);
+    expect(fake.movements[0].total_cost).toBe(2520);
+  });
+
   it("Section 18 scenario 6 — selling 60 pours of 150ml wine consumes exactly one carton's content (9,000ml = 12 bottles)", async () => {
     const ML = { id: "unit-ml", code: "ML", name: "Millilitre", dimension: "volume", factor: 1 };
     const BTL = { id: "unit-btl", code: "BTL", name: "Bottle", dimension: "count", factor: 1 };
@@ -359,5 +412,41 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
       }),
     ).rejects.toThrow(/cannot be converted/i);
     expect(fake.movements).toHaveLength(0); // nothing posted on refusal
+  });
+});
+
+
+describe("consumeOperationalConsumablesForOrder — per-cover stock consumption", () => {
+  it("consumes configured service supplies once per order and remains idempotent on close retry", async () => {
+    const fake = makeFakeSupabase({
+      items: [{
+        id: "item-napkin", name: "Napkins", average_cost: 50, currency: "TZS",
+        unit_id: PC.id, property_id: "property-1", allow_negative: true, current_quantity: 100,
+      }],
+      components: [],
+      units: [PC],
+      profiles: [{
+        id: "profile-1", cost_class: "service_consumable", property_id: "property-1",
+        location_id: null, active: true, effective_from: "2026-01-01", effective_to: null,
+      }],
+      rules: [{
+        id: "rule-1", profile_id: "profile-1", inventory_item_id: "item-napkin",
+        unit_id: PC.id, quantity_per_cover: 2, active: true,
+        effective_from: "2026-01-01", effective_to: null,
+      }],
+    });
+    const args = {
+      tenantId: TENANT, propertyId: "property-1", locationId: "location-1",
+      orderId: "order-1", guestCount: 3, currency: "TZS", occurredAt: "2026-11-16T12:00:00.000Z",
+    };
+    const first = await consumeOperationalConsumablesForOrder(fake.supabase, USER, args);
+    const retry = await consumeOperationalConsumablesForOrder(fake.supabase, USER, args);
+    expect(first).toBe(300);
+    expect(retry).toBe(300);
+    expect(fake.movements).toHaveLength(1);
+    expect(fake.movements[0].quantity).toBe(-6);
+    expect(fake.movements[0].reference_type).toBe("restaurant_order");
+    expect(fake.movements[0].reference_id).toBe("order-1");
+    expect(fake.movements[0].dedupe_key).toBe("operational-consume:order-1:rule-1");
   });
 });
