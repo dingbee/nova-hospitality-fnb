@@ -91,7 +91,7 @@ export async function saveOperationalConsumptionProfile(
   const effectiveFrom = new Date().toISOString().slice(0, 10);
   let existingProfileQuery = sb
     .from("restaurant_consumption_profiles")
-    .select("id")
+    .select("id, effective_from, cost_class")
     .eq("tenant_id", input.tenantId)
     .eq("property_id", input.propertyId)
     .eq("name", input.name);
@@ -100,6 +100,9 @@ export async function saveOperationalConsumptionProfile(
     : existingProfileQuery.is("location_id", null);
   const { data: existing, error: existingError } = await existingProfileQuery.maybeSingle();
   if (existingError) throw new Error(existingError.message);
+  if (existing?.cost_class && existing.cost_class !== input.costClass) {
+    throw new Error("Use a new profile name when changing a consumable cost classification so historical costing remains traceable.");
+  }
   const profilePayload = {
     tenant_id: input.tenantId,
     property_id: input.propertyId,
@@ -107,7 +110,7 @@ export async function saveOperationalConsumptionProfile(
     name: input.name,
     cost_class: input.costClass,
     active: true,
-    effective_from: effectiveFrom,
+    effective_from: existing?.effective_from ?? effectiveFrom,
     effective_to: null,
   };
   const profileQuery = existing?.id
