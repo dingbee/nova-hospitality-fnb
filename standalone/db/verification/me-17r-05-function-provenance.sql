@@ -5,18 +5,18 @@
 
 with expected(name, expected_version, expected_migration) as (
   values
-    ('restaurant_apply_giveaway', '20260915084602', 'me01_me02_me03_corrective_financial_functions_reconstruction'),
+    ('restaurant_apply_giveaway', '20260920200912', 'me17r06_security_definer_hardening'),
     ('restaurant_cash_payout_control', '20260915084602', 'me01_me02_me03_corrective_financial_functions_reconstruction'),
     ('restaurant_cash_payout_events_immutable', '20260915084602', 'me01_me02_me03_corrective_financial_functions_reconstruction'),
     ('restaurant_cash_payout_no_delete', '20260915084602', 'me01_me02_me03_corrective_financial_functions_reconstruction'),
-    ('restaurant_cash_payout_total', '20260915084602', 'me01_me02_me03_corrective_financial_functions_reconstruction'),
+    ('restaurant_cash_payout_total', '20260920200912', 'me17r06_security_definer_hardening'),
     ('restaurant_cash_payout_trail', '20260915084602', 'me01_me02_me03_corrective_financial_functions_reconstruction'),
     ('restaurant_daily_close_control', '20260918051808', 'me04_daily_close_double_close_race'),
     ('restaurant_daily_close_payout_sync', '20260915084602', 'me01_me02_me03_corrective_financial_functions_reconstruction'),
     ('restaurant_day_is_locked', '20260915084951', 'me01_me02_me03_corrective_day_is_locked_reconstruction'),
     ('restaurant_decide_giveaway', '20260915084602', 'me01_me02_me03_corrective_financial_functions_reconstruction'),
     ('restaurant_declaration_revisions_immutable', '20260915084602', 'me01_me02_me03_corrective_financial_functions_reconstruction'),
-    ('restaurant_expected_tender', '20260915084602', 'me01_me02_me03_corrective_financial_functions_reconstruction'),
+    ('restaurant_expected_tender', '20260920200912', 'me17r06_security_definer_hardening'),
     ('restaurant_giveaway_guard', '20260915084602', 'me01_me02_me03_corrective_financial_functions_reconstruction'),
     ('restaurant_giveaway_no_delete', '20260915084602', 'me01_me02_me03_corrective_financial_functions_reconstruction'),
     ('restaurant_giveaway_period_lock', '20260915084602', 'me01_me02_me03_corrective_financial_functions_reconstruction'),
