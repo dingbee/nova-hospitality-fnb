@@ -120,6 +120,12 @@ function seed(options?: {
       movement_count: 8,
       last_movement_at: new Date(now - 86400000).toISOString(),
     }],
+    restaurant_properties: [{
+      tenant_id: TENANT,
+      id: PROPERTY,
+      currency: "TZS",
+    }],
+    restaurant_tenants: [],
     restaurant_locations: [{
       tenant_id: TENANT,
       id: LOCATION,
