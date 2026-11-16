@@ -723,7 +723,8 @@ export async function consumeOperationalConsumablesForOrder(
     if (!Number.isFinite(unitCost) || unitCost < 0) {
       throw new Error(`"${item.name}": operational consumable has an invalid average cost.`);
     }
-    await insertMovement(sb, userId, {
+    const dedupeKey = `operational-consume:${args.orderId}:${rule.id}`;
+    const inserted = await insertMovement(sb, userId, {
       tenantId: args.tenantId,
       propertyId: args.propertyId,
       locationId: args.locationId,
@@ -737,9 +738,11 @@ export async function consumeOperationalConsumablesForOrder(
       referenceType: "restaurant_order",
       referenceId: args.orderId,
       occurredAt: args.occurredAt,
-      dedupeKey: `operational-consume:${args.orderId}:${rule.id}`,
+      dedupeKey,
     });
-    actualCost += conversion.quantity * unitCost;
+    const committedMovement = inserted ?? await findMovementByDedupeKey(sb, args.tenantId, dedupeKey);
+    if (!committedMovement) throw new Error(`Operational consumable movement for "${item.name}" could not be verified.`);
+    actualCost += Number(committedMovement.total_cost ?? 0);
   }
   return Number(actualCost.toFixed(4));
 }
