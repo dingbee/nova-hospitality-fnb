@@ -49,7 +49,12 @@ const LOCATION = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 function chain(result: unknown) {
   const q: any = {};
-  for (const method of ["select", "eq", "in", "or", "lte", "maybeSingle", "single"]) q[method] = vi.fn(() => q);
+  for (const method of ["select", "eq", "in", "or", "lte"]) q[method] = vi.fn(() => q);
+  q.maybeSingle = vi.fn(async () => ({
+    ...(result as any),
+    data: Array.isArray((result as any).data) ? (result as any).data[0] ?? null : (result as any).data,
+  }));
+  q.single = q.maybeSingle;
   q.then = (resolve: (value: unknown) => unknown) => Promise.resolve(resolve(result));
   return q;
 }
@@ -100,6 +105,9 @@ function sbWithExisting(
       }
       if (table === "restaurant_suppliers") {
         return chain({ data: [{ id: SUPPLIER, name: "Fresh Supplier", status: "active" }], error: null });
+      }
+      if (table === "restaurant_locations") {
+        return chain({ data: [{ id: LOCATION, property_id: PROPERTY, scope: "property", is_storage: true }], error: null });
       }
       if (table === "restaurant_purchase_orders") {
         return chain({ data: existing, error: null });
