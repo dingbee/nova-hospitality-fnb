@@ -5,6 +5,7 @@ import {
   calculateStockPosition,
   comparableSupplierUnitCost,
   forecastDailyDemand,
+  stockUnitsPerUnit,
 } from "./stock-position.contract";
 
 describe("canonical stock-position contract", () => {
@@ -59,7 +60,7 @@ describe("canonical stock-position contract", () => {
   });
 
   it("does not fabricate demand when history is insufficient", () => {
-    expect(forecastDailyDemand([1, 2, 0, 3, 1, 2], 10)).toMatchObject({
+    expect(forecastDailyDemand([1, 2, 0, 3, 1, 2, 0, 0, 0, 0], 10, 7, 6)).toMatchObject({
       status: "insufficient_history",
       dailyAverage: null,
       forecastQuantity: null,
@@ -68,7 +69,7 @@ describe("canonical stock-position contract", () => {
   });
 
   it("produces a deterministic daily forecast and flags a spike", () => {
-    const result = forecastDailyDemand([1, 1, 2, 1, 1, 2, 1, 1, 50, 1, 1, 2, 1, 1], 7);
+    const result = forecastDailyDemand([1, 1, 2, 1, 1, 2, 1, 1, 50, 1, 1, 2, 1, 1], 7, 7, 14);
     expect(result.status).toBe("ready");
     expect(result.outlierDays).toContain(8);
     expect(result.dailyAverage).toBeLessThan(5);
@@ -103,6 +104,18 @@ describe("canonical stock-position contract", () => {
       forecastDemand: 10, safetyStock: 2, netAvailable: 1,
       leadTimeDays: 3, targetCoverageDays: 7, stockUnitsPerPurchaseUnit: null,
     }).status).toBe("manual_review");
+  });
+
+  it("resolves unit conversion only from exact units, compatible unit factors or configured pack size", () => {
+    const units = [
+      { id: "kg", dimension: "mass", base_unit_id: "base-mass", factor: 1 },
+      { id: "g", dimension: "mass", base_unit_id: "base-mass", factor: 0.001 },
+      { id: "litre", dimension: "volume", base_unit_id: "base-volume", factor: 1 },
+    ];
+    expect(stockUnitsPerUnit("kg", "g", null, null, units)).toBe(1000);
+    expect(stockUnitsPerUnit("litre", "g", null, null, units)).toBeNull();
+    expect(stockUnitsPerUnit("carton", "bottle", "carton", 12, [])).toBe(12);
+    expect(stockUnitsPerUnit("unknown", "bottle", null, null, [])).toBeNull();
   });
 
   it("compares prices only when currencies and stock-unit conversions are comparable", () => {
