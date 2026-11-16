@@ -48,6 +48,7 @@ CREATE TABLE public.restaurant_supplier_invoices (
   currency text NOT NULL,
   total numeric(14,2) NOT NULL,
   amount_paid numeric(14,2) NOT NULL DEFAULT 0,
+  payment_status text NOT NULL DEFAULT 'unpaid',
   status text NOT NULL DEFAULT 'recorded'
 );
 CREATE TABLE public.restaurant_procurement_audit (
@@ -197,6 +198,9 @@ BEGIN
   IF (SELECT round(total - amount_paid - (SELECT sum(amount) FROM public.restaurant_supplier_credit_note_applications WHERE invoice_id='30000000-0000-4000-8000-000000000001'),2)
       FROM public.restaurant_supplier_invoices WHERE id='30000000-0000-4000-8000-000000000001') <> 30 THEN
     RAISE EXCEPTION 'Invoice outstanding balance did not net the credit application';
+  END IF;
+  IF (SELECT payment_status FROM public.restaurant_supplier_invoices WHERE id='30000000-0000-4000-8000-000000000001') <> 'partially_paid' THEN
+    RAISE EXCEPTION 'Invoice payment status did not reflect applied supplier credit';
   END IF;
   IF (SELECT count(*) FROM public.restaurant_procurement_audit WHERE document_type='supplier_credit_note' AND action='credit_note_applied') <> 1 THEN
     RAISE EXCEPTION 'Credit application audit was not written atomically';
