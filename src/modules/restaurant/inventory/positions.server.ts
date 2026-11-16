@@ -342,7 +342,7 @@ export async function getStockPositionEvidenceForReplenishment(
       : Promise.resolve({ data: [], error: null }),
     orderIds.length
       ? sb.from("restaurant_supplier_confirmations")
-          .select("id, purchase_order_id, status, expected_at, confirmed_delivery_date, created_at")
+          .select("id, purchase_order_id, status, confirmed_delivery_date, created_at")
           .eq("tenant_id", input.tenantId)
           .in("purchase_order_id", orderIds)
           .in("status", ["confirmed", "partially_confirmed"])
