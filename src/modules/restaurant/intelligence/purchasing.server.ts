@@ -18,6 +18,7 @@ import type {
 type Sb = any;
 const DAY = 864e5;
 const COVER_DAYS = 7;
+const MAX_SUPPLIER_PRICE_AGE_DAYS = 90;
 
 export async function getPurchasingIntelligence(
   sb: Sb,
@@ -137,6 +138,7 @@ export async function getPurchasingIntelligence(
 
   const supplierById = new Map(suppliers.map((supplier) => [supplier.id, supplier]));
   const bestProduct = new Map<string, any>();
+  const supplierIssues = new Map<string, string>();
   for (const product of products) {
     const item = itemById.get(product.inventory_item_id);
     const supplier = supplierById.get(product.supplier_id);
@@ -148,10 +150,23 @@ export async function getPurchasingIntelligence(
       Number(product.pack_size),
       units,
     );
-    if (stockFactor == null) continue;
+    if (stockFactor == null) {
+      supplierIssues.set(item.id, "Supplier purchase unit has no verified conversion to the stock unit.");
+      continue;
+    }
     const history = latestPriceByProduct.get(product.id);
     const effectivePrice = history ?? product;
-    if (history && (history.unit_id !== product.unit_id || history.currency !== product.currency)) continue;
+    if (history && (history.unit_id !== product.unit_id || history.currency !== product.currency)) {
+      supplierIssues.set(item.id, "Latest effective supplier price uses a different unit or currency.");
+      continue;
+    }
+    const effectivePriceDate = history?.effective_date ?? product.last_price_at ?? null;
+    const effectivePriceTime = effectivePriceDate ? Date.parse(effectivePriceDate) : NaN;
+    const priceAgeDays = (now - effectivePriceTime) / DAY;
+    if (!Number.isFinite(effectivePriceTime) || priceAgeDays < 0 || priceAgeDays > MAX_SUPPLIER_PRICE_AGE_DAYS) {
+      supplierIssues.set(item.id, "Supplier price is missing an effective date or is older than " + MAX_SUPPLIER_PRICE_AGE_DAYS + " days.");
+      continue;
+    }
     const price = Number(effectivePrice.price ?? effectivePrice.unit_price);
     const normalizedStockUnitPrice = comparableSupplierUnitCost(
       price,
@@ -159,11 +174,14 @@ export async function getPurchasingIntelligence(
       item.currency ?? currency,
       stockFactor,
     );
-    if (normalizedStockUnitPrice == null) continue;
+    if (normalizedStockUnitPrice == null) {
+      supplierIssues.set(item.id, "Supplier price currency or stock-unit conversion is not comparable.");
+      continue;
+    }
     const normalized = {
       ...product,
       effectiveUnitPrice: price,
-      effectivePriceDate: history?.effective_date ?? product.last_price_at ?? null,
+      effectivePriceDate,
       stockUnitsPerPurchaseUnit: stockFactor,
       normalizedStockUnitPrice,
     };
@@ -226,7 +244,7 @@ export async function getPurchasingIntelligence(
       continue;
     }
     const reasons = [...evidence.manualReviewReasons];
-    if (!product || !supplier) reasons.push("No active supplier product with a comparable price is configured.");
+    if (!product || !supplier) reasons.push(supplierIssues.get(item.id) ?? "No active supplier product with a comparable price is configured.");
     if (reasons.length > 0) {
       reviewItems.push({ inventoryItemId: item.id, name: item.name, status: "manual_review", reason: [...new Set(reasons)].join(" "), observations: observedDays });
       continue;
