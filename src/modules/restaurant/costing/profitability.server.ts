@@ -116,34 +116,6 @@ export async function computeProfitability(
   const periodFrom = input.from.slice(0, 10);
   const periodTo = input.to.slice(0, 10);
   const allocationPeriodFrom = `${periodFrom.slice(0, 7)}-01`;
-  const prorateMonthlyAmount = (amount: number, monthStart: string) => {
-    const [year, month] = monthStart.split("-").map(Number);
-    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-    const monthEnd = `${year}-${String(month).padStart(2, "0")}-${String(daysInMonth).padStart(2, "0")}`;
-    const overlapStart = periodFrom > monthStart ? periodFrom : monthStart;
-    const overlapEnd = periodTo < monthEnd ? periodTo : monthEnd;
-    if (overlapEnd < overlapStart) return 0;
-    const overlapDays = Math.floor((Date.parse(`${overlapEnd}T00:00:00Z`) - Date.parse(`${overlapStart}T00:00:00Z`)) / 86_400_000) + 1;
-    return amount * overlapDays / daysInMonth;
-  };
-  let expenseAllocationQuery = sb
-    .from("restaurant_cost_allocations")
-    .select("amount, currency, property_id, location_id, source_id, allocation_method")
-    .eq("tenant_id", input.tenantId)
-    .eq("source_type", "operational_expense")
-    .gte("period_start", allocationPeriodFrom)
-    .lte("period_start", periodTo);
-  if (input.propertyId) expenseAllocationQuery = expenseAllocationQuery.eq("property_id", input.propertyId);
-  if (input.locationId) expenseAllocationQuery = expenseAllocationQuery.eq("location_id", input.locationId);
-  const { data: expenseAllocations, error: expenseAllocationError } = await expenseAllocationQuery;
-  if (expenseAllocationError) throw new Error(expenseAllocationError.message);
-  const allocationRows = (expenseAllocations ?? []) as any[];
-  if (allocationRows.some((r) => !/^[A-Z]{3}$/.test(String(r.currency ?? "")))) {
-    throw new Error("Allocated operating cost currency is missing or invalid.");
-  }
-  const currencies = new Set(allocationRows.map((r) => r.currency));
-  const currencySet = new Set([...orderCurrencies, ...currencies]);
-  if (currencySet.size > 1) throw new Error("Profitability cannot combine sales and operating costs across currencies.");
   let reportingPropertyId = input.propertyId ?? null;
   if (input.locationId) {
     const { data: location, error: locationError } = await sb
@@ -158,6 +130,34 @@ export async function computeProfitability(
     }
     reportingPropertyId = location.property_id;
   }
+  const prorateMonthlyAmount = (amount: number, monthStart: string) => {
+    const [year, month] = monthStart.split("-").map(Number);
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const monthEnd = `${year}-${String(month).padStart(2, "0")}-${String(daysInMonth).padStart(2, "0")}`;
+    const overlapStart = periodFrom > monthStart ? periodFrom : monthStart;
+    const overlapEnd = periodTo < monthEnd ? periodTo : monthEnd;
+    if (overlapEnd < overlapStart) return 0;
+    const overlapDays = Math.floor((Date.parse(`${overlapEnd}T00:00:00Z`) - Date.parse(`${overlapStart}T00:00:00Z`)) / 86_400_000) + 1;
+    return amount * overlapDays / daysInMonth;
+  };
+  let expenseAllocationQuery = sb
+    .from("restaurant_cost_allocations")
+    .select("amount, currency, property_id, location_id, source_id, allocation_method, period_start")
+    .eq("tenant_id", input.tenantId)
+    .eq("source_type", "operational_expense")
+    .gte("period_start", allocationPeriodFrom)
+    .lte("period_start", periodTo);
+  if (reportingPropertyId) expenseAllocationQuery = expenseAllocationQuery.eq("property_id", reportingPropertyId);
+  const { data: expenseAllocations, error: expenseAllocationError } = await expenseAllocationQuery;
+  if (expenseAllocationError) throw new Error(expenseAllocationError.message);
+  let allocationRows = (expenseAllocations ?? []) as any[];
+  if (input.locationId) allocationRows = allocationRows.filter((row) => row.location_id === null || row.location_id === input.locationId);
+  if (allocationRows.some((r) => !/^[A-Z]{3}$/.test(String(r.currency ?? "")))) {
+    throw new Error("Allocated operating cost currency is missing or invalid.");
+  }
+  const currencies = new Set(allocationRows.map((r) => r.currency));
+  const currencySet = new Set([...orderCurrencies, ...currencies]);
+  if (currencySet.size > 1) throw new Error("Profitability cannot combine sales and operating costs across currencies.");
   let propertyQuery = sb.from("restaurant_properties").select("id,currency").eq("tenant_id", input.tenantId);
   if (reportingPropertyId) propertyQuery = propertyQuery.eq("id", reportingPropertyId);
   const { data: reportingProperties, error: reportingPropertyError } = await propertyQuery;
@@ -174,7 +174,7 @@ export async function computeProfitability(
     allocationRows.reduce((sum, row) => sum + prorateMonthlyAmount(Number(row.amount ?? 0), row.period_start), 0).toFixed(2),
   );
   let unallocatedQuery = sb.from("restaurant_cost_allocation_exceptions")
-    .select("id, source_id, source_amount, currency, source_type")
+    .select("id, source_id, source_amount, currency, source_type, period_start")
     .eq("tenant_id", input.tenantId).eq("source_type", "operational_expense")
     .gte("period_start", allocationPeriodFrom).lte("period_start", periodTo);
   let pendingExpenseQuery = sb.from("restaurant_operational_expenses")
@@ -183,8 +183,7 @@ export async function computeProfitability(
   let consumptionProfileQuery = sb.from("restaurant_consumption_profiles")
     .select("id, cost_class, property_id, location_id, effective_from, effective_to")
     .eq("tenant_id", input.tenantId).eq("active", true);
-  if (input.propertyId) pendingExpenseQuery = pendingExpenseQuery.eq("property_id", input.propertyId);
-  if (input.locationId) pendingExpenseQuery = pendingExpenseQuery.eq("location_id", input.locationId);
+  if (reportingPropertyId) pendingExpenseQuery = pendingExpenseQuery.eq("property_id", reportingPropertyId);
   const [{ data: items, error: itemError }, { data: movements, error: movementError }, { data: payments, error: paymentError }, { data: unallocated, error: unallocatedError }, { data: pendingExpenses, error: pendingExpenseError }, { data: consumptionEvents, error: consumptionError }, { data: consumptionProfiles, error: consumptionProfileError }, { data: consumptionRules, error: consumptionRuleError }] = await Promise.all([
     sb.from("restaurant_order_items")
       .select("id, order_id, menu_item_id, description, quantity, line_total, line_cost, discount, tax_amount, service_charge_amount, status, is_comp, channel")
@@ -192,7 +191,7 @@ export async function computeProfitability(
     sb.from("restaurant_stock_movements")
       .select("id, order_item_id, inventory_item_id, property_id, location_id, total_cost, currency, reference_type, reference_id, reason")
       .eq("tenant_id", input.tenantId).eq("movement_type", "consumption")
-      .in("reference_id", orderIds),
+      .eq("reference_type", "restaurant_order").in("reference_id", orderIds),
     sb.from("restaurant_payments")
       .select("id, order_id, amount, state, refund_of, currency")
       .eq("tenant_id", input.tenantId).in("order_id", orderIds),
@@ -347,11 +346,13 @@ export async function computeProfitability(
       .in("id", sourceIds);
     if (scopedExpenseError) throw new Error(scopedExpenseError.message);
     const allowedSourceIds = new Set(((scopedExpenseSources ?? []) as any[])
-      .filter((e) => (!input.propertyId || e.property_id === input.propertyId) && (!input.locationId || e.location_id === input.locationId))
+      .filter((e) => (!reportingPropertyId || e.property_id === reportingPropertyId) && (!input.locationId || e.location_id === null || e.location_id === input.locationId))
       .map((e) => e.id));
     unallocatedRows = unallocatedRows.filter((r) => allowedSourceIds.has(r.source_id));
   }
-  const pendingRows = (pendingExpenses ?? []) as any[];
+  const pendingRows = ((pendingExpenses ?? []) as any[]).filter((expense) =>
+    !input.locationId || expense.location_id === null || expense.location_id === input.locationId
+  );
   const unallocatedOperatingExpenses = unallocatedRows.reduce((sum, r) => sum + prorateMonthlyAmount(Number(r.source_amount ?? 0), r.period_start), 0);
   const pendingExpenseVerification = pendingRows.length > 0;
   const pendingExpenseAmount = pendingRows.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
