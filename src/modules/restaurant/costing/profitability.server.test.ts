@@ -117,8 +117,8 @@ describe("computeProfitability operating-cost integration", () => {
         status: "served", is_comp: false, channel: "pos",
       }],
       restaurant_stock_movements: [
-        { id: "recipe-movement", order_item_id: "line-1", inventory_item_id: "rice", total_cost: 400, currency: "TZS" },
-        { id: "napkin-movement", order_item_id: "line-1", inventory_item_id: "napkin", total_cost: 50, currency: "TZS", reference_type: "restaurant_order", reference_id: "order-1" },
+        { id: "recipe-movement", order_item_id: "line-1", inventory_item_id: "rice", property_id: "property-1", location_id: "outlet-1", total_cost: 400, currency: "TZS", reference_type: "restaurant_order", reference_id: "order-1" },
+        { id: "napkin-movement", order_item_id: "line-1", inventory_item_id: "napkin", property_id: "property-1", location_id: "outlet-1", total_cost: 50, currency: "TZS", reference_type: "restaurant_order", reference_id: "order-1" },
       ],
       restaurant_payments: [{
         id: "refund-1", order_id: "order-1", amount: -550, state: "refunded",
