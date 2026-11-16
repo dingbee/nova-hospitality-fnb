@@ -152,6 +152,31 @@ export interface PurchaseSuggestion {
   estimatedCost: number;
   supplierName: string | null;
   supplierId: string | null;
+  /** Stock-unit quantities and source evidence used to reproduce this result. */
+  purchaseQuantity?: number;
+  stockUnitsPerPurchaseUnit?: number;
+  forecastDemand?: number;
+  safetyStock?: number;
+  netAvailable?: number;
+  demandObservations?: number;
+  forecastConfidence?: "high" | "medium" | "low" | "none";
+  stockPositionEvidence?: {
+    onHand: number;
+    reserved: number;
+    purchaseOrderInbound: number;
+    confirmedDeliveryInbound: number;
+    inTransitInbound: number;
+    netAvailable: number;
+    components: Array<{ sourceId: string; sourceType: string; quantityInStockUnits: number; expectedAt: string | null }>;
+  };
+}
+
+export interface ReplenishmentReviewItem {
+  inventoryItemId: string;
+  name: string;
+  status: "insufficient_history" | "manual_review";
+  reason: string;
+  observations: number;
 }
 
 export interface SupplierReliability {
