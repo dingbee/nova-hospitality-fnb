@@ -93,6 +93,7 @@ BEGIN
   IF NOT FOUND
     OR location_tenant IS DISTINCT FROM NEW.tenant_id
     OR location_property IS DISTINCT FROM NEW.property_id
+    OR location_type IS NULL
     OR location_type NOT IN ('outlet', 'restaurant', 'bar')
     OR location_is_storage IS DISTINCT FROM false
     OR location_status IS DISTINCT FROM 'active' THEN
