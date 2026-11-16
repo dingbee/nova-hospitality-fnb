@@ -65,10 +65,12 @@ describe("Meta WhatsApp Cloud API foundation", () => {
   it("lists phone numbers and checks phone-number health", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: "phone-456", quality_rating: "GREEN" }] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "phone-456", display_phone_number: "+255700000000" }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "phone-456", display_phone_number: "+255700000000", status: "CONNECTED" }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     await expect(listWabaPhoneNumbers(credentials)).resolves.toHaveLength(1);
-    await expect(checkPhoneNumberHealth(credentials)).resolves.toMatchObject({ id: "phone-456" });
+    await expect(checkPhoneNumberHealth(credentials)).resolves.toMatchObject({ id: "phone-456", status: "CONNECTED" });
+    const [healthUrl] = fetchMock.mock.calls[1] as [URL];
+    expect(healthUrl.searchParams.get("fields")).toContain("status");
   });
 
   it("registers a verified number only with a six-digit PIN", async () => {
