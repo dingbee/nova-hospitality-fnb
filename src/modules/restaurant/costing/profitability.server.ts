@@ -186,12 +186,20 @@ export async function computeProfitability(
         quantity_sold: 0, revenue: 0, theoretical_cost: 0, actual_cost: 0, variance: 0,
         gross_profit: 0, margin_percent: null, food_cost_percent: null,
         allocated_operating_expenses: allocatedOperatingExpenses,
-        contribution_profit: 0,
-        contribution_margin_percent: null,
-        operating_profit: Number((-allocatedOperatingExpenses).toFixed(2)),
-        operating_margin_percent: null,
-        currency,
+        contribution_profit: 0, contribution_margin_percent: null,
+        operating_profit: Number((-allocatedOperatingExpenses).toFixed(2)), operating_margin_percent: null,
+        currency, gross_sales: 0, discounts: 0, refunds: 0, tax_collected: 0, net_sales: 0,
+        service_consumables: 0, other_direct_variable_costs: 0, direct_variable_costs: 0,
+        unallocated_operating_expenses: 0, confidence_state: "incomplete_source_data",
       },
+      operational: calculateOperationalProfitability({
+        currency, grossSales: 0, discounts: 0, refunds: 0, salesAdjustments: 0, taxCollected: 0,
+        recipeCogs: 0, recipeCostBasis: "standard", serviceConsumables: 0,
+        consumablesCostBasis: "estimated", otherDirectVariableCosts: 0,
+        allocatedOperatingExpenses, unallocatedOperatingExpenses: 0,
+        pendingExpenseVerification: false, incompleteSourceData: true,
+      }),
+      dimensions: [],
     };
   }
 
@@ -254,7 +262,12 @@ export async function computeProfitability(
   const grossSales = itemRows.filter((i) => !i.is_comp).reduce((sum, i) => sum + Number(i.line_total ?? 0) + Number(i.discount ?? 0), 0);
   const discounts = itemRows.filter((i) => !i.is_comp).reduce((sum, i) => sum + Number(i.discount ?? 0), 0);
   const refunds = [...refundByOrder.values()].reduce((sum, amount) => sum + amount, 0);
-  const taxCollected = itemRows.filter((i) => !i.is_comp).reduce((sum, i) => sum + Number(i.tax_amount ?? 0), 0);
+  const grossTax = itemRows.filter((i) => !i.is_comp).reduce((sum, i) => sum + Number(i.tax_amount ?? 0), 0);
+  const refundedTax = itemRows.filter((i) => !i.is_comp).reduce((sum, i) => {
+    const lineTotal = Number(i.line_total ?? 0);
+    return sum + (lineTotal > 0 ? Number(i.tax_amount ?? 0) * ((refundByLine.get(i.id) ?? 0) / lineTotal) : 0);
+  }, 0);
+  const taxCollected = Math.max(0, grossTax - refundedTax);
   const recipeCogs = itemRows.reduce((sum, i) => sum + (actualByItem.has(i.id) ? actualByItem.get(i.id)! : Number(i.line_cost ?? 0)), 0);
   const allLinesHaveActualMovements = itemRows.every((i) => actualByItem.has(i.id));
   const unallocatedRows = (unallocated ?? []) as any[];
@@ -291,13 +304,26 @@ export async function computeProfitability(
     const order = orderById.get(item.order_id);
     if (!order || item.is_comp) continue;
     const lineGross = Number(item.line_total ?? 0) + Number(item.discount ?? 0);
-    const lineNet = lineGross - Number(item.discount ?? 0) - Number(item.tax_amount ?? 0) - (refundByLine.get(item.id) ?? 0);
+    const refundGross = refundByLine.get(item.id) ?? 0;
+    const refundedTaxForLine = Number(item.line_total ?? 0) > 0
+      ? Number(item.tax_amount ?? 0) * (refundGross / Number(item.line_total))
+      : 0;
+    const lineNet = lineGross - Number(item.discount ?? 0) - Number(item.tax_amount ?? 0) - refundGross + refundedTaxForLine;
     const lineCost = actualByItem.has(item.id) ? actualByItem.get(item.id)! : Number(item.line_cost ?? 0);
     addDimension("channel", String(item.channel ?? order.source ?? "unknown"), String(item.channel ?? order.source ?? "Unknown channel"), lineNet, lineCost);
     if (order.location_id) addDimension("outlet", order.location_id, order.location_id, lineNet, lineCost);
     if (order.property_id) addDimension("property", order.property_id, order.property_id, lineNet, lineCost);
   }
-  const dimensions = [...dimensionMap.values()].map((d) => ({ ...d, net_sales: Number(d.net_sales.toFixed(2)), direct_variable_costs: Number(d.direct_variable_costs.toFixed(2)), contribution: Number(d.contribution.toFixed(2)), operating_profit: Number((d.contribution - allocatedOperatingExpenses * (d.net_sales / Math.max(operational.netSales, 0.01))).toFixed(2)) }));
+  const dimensions = [...dimensionMap.values()].map((d) => {
+    const matchingOpex = allocationRows.filter((a) =>
+      d.dimension_type === "outlet" ? a.location_id === d.dimension_key :
+      d.dimension_type === "property" ? a.property_id === d.dimension_key : false
+    ).reduce((sum, a) => sum + Number(a.amount ?? 0), 0);
+    const allocated = d.dimension_type === "channel"
+      ? allocatedOperatingExpenses * (d.net_sales / Math.max(operational.netSales, 0.01))
+      : matchingOpex;
+    return { ...d, net_sales: Number(d.net_sales.toFixed(2)), direct_variable_costs: Number(d.direct_variable_costs.toFixed(2)), contribution: Number(d.contribution.toFixed(2)), operating_profit: Number((d.contribution - allocated).toFixed(2)) };
+  });
   const operationalTotals = {
     gross_sales: operational.grossSales, discounts: operational.discounts, refunds: operational.refunds,
     tax_collected: operational.taxCollected, net_sales: operational.netSales,
@@ -371,11 +397,10 @@ export async function computeProfitability(
     contribution_margin_percent: revenue > 0
       ? Number((((revenue - actual) / revenue) * 100).toFixed(2))
       : null,
-    operating_profit: Number((revenue - actual - allocatedOperatingExpenses).toFixed(2)),
-    operating_margin_percent: revenue > 0
-      ? Number((((revenue - actual - allocatedOperatingExpenses) / revenue) * 100).toFixed(2))
-      : null,
+    operating_profit: operational.operatingProfit,
+    operating_margin_percent: operational.operatingMarginPercent,
     currency,
+    ...operationalTotals,
   };
 
   if (input.persist && allRows.length > 0) {
