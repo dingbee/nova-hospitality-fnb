@@ -162,3 +162,7 @@ drop trigger if exists restaurant_capture_operational_consumption on public.rest
 create trigger restaurant_capture_operational_consumption
  after insert on public.restaurant_stock_movements
  for each row execute function public.restaurant_capture_operational_consumption();
+-- These functions are trigger entry points, not callable RPCs.
+revoke all on function public.restaurant_validate_consumption_profile_scope() from public, anon, authenticated;
+revoke all on function public.restaurant_validate_consumption_rule_scope() from public, anon, authenticated;
+revoke all on function public.restaurant_capture_operational_consumption() from public, anon, authenticated;
