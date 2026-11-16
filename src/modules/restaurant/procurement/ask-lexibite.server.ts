@@ -514,9 +514,9 @@ export async function createIntelligentPurchaseOrders(
         (item) => item.inventoryItemId === line.inventoryItemId,
       );
       const finalQuantity = override?.quantity ?? line.quantity;
-      const orderMultiple = Number(line.orderMultiple ?? 1);
+      const orderMultiple = Number(line.orderMultiple);
       const minimumOrderQuantity = Number(line.minimumOrderQuantity ?? 0);
-      if (!Number.isFinite(finalQuantity) || finalQuantity <= 0 ||
+      if (line.orderMultiple == null || !Number.isFinite(finalQuantity) || finalQuantity <= 0 ||
           !Number.isFinite(orderMultiple) || orderMultiple <= 0 ||
           !Number.isFinite(minimumOrderQuantity) || finalQuantity < minimumOrderQuantity ||
           Math.abs(finalQuantity / orderMultiple - Math.round(finalQuantity / orderMultiple)) > 0.000001) {
@@ -559,7 +559,7 @@ export async function createIntelligentPurchaseOrders(
               saved.stock_unit_id === line.stockUnitId &&
               Number(saved.stock_units_per_purchase_unit) === Number(line.stockUnitsPerPurchaseUnit) &&
               Number(saved.minimum_order_quantity ?? 0) === Number(line.minimumOrderQuantity ?? 0) &&
-              Number(saved.order_multiple ?? 1) === Number(line.orderMultiple ?? 1) &&
+              saved.order_multiple != null && Number(saved.order_multiple) === Number(line.orderMultiple) &&
               Number(saved.quantity) === Number(line.quantity) &&
               Number(saved.unit_price) === Number(line.unitPrice),
           ),
@@ -642,7 +642,7 @@ export async function createIntelligentPurchaseOrders(
         saved.stock_unit_id === line.stockUnitId &&
         Number(saved.stock_units_per_purchase_unit) === Number(line.stockUnitsPerPurchaseUnit) &&
         Number(saved.minimum_order_quantity ?? 0) === Number(line.minimumOrderQuantity ?? 0) &&
-        Number(saved.order_multiple ?? 1) === Number(line.orderMultiple ?? 1) &&
+        saved.order_multiple != null && Number(saved.order_multiple) === Number(line.orderMultiple) &&
         Number(saved.quantity) === Number(line.quantity) &&
         Number(saved.unit_price) === Number(line.unitPrice),
       ));
