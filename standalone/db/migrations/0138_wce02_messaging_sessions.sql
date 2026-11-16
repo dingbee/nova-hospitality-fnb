@@ -163,6 +163,61 @@ CREATE TABLE IF NOT EXISTS public.wa_webhook_events (
     ON DELETE SET NULL (binding_id)
 );
 
+CREATE OR REPLACE FUNCTION public.wa_validate_webhook_event_binding_scope()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $
+DECLARE
+  bound_tenant uuid;
+  bound_property uuid;
+  bound_location uuid;
+  bound_waba text;
+  bound_phone text;
+  bound_status text;
+BEGIN
+  IF NEW.binding_id IS NULL THEN
+    IF NEW.status <> 'rejected'
+      OR NEW.tenant_id IS NOT NULL
+      OR NEW.property_id IS NOT NULL
+      OR NEW.location_id IS NOT NULL THEN
+      RAISE EXCEPTION 'Unresolved WhatsApp receiving numbers must be quarantined without tenant context';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  SELECT b.tenant_id, b.property_id, b.location_id, b.waba_id,
+         b.phone_number_id, b.status
+  INTO bound_tenant, bound_property, bound_location, bound_waba,
+       bound_phone, bound_status
+  FROM public.wa_phone_number_bindings b
+  WHERE b.id = NEW.binding_id;
+
+  IF NOT FOUND
+    OR bound_tenant IS DISTINCT FROM NEW.tenant_id
+    OR bound_property IS DISTINCT FROM NEW.property_id
+    OR bound_location IS DISTINCT FROM NEW.location_id
+    OR bound_waba IS DISTINCT FROM NEW.waba_id
+    OR bound_phone IS DISTINCT FROM NEW.phone_number_id
+    OR bound_status IS DISTINCT FROM 'active' THEN
+    RAISE EXCEPTION 'WhatsApp webhook event does not match an active verified receiving-number binding';
+  END IF;
+
+  RETURN NEW;
+END;
+$;
+
+REVOKE ALL ON FUNCTION public.wa_validate_webhook_event_binding_scope() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.wa_validate_webhook_event_binding_scope() TO service_role;
+
+DROP TRIGGER IF EXISTS wa_webhook_event_binding_scope_guard ON public.wa_webhook_events;
+CREATE TRIGGER wa_webhook_event_binding_scope_guard
+BEFORE INSERT OR UPDATE OF binding_id, tenant_id, property_id, location_id, waba_id, phone_number_id, status
+ON public.wa_webhook_events
+FOR EACH ROW
+EXECUTE FUNCTION public.wa_validate_webhook_event_binding_scope();
+
 CREATE INDEX IF NOT EXISTS wa_webhook_events_claim_idx
   ON public.wa_webhook_events (status, next_attempt_at, received_at);
 
