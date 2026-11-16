@@ -56,7 +56,7 @@ export async function createAskLexiBitePurchaseOrder(
         .in("id", itemIds),
       sb
         .from("restaurant_supplier_products")
-        .select("id, supplier_id, inventory_item_id, unit_id, pack_size, unit_price, currency, active, min_order_quantity")
+        .select("id, supplier_id, inventory_item_id, unit_id, pack_size, unit_price, currency, last_price_at, active, min_order_quantity")
         .eq("tenant_id", tenantId)
         .eq("supplier_id", contract.supplier.resolvedId)
         .in("inventory_item_id", itemIds),
@@ -308,6 +308,23 @@ export async function previewIntelligentPurchaseOrders(
   const itemById = new Map(((items ?? []) as any[]).map((x) => [x.id, x]));
   const supplierById = new Map(((suppliers ?? []) as any[]).map((x) => [x.id, x]));
   const productById = new Map(((products ?? []) as any[]).map((x) => [x.id, x]));
+  const selectedProductIds = suggestions.map((row) => row.supplierProductId).filter(Boolean) as string[];
+  const priceHistoryRes = selectedProductIds.length
+    ? await sb.from("restaurant_supplier_price_history")
+        .select("supplier_product_id, unit_id, price, currency, effective_date, created_at")
+        .eq("tenant_id", tenantId)
+        .in("supplier_product_id", selectedProductIds)
+        .lte("effective_date", new Date().toISOString().slice(0, 10))
+    : { data: [], error: null };
+  if (priceHistoryRes.error) throw new Error("Unable to revalidate supplier price history: " + priceHistoryRes.error.message);
+  const latestPriceByProduct = new Map<string, any>();
+  for (const row of (priceHistoryRes.data ?? []) as any[]) {
+    const previous = latestPriceByProduct.get(row.supplier_product_id);
+    if (!previous || String(row.effective_date) > String(previous.effective_date) ||
+        (String(row.effective_date) === String(previous.effective_date) && String(row.created_at) > String(previous.created_at))) {
+      latestPriceByProduct.set(row.supplier_product_id, row);
+    }
+  }
 
   const skipped: string[] = [];
   const groups = new Map<string, IntelligentPurchaseOrderGroup>();
@@ -358,6 +375,18 @@ export async function previewIntelligentPurchaseOrders(
     }
     if (purchaseCurrency !== item.currency || product.currency !== purchaseCurrency) {
       skipped.push(suggestion.name + ": supplier and property currencies are no longer comparable.");
+      continue;
+    }
+    const latestPrice = latestPriceByProduct.get(product.id);
+    if (latestPrice && (latestPrice.unit_id !== unitId || latestPrice.currency !== product.currency)) {
+      skipped.push(suggestion.name + ": latest supplier price history changed unit or currency; recalculate.");
+      continue;
+    }
+    const currentPrice = Number(latestPrice?.price ?? product.unit_price);
+    const currentPriceDate = latestPrice?.effective_date ?? product.last_price_at ?? null;
+    if (!Number.isFinite(currentPrice) || currentPrice !== purchaseUnitPrice ||
+        currentPriceDate !== (suggestion.effectivePriceDate ?? null)) {
+      skipped.push(suggestion.name + ": supplier price or effective date changed after recommendation; recalculate.");
       continue;
     }
     const minimumOrderQuantity = Number(product.min_order_quantity ?? 0);
