@@ -58,7 +58,9 @@ CREATE TABLE IF NOT EXISTS public.wa_phone_number_bindings (
     REFERENCES public.restaurant_properties(tenant_id, id)
     ON DELETE CASCADE,
   CONSTRAINT wa_phone_number_bindings_identity_uq
-    UNIQUE (tenant_id, property_id, location_id, phone_number_id)
+    UNIQUE (tenant_id, property_id, location_id, phone_number_id),
+  CONSTRAINT wa_phone_number_bindings_scope_id_uq
+    UNIQUE (tenant_id, property_id, location_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS wa_phone_number_bindings_scope_idx
@@ -120,7 +122,7 @@ EXECUTE FUNCTION public.wa_validate_phone_number_binding_scope();
 
 CREATE TABLE IF NOT EXISTS public.wa_webhook_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  binding_id uuid REFERENCES public.wa_phone_number_bindings(id) ON DELETE SET NULL,
+  binding_id uuid,
   tenant_id uuid REFERENCES public.restaurant_tenants(id) ON DELETE SET NULL,
   property_id uuid REFERENCES public.restaurant_properties(id) ON DELETE SET NULL,
   location_id uuid REFERENCES public.restaurant_locations(id) ON DELETE SET NULL,
@@ -143,7 +145,11 @@ CREATE TABLE IF NOT EXISTS public.wa_webhook_events (
   received_at timestamptz NOT NULL DEFAULT now(),
   processed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT wa_webhook_events_phone_event_uq UNIQUE (phone_number_id, event_key)
+  CONSTRAINT wa_webhook_events_phone_event_uq UNIQUE (phone_number_id, event_key),
+  CONSTRAINT wa_webhook_events_binding_scope_fkey
+    FOREIGN KEY (tenant_id, property_id, location_id, binding_id)
+    REFERENCES public.wa_phone_number_bindings(tenant_id, property_id, location_id, id)
+    ON DELETE SET NULL (binding_id)
 );
 
 CREATE INDEX IF NOT EXISTS wa_webhook_events_claim_idx
@@ -161,8 +167,7 @@ CREATE TABLE IF NOT EXISTS public.wa_conversations (
   tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE CASCADE,
   property_id uuid NOT NULL REFERENCES public.restaurant_properties(id) ON DELETE CASCADE,
   location_id uuid NOT NULL REFERENCES public.restaurant_locations(id) ON DELETE CASCADE,
-  binding_id uuid NOT NULL REFERENCES public.wa_phone_number_bindings(id) ON DELETE CASCADE,
-  phone_number_id text NOT NULL,
+  binding_id uuid NOT NULL,
   wa_user_id text NOT NULL,
   status text NOT NULL DEFAULT 'open'
     CHECK (status IN ('open', 'closed', 'human_handoff', 'suspended')),
@@ -170,7 +175,11 @@ CREATE TABLE IF NOT EXISTS public.wa_conversations (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT wa_conversations_scope_binding_uq
-    UNIQUE (tenant_id, property_id, location_id, binding_id, id)
+    UNIQUE (tenant_id, property_id, location_id, id),
+  CONSTRAINT wa_conversations_binding_scope_fkey
+    FOREIGN KEY (tenant_id, property_id, location_id, binding_id)
+    REFERENCES public.wa_phone_number_bindings(tenant_id, property_id, location_id, id)
+    ON DELETE RESTRICT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS wa_conversations_one_open_sender_idx
@@ -185,7 +194,7 @@ CREATE TABLE IF NOT EXISTS public.wa_messages (
   tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE CASCADE,
   property_id uuid NOT NULL REFERENCES public.restaurant_properties(id) ON DELETE CASCADE,
   location_id uuid NOT NULL REFERENCES public.restaurant_locations(id) ON DELETE CASCADE,
-  conversation_id uuid NOT NULL REFERENCES public.wa_conversations(id) ON DELETE CASCADE,
+  conversation_id uuid NOT NULL,
   provider_message_id text NOT NULL UNIQUE,
   direction text NOT NULL CHECK (direction IN ('inbound', 'outbound')),
   message_type text NOT NULL DEFAULT 'text'
@@ -200,7 +209,11 @@ CREATE TABLE IF NOT EXISTS public.wa_messages (
   read_at timestamptz,
   failed_at timestamptz,
   error_code text,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT wa_messages_conversation_scope_fkey
+    FOREIGN KEY (tenant_id, property_id, location_id, conversation_id)
+    REFERENCES public.wa_conversations(tenant_id, property_id, location_id, id)
+    ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS wa_messages_conversation_created_idx
@@ -214,9 +227,9 @@ CREATE TABLE IF NOT EXISTS public.wa_guest_portal_sessions (
   tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE CASCADE,
   property_id uuid NOT NULL REFERENCES public.restaurant_properties(id) ON DELETE CASCADE,
   location_id uuid NOT NULL REFERENCES public.restaurant_locations(id) ON DELETE CASCADE,
-  binding_id uuid NOT NULL REFERENCES public.wa_phone_number_bindings(id) ON DELETE CASCADE,
-  conversation_id uuid REFERENCES public.wa_conversations(id) ON DELETE SET NULL,
-  created_by_event_id uuid REFERENCES public.wa_webhook_events(id) ON DELETE SET NULL,
+  binding_id uuid NOT NULL,
+  conversation_id uuid,
+  created_by_event_id uuid,
   token_hash text NOT NULL UNIQUE CHECK (token_hash ~ '^[a-f0-9]{64}$'),
   scope text NOT NULL DEFAULT 'menu_browse' CHECK (scope = 'menu_browse'),
   acquisition_channel text NOT NULL DEFAULT 'whatsapp' CHECK (acquisition_channel = 'whatsapp'),
@@ -226,7 +239,19 @@ CREATE TABLE IF NOT EXISTS public.wa_guest_portal_sessions (
   revoked_at timestamptz,
   opened_at timestamptz,
   last_activity_at timestamptz,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT wa_guest_portal_sessions_binding_scope_fkey
+    FOREIGN KEY (tenant_id, property_id, location_id, binding_id)
+    REFERENCES public.wa_phone_number_bindings(tenant_id, property_id, location_id, id)
+    ON DELETE RESTRICT,
+  CONSTRAINT wa_guest_portal_sessions_conversation_scope_fkey
+    FOREIGN KEY (tenant_id, property_id, location_id, conversation_id)
+    REFERENCES public.wa_conversations(tenant_id, property_id, location_id, id)
+    ON DELETE SET NULL (conversation_id),
+  CONSTRAINT wa_guest_portal_sessions_event_scope_fkey
+    FOREIGN KEY (tenant_id, property_id, location_id, created_by_event_id)
+    REFERENCES public.wa_webhook_events(tenant_id, property_id, location_id, id)
+    ON DELETE SET NULL (created_by_event_id)
 );
 
 CREATE INDEX IF NOT EXISTS wa_guest_portal_sessions_scope_expiry_idx
