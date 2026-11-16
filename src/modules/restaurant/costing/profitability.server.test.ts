@@ -192,13 +192,18 @@ describe("computeProfitability operating-cost integration", () => {
     const outlet1 = result.dimensions.find((d: any) => d.dimension_type === "outlet" && d.location_id === "outlet-1");
     const outlet2 = result.dimensions.find((d: any) => d.dimension_type === "outlet" && d.location_id === "outlet-2");
     const property = result.dimensions.find((d: any) => d.dimension_type === "property");
-    expect(pos).toMatchObject({ allocated_operating_expenses: 1000, allocation_method: "sales_proportional", confidence_state: "estimated" });
-    expect(delivery).toMatchObject({ allocated_operating_expenses: 200, allocation_method: "sales_proportional", confidence_state: "estimated" });
-    expect(outlet1).toMatchObject({ allocated_operating_expenses: 1000, allocation_method: "mixed", confidence_state: "estimated" });
-    expect(outlet2).toMatchObject({ allocated_operating_expenses: 200, allocation_method: "sales_proportional", confidence_state: "estimated" });
-    expect(property).toMatchObject({ allocated_operating_expenses: 1200, allocation_method: "mixed", confidence_state: "fully_reconciled" });
-    expect(pos.allocated_operating_expenses + delivery.allocated_operating_expenses).toBe(1200);
-    expect(outlet1.allocated_operating_expenses + outlet2.allocated_operating_expenses).toBe(1200);
+    expect(pos).toBeDefined();
+    expect(delivery).toBeDefined();
+    expect(outlet1).toBeDefined();
+    expect(outlet2).toBeDefined();
+    expect(property).toBeDefined();
+    expect(pos!).toMatchObject({ allocated_operating_expenses: 1000, allocation_method: "sales_proportional", confidence_state: "estimated" });
+    expect(delivery!).toMatchObject({ allocated_operating_expenses: 200, allocation_method: "sales_proportional", confidence_state: "estimated" });
+    expect(outlet1!).toMatchObject({ allocated_operating_expenses: 1000, allocation_method: "mixed", confidence_state: "estimated" });
+    expect(outlet2!).toMatchObject({ allocated_operating_expenses: 200, allocation_method: "sales_proportional", confidence_state: "estimated" });
+    expect(property!).toMatchObject({ allocated_operating_expenses: 1200, allocation_method: "mixed", confidence_state: "fully_reconciled" });
+    expect(pos!.allocated_operating_expenses + delivery!.allocated_operating_expenses).toBe(1200);
+    expect(outlet1!.allocated_operating_expenses + outlet2!.allocated_operating_expenses).toBe(1200);
   });
 
   it("prorates monthly allocations to partial reporting periods", async () => {
