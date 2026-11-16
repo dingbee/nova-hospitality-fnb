@@ -148,6 +148,13 @@ jobs:
         if: steps.full_tests.outcome == 'failure'
         run: echo "::warning::Full repository test suite remains non-clean outside the scoped functional gate; scoped changed-path tests remain blocking."
 
+      - name: Verify Phase 1 operational consumables ledger capture and RLS
+        env:
+          PGPASSWORD: postgres
+        run: |
+          createdb -h localhost -U postgres lexibite_consumables_test
+          psql -h localhost -U postgres -d lexibite_consumables_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-operational-consumables-phase1.sql
+
       - name: Verify operational profitability snapshot schema and RLS
         env:
           PGPASSWORD: postgres
