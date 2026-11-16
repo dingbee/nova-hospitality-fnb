@@ -417,50 +417,64 @@ export async function computeProfitability(
     incompleteSourceData: consumableCoverageIncomplete || salesSourceMismatch,
   });
   const netSalesByLine = new Map<string, number>();
-  const dimensionMap = new Map<string, { dimension_type: "channel" | "outlet" | "property"; dimension_key: string; dimension_name: string; property_id: string | null; location_id: string | null; net_sales: number; direct_variable_costs: number; contribution: number; operating_profit: number }>();
-  const addDimension = (type: "channel" | "outlet" | "property", key: string, name: string, net: number, cost: number, propertyId: string | null, locationId: string | null) => {
-    const id = `${type}:${propertyId ?? "tenant"}:${locationId ?? "all"}:${key}`;
-    const current = dimensionMap.get(id) ?? { dimension_type: type, dimension_key: key, dimension_name: name, property_id: propertyId, location_id: locationId, net_sales: 0, direct_variable_costs: 0, contribution: 0, operating_profit: 0 };
-    current.net_sales += net;
-    current.direct_variable_costs += cost;
-    current.contribution += net - cost;
-    dimensionMap.set(id, current);
+  const dimensionMap = new Map<string, { dimension_type: "channel" | "outlet" | "property"; dimension_key: string; dimension_name: string; property_id: string | null; location_id: string | null; net_sales: number; direct_variable_costs: number; contribution: number; allocated_operating_expenses: number; operating_profit: number }>();
+  const sumAllocationRows = (rows: any[]) =>
+    rows.reduce((sum, row) => sum + prorateMonthlyAmount(Number(row.amount ?? 0), row.period_start), 0);
+  const allocationMethodFor = (rows: any[]) => {
+    const methods = [...new Set(rows.map((row) => row.allocation_method).filter(Boolean))];
+    return methods.length === 0 ? "none" : methods.length === 1 ? methods[0] : "mixed";
   };
-  for (const item of itemRows) {
-    const order = orderById.get(item.order_id);
-    if (!order || item.is_comp) continue;
-    const lineGross = Number(item.line_total ?? 0) + Number(item.discount ?? 0);
-    const refundGross = refundByLine.get(item.id) ?? 0;
-    const refundedTaxForLine = Number(item.line_total ?? 0) > 0
-      ? Number(item.tax_amount ?? 0) * (refundGross / Number(item.line_total))
-      : 0;
-    const lineNet = lineGross - Number(item.discount ?? 0) - Number(item.tax_amount ?? 0) - refundGross + refundedTaxForLine;
-    const lineCost = (actualByItem.has(item.id) ? actualByItem.get(item.id)! : Number(item.line_cost ?? 0)) + (consumableCostByOrderItem.get(item.id) ?? 0);
-    netSalesByLine.set(item.id, lineNet);
-    const channelKey = `${order.property_id ?? "tenant"}:${String(item.channel ?? order.source ?? "unknown")}`;
-    addDimension("channel", channelKey, String(item.channel ?? order.source ?? "Unknown channel"), lineNet, lineCost, order.property_id ?? null, null);
-    if (order.location_id) addDimension("outlet", order.location_id, order.location_id, lineNet, lineCost, order.property_id ?? null, order.location_id);
-    if (order.property_id) addDimension("property", order.property_id, order.property_id, lineNet, lineCost, order.property_id, null);
-  }
-  const propertyNetSalesById = new Map<string, number>();
-  for (const d of dimensionMap.values()) {
-    if (d.dimension_type === "property" && d.property_id) {
-      propertyNetSalesById.set(d.property_id, (propertyNetSalesById.get(d.property_id) ?? 0) + d.net_sales);
-    }
-  }
   const dimensions = [...dimensionMap.values()].map((d) => {
-    const matchingOpex = allocationRows.filter((a) =>
-      d.dimension_type === "outlet" ? a.location_id === d.dimension_key :
-      d.dimension_type === "property" ? a.property_id === d.dimension_key : false
-    ).reduce((sum, a) => sum + prorateMonthlyAmount(Number(a.amount ?? 0), a.period_start), 0);
+    const propertyRows = allocationRows.filter((a) => a.property_id === d.property_id);
+    const propertyLevelRows = propertyRows.filter((a) => a.location_id === null);
+    const locationRows = propertyRows.filter((a) => a.location_id === d.location_id && a.location_id !== null);
+    const propertyLevelOpex = sumAllocationRows(propertyLevelRows);
+    const locationDirectOpex = sumAllocationRows(locationRows);
+    const allPropertyOpex = sumAllocationRows(propertyRows);
     const propertyNetSales = d.property_id ? propertyNetSalesById.get(d.property_id) ?? 0 : 0;
-    const propertyAllocatedOpex = allocationRows
-      .filter((a) => a.property_id === d.property_id)
-      .reduce((sum, a) => sum + prorateMonthlyAmount(Number(a.amount ?? 0), a.period_start), 0);
-    const allocated = d.dimension_type === "channel"
-      ? propertyAllocatedOpex * (d.net_sales / Math.max(propertyNetSales, 0.01))
-      : matchingOpex;
-    return { ...d, net_sales: Number(d.net_sales.toFixed(2)), direct_variable_costs: Number(d.direct_variable_costs.toFixed(2)), contribution: Number(d.contribution.toFixed(2)), operating_profit: Number((d.contribution - allocated).toFixed(2)) };
+    const locationKey = d.property_id && d.location_id ? `${d.property_id}:${d.location_id}` : "";
+    const locationNetSales = locationKey ? locationNetSalesByKey.get(locationKey) ?? 0 : 0;
+    let allocated = 0;
+    let allocationMethod = "none";
+    let dimensionConfidence = operational.reconciliationState;
+
+    if (d.dimension_type === "property") {
+      allocated = allPropertyOpex;
+      allocationMethod = allocationMethodFor(propertyRows);
+    } else if (d.dimension_type === "outlet") {
+      allocated = locationDirectOpex + (propertyNetSales > 0 ? propertyLevelOpex * (locationNetSales / propertyNetSales) : 0);
+      allocationMethod = propertyLevelOpex > 0
+        ? (locationDirectOpex > 0 ? "mixed" : "sales_proportional")
+        : allocationMethodFor(locationRows);
+      if (propertyLevelOpex > 0 && dimensionConfidence === "fully_reconciled") dimensionConfidence = "estimated";
+    } else if (d.dimension_type === "channel") {
+      const channelKey = `${d.property_id ?? "tenant"}:${d.dimension_name}`;
+      const channelNetSales = channelNetSalesByPropertyKey.get(channelKey) ?? 0;
+      const propertyLevelShare = propertyNetSales > 0 ? propertyLevelOpex * (channelNetSales / propertyNetSales) : 0;
+      const locationAllocationById = new Map<string, number>();
+      for (const row of propertyRows.filter((a) => a.location_id !== null)) {
+        locationAllocationById.set(row.location_id, (locationAllocationById.get(row.location_id) ?? 0) + prorateMonthlyAmount(Number(row.amount ?? 0), row.period_start));
+      }
+      let locationLevelShare = 0;
+      for (const [locationId, locationOpex] of locationAllocationById) {
+        const locationSales = locationNetSalesByKey.get(`${d.property_id}:${locationId}`) ?? 0;
+        const channelLocationSales = channelNetSalesByLocationKey.get(`${d.property_id}:${locationId}:${d.dimension_name}`) ?? 0;
+        if (locationSales > 0) locationLevelShare += locationOpex * (channelLocationSales / locationSales);
+      }
+      allocated = propertyLevelShare + locationLevelShare;
+      allocationMethod = allPropertyOpex > 0 ? "sales_proportional" : "none";
+      if (allPropertyOpex > 0 && dimensionConfidence === "fully_reconciled") dimensionConfidence = "estimated";
+    }
+    return {
+      ...d,
+      net_sales: Number(d.net_sales.toFixed(2)),
+      direct_variable_costs: Number(d.direct_variable_costs.toFixed(2)),
+      contribution: Number(d.contribution.toFixed(2)),
+      allocated_operating_expenses: Number(allocated.toFixed(2)),
+      operating_profit: Number((d.contribution - allocated).toFixed(2)),
+      allocation_method: allocationMethod,
+      confidence_state: dimensionConfidence,
+    };
   });
   const operationalTotals = {
     gross_sales: operational.grossSales, discounts: operational.discounts, refunds: operational.refunds,
