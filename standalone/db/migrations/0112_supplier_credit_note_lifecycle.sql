@@ -154,6 +154,7 @@ DECLARE
   v_existing public.restaurant_supplier_credit_note_applications%ROWTYPE;
   v_note_applied numeric(14,2);
   v_invoice_credits numeric(14,2);
+  v_amount numeric(14,2);
   v_note_remaining numeric(14,2);
   v_invoice_remaining numeric(14,2);
   v_application public.restaurant_supplier_credit_note_applications%ROWTYPE;
@@ -173,7 +174,11 @@ BEGIN
   ) THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'CREDIT_NOTE_APPLICATION_FORBIDDEN';
   END IF;
-  IF _amount IS NULL OR _amount <= 0 OR _idempotency_key IS NULL OR length(trim(coalesce(_reason, ''))) < 3 THEN
+  IF _amount IS NULL OR _idempotency_key IS NULL OR length(trim(coalesce(_reason, ''))) < 3 THEN
+    RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'INVALID_CREDIT_NOTE_APPLICATION';
+  END IF;
+  v_amount := round(_amount, 2);
+  IF v_amount <= 0 THEN
     RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'INVALID_CREDIT_NOTE_APPLICATION';
   END IF;
 
@@ -199,7 +204,7 @@ BEGIN
   IF FOUND THEN
     IF v_existing.credit_note_id <> _credit_note_id
       OR v_existing.invoice_id <> _invoice_id
-      OR abs(v_existing.amount - _amount) > 0.0001 THEN
+      OR abs(v_existing.amount - v_amount) > 0.0001 THEN
       RAISE EXCEPTION USING ERRCODE = '23505', MESSAGE = 'CREDIT_NOTE_IDEMPOTENCY_KEY_REUSED';
     END IF;
     RETURN jsonb_build_object(
@@ -266,10 +271,10 @@ BEGIN
 
   v_note_remaining := round(v_note.total - v_note_applied, 2);
   v_invoice_remaining := round(v_invoice.total - v_invoice.amount_paid - v_invoice_credits, 2);
-  IF _amount - v_note_remaining > 0.0001 THEN
+  IF v_amount - v_note_remaining > 0.0001 THEN
     RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'CREDIT_NOTE_OVER_APPLICATION';
   END IF;
-  IF _amount - v_invoice_remaining > 0.0001 THEN
+  IF v_amount - v_invoice_remaining > 0.0001 THEN
     RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'INVOICE_CREDIT_EXCEEDS_OUTSTANDING_BALANCE';
   END IF;
 
@@ -282,14 +287,14 @@ BEGIN
     coalesce(v_note.location_id, v_invoice.location_id),
     _credit_note_id,
     _invoice_id,
-    round(_amount, 2),
+    v_amount,
     _idempotency_key,
     trim(_reason),
     v_actor
   ) RETURNING * INTO v_application;
 
-  v_note_remaining := round(v_note_remaining - _amount, 2);
-  v_invoice_remaining := round(v_invoice_remaining - _amount, 2);
+  v_note_remaining := round(v_note_remaining - v_amount, 2);
+  v_invoice_remaining := round(v_invoice_remaining - v_amount, 2);
   UPDATE public.restaurant_supplier_credit_notes
   SET status = CASE WHEN v_note_remaining <= 0.01 THEN 'applied' ELSE 'partially_applied' END
   WHERE tenant_id = _tenant_id AND id = _credit_note_id;
@@ -297,7 +302,7 @@ BEGIN
   UPDATE public.restaurant_supplier_invoices
   SET payment_status = CASE
     WHEN payment_status = 'disputed' THEN payment_status
-    WHEN amount_paid + v_invoice_credits + round(_amount, 2) >= total - 0.01 THEN 'paid'
+    WHEN amount_paid + v_invoice_credits + v_amount >= total - 0.01 THEN 'paid'
     WHEN amount_paid + v_invoice_credits + round(_amount, 2) > 0 THEN 'partially_paid'
     ELSE 'unpaid'
   END
@@ -314,7 +319,7 @@ BEGIN
     jsonb_build_object(
       'invoice_id', _invoice_id,
       'application_id', v_application.id,
-      'amount_applied', round(_amount, 2),
+      'amount_applied', v_amount,
       'credit_note_remaining', v_note_remaining,
       'invoice_outstanding', v_invoice_remaining,
       'currency', v_note.currency
