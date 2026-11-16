@@ -123,6 +123,47 @@ jobs:
           psql -h localhost -U postgres -d lexibite_phase3_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-operational-cost-intelligence.sql
           bunx vitest run src/modules/restaurant/costing/hybrid-allocation.test.ts src/modules/restaurant/costing/profitability.server.test.ts
 
+      - name: Replay the complete repository migration chain on isolated PostgreSQL 17
+        env:
+          NOVA_DB_HOST: 127.0.0.1
+          NOVA_DB_PORT: 5432
+          NOVA_DB_NAME: lexibite_full_replay
+          NOVA_DB_SUPERUSER: postgres
+          NOVA_DB_SUPERUSER_PASSWORD: postgres
+          NOVA_DB_AUTHENTICATOR: nova_authenticator
+          NOVA_DB_AUTHENTICATOR_PASSWORD: p0-01-ci-only-authenticator-password
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./local/scripts/init-db.sh
+
+          expected="$(find standalone/db/migrations -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
+          applied="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'applied'")"
+          skipped="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'skipped'")"
+          version="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SHOW server_version_num")"
+
+          echo "PostgreSQL server_version_num=$version"
+          echo "Repository migration files=$expected; applied=$applied; skipped=$skipped"
+          test "$version" -ge 170000
+          test "$applied" -eq "$expected"
+          test "$skipped" -eq 0
+
+          PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "\\copy (SELECT filename, checksum, status, applied_at, note FROM nova_local.schema_migrations ORDER BY filename) TO STDOUT WITH CSV HEADER" > migration-replay-ledger.csv
+
+          pg_container="$(docker ps -q --filter ancestor=postgres:17 | head -1)"
+          test -n "$pg_container"
+          docker exec -e PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" "$pg_container" pg_dump -h localhost -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" --schema-only --no-owner --no-privileges > migration-replay-schema.sql
+
+      - name: Upload isolated migration replay evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-01-migration-replay-${{ github.sha }}
+          path: |
+            migration-replay-ledger.csv
+            migration-replay-schema.sql
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Scoped GTM and changed-path functional tests
         run: |
           bunx vitest run \
