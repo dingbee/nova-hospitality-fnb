@@ -36,6 +36,7 @@ from public.restaurant_operational_profitability_snapshots;
 do $$ begin
  if (select count(*) from public.restaurant_operational_profitability_snapshots)<>1 then raise exception 'Snapshot persistence failed'; end if;
  if (select count(*) from public.restaurant_operational_profitability_dimensions)<>1 then raise exception 'Dimension persistence failed'; end if;
+ if (select calculation_inputs->>'net_sales' from public.restaurant_operational_profitability_snapshots limit 1)<>'20000' then raise exception 'Calculation inputs were not retained'; end if;
  if exists(select 1 from public.restaurant_operational_profitability_snapshots where currency<>'TZS') then raise exception 'Currency integrity failed'; end if;
  if not exists(select 1 from information_schema.columns where table_schema='public' and table_name='restaurant_operational_profitability_snapshots' and column_name='operating_margin_percent') then raise exception 'Operating margin snapshot column missing'; end if;
  if not exists(select 1 from information_schema.columns where table_schema='public' and table_name='restaurant_operational_profitability_snapshots' and column_name='pending_expense_amount') then raise exception 'Pending expense amount snapshot column missing'; end if;
