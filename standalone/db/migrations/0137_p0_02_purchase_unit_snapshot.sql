@@ -87,6 +87,29 @@ END $$;
 ALTER TABLE public.restaurant_goods_receipt_items
   ADD COLUMN IF NOT EXISTS po_fulfilment_applied_at timestamptz;
 
+-- Safe historical backfill only where the PO/request unit is already the
+-- inventory item's stock unit (a provable 1:1 conversion). Pack-size
+-- conversions are deliberately not inferred from mutable current settings.
+UPDATE public.restaurant_purchase_order_items poi
+SET stock_unit_id = item.unit_id,
+    stock_units_per_purchase_unit = 1
+FROM public.restaurant_inventory_items item
+WHERE poi.inventory_item_id = item.id
+  AND item.unit_id IS NOT NULL
+  AND poi.unit_id = item.unit_id
+  AND poi.stock_unit_id IS NULL
+  AND poi.stock_units_per_purchase_unit IS NULL;
+
+UPDATE public.restaurant_purchase_request_items pri
+SET stock_unit_id = item.unit_id,
+    stock_units_per_purchase_unit = 1
+FROM public.restaurant_inventory_items item
+WHERE pri.inventory_item_id = item.id
+  AND item.unit_id IS NOT NULL
+  AND pri.unit_id = item.unit_id
+  AND pri.stock_unit_id IS NULL
+  AND pri.stock_units_per_purchase_unit IS NULL;
+
 CREATE INDEX IF NOT EXISTS idx_restaurant_purchase_request_items_supplier_product
   ON public.restaurant_purchase_request_items (supplier_product_id);
 CREATE INDEX IF NOT EXISTS idx_restaurant_purchase_order_items_stock_unit
