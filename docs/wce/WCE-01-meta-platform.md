@@ -8,6 +8,8 @@
 
 New server-only module: `src/modules/messaging/providers/meta-cloud-api.server.ts`.
 
+New browser-only Embedded Signup v4 module: `src/modules/messaging/embedded-signup.client.ts`. It loads the Facebook SDK only on the onboarding page, initializes the configured app/version, launches Facebook Login for Business with `config_id` and authorization-code response mode, and validates Meta-origin `WA_EMBEDDED_SIGNUP` FINISH/CANCEL/ERROR events. The authorization code and WABA/phone identifiers are delivered separately to the caller; the module does not persist or log them.
+
 It provides:
 - Central Graph API version selection, defaulting to `v27.0` and rejecting malformed versions.
 - Server-side Embedded Signup authorization-code exchange.
@@ -21,7 +23,11 @@ It provides:
 - POST webhook signature verification over exact raw request bytes using HMAC-SHA256 and constant-time comparison.
 - Bounded request timeouts and sanitized network failures.
 
-Tests: `src/modules/messaging/providers/meta-cloud-api.server.test.ts`. The new test file is included in the mandatory scoped CI functional test command in `.github/workflows/ci.yml`.
+Tests:
+- `src/modules/messaging/providers/meta-cloud-api.server.test.ts`
+- `src/modules/messaging/embedded-signup.client.test.ts`
+
+Both test files are included in the mandatory scoped CI functional test command in `.github/workflows/ci.yml`.
 
 ## Security and lifecycle rules
 
