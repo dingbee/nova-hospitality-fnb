@@ -8,6 +8,7 @@ import { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { insertMovement } from "./movements.server";
+import { toStockUnits, type UnitRow } from "./units";
 import { assertLocationInTenant } from "./locations.server";
 import {
   DEFAULT_ADJUSTMENT_REASONS,
@@ -108,7 +109,7 @@ async function resolveReason(sb: Sb, userId: string, tenantId: string, kind: str
 async function itemMeta(sb: Sb, tenantId: string, itemId: string) {
   const { data, error } = await sb
     .from("restaurant_inventory_items")
-    .select("id, name, average_cost, currency, unit_id, location_id, property_id, reorder_point, allow_negative, current_quantity, is_beverage, item_type")
+    .select("id, name, average_cost, currency, unit_id, purchase_unit_id, pack_size, location_id, property_id, reorder_point, allow_negative, current_quantity, is_beverage, item_type")
     .eq("tenant_id", tenantId)
     .eq("id", itemId)
     .single();
@@ -123,6 +124,22 @@ export async function recordWaste(sb: Sb, userId: string, input: RecordWasteInpu
   const reason = await resolveReason(sb, userId, input.tenantId, "waste", input.reasonCode);
   if (reason.requires_note && !input.notes) throw new Error(`Reason "${reason.label}" requires a note.`);
 
+  const inputUnitId = input.unitId ?? item.unit_id;
+  let units: UnitRow[] = [];
+  if (inputUnitId !== item.unit_id && inputUnitId !== item.purchase_unit_id) {
+    const { data: unitRows, error: unitsError } = await sb
+      .from("restaurant_inventory_units")
+      .select("id, code, name, dimension, factor, base_unit_id")
+      .in("id", [inputUnitId, item.unit_id])
+      .or("tenant_id.is.null,tenant_id.eq." + input.tenantId);
+    if (unitsError) throw new Error(unitsError.message);
+    units = (unitRows ?? []) as UnitRow[];
+  }
+  const converted = toStockUnits(input.quantity, inputUnitId, item, units);
+  if (!converted.exact) {
+    throw new Error(converted.reason ?? "Waste quantity cannot be converted to the item's stock unit.");
+  }
+  const stockQuantity = converted.quantity;
   const unitCost = Number(item.average_cost ?? 0);
   const locationId = input.locationId ?? item.location_id ?? null;
   const moved = await insertMovement(sb, userId, {
@@ -130,9 +147,9 @@ export async function recordWaste(sb: Sb, userId: string, input: RecordWasteInpu
     propertyId: input.propertyId ?? item.property_id,
     locationId,
     inventoryItemId: input.inventoryItemId,
-    unitId: input.unitId ?? item.unit_id,
+    unitId: item.unit_id,
     movementType: "wastage",
-    quantity: -Math.abs(input.quantity),
+    quantity: -Math.abs(stockQuantity),
     unitCost,
     currency: item.currency ?? "TZS",
     reason: reason.label,
@@ -145,7 +162,7 @@ export async function recordWaste(sb: Sb, userId: string, input: RecordWasteInpu
   });
   if (!moved) return { duplicate: true as const };
 
-  const value = Math.abs(input.quantity) * unitCost;
+  const value = Math.abs(stockQuantity) * unitCost;
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.inventory.waste.recorded",
     tenantId: input.tenantId,
@@ -156,7 +173,7 @@ export async function recordWaste(sb: Sb, userId: string, input: RecordWasteInpu
     source: "restaurant-os",
     payload: {
       name: item.name,
-      quantity: Math.abs(input.quantity),
+      quantity: Math.abs(stockQuantity),
       reason_code: reason.code,
       value: Number(value.toFixed(2)),
       balance_after: Number(moved.balance_after ?? 0),
