@@ -68,6 +68,43 @@ export function convertUnits(
   };
 }
 
+/**
+ * Normalize a recorded quantity into the inventory item's canonical stock
+ * unit. Purchase-pack conversion is allowed only when the item's explicit
+ * purchase unit and positive pack size match the source unit; all other
+ * conversions must be present in the unit catalogue.
+ */
+export function toStockUnits(
+  quantity: number,
+  inputUnitId: string | null | undefined,
+  item: {
+    unit_id?: string | null;
+    purchase_unit_id?: string | null;
+    pack_size?: number | string | null;
+  },
+  units: UnitRow[],
+): ConversionResult {
+  const stockUnitId = item.unit_id ?? null;
+  const sourceUnitId = inputUnitId ?? stockUnitId;
+  if (!stockUnitId) {
+    return { quantity, steps: [], exact: false, reason: "The inventory item has no configured stock unit." };
+  }
+  if (sourceUnitId === stockUnitId) return { quantity, steps: [], exact: true };
+  if (sourceUnitId && sourceUnitId === item.purchase_unit_id) {
+    const packSize = Number(item.pack_size);
+    if (!Number.isFinite(packSize) || packSize <= 0) {
+      return { quantity, steps: [], exact: false, reason: "The configured purchase pack size is missing or invalid." };
+    }
+    return purchaseToStock(quantity, packSize);
+  }
+  const from = units.find((unit) => unit.id === sourceUnitId);
+  const to = units.find((unit) => unit.id === stockUnitId);
+  if (!from || !to) {
+    return { quantity, steps: [], exact: false, reason: "The source unit or stock unit is not available in the unit catalogue." };
+  }
+  return convertUnits(quantity, from, to);
+}
+
 /** Purchase unit → stock unit. Pack size is item configuration, not a guess. */
 export function purchaseToStock(
   quantity: number,
