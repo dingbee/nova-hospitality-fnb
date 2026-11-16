@@ -154,6 +154,11 @@ export interface PurchaseSuggestion {
   supplierId: string | null;
   /** Stock-unit quantities and source evidence used to reproduce this result. */
   purchaseQuantity?: number;
+  purchaseUnitId?: string;
+  supplierProductId?: string;
+  purchaseUnitPrice?: number;
+  purchaseCurrency?: string;
+  effectivePriceDate?: string | null;
   stockUnitsPerPurchaseUnit?: number;
   forecastDemand?: number;
   safetyStock?: number;
