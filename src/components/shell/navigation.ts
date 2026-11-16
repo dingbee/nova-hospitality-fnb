@@ -178,10 +178,10 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         to: "/admin/restaurant/costing",
-        label: "Costing",
+        label: "Expense Centre",
         icon: Calculator,
         permission: "COSTING:READ",
-        hint: "Recipe cost, yield and margin",
+        hint: "Operating expenses, recurring costs and recipe costing",
       },
     ],
   },
@@ -260,13 +260,6 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: PiggyBank,
         permission: "FINANCE:READ",
         hint: "Contribution by item and outlet",
-      },
-      {
-        to: "/admin/restaurant/cost-reconciliation",
-        label: "Cost reconciliation",
-        icon: Scale,
-        permission: "FINANCE:READ",
-        hint: "Operating expense allocation and variance investigations",
       },
       {
         to: "/admin/restaurant/documents",
