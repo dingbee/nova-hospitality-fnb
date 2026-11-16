@@ -90,7 +90,7 @@ The database catalog query found 115 SECURITY DEFINER functions; all had a funct
 
 ### 4.5 Migration provenance reconciliation
 
-The live ledger has 171 records while the current repository has 156 migration files. This is explained in part by:
+The live ledger has 171 records while the current repository has 157 migration files. This is explained in part by:
 - the original `0001_fnb_core.sql` being applied in five ledger parts;
 - migration transfers and schema-parity repair records;
 - subsequent migration renames and split/consolidated implementations;
