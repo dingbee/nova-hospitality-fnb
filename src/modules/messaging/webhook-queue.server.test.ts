@@ -122,7 +122,12 @@ describe("Meta WhatsApp durable webhook worker", () => {
   });
 
   it("moves an event to dead letter after its maximum attempts", async () => {
-    const exhausted = { ...baseEvent, attempt_count: 8, max_attempts: 8 };
+    const exhausted = {
+      ...baseEvent,
+      payload: { value: { statuses: [{ id: "wamid.outbound.1", status: "delivered", timestamp: "1794850000" }] } },
+      attempt_count: 8,
+      max_attempts: 8,
+    };
     const { db, updates } = makeDb([exhausted], { statusResult: false });
 
     const result = await processPendingMetaWebhookEvents(db);
