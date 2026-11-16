@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { parseMetaEmbeddedSignupMessage } from "./embedded-signup.client";
+import { parseMetaEmbeddedSignupMessage } from "./embedded-signup.contracts";
 
 it("accepts FINISH only from Meta origins and returns WABA/phone identifiers", () => {
   const payload = JSON.stringify({
