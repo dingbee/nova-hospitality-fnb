@@ -656,8 +656,13 @@ export async function consumeOperationalConsumablesForOrder(
     .in("profile_id", profileIds);
   if (ruleError) throw new Error(ruleError.message);
   const profileById = new Map(applicableProfiles.map((p) => [p.id, p]));
+  const profilePriority = new Map(applicableProfiles.map((p, index) => [p.id, index]));
   const selectedRules = new Map<string, any>();
-  for (const rule of (rules ?? []) as any[]) {
+  const orderedRules = ((rules ?? []) as any[]).sort(
+    (a, b) => (profilePriority.get(a.profile_id) ?? Number.MAX_SAFE_INTEGER) -
+      (profilePriority.get(b.profile_id) ?? Number.MAX_SAFE_INTEGER),
+  );
+  for (const rule of orderedRules) {
     const profile = profileById.get(rule.profile_id);
     if (!profile || !rule.quantity_per_cover || Number(rule.quantity_per_cover) <= 0 ||
         rule.effective_from > date || (rule.effective_to && rule.effective_to < date)) continue;
