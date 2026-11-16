@@ -324,10 +324,10 @@ export async function computeProfitability(
     incompleteSourceData: !hasConsumptionProfiles,
   });
   const netSalesByLine = new Map<string, number>();
-  const dimensionMap = new Map<string, { dimension_type: "channel" | "outlet" | "property"; dimension_key: string; dimension_name: string; net_sales: number; direct_variable_costs: number; contribution: number; operating_profit: number }>();
-  const addDimension = (type: "channel" | "outlet" | "property", key: string, name: string, net: number, cost: number) => {
-    const id = `${type}:${key}`;
-    const current = dimensionMap.get(id) ?? { dimension_type: type, dimension_key: key, dimension_name: name, net_sales: 0, direct_variable_costs: 0, contribution: 0, operating_profit: 0 };
+  const dimensionMap = new Map<string, { dimension_type: "channel" | "outlet" | "property"; dimension_key: string; dimension_name: string; property_id: string | null; location_id: string | null; net_sales: number; direct_variable_costs: number; contribution: number; operating_profit: number }>();
+  const addDimension = (type: "channel" | "outlet" | "property", key: string, name: string, net: number, cost: number, propertyId: string | null, locationId: string | null) => {
+    const id = `${type}:${propertyId ?? "tenant"}:${locationId ?? "all"}:${key}`;
+    const current = dimensionMap.get(id) ?? { dimension_type: type, dimension_key: key, dimension_name: name, property_id: propertyId, location_id: locationId, net_sales: 0, direct_variable_costs: 0, contribution: 0, operating_profit: 0 };
     current.net_sales += net;
     current.direct_variable_costs += cost;
     current.contribution += net - cost;
@@ -344,9 +344,10 @@ export async function computeProfitability(
     const lineNet = lineGross - Number(item.discount ?? 0) - Number(item.tax_amount ?? 0) - refundGross + refundedTaxForLine;
     const lineCost = (actualByItem.has(item.id) ? actualByItem.get(item.id)! : Number(item.line_cost ?? 0)) + (consumableCostByOrderItem.get(item.id) ?? 0);
     netSalesByLine.set(item.id, lineNet);
-    addDimension("channel", String(item.channel ?? order.source ?? "unknown"), String(item.channel ?? order.source ?? "Unknown channel"), lineNet, lineCost);
-    if (order.location_id) addDimension("outlet", order.location_id, order.location_id, lineNet, lineCost);
-    if (order.property_id) addDimension("property", order.property_id, order.property_id, lineNet, lineCost);
+    const channelKey = `${order.property_id ?? "tenant"}:${String(item.channel ?? order.source ?? "unknown")}`;
+    addDimension("channel", channelKey, String(item.channel ?? order.source ?? "Unknown channel"), lineNet, lineCost, order.property_id ?? null, null);
+    if (order.location_id) addDimension("outlet", order.location_id, order.location_id, lineNet, lineCost, order.property_id ?? null, order.location_id);
+    if (order.property_id) addDimension("property", order.property_id, order.property_id, lineNet, lineCost, order.property_id, null);
   }
   const dimensions = [...dimensionMap.values()].map((d) => {
     const matchingOpex = allocationRows.filter((a) =>
@@ -512,8 +513,8 @@ export async function computeProfitability(
       const dimensionRows = dimensions.map((d) => ({
         tenant_id: input.tenantId,
         snapshot_id: snapshot.id,
-        property_id: d.dimension_type === "property" ? d.dimension_key : input.propertyId ?? null,
-        location_id: d.dimension_type === "outlet" ? d.dimension_key : input.locationId ?? null,
+        property_id: d.property_id,
+        location_id: d.location_id,
         dimension_type: d.dimension_type,
         dimension_key: d.dimension_key,
         dimension_name: d.dimension_name,
