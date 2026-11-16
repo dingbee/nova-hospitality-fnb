@@ -270,11 +270,11 @@ function ProfitabilityPage() {
             tone={(result.totals.food_cost_percent ?? 0) > 35 ? "warn" : "green"}
           />
           <StatCard
-            label="Cost variance"
+            label="Recipe cost variance"
             value={money(result.totals.variance)}
             icon={TrendingDown}
             tone={result.totals.variance > 0 ? "danger" : "green"}
-            hint="Actual minus theoretical"
+            hint="Recipe actual minus theoretical"
           />
           <StatCard
             label="Allocated operating expenses"
@@ -365,7 +365,7 @@ function ProfitabilityPage() {
                   <p className="text-xs text-muted-foreground">
                     {r.quantity_sold} sold · revenue {money(r.revenue)} · cost{" "}
                     {money(r.actual_cost)}
-                    {r.variance !== 0 ? ` · variance ${money(r.variance)}` : ""}
+                    {r.variance !== 0 ? ` · recipe variance ${money(r.variance)}` : ""}
                   </p>
                 </div>
                 <span className="text-xs text-muted-foreground">
