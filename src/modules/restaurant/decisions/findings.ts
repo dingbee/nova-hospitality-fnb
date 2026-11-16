@@ -223,6 +223,16 @@ export function inventoryFindings(
           stockUnitsPerPurchaseUnit: suggestion?.stockUnitsPerPurchaseUnit ?? null,
           minimumOrderQuantity: suggestion?.minimumOrderQuantity ?? null,
           orderMultiple: suggestion?.orderMultiple ?? null,
+          effectivePriceDate: suggestion?.effectivePriceDate ?? null,
+          stockPositionEvidence: suggestion?.stockPositionEvidence ?? null,
+          forecastConfidence: suggestion?.forecastConfidence ?? null,
+          demandObservations: suggestion?.demandObservations ?? null,
+          dailyVelocity: suggestion?.dailyVelocity ?? null,
+          forecastDemand: suggestion?.forecastDemand ?? null,
+          safetyStock: suggestion?.safetyStock ?? null,
+          netAvailable: suggestion?.netAvailable ?? null,
+          leadTimeDays: suggestion?.leadTimeDays ?? null,
+          targetCoverageDays: suggestion?.targetCoverageDays ?? null,
           estimatedUnitCost:
             suggestion && suggestion.recommendedQuantity > 0
               ? round(suggestion.estimatedCost / suggestion.recommendedQuantity, 4)
@@ -433,6 +443,16 @@ export function purchasingFindings(p: PurchasingIntelligence): RestaurantFinding
         stockUnitsPerPurchaseUnit: s.stockUnitsPerPurchaseUnit ?? null,
         minimumOrderQuantity: s.minimumOrderQuantity ?? null,
         orderMultiple: s.orderMultiple ?? null,
+        effectivePriceDate: s.effectivePriceDate ?? null,
+        stockPositionEvidence: s.stockPositionEvidence ?? null,
+        forecastConfidence: s.forecastConfidence ?? null,
+        demandObservations: s.demandObservations ?? null,
+        dailyVelocity: s.dailyVelocity ?? null,
+        forecastDemand: s.forecastDemand ?? null,
+        safetyStock: s.safetyStock ?? null,
+        netAvailable: s.netAvailable ?? null,
+        leadTimeDays: s.leadTimeDays ?? null,
+        targetCoverageDays: s.targetCoverageDays ?? null,
         estimatedUnitCost:
           s.recommendedQuantity > 0 ? round(s.estimatedCost / s.recommendedQuantity, 4) : null,
         currency: p.currency,
