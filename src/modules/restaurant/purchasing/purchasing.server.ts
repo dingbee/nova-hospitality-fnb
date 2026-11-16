@@ -90,7 +90,12 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
           notes: input.notes ?? null,
           created_by: userId,
           buyer_id: userId,
-          metadata: { origin: "direct", direct_reason: input.directReason, authorised_by: userId },
+          metadata: {
+            origin: "direct",
+            direct_reason: input.directReason,
+            authorised_by: userId,
+            ...(input.metadata ?? {}),
+          },
         })
         .select("id, reference, document_number, total, currency")
         .single(),
@@ -125,7 +130,7 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
     action: "created_direct",
     newState: "draft",
     reason: input.directReason,
-    metadata: { origin: "direct", lines: input.lines.length, subtotal },
+    metadata: { origin: "direct", lines: input.lines.length, subtotal, ...(input.metadata ?? {}) },
   });
 
   await emitRestaurantEvent(sb, userId, {
