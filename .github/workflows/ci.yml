@@ -271,6 +271,9 @@ jobs:
             src/modules/messaging/bindings.server.test.ts \
             src/modules/messaging/webhook-queue.server.test.ts \
             src/modules/messaging/guest-portal-sessions.server.test.ts \
+            src/modules/messaging/handoff.server.test.ts \
+            src/modules/messaging/outbound-queue.server.test.ts \
+            src/modules/restaurant/selforder/whatsapp-guest-portal.server.test.ts \
             src/modules/api-platform/adapters/meta-whatsapp.server.test.ts \
             src/modules/api-platform/adapters/channel-adapter.test.ts \
             src/modules/restaurant/payments/mobilemoney/mobilemoney.server.test.ts \
