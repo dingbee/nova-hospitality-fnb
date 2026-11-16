@@ -98,6 +98,16 @@ describe("computeProfitability operating-cost integration", () => {
     expect(persisted[0]).toHaveLength(2);
   });
 
+  it("rejects a sales source with no currency even when operating costs have one", async () => {
+    const sb = makeSupabase({
+      restaurant_orders: [{ id: "order-1", currency: null }],
+      restaurant_cost_allocations: [{ amount: 100, currency: "TZS" }],
+    });
+    await expect(computeProfitability(sb, "user-1", input)).rejects.toThrow(
+      "Sales source currency is missing or invalid.",
+    );
+  });
+
   it("does not invent a reporting currency when the tenant has no currency-bearing sources", async () => {
     const sb = makeSupabase({
       restaurant_orders: [],
