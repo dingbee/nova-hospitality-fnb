@@ -98,9 +98,10 @@ describe("computeProfitability operating-cost integration", () => {
       operating_profit: 14000,
       operating_margin_percent: 35,
     });
-    expect(persisted).toHaveLength(2);
+    expect(persisted).toHaveLength(3);
     expect(persisted[0]).toHaveLength(2);
-    expect(persisted[1]).toHaveLength(1);
+    expect(persisted[1]).toMatchObject({ tenant_id: tenantId, currency: "TZS", confidence_state: "incomplete_source_data" });
+    expect(persisted[2]).toHaveLength(1);
   });
 
   it("rejects a sales source with no currency even when operating costs have one", async () => {
