@@ -789,6 +789,21 @@ function draftRequest(overrides: Partial<Record<string, unknown>> = {}) {
     tenant_id: TENANT_A,
     correlation_id: EXECUTED_ACTION.id,
     status: "draft",
+    metadata: {
+      inventory_recommendation: {
+        inventory_item_id: INVENTORY_ITEM_ID,
+        supplier_product_id: SUPPLIER_PRODUCT_ID,
+        recommended_stock_quantity: 30,
+        purchase_quantity: 30,
+        purchase_unit_price: 1500,
+        currency: "TZS",
+        purchase_unit_id: PURCHASE_UNIT_ID,
+        stock_unit_id: STOCK_UNIT_ID,
+        stock_units_per_purchase_unit: 1,
+        minimum_order_quantity: 0,
+        order_multiple: 1,
+      },
+    },
     ...overrides,
   };
 }
@@ -798,7 +813,16 @@ function requestItem(overrides: Partial<Record<string, unknown>> = {}) {
     id: "item-verify-1",
     purchase_request_id: "req-verify-1",
     inventory_item_id: INVENTORY_ITEM_ID,
+    preferred_supplier_id: SUPPLIER_ID,
+    supplier_product_id: SUPPLIER_PRODUCT_ID,
+    unit_id: PURCHASE_UNIT_ID,
+    stock_unit_id: STOCK_UNIT_ID,
+    stock_units_per_purchase_unit: 1,
+    minimum_order_quantity: 0,
+    order_multiple: 1,
+    source_action_id: EXECUTED_ACTION.id,
     quantity: 30,
+    estimated_unit_cost: 1500,
     ...overrides,
   };
 }
