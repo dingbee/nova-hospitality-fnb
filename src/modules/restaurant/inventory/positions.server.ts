@@ -258,6 +258,10 @@ export async function getStockPositionEvidenceForReplenishment(
   if (input.locationId && !locationById.has(input.locationId)) {
     throw new Error("Requested stock location does not belong to this tenant.");
   }
+  if (input.locationId && input.propertyId &&
+      locationById.get(input.locationId)?.property_id !== input.propertyId) {
+    throw new Error("Requested stock location does not belong to the selected property.");
+  }
   const itemById = new Map(input.items.map((item) => [item.id, item]));
   const units = (unitsRes.data ?? []) as Array<{ id: string; dimension: string; base_unit_id: string | null; factor: number }>;
   const result = new Map<string, ReplenishmentPositionEvidence>();
@@ -489,7 +493,8 @@ export async function getStockPositionEvidenceForReplenishment(
 
   for (const [itemId, evidence] of result) {
     const item = itemById.get(itemId);
-    if (!input.propertyId && !input.locationId && item?.current_quantity != null) {
+    if (!input.locationId && item?.current_quantity != null &&
+        (!input.propertyId || item.property_id === input.propertyId)) {
       const current = Number(item.current_quantity);
       if (Number.isFinite(current) && Math.abs(current - evidence.onHand) > 0.0001) {
         evidence.manualReviewReasons.push("Inventory item balance differs from the stock-ledger aggregate.");
