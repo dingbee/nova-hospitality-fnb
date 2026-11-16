@@ -203,6 +203,17 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'CREDIT_NOTE_REFERENCE_INVOICE_MISMATCH';
   END IF;
 
+  IF v_note.property_id IS NOT NULL
+    AND v_invoice.property_id IS NOT NULL
+    AND v_note.property_id <> v_invoice.property_id THEN
+    RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'CREDIT_NOTE_PROPERTY_SCOPE_MISMATCH';
+  END IF;
+  IF v_note.location_id IS NOT NULL
+    AND v_invoice.location_id IS NOT NULL
+    AND v_note.location_id <> v_invoice.location_id THEN
+    RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'CREDIT_NOTE_LOCATION_SCOPE_MISMATCH';
+  END IF;
+
   SELECT coalesce(sum(amount), 0) INTO v_note_applied
   FROM public.restaurant_supplier_credit_note_applications
   WHERE tenant_id = _tenant_id AND credit_note_id = _credit_note_id;
