@@ -114,7 +114,7 @@ export async function upsertChannelDefinition(
 
 export async function listChannelProvidersForAdmin(sb: Sb, userId: string) {
   await assertCommercialAdmin(sb, userId);
-  return CHANNEL_PROVIDERS;
+  return CHANNEL_PROVIDERS.filter((provider) => provider.key !== 'meta-whatsapp');
 }
 
 export function isChannelType(value: string): value is ChannelType {
