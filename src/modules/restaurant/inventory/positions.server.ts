@@ -390,12 +390,17 @@ export async function getStockPositionEvidenceForReplenishment(
     const item = itemById.get(line.inventory_item_id);
     if (!evidence || !order || !item) continue;
     const quantity = Number(line.quantity);
+    const received = Number(line.received_quantity);
     const accepted = Number(line.accepted_quantity);
-    if (!Number.isFinite(quantity) || !Number.isFinite(accepted) || quantity < 0 || accepted < 0 || accepted > quantity + 1e-8) {
-      evidence.manualReviewReasons.push("Purchase-order line " + line.id + " has invalid ordered/accepted quantities.");
+    if (!Number.isFinite(quantity) || !Number.isFinite(received) || !Number.isFinite(accepted) ||
+        quantity < 0 || received < 0 || accepted < 0 || received > quantity + 1e-8 || accepted > received + 1e-8) {
+      evidence.manualReviewReasons.push("Purchase-order line " + line.id + " has invalid ordered/received/accepted quantities.");
       continue;
     }
-    const outstanding = Math.max(0, quantity - accepted);
+    // All received goods (accepted, rejected or damaged) are no longer an
+    // outstanding delivery. Only accepted goods have already entered on-hand;
+    // rejected/damaged goods remain excluded until a replacement is confirmed.
+    const outstanding = Math.max(0, quantity - received);
     if (outstanding <= 0) continue;
     const factor = stockUnitsPerUnit(line.unit_id, item.unit_id ?? null, item.purchase_unit_id ?? null, item.pack_size ?? null, units);
     if (factor == null) {
@@ -410,6 +415,7 @@ export async function getStockPositionEvidenceForReplenishment(
     }
     const confirmedDate = confirmation?.row.confirmed_delivery_date ?? confirmation?.header.confirmed_delivery_date ?? order.expected_at ?? null;
     if (confirmedQty > 0) {
+      if (!confirmedDate) evidence.manualReviewReasons.push("Supplier confirmation for PO line " + line.id + " has no delivery date.");
       evidence.inbound.push({
         sourceId: confirmation.header.id,
         sourceType: "supplier_confirmation",
@@ -420,6 +426,7 @@ export async function getStockPositionEvidenceForReplenishment(
     }
     const unconfirmed = outstanding - confirmedQty;
     if (unconfirmed > 0) {
+      if (!order.expected_at) evidence.manualReviewReasons.push("Outstanding PO line " + line.id + " has no expected delivery date.");
       evidence.inbound.push({
         sourceId: order.id + ":" + line.id,
         sourceType: "purchase_order",
