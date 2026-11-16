@@ -299,6 +299,9 @@ export async function postGoodsReceipt(
     .eq("id", receiptId)
     .single();
   if (error || !receipt) throw new Error("Goods receipt not found.");
+  if (typeof receipt.currency !== "string" || !/^[A-Z]{3}$/.test(receipt.currency)) {
+    throw new Error("Goods receipt currency is missing or invalid. Configure the correct property currency before posting.");
+  }
   if (receipt.status === "cancelled") throw new Error("A cancelled receipt cannot be posted.");
   if (receipt.status === "posted") {
     return {
@@ -529,7 +532,7 @@ export async function postGoodsReceipt(
         movementType: "purchase_receipt",
         quantity: Math.abs(stockQuantity.quantity),
         unitCost: stockQuantity.unitCost,
-        currency: receipt.currency ?? "TZS",
+        currency: receipt.currency,
         reason: `Goods receipt ${receipt.document_number}`,
         referenceType: "restaurant_goods_receipt",
         referenceId: receipt.id,
@@ -633,7 +636,7 @@ export async function postGoodsReceipt(
       priceType: "received",
       price: unitCost,
       quantity: receivedQty,
-      currency: receipt.currency ?? "TZS",
+      currency: receipt.currency,
       effectiveDate: String(receipt.received_at).slice(0, 10),
       sourceType: "goods_receipt",
       sourceId: receipt.id,
