@@ -113,6 +113,24 @@ async function processOneOutboundJob(db: Db, job: ClaimedOutboundJob, workerId: 
     return "failed" as const;
   }
 
+  const { data: portalSession, error: portalSessionError } = await db
+    .from("wa_guest_portal_sessions")
+    .select("expires_at, revoked_at")
+    .eq("id", job.portal_session_id)
+    .eq("tenant_id", job.tenant_id)
+    .eq("property_id", job.property_id)
+    .eq("location_id", job.location_id)
+    .maybeSingle();
+  if (
+    portalSessionError ||
+    !portalSession ||
+    portalSession.revoked_at !== null ||
+    new Date(portalSession.expires_at).getTime() <= Date.now()
+  ) {
+    await markFailed(db, job, workerId, "guest_portal_session_expired_or_revoked");
+    return "failed" as const;
+  }
+
   const { data: conversation, error: conversationError } = await db
     .from("wa_conversations")
     .select("last_message_at")
