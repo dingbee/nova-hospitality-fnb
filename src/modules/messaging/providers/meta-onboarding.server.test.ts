@@ -49,13 +49,13 @@ const input = {
   label: "Restaurant WhatsApp",
 };
 
-function makeSupabase(existingId: string | null = null) {
+function makeSupabase(existingId: string | null = null, existingConfig: Record<string, unknown> | null = null) {
   const query = {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     is: vi.fn().mockReturnThis(),
     maybeSingle: vi.fn().mockResolvedValue({
-      data: existingId ? { id: existingId } : null,
+      data: existingId ? { id: existingId, config: existingConfig ?? { wabaId: input.wabaId, phoneNumberId: '111111111', phoneNumbers: [{ id: '111111111' }] } } : null,
       error: null,
     }),
   };
