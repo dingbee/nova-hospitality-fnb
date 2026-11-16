@@ -17,7 +17,7 @@ import type {
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { evaluateNegativeStock } from "./policy";
-import { convertUnits, purchaseToStock } from "./units";
+import { toStockUnits, type UnitRow } from "./units";
 import { componentToStock, type UnitRow } from "./units";
 import { assertLocationInTenant } from "./locations.server";
 
@@ -247,30 +247,21 @@ export async function recordMovement(sb: Sb, userId: string, input: RecordMoveme
   }
 
   const inputUnitId = input.unitId ?? item.unit_id;
-  let stockQuantity = input.quantity;
-  if (inputUnitId !== item.unit_id) {
-    if (inputUnitId === item.purchase_unit_id) {
-      const packSize = Number(item.pack_size);
-      if (!Number.isFinite(packSize) || packSize <= 0) {
-        throw new Error("The item's purchase pack size is missing or invalid. Manual unit review is required.");
-      }
-      stockQuantity = purchaseToStock(input.quantity, packSize).quantity;
-    } else {
-      const { data: unitRows, error: unitsError } = await sb
-        .from("restaurant_inventory_units")
-        .select("id, code, name, dimension, factor, base_unit_id")
-        .in("id", [inputUnitId, item.unit_id])
-        .or("tenant_id.is.null,tenant_id.eq." + input.tenantId);
-      if (unitsError) throw new Error(unitsError.message);
-      const unitById = new Map(((unitRows ?? []) as any[]).map((unit) => [unit.id, unit]));
-      const from = unitById.get(inputUnitId);
-      const to = unitById.get(item.unit_id);
-      if (!from || !to) throw new Error("The selected movement unit or stock unit is not available in this tenant.");
-      const converted = convertUnits(input.quantity, from, to);
-      if (!converted.exact) throw new Error(converted.reason ?? "Movement unit cannot be converted to the stock unit.");
-      stockQuantity = converted.quantity;
-    }
+  let units: UnitRow[] = [];
+  if (inputUnitId !== item.unit_id && inputUnitId !== item.purchase_unit_id) {
+    const { data: unitRows, error: unitsError } = await sb
+      .from("restaurant_inventory_units")
+      .select("id, code, name, dimension, factor, base_unit_id")
+      .in("id", [inputUnitId, item.unit_id])
+      .or("tenant_id.is.null,tenant_id.eq." + input.tenantId);
+    if (unitsError) throw new Error(unitsError.message);
+    units = (unitRows ?? []) as UnitRow[];
   }
+  const converted = toStockUnits(input.quantity, inputUnitId, item, units);
+  if (!converted.exact) {
+    throw new Error(converted.reason ?? "Movement quantity cannot be converted to the item's stock unit.");
+  }
+  const stockQuantity = converted.quantity;
 
   const quantity = signedQuantity(input.movementType, stockQuantity);
   const unitCost = input.unitCost == null
