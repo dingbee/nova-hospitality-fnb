@@ -155,6 +155,52 @@ describe("computeProfitability operating-cost integration", () => {
     expect(result.dimensions).toHaveLength(3);
   });
 
+  it("allocates property and outlet OPEX without double counting and marks channel attribution estimated", async () => {
+    const sb = makeSupabase({
+      restaurant_orders: [
+        { id: "order-pos", currency: "TZS", property_id: "property-1", location_id: "outlet-1", source: "pos", total: 80, discount_total: 0, tax_total: 0, service_charge: 0 },
+        { id: "order-delivery", currency: "TZS", property_id: "property-1", location_id: "outlet-2", source: "delivery", total: 20, discount_total: 0, tax_total: 0, service_charge: 0 },
+      ],
+      restaurant_order_items: [
+        { id: "line-pos", order_id: "order-pos", menu_item_id: "menu-1", description: "Rice", quantity: 1, line_total: 80, line_cost: 10, discount: 0, tax_amount: 0, service_charge_amount: 0, status: "served", is_comp: false, channel: "pos" },
+        { id: "line-delivery", order_id: "order-delivery", menu_item_id: "menu-1", description: "Rice", quantity: 1, line_total: 20, line_cost: 10, discount: 0, tax_amount: 0, service_charge_amount: 0, status: "served", is_comp: false, channel: "delivery" },
+      ],
+      restaurant_stock_movements: [
+        { id: "movement-pos", order_item_id: "line-pos", inventory_item_id: "rice-pos", property_id: "property-1", location_id: "outlet-1", total_cost: 10, currency: "TZS", reference_type: "restaurant_order", reference_id: "order-pos", reason: "Recipe consumption" },
+        { id: "movement-delivery", order_item_id: "line-delivery", inventory_item_id: "rice-delivery", property_id: "property-1", location_id: "outlet-2", total_cost: 10, currency: "TZS", reference_type: "restaurant_order", reference_id: "order-delivery", reason: "Recipe consumption" },
+      ],
+      restaurant_cost_allocations: [
+        { id: "property-rent", source_type: "operational_expense", source_id: "expense-1", property_id: "property-1", location_id: null, amount: 1000, currency: "TZS", period_start: "2026-11-01", allocation_method: "direct" },
+        { id: "outlet-maintenance", source_type: "operational_expense", source_id: "expense-2", property_id: "property-1", location_id: "outlet-1", amount: 200, currency: "TZS", period_start: "2026-11-01", allocation_method: "approved_rule" },
+      ],
+      restaurant_consumption_profiles: [{
+        id: "profile-1", cost_class: "service_consumable", property_id: "property-1",
+        location_id: null, effective_from: "2025-01-01", effective_to: null, active: true,
+      }],
+      restaurant_consumption_rules: [{
+        id: "rule-1", profile_id: "profile-1", inventory_item_id: "napkin",
+        effective_from: "2025-01-01", effective_to: null, active: true,
+      }],
+      restaurant_cost_reconciliation_runs: [{
+        id: "recon-1", property_id: "property-1", status: "completed",
+        period_start: "2026-11-01", period_end: "2026-11-30", currency: "TZS",
+      }],
+    });
+    const result = await computeProfitability(sb, "user-1", { ...input, propertyId: "property-1" });
+    const pos = result.dimensions.find((d: any) => d.dimension_type === "channel" && d.dimension_name === "pos");
+    const delivery = result.dimensions.find((d: any) => d.dimension_type === "channel" && d.dimension_name === "delivery");
+    const outlet1 = result.dimensions.find((d: any) => d.dimension_type === "outlet" && d.location_id === "outlet-1");
+    const outlet2 = result.dimensions.find((d: any) => d.dimension_type === "outlet" && d.location_id === "outlet-2");
+    const property = result.dimensions.find((d: any) => d.dimension_type === "property");
+    expect(pos).toMatchObject({ allocated_operating_expenses: 1000, allocation_method: "sales_proportional", confidence_state: "estimated" });
+    expect(delivery).toMatchObject({ allocated_operating_expenses: 200, allocation_method: "sales_proportional", confidence_state: "estimated" });
+    expect(outlet1).toMatchObject({ allocated_operating_expenses: 1000, allocation_method: "mixed", confidence_state: "estimated" });
+    expect(outlet2).toMatchObject({ allocated_operating_expenses: 200, allocation_method: "sales_proportional", confidence_state: "estimated" });
+    expect(property).toMatchObject({ allocated_operating_expenses: 1200, allocation_method: "mixed", confidence_state: "fully_reconciled" });
+    expect(pos.allocated_operating_expenses + delivery.allocated_operating_expenses).toBe(1200);
+    expect(outlet1.allocated_operating_expenses + outlet2.allocated_operating_expenses).toBe(1200);
+  });
+
   it("prorates monthly allocations to partial reporting periods", async () => {
     const sb = makeSupabase({
       restaurant_orders: [],
