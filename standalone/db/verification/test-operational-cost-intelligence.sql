@@ -3,6 +3,7 @@ begin;
 create extension if not exists pgcrypto;
 create schema if not exists auth;
 create table auth.users(id uuid primary key);
+insert into auth.users values ('30000000-0000-0000-0000-000000000001'),('30000000-0000-0000-0000-000000000002');
 do $$ begin create type public.restaurant_role as enum('owner','general_manager','restaurant_manager','accountant'); exception when duplicate_object then null; end $$;
 create table public.restaurant_tenants(id uuid primary key);
 create table public.restaurant_properties(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id));
