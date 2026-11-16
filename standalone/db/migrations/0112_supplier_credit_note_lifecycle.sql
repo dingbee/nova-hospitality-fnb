@@ -199,6 +199,19 @@ BEGIN
     OR upper(v_note.currency) IS DISTINCT FROM upper(v_invoice.currency) THEN
     RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'CREDIT_NOTE_INVOICE_SUPPLIER_OR_CURRENCY_MISMATCH';
   END IF;
+  IF NOT public.restaurant_can_write_scoped(
+    _tenant_id,
+    ARRAY[
+      'owner'::public.restaurant_role,
+      'general_manager'::public.restaurant_role,
+      'restaurant_manager'::public.restaurant_role,
+      'purchasing_officer'::public.restaurant_role,
+      'accountant'::public.restaurant_role
+    ],
+    v_invoice.property_id
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'CREDIT_NOTE_APPLICATION_PROPERTY_FORBIDDEN';
+  END IF;
   IF v_note.reference_invoice_id IS NOT NULL AND v_note.reference_invoice_id <> v_invoice.id THEN
     RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'CREDIT_NOTE_REFERENCE_INVOICE_MISMATCH';
   END IF;
