@@ -70,6 +70,7 @@ CREATE TABLE public.restaurant_procurement_audit (
 CREATE TABLE public.restaurant_members (
   tenant_id uuid NOT NULL,
   user_id uuid NOT NULL,
+  property_id uuid,
   role public.restaurant_role NOT NULL,
   active boolean NOT NULL DEFAULT true
 );
@@ -83,13 +84,34 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
   )
 $$;
 CREATE OR REPLACE FUNCTION public.restaurant_can_write(_tenant uuid, _roles public.restaurant_role[])
-RETURNS boolean LANGUAGE sql STABLE AS $$
+RETURNS boolean LANGUAGE sql STABLE AS $
   SELECT EXISTS (
     SELECT 1 FROM public.restaurant_members m
     WHERE m.tenant_id = _tenant AND m.user_id = auth.uid()
       AND m.active AND m.role = ANY(_roles)
   )
-$$;
+$;
+CREATE OR REPLACE FUNCTION public.restaurant_can_read_scoped(_tenant uuid, _property uuid)
+RETURNS boolean LANGUAGE sql STABLE AS $
+  SELECT EXISTS (
+    SELECT 1 FROM public.restaurant_members m
+    WHERE m.tenant_id = _tenant AND m.user_id = auth.uid()
+      AND m.active AND (m.property_id IS NULL OR m.property_id = _property)
+  )
+$;
+CREATE OR REPLACE FUNCTION public.restaurant_can_write_scoped(
+  _tenant uuid,
+  _roles public.restaurant_role[],
+  _property uuid
+)
+RETURNS boolean LANGUAGE sql STABLE AS $
+  SELECT EXISTS (
+    SELECT 1 FROM public.restaurant_members m
+    WHERE m.tenant_id = _tenant AND m.user_id = auth.uid()
+      AND m.active AND m.role = ANY(_roles)
+      AND (m.property_id IS NULL OR m.property_id = _property)
+  )
+$;
 
 \i standalone/db/migrations/0112_supplier_credit_note_lifecycle.sql
 
@@ -122,9 +144,10 @@ INSERT INTO public.restaurant_supplier_credit_notes(
  ('40000000-0000-4000-8000-000000000005','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0005','SUP-CN-005',current_date,'TZS',100,0,100,'Additional supplier adjustment','50000000-0000-4000-8000-000000000001'),
  ('40000000-0000-4000-8000-000000000006','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0006','SUP-CN-006',current_date,'TZS',50,0,50,'Property-specific adjustment','50000000-0000-4000-8000-000000000001');
 UPDATE public.restaurant_supplier_credit_notes SET property_id='70000000-0000-4000-8000-000000000001' WHERE id='40000000-0000-4000-8000-000000000006';
-INSERT INTO public.restaurant_members(tenant_id,user_id,role,active) VALUES
- ('10000000-0000-4000-8000-000000000001','50000000-0000-4000-8000-000000000001','owner',true),
- ('10000000-0000-4000-8000-000000000002','50000000-0000-4000-8000-000000000002','owner',true);
+INSERT INTO public.restaurant_members(tenant_id,user_id,property_id,role,active) VALUES
+ ('10000000-0000-4000-8000-000000000001','50000000-0000-4000-8000-000000000001',NULL,'owner',true),
+ ('10000000-0000-4000-8000-000000000002','50000000-0000-4000-8000-000000000002',NULL,'owner',true),
+ ('10000000-0000-4000-8000-000000000001','50000000-0000-4000-8000-000000000003','70000000-0000-4000-8000-000000000001','owner',true);
 
 SET ROLE authenticated;
 SELECT set_config('request.test_user_id','50000000-0000-4000-8000-000000000001',true);
@@ -137,6 +160,11 @@ BEGIN
   IF (SELECT count(*) FROM public.restaurant_supplier_credit_notes WHERE tenant_id='10000000-0000-4000-8000-000000000002') <> 0 THEN
     RAISE EXCEPTION 'Cross-tenant credit notes leaked through RLS';
   END IF;
+  PERFORM set_config('request.test_user_id','50000000-0000-4000-8000-000000000003',true);
+  IF (SELECT count(*) FROM public.restaurant_supplier_credit_notes WHERE tenant_id='10000000-0000-4000-8000-000000000001') <> 1 THEN
+    RAISE EXCEPTION 'Property-scoped member did not see only its own credit note';
+  END IF;
+  PERFORM set_config('request.test_user_id','50000000-0000-4000-8000-000000000001',true);
 END
 $credit_note_rls$;
 
@@ -215,6 +243,18 @@ BEGIN
     RAISE EXCEPTION 'Cross-property credit application was accepted';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
+  BEGIN
+    PERFORM set_config('request.test_user_id','50000000-0000-4000-8000-000000000003',true);
+    PERFORM public.restaurant_apply_supplier_credit_note(
+      '10000000-0000-4000-8000-000000000001',
+      '40000000-0000-4000-8000-000000000001',
+      '30000000-0000-4000-8000-000000000006',
+      5,'Out of property scope','60000000-0000-4000-8000-000000000008'
+    );
+    RAISE EXCEPTION 'Property member applied tenant credit to another property';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  PERFORM set_config('request.test_user_id','50000000-0000-4000-8000-000000000001',true);
   BEGIN
     PERFORM public.restaurant_apply_supplier_credit_note(
       '10000000-0000-4000-8000-000000000001',
