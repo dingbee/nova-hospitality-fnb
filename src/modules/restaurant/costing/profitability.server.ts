@@ -720,6 +720,8 @@ export async function computeProfitability(
         contribution: d.contribution,
         allocated_operating_expenses: Math.max(0, d.contribution - d.operating_profit),
         operating_profit: d.operating_profit,
+        allocation_method: d.allocation_method,
+        confidence_state: d.confidence_state,
         source_references: orderIds,
       }));
       const { error: dimensionError } = await sb
