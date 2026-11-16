@@ -196,6 +196,7 @@ export interface IntelligentPurchaseOrderLine {
   inventoryItemId: string;
   supplierProductId: string;
   unitId: string;
+  stockUnitId: string;
   description: string;
   quantity: number;
   recommendedPurchaseQuantity: number;
@@ -412,6 +413,7 @@ export async function previewIntelligentPurchaseOrders(
       inventoryItemId: item.id,
       supplierProductId: product.id,
       unitId,
+      stockUnitId: item.unit_id,
       description: item.name,
       quantity: purchaseQuantity,
       recommendedPurchaseQuantity: purchaseQuantity,
@@ -606,6 +608,10 @@ export async function createIntelligentPurchaseOrders(
         inventoryItemId: line.inventoryItemId,
         supplierProductId: line.supplierProductId,
         unitId: line.unitId,
+        stockUnitId: line.stockUnitId,
+        stockUnitsPerPurchaseUnit: line.stockUnitsPerPurchaseUnit,
+        minimumOrderQuantity: line.minimumOrderQuantity,
+        orderMultiple: line.orderMultiple,
         description: line.description,
         quantity: line.quantity,
         unitPrice: line.unitPrice,
