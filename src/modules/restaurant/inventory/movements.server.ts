@@ -117,7 +117,7 @@ export async function insertMovement(
   // Resolve a known idempotency key before evaluating current stock. A
   // retry must resolve to the original ledger fact, not fail because that
   // original movement has already reduced the available balance.
-  if (row.dedupeKey) {
+  if (row.dedupeKey && row.referenceType === "restaurant_order" && row.reason?.startsWith("Operational ")) {
     const existing = await findMovementByDedupeKey(sb, row.tenantId, row.dedupeKey);
     if (existing) return null;
   }
