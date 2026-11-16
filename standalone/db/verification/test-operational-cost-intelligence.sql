@@ -169,14 +169,21 @@ do $$ begin
  if (select sum(amount) from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002')<>1250 then raise exception 'Activity driver allocation did not reconcile'; end if;
  if (select amount from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002' and property_id='20000000-0000-0000-0000-000000000001')<>750 then raise exception 'Activity driver weight 3/5 was not applied'; end if;
 end $$;
--- Phase 4 additive reconciliation schema and property isolation.
+-- Approved budgets are explicit source baselines; property RLS and tenant/category integrity are enforced.
+insert into public.restaurant_operational_cost_budgets(tenant_id,property_id,category_id,period_start,period_end,currency,budget_amount,status,approved_by,approved_at)
+select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,date '2026-11-01',date '2026-11-30','TZS',150000,'approved','30000000-0000-0000-0000-000000000001',now()
+from public.restaurant_operational_expense_categories where category_key='utilities';
+do $ begin
+ if (select count(*) from public.restaurant_operational_cost_budgets where property_id='20000000-0000-0000-0000-000000000001' and status='approved')<>1 then raise exception 'Approved budget baseline was not persisted'; end if;
+end $;
+\n-- Phase 4 additive reconciliation schema and property isolation.
 insert into public.restaurant_members values ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','restaurant_manager','20000000-0000-0000-0000-000000000001');
 insert into public.restaurant_cost_reconciliation_runs(tenant_id,property_id,period_start,period_end,currency,source_fingerprint)
 values
  ('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','2026-11-01','2026-11-30','TZS','fixture-property-1'),
  ('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','2026-11-01','2026-11-30','TZS','fixture-property-3');
 insert into public.restaurant_cost_reconciliation_lines(tenant_id,run_id,property_id,source_type,source_id,variance_kind,currency,expected_amount,actual_amount,variance_amount)
-select tenant_id,id,property_id,'stock_movement','50000000-0000-0000-0000-000000000001','stock_quantity','TZS',100,125,25
+select tenant_id,id,property_id,'stock_movement','50000000-0000-0000-0000-000000000001','consumption_cost','TZS',100,125,25
 from public.restaurant_cost_reconciliation_runs;
 insert into public.restaurant_cost_variances(tenant_id,property_id,reconciliation_line_id,severity)
 select tenant_id,property_id,id,'medium' from public.restaurant_cost_reconciliation_lines;
