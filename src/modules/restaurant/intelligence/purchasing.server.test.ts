@@ -201,6 +201,14 @@ function seed(options?: {
 beforeEach(() => seed());
 
 describe("Purchasing Intelligence procurement integrity", () => {
+  it("refuses tenant-wide stock pooling without a property or location scope", async () => {
+    await expect(
+      getPurchasingIntelligence(fakeSupabase(), "user-1", {
+        tenantId: TENANT,
+        windowDays: 30,
+      }),
+    ).rejects.toThrow(/explicit property or stock-location scope/i);
+  });
   it("nets accepted quantity and converts the remaining approved PO into stock units", async () => {
     const result = await getPurchasingIntelligence(fakeSupabase(), "user-1", {
       tenantId: TENANT,
