@@ -169,7 +169,7 @@ export async function computeProfitability(
       .select("id, order_id, menu_item_id, description, quantity, line_total, line_cost, discount, tax_amount, service_charge_amount, status, is_comp, channel")
       .eq("tenant_id", input.tenantId).in("order_id", orderIds),
     sb.from("restaurant_stock_movements")
-      .select("id, order_item_id, inventory_item_id, total_cost, currency, reference_type, reference_id")
+      .select("id, order_item_id, inventory_item_id, property_id, location_id, total_cost, currency, reference_type, reference_id")
       .eq("tenant_id", input.tenantId).eq("movement_type", "consumption")
       .in("reference_id", orderIds),
     sb.from("restaurant_payments")
@@ -209,38 +209,55 @@ export async function computeProfitability(
     r.active !== false && r.effective_from <= periodTo && (!r.effective_to || r.effective_to >= periodFrom) &&
     profileById.has(r.profile_id)
   );
-  const profilePriority = new Map(profileRows.map((p, index) => [p.id, index]));
-  const orderedRuleRows = [...ruleRows].sort(
-    (a, b) => (profilePriority.get(a.profile_id) ?? Number.MAX_SAFE_INTEGER) -
-      (profilePriority.get(b.profile_id) ?? Number.MAX_SAFE_INTEGER),
-  );
-  const costClassByInventoryItem = new Map<string, "service_consumable" | "other_direct_variable">();
-  for (const rule of orderedRuleRows.reverse()) {
+  const rulesByInventoryItem = new Map<string, Array<{ rule: any; profile: any }>>();
+  for (const rule of ruleRows) {
     const profile = profileById.get(rule.profile_id);
-    if (profile) costClassByInventoryItem.set(rule.inventory_item_id, profile.cost_class);
+    if (!profile) continue;
+    const matches = rulesByInventoryItem.get(rule.inventory_item_id) ?? [];
+    matches.push({ rule, profile });
+    rulesByInventoryItem.set(rule.inventory_item_id, matches);
   }
+  const classifyConsumableMovement = (movement: any): "service_consumable" | "other_direct_variable" | null => {
+    const matches = (rulesByInventoryItem.get(movement.inventory_item_id) ?? [])
+      .filter(({ profile }) =>
+        (profile.property_id === null || profile.property_id === movement.property_id) &&
+        (profile.location_id === null || profile.location_id === movement.location_id)
+      )
+      .sort((a, b) =>
+        Number(b.profile.location_id !== null) - Number(a.profile.location_id !== null) ||
+        Number(b.profile.property_id !== null) - Number(a.profile.property_id !== null)
+      );
+    return matches[0]?.profile.cost_class ?? null;
+  };
   const movementRows = (movements ?? []) as any[];
   const consumptionEventRows = (consumptionEvents ?? []) as any[];
   const capturedConsumableMovementIds = new Set(consumptionEventRows.map((e) => e.stock_movement_id));
   const missingConsumableMovements = movementRows.filter((m) =>
-    costClassByInventoryItem.has(m.inventory_item_id) && !capturedConsumableMovementIds.has(m.id)
+    classifyConsumableMovement(m) !== null && !capturedConsumableMovementIds.has(m.id)
   );
   const missingServiceConsumables = missingConsumableMovements
-    .filter((m) => costClassByInventoryItem.get(m.inventory_item_id) === "service_consumable")
+    .filter((m) => classifyConsumableMovement(m) === "service_consumable")
     .reduce((sum, m) => sum + Number(m.total_cost ?? 0), 0);
   const missingOtherDirectCosts = missingConsumableMovements
-    .filter((m) => costClassByInventoryItem.get(m.inventory_item_id) === "other_direct_variable")
+    .filter((m) => classifyConsumableMovement(m) === "other_direct_variable")
     .reduce((sum, m) => sum + Number(m.total_cost ?? 0), 0);
-  const hasConsumptionProfiles = reportPropertyIds.length > 0 && reportPropertyIds.every((propertyId) =>
-    profileRows.some((p) => p.property_id === null || p.property_id === propertyId) &&
-    ruleRows.some((r) => profileById.get(r.profile_id)?.property_id === null || profileById.get(r.profile_id)?.property_id === propertyId)
-  );
+  const hasRule = (profileId: string) => ruleRows.some((rule) => rule.profile_id === profileId);
+  const hasConsumptionProfiles = reportPropertyIds.length > 0 && reportPropertyIds.every((propertyId) => {
+    const applicable = profileRows.filter((profile) => profile.property_id === null || profile.property_id === propertyId);
+    if (applicable.some((profile) => profile.location_id === null && hasRule(profile.id))) return true;
+    const locations = input.locationId
+      ? [input.locationId]
+      : [...new Set(orderRows.filter((order) => order.property_id === propertyId).map((order) => order.location_id).filter(Boolean))];
+    return locations.length > 0 && locations.every((locationId) =>
+      applicable.some((profile) => profile.location_id === locationId && hasRule(profile.id))
+    );
+  });
   const consumableCoverageIncomplete = !hasConsumptionProfiles || missingConsumableMovements.length > 0;
   // Service consumable movements are projected separately by Phase 1;
   // exclude them from recipe COGS so direct costs are never double-counted.
   const actualByItem = new Map<string, number>();
   for (const m of movementRows) {
-    if (!m.order_item_id || costClassByInventoryItem.has(m.inventory_item_id)) continue;
+    if (!m.order_item_id || classifyConsumableMovement(m) !== null) continue;
     actualByItem.set(
       m.order_item_id,
       (actualByItem.get(m.order_item_id) ?? 0) + Number(m.total_cost ?? 0),
