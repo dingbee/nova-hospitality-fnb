@@ -193,6 +193,47 @@ describe("procurement", () => {
     expect(codes).toContain("procurement.invoice_mismatch");
     expect(codes).toContain("procurement.outstanding_supplier_amount");
   });
+
+  it("nets applied supplier credits before raising overdue invoice exceptions", () => {
+    const drafts = detectProcurementExceptions(
+      DATE,
+      [],
+      [{
+        id: "inv-credit",
+        purchase_order_id: "po-credit",
+        status: "recorded",
+        match_status: "matched",
+        payment_status: "partially_paid",
+        total: 100,
+        amount_paid: 20,
+        due_date: "2026-02-01",
+      }],
+      [],
+      [{ invoice_id: "inv-credit", amount: 80 }],
+    );
+    expect(drafts.map((draft) => draft.code)).not.toContain("procurement.outstanding_supplier_amount");
+  });
+
+  it("keeps an overdue exception for the net balance after partial credit application", () => {
+    const drafts = detectProcurementExceptions(
+      DATE,
+      [],
+      [{
+        id: "inv-credit-partial",
+        purchase_order_id: "po-credit",
+        status: "recorded",
+        match_status: "matched",
+        payment_status: "partially_paid",
+        total: 100,
+        amount_paid: 20,
+        due_date: "2026-02-01",
+      }],
+      [],
+      [{ invoice_id: "inv-credit-partial", amount: 70 }],
+    );
+    const overdue = drafts.find((draft) => draft.code === "procurement.outstanding_supplier_amount");
+    expect(overdue?.impactValue).toBe(10);
+  });
 });
 
 describe("idempotency and summary", () => {
