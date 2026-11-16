@@ -214,6 +214,10 @@ jobs:
           bunx vitest run \
             src/modules/restaurant/core/members.server.test.ts \
             src/modules/api-platform/channel-registry.test.ts \
+            src/modules/messaging/providers/meta-cloud-api.server.test.ts \
+            src/modules/messaging/providers/meta-onboarding.server.test.ts \
+            src/modules/messaging/embedded-signup.test.ts \
+            src/modules/api-platform/adapters/meta-whatsapp.server.test.ts \
             src/modules/api-platform/adapters/channel-adapter.test.ts \
             src/modules/restaurant/payments/mobilemoney/mobilemoney.server.test.ts \
             src/modules/restaurant/payments/mobilemoney/mobilemoney.property-scope.test.ts \
