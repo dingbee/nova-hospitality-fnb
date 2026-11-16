@@ -557,7 +557,12 @@ async function inventoryFacts(sb: Sb, tenantId: string, businessDate: string, lo
 
 async function procurementFacts(sb: Sb, tenantId: string, businessDate: string) {
   const { from, to } = businessDayWindow(businessDate);
-  const [{ data: receipts }, { data: invoices }, { data: variances }] = await Promise.all([
+  const [
+    { data: receipts },
+    { data: invoices },
+    { data: variances },
+    { data: creditApplications },
+  ] = await Promise.all([
     sb
       .from("restaurant_goods_receipts")
       .select("id, document_number, purchase_order_id, status, accepted_value, currency, posted_at")
@@ -577,11 +582,16 @@ async function procurementFacts(sb: Sb, tenantId: string, businessDate: string) 
       )
       .eq("tenant_id", tenantId)
       .in("status", ["open", "escalated"]),
+    sb
+      .from("restaurant_supplier_credit_note_applications")
+      .select("invoice_id, amount")
+      .eq("tenant_id", tenantId),
   ]);
   return {
     receipts: (receipts ?? []) as any[],
     invoices: (invoices ?? []) as any[],
     variances: (variances ?? []) as any[],
+    creditApplications: (creditApplications ?? []) as any[],
   };
 }
 
@@ -779,6 +789,7 @@ export async function runReconciliation(
         proc.receipts,
         proc.invoices,
         proc.variances,
+        proc.creditApplications,
       ),
     );
   }
