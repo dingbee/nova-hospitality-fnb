@@ -369,7 +369,7 @@ export async function getStockPositionEvidenceForReplenishment(
   const [poLinesRes, confirmationsRes, transferLinesRes] = await Promise.all([
     orderIds.length
       ? sb.from("restaurant_purchase_order_items")
-          .select("id, purchase_order_id, inventory_item_id, supplier_product_id, unit_id, quantity, received_quantity, accepted_quantity, rejected_quantity")
+          .select("id, purchase_order_id, inventory_item_id, supplier_product_id, unit_id, stock_unit_id, stock_units_per_purchase_unit, quantity, received_quantity, accepted_quantity, rejected_quantity")
           .eq("tenant_id", input.tenantId)
           .in("purchase_order_id", orderIds)
           .in("inventory_item_id", input.itemIds)
@@ -396,18 +396,6 @@ export async function getStockPositionEvidenceForReplenishment(
   ] as const) {
     if (query.error) throw new Error("Unable to load " + label + " for replenishment: " + query.error.message);
   }
-
-  const supplierProductIds = [...new Set(((poLinesRes.data ?? []) as any[]).map((line) => line.supplier_product_id).filter(Boolean))];
-  const supplierProductsRes = supplierProductIds.length
-    ? await sb.from("restaurant_supplier_products")
-        .select("id, unit_id, pack_size")
-        .eq("tenant_id", input.tenantId)
-        .in("id", supplierProductIds)
-    : { data: [], error: null };
-  if (supplierProductsRes.error) {
-    throw new Error("Unable to load purchase-unit conversions for replenishment: " + supplierProductsRes.error.message);
-  }
-  const supplierProductById = new Map(((supplierProductsRes.data ?? []) as any[]).map((row) => [row.id, row]));
 
   const confirmationRows = (confirmationsRes.data ?? []) as any[];
   const confirmationIds = confirmationRows.map((row) => row.id);
@@ -466,12 +454,19 @@ export async function getStockPositionEvidenceForReplenishment(
     // rejected/damaged goods remain excluded until a replacement is confirmed.
     const outstanding = Math.max(0, quantity - received);
     if (outstanding <= 0) continue;
-    const supplierProduct = line.supplier_product_id ? supplierProductById.get(line.supplier_product_id) : null;
-    const factor = supplierProduct && supplierProduct.unit_id === line.unit_id
-      ? stockUnitsPerUnit(line.unit_id, item.unit_id ?? null, supplierProduct.unit_id, Number(supplierProduct.pack_size), units)
-      : stockUnitsPerUnit(line.unit_id, item.unit_id ?? null, item.purchase_unit_id ?? null, item.pack_size ?? null, units);
-    if (factor == null) {
-      evidence.manualReviewReasons.push("Purchase-order line " + line.id + " has an unconvertible or ambiguous supplier purchase unit.");
+    let factor: number | null = null;
+    if (line.stock_units_per_purchase_unit != null) {
+      const snapshotFactor = Number(line.stock_units_per_purchase_unit);
+      if (!line.stock_unit_id || line.stock_unit_id !== item.unit_id || !Number.isFinite(snapshotFactor) || snapshotFactor <= 0) {
+        evidence.manualReviewReasons.push("Purchase-order line " + line.id + " has a missing, invalid or obsolete stock-unit snapshot.");
+        continue;
+      }
+      factor = snapshotFactor;
+    } else if (line.unit_id === item.unit_id) {
+      // Legacy POs ordered directly in the current stock unit are unambiguous.
+      factor = 1;
+    } else {
+      evidence.manualReviewReasons.push("Legacy purchase-order line " + line.id + " has no immutable purchase-to-stock conversion snapshot.");
       continue;
     }
     const confirmation = confirmationByLine.get(line.id);
