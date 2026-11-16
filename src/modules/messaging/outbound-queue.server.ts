@@ -291,7 +291,7 @@ export async function requeueMetaOutboundJob(
   }
   const { data: job, error: lookupError } = await admin
     .from("wa_outbound_jobs")
-    .select("id, tenant_id, property_id, status")
+    .select("id, tenant_id, property_id, status, provider_message_id")
     .eq("id", jobId)
     .maybeSingle();
   if (
@@ -302,6 +302,15 @@ export async function requeueMetaOutboundJob(
     !job.property_id
   ) {
     throw new Error("Outbound job is unavailable for requeue.");
+  }
+
+  const { data: existingMessage, error: messageLookupError } = await admin
+    .from("wa_messages")
+    .select("id")
+    .eq("outbound_job_id", jobId)
+    .maybeSingle();
+  if (messageLookupError || existingMessage || job.provider_message_id) {
+    throw new Error("A provider message record already exists; this job cannot be requeued safely.");
   }
 
   await assertCapability(userDb, userId, job.tenant_id, "tenant.manage", {
