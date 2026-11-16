@@ -169,6 +169,19 @@ BEGIN
 END
 $credit_note_rls$;
 
+DO $property_credit_application$
+BEGIN
+  PERFORM set_config('request.test_user_id','50000000-0000-4000-8000-000000000003',true);
+  PERFORM public.restaurant_apply_supplier_credit_note(
+    '10000000-0000-4000-8000-000000000001',
+    '40000000-0000-4000-8000-000000000006',
+    '30000000-0000-4000-8000-000000000005',
+    5,'Property-specific credit','60000000-0000-4000-8000-000000000011'
+  );
+  PERFORM set_config('request.test_user_id','50000000-0000-4000-8000-000000000001',true);
+END
+$property_credit_application$;
+
 SELECT public.restaurant_apply_supplier_credit_note(
  '10000000-0000-4000-8000-000000000001',
  '40000000-0000-4000-8000-000000000001',
@@ -185,8 +198,11 @@ SELECT public.restaurant_apply_supplier_credit_note(
 DO $credit_application_rls$
 BEGIN
   PERFORM set_config('request.test_user_id','50000000-0000-4000-8000-000000000003',true);
-  IF (SELECT count(*) FROM public.restaurant_supplier_credit_note_applications WHERE tenant_id='10000000-0000-4000-8000-000000000001') <> 0 THEN
-    RAISE EXCEPTION 'Property-scoped member can read tenant-wide credit application';
+  IF (SELECT count(*) FROM public.restaurant_supplier_credit_note_applications WHERE tenant_id='10000000-0000-4000-8000-000000000001') <> 1 THEN
+    RAISE EXCEPTION 'Property-scoped member cannot read its own credit application';
+  END IF;
+  IF (SELECT count(*) FROM public.restaurant_supplier_credit_note_applications WHERE tenant_id='10000000-0000-4000-8000-000000000001' AND property_id IS NULL) <> 0 THEN
+    RAISE EXCEPTION 'Property-scoped member can read tenant-wide credit applications';
   END IF;
   PERFORM set_config('request.test_user_id','50000000-0000-4000-8000-000000000001',true);
 END
@@ -309,7 +325,7 @@ BEGIN
   IF (SELECT payment_status FROM public.restaurant_supplier_invoices WHERE id='30000000-0000-4000-8000-000000000001') <> 'paid' THEN
     RAISE EXCEPTION 'Invoice payment status did not reflect full cash and credit settlement';
   END IF;
-  IF (SELECT count(*) FROM public.restaurant_procurement_audit WHERE document_type='supplier_credit_note' AND action='credit_note_applied') <> 3 THEN
+  IF (SELECT count(*) FROM public.restaurant_procurement_audit WHERE document_type='supplier_credit_note' AND action='credit_note_applied') <> 4 THEN
     RAISE EXCEPTION 'Credit application audit was not written atomically';
   END IF;
 END
