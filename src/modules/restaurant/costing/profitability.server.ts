@@ -177,7 +177,27 @@ export async function computeProfitability(
   const allocatedOperatingExpenses = Number(
     allocationRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0).toFixed(2),
   );
-  const [{ data: items, error: itemError }, { data: movements, error: movementError }, { data: payments, error: paymentError }, { data: unallocated, error: unallocatedError }, { data: pendingExpenses, error: pendingExpenseError }] = await Promise.all([
+  let unallocatedQuery = sb.from("restaurant_cost_allocation_exceptions")
+    .select("id, source_id, source_amount, currency, property_id, source_type")
+    .eq("tenant_id", input.tenantId).eq("source_type", "operational_expense")
+    .gte("period_start", periodFrom).lte("period_start", periodTo);
+  let pendingExpenseQuery = sb.from("restaurant_operational_expenses")
+    .select("id, amount, currency, approval_status, property_id, location_id")
+    .eq("tenant_id", input.tenantId).gte("incurred_on", periodFrom).lte("incurred_on", periodTo).eq("approval_status", "pending");
+  let consumptionProfileQuery = sb.from("restaurant_consumption_profiles")
+    .select("id, cost_class, property_id, location_id")
+    .eq("tenant_id", input.tenantId).eq("active", true);
+  if (input.propertyId) {
+    unallocatedQuery = unallocatedQuery.eq("property_id", input.propertyId);
+    pendingExpenseQuery = pendingExpenseQuery.eq("property_id", input.propertyId);
+    consumptionProfileQuery = consumptionProfileQuery.eq("property_id", input.propertyId);
+  }
+  if (input.locationId) {
+    unallocatedQuery = unallocatedQuery.eq("location_id", input.locationId);
+    pendingExpenseQuery = pendingExpenseQuery.eq("location_id", input.locationId);
+    consumptionProfileQuery = consumptionProfileQuery.eq("location_id", input.locationId);
+  }
+  const [{ data: items, error: itemError }, { data: movements, error: movementError }, { data: payments, error: paymentError }, { data: unallocated, error: unallocatedError }, { data: pendingExpenses, error: pendingExpenseError }, { data: consumptionEvents, error: consumptionError }, { data: consumptionProfiles, error: consumptionProfileError }] = await Promise.all([
     sb.from("restaurant_order_items")
       .select("id, order_id, menu_item_id, description, quantity, line_total, line_cost, discount, tax_amount, service_charge_amount, status, is_comp, channel")
       .eq("tenant_id", input.tenantId).in("order_id", orderIds),
@@ -188,18 +208,20 @@ export async function computeProfitability(
     sb.from("restaurant_payments")
       .select("id, order_id, amount, state, refund_of, currency")
       .eq("tenant_id", input.tenantId).in("order_id", orderIds),
-    sb.from("restaurant_cost_allocation_exceptions")
-      .select("id, source_id, source_amount, currency, property_id")
-      .eq("tenant_id", input.tenantId).gte("period_start", periodFrom).lte("period_start", periodTo),
-    sb.from("restaurant_operational_expenses")
-      .select("id, amount, currency, approval_status, property_id, location_id")
-      .eq("tenant_id", input.tenantId).gte("incurred_on", periodFrom).lte("incurred_on", periodTo).eq("approval_status", "pending"),
+    unallocatedQuery,
+    pendingExpenseQuery,
+    sb.from("restaurant_consumption_events")
+      .select("id, stock_movement_id, order_id, order_item_id, cost_class, total_cost, currency")
+      .eq("tenant_id", input.tenantId).in("order_id", orderIds),
+    consumptionProfileQuery,
   ]);
   if (itemError) throw new Error(itemError.message);
   if (movementError) throw new Error(movementError.message);
   if (paymentError) throw new Error(paymentError.message);
   if (unallocatedError) throw new Error(unallocatedError.message);
   if (pendingExpenseError) throw new Error(pendingExpenseError.message);
+  if (consumptionError) throw new Error(consumptionError.message);
+  if (consumptionProfileError) throw new Error(consumptionProfileError.message);
 
   // Actual cost is attributed back to the exact order line that consumed it.
   const actualByItem = new Map<string, number>();
@@ -248,6 +270,10 @@ export async function computeProfitability(
   const pendingRows = (pendingExpenses ?? []) as any[];
   const unallocatedOperatingExpenses = unallocatedRows.reduce((sum, r) => sum + Number(r.source_amount ?? 0), 0);
   const pendingExpenseVerification = pendingRows.length > 0;
+  const consumptionEventRows = (consumptionEvents ?? []) as any[];
+  const serviceConsumables = consumptionEventRows.filter((e) => e.cost_class === "service_consumable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0);
+  const otherDirectVariableCosts = consumptionEventRows.filter((e) => e.cost_class === "other_direct_variable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0);
+  const hasConsumptionProfiles = ((consumptionProfiles ?? []) as any[]).length > 0;
   const operational = calculateOperationalProfitability({
     currency,
     grossSales: Number(grossSales.toFixed(2)),
@@ -257,13 +283,13 @@ export async function computeProfitability(
     taxCollected: Number(taxCollected.toFixed(2)),
     recipeCogs: Number(recipeCogs.toFixed(2)),
     recipeCostBasis: allLinesHaveActualMovements ? "actual" : "standard",
-    serviceConsumables: 0,
-    consumablesCostBasis: "estimated",
-    otherDirectVariableCosts: 0,
+    serviceConsumables: Number(serviceConsumables.toFixed(2)),
+    consumablesCostBasis: hasConsumptionProfiles ? "actual" : "estimated",
+    otherDirectVariableCosts: Number(otherDirectVariableCosts.toFixed(2)),
     allocatedOperatingExpenses,
     unallocatedOperatingExpenses: Number(unallocatedOperatingExpenses.toFixed(2)),
     pendingExpenseVerification,
-    incompleteSourceData: true,
+    incompleteSourceData: !hasConsumptionProfiles,
   });
   const dimensionMap = new Map<string, { dimension_type: "channel" | "outlet" | "property"; dimension_key: string; dimension_name: string; net_sales: number; direct_variable_costs: number; contribution: number; operating_profit: number }>();
   const addDimension = (type: "channel" | "outlet" | "property", key: string, name: string, net: number, cost: number) => {
@@ -428,6 +454,7 @@ export async function computeProfitability(
           orders: orderRows.length, order_items: itemRows.length,
           stock_movements: ((movements ?? []) as any[]).length,
           refunds: (payments ?? []).filter((p: any) => p.refund_of && p.state === "refunded").length,
+          consumable_events: consumptionEventRows.length,
           expense_allocations: allocationRows.length,
           unallocated_costs: unallocatedRows.length,
           pending_expenses: pendingRows.length,
@@ -436,6 +463,7 @@ export async function computeProfitability(
           order_ids: orderIds,
           stock_movement_ids: ((movements ?? []) as any[]).map((m) => m.id),
           payment_ids: ((payments ?? []) as any[]).map((p: any) => p.id),
+          consumable_event_ids: consumptionEventRows.map((e) => e.id),
           allocation_source_ids: allocationRows.map((a) => a.source_id).filter(Boolean),
           unallocated_source_ids: unallocatedRows.map((a) => a.source_id).filter(Boolean),
           pending_expense_ids: pendingRows.map((e) => e.id),
