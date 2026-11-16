@@ -30,6 +30,7 @@ export interface ProfitabilityRow {
   quantity_sold: number;
   revenue: number;
   theoretical_cost: number;
+  recipe_actual_cost: number;
   actual_cost: number;
   variance: number;
   gross_profit: number;
@@ -474,6 +475,7 @@ export async function computeProfitability(
         quantity_sold: 0,
         revenue: 0,
         theoretical_cost: 0,
+        recipe_actual_cost: 0,
         actual_cost: 0,
         variance: 0,
         gross_profit: 0,
@@ -485,7 +487,9 @@ export async function computeProfitability(
     row.quantity_sold += Number(item.quantity ?? 0);
     row.revenue += item.is_comp ? 0 : (netSalesByLine.get(item.id) ?? Number(item.line_total ?? 0));
     row.theoretical_cost += Number(item.line_cost ?? 0);
-    row.actual_cost += (actualByItem.get(item.id) ?? Number(item.line_cost ?? 0)) + (consumableCostByOrderItem.get(item.id) ?? 0);
+    const recipeActualCost = actualByItem.get(item.id) ?? Number(item.line_cost ?? 0);
+    row.recipe_actual_cost += recipeActualCost;
+    row.actual_cost += recipeActualCost + (consumableCostByOrderItem.get(item.id) ?? 0);
     agg.set(key, row);
   }
 
@@ -493,14 +497,16 @@ export async function computeProfitability(
     .map((r) => {
       const revenue = Number(r.revenue.toFixed(2));
       const actual = Number(r.actual_cost.toFixed(4));
+      const recipeActual = Number(r.recipe_actual_cost.toFixed(4));
       const theoretical = Number(r.theoretical_cost.toFixed(4));
       const grossProfit = Number((revenue - actual).toFixed(4));
       return {
         ...r,
         revenue,
         actual_cost: actual,
+        recipe_actual_cost: recipeActual,
         theoretical_cost: theoretical,
-        variance: Number((actual - theoretical).toFixed(4)),
+        variance: Number((recipeActual - theoretical).toFixed(4)),
         gross_profit: grossProfit,
         margin_percent: revenue > 0 ? Number(((grossProfit / revenue) * 100).toFixed(2)) : null,
         food_cost_percent: revenue > 0 ? Number(((actual / revenue) * 100).toFixed(2)) : null,
@@ -512,13 +518,15 @@ export async function computeProfitability(
 
   const revenue = Number(allRows.reduce((s, r) => s + r.revenue, 0).toFixed(2));
   const actual = Number(allRows.reduce((s, r) => s + r.actual_cost, 0).toFixed(4));
+  const recipeActual = Number(allRows.reduce((s, r) => s + r.recipe_actual_cost, 0).toFixed(4));
   const theoretical = Number(allRows.reduce((s, r) => s + r.theoretical_cost, 0).toFixed(4));
   const totals = {
     quantity_sold: Number(allRows.reduce((s, r) => s + r.quantity_sold, 0).toFixed(3)),
     revenue,
     theoretical_cost: theoretical,
     actual_cost: actual,
-    variance: Number((actual - theoretical).toFixed(4)),
+    recipe_actual_cost: recipeActual,
+    variance: Number(allRows.reduce((sum, row) => sum + row.variance, 0).toFixed(4)),
     gross_profit: Number((revenue - actual).toFixed(4)),
     margin_percent: revenue > 0 ? Number((((revenue - actual) / revenue) * 100).toFixed(2)) : null,
     food_cost_percent: revenue > 0 ? Number(((actual / revenue) * 100).toFixed(2)) : null,
