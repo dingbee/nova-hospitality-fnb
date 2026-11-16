@@ -150,9 +150,39 @@ describe("computeProfitability operating-cost integration", () => {
       contribution: 50,
       operatingProfit: 50,
       reconciliationState: "partially_reconciled",
+      salesAdjustments: 0,
     });
     expect(result.totals.actual_cost).toBe(450);
     expect(result.dimensions).toHaveLength(3);
+  });
+
+  it("recognises a fully refunded original payment without requiring a child refund row", async () => {
+    const sb = makeSupabase({
+      restaurant_orders: [{
+        id: "order-1", currency: "TZS", property_id: "property-1",
+        location_id: "outlet-1", source: "pos", total: 1100,
+        discount_total: 100, tax_total: 100, service_charge: 0,
+      }],
+      restaurant_order_items: [{
+        id: "line-1", order_id: "order-1", menu_item_id: "menu-1",
+        description: "Pilau", quantity: 1, line_total: 1100, line_cost: 0,
+        discount: 100, tax_amount: 100, status: "served", is_comp: false,
+        channel: "pos",
+      }],
+      restaurant_payments: [{
+        id: "payment-1", order_id: "order-1", amount: 1100,
+        state: "refunded", refund_of: null, currency: "TZS",
+      }],
+    });
+    const result = await computeProfitability(sb, "user-1", input);
+    expect(result.operational).toMatchObject({
+      grossSales: 1200,
+      discounts: 100,
+      refunds: 1100,
+      salesAdjustments: 0,
+      taxCollected: 0,
+      netSales: 0,
+    });
   });
 
   it("allocates property and outlet OPEX without double counting and marks channel attribution estimated", async () => {
