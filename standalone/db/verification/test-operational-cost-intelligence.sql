@@ -51,6 +51,8 @@ begin
 exception when duplicate_object then null;
 end
 $roles$;
+-- Roles are cluster-wide across CI databases; normalize an existing fixture role too.
+alter role service_role bypassrls;
 grant usage on schema auth to authenticated,anon,service_role;
 grant usage on schema storage to authenticated,service_role;
 grant select,insert,delete on storage.objects to authenticated,service_role;
