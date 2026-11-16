@@ -187,5 +187,6 @@ describe("Meta Embedded Signup server completion", () => {
     );
     expect(mocks.registerIntegration).not.toHaveBeenCalled();
     expect(result.integrationId).toBe("integration-existing");
+    expect(result.connectedPhoneNumbers).toBe(2);
   });
 });
