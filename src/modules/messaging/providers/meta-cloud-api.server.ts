@@ -230,6 +230,7 @@ export type MetaPhoneNumber = {
   quality_rating?: string;
   code_verification_status?: string;
   platform_type?: string;
+  status?: string;
 };
 
 export async function listWabaPhoneNumbers(
@@ -237,7 +238,7 @@ export async function listWabaPhoneNumbers(
   platform?: Pick<MetaPlatformConfig, "graphApiVersion">,
 ): Promise<MetaPhoneNumber[]> {
   const id = encodeURIComponent(required(credentials.wabaId, "WABA ID"));
-  const query = new URLSearchParams({ fields: "id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type" });
+  const query = new URLSearchParams({ fields: "id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type,status" });
   const body = await graphRequest<{ data?: MetaPhoneNumber[] }>(`${id}/phone_numbers?${query.toString()}`, credentials.accessToken, {}, platform);
   return body.data ?? [];
 }
