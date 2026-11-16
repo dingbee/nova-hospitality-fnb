@@ -212,18 +212,10 @@ export async function applySupplierCreditNote(
   if (creditNote.reference_invoice_id && creditNote.reference_invoice_id !== invoice.id) {
     throw new Error("Supplier credit note is restricted to its referenced invoice.");
   }
-  if (
-    creditNote.property_id &&
-    invoice.property_id &&
-    creditNote.property_id !== invoice.property_id
-  ) {
+  if (creditNote.property_id && creditNote.property_id !== invoice.property_id) {
     throw new Error("Supplier credit note and target invoice property scopes differ.");
   }
-  if (
-    creditNote.location_id &&
-    invoice.location_id &&
-    creditNote.location_id !== invoice.location_id
-  ) {
+  if (creditNote.location_id && creditNote.location_id !== invoice.location_id) {
     throw new Error("Supplier credit note and target invoice location scopes differ.");
   }
   await assertCapability(sb, userId, input.tenantId, "invoice.manage", {
