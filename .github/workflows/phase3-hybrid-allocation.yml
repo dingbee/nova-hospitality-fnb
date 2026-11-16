@@ -5,7 +5,7 @@ on:
       - "feat/operational-cost-intelligence-phase3-workaround"
     paths:
       - "src/modules/restaurant/costing/**"
-      - "standalone/db/migrations/0042_cost_reconciliation_variance_intelligence.sql"
+      - "standalone/db/migrations/0042_cost_reconciliation_variance_intelligence.sql"\n      - "standalone/db/migrations/0043_cost_reconciliation_baselines.sql"
       - "standalone/db/verification/test-operational-cost-intelligence.sql"
       - "standalone/db/migrations/0040_operational_cost_intelligence.sql"
       - "standalone/db/verification/test-operational-cost-intelligence.sql"
