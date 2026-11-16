@@ -75,8 +75,8 @@ describe("computeProfitability operating-cost integration", () => {
       restaurant_orders: [{ id: "order-1", currency: "TZS" }],
       restaurant_cost_allocations: [{ amount: 10000, currency: "TZS" }],
       restaurant_order_items: [
-        { id: "line-1", menu_item_id: "menu-1", description: "Pilau", quantity: 2, line_total: 30000, line_cost: 10000, status: "served" },
-        { id: "line-2", menu_item_id: "menu-2", description: "Juice", quantity: 1, line_total: 10000, line_cost: 3000, status: "served" },
+        { id: "line-1", order_id: "order-1", menu_item_id: "menu-1", description: "Pilau", quantity: 2, line_total: 30000, line_cost: 10000, status: "served" },
+        { id: "line-2", order_id: "order-1", menu_item_id: "menu-2", description: "Juice", quantity: 1, line_total: 10000, line_cost: 3000, status: "served" },
       ],
       restaurant_stock_movements: [
         { id: "movement-1", order_item_id: "line-1", total_cost: 12000, currency: "TZS" },
