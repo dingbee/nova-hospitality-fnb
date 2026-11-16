@@ -11,7 +11,7 @@
 import type { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
-import { nextDocumentNumber, recordProcurementAudit } from "./audit.server";
+import { nextDocumentNumber, recordProcurementAuditStrict } from "./audit.server";
 import { recordPriceObservation } from "./pricing.server";
 import { raiseVariance } from "./variances.server";
 import { calculateSupplierInvoiceMatch } from "./invoice-matching";
@@ -165,7 +165,7 @@ export async function recordSupplierInvoice(sb: Sb, userId: string, input: Recor
     }
   }
 
-  await recordProcurementAudit(sb, userId, {
+  await recordProcurementAuditStrict(sb, userId, {
     tenantId: input.tenantId,
     documentType: "supplier_invoice",
     documentId: invoice.id,
@@ -362,7 +362,7 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
     .eq("id", invoice.id);
   if (updateError) throw new Error("Unable to persist invoice match result: " + updateError.message);
 
-  await recordProcurementAudit(sb, userId, {
+  await recordProcurementAuditStrict(sb, userId, {
     tenantId,
     documentType: "supplier_invoice",
     documentId: invoice.id,
@@ -478,7 +478,7 @@ export async function setInvoicePaymentStatus(
     .single();
   if (error) throw new Error(error.message);
 
-  await recordProcurementAudit(sb, userId, {
+  await recordProcurementAuditStrict(sb, userId, {
     tenantId: input.tenantId,
     documentType: "supplier_invoice",
     documentId: input.invoiceId,
