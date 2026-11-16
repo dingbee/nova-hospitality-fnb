@@ -22,6 +22,7 @@ describe("canonical stock-position contract", () => {
       inbound: [
         { sourceId: "po-1", sourceType: "purchase_order", quantityInStockUnits: 5, expectedAt: "2026-11-20T00:00:00Z", status: "approved" },
         { sourceId: "transfer-1", sourceType: "stock_transfer", quantityInStockUnits: 2, expectedAt: "2026-11-21T00:00:00Z", status: "dispatched" },
+        { sourceId: "partial-po", sourceType: "purchase_order", quantityInStockUnits: 3, acceptedQuantityInStockUnits: 7, rejectedQuantityInStockUnits: 1, expectedAt: "2026-11-22T00:00:00Z", status: "partially_received" },
         { sourceId: "late-po", sourceType: "purchase_order", quantityInStockUnits: 9, expectedAt: "2026-12-20T00:00:00Z", status: "approved" },
       ],
       asOf,
@@ -30,12 +31,12 @@ describe("canonical stock-position contract", () => {
     expect(result).toMatchObject({
       onHand: 20,
       reserved: 4,
-      purchaseOrderInbound: 5,
+      purchaseOrderInbound: 8,
       inTransitInbound: 2,
       confirmedDeliveryInbound: 0,
       netAvailable: 23,
     });
-    expect(result.components.map((row) => row.sourceId)).toEqual(["po-1", "transfer-1"]);
+    expect(result.components.map((row) => row.sourceId)).toEqual(["partial-po", "po-1", "transfer-1"]);
   });
 
   it("does not count expired reservations or cancelled, rejected, completed or undated inbound", () => {
@@ -74,6 +75,22 @@ describe("canonical stock-position contract", () => {
     expect(result.outlierDays).toContain(8);
     expect(result.dailyAverage).toBeLessThan(5);
     expect(result.forecastQuantity).toBe(Number(((result.dailyAverage ?? 0) * 7).toFixed(4)));
+  });
+
+  it("does not recommend a purchase when net available stock covers forecast and safety stock", () => {
+    expect(calculateReplenishment({
+      forecastDemand: 10,
+      safetyStock: 2,
+      netAvailable: 15,
+      leadTimeDays: 4,
+      targetCoverageDays: 3,
+      stockUnitsPerPurchaseUnit: 12,
+    })).toMatchObject({
+      status: "ready",
+      requiredStockUnits: 0,
+      recommendedPurchaseUnits: 0,
+      recommendedStockUnits: 0,
+    });
   });
 
   it("rounds replenishment to supplier pack and order multiples", () => {
