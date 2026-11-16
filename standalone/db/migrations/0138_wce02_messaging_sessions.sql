@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS public.wa_webhook_events (
   CONSTRAINT wa_webhook_events_binding_scope_fkey
     FOREIGN KEY (tenant_id, property_id, location_id, binding_id)
     REFERENCES public.wa_phone_number_bindings(tenant_id, property_id, location_id, id)
-    ON DELETE SET NULL (binding_id)
+    ON DELETE RESTRICT
 );
 
 CREATE OR REPLACE FUNCTION public.wa_validate_webhook_event_binding_scope()
