@@ -43,6 +43,7 @@ function makeFakeSupabase() {
     {
       id: ITEM_ID,
       name: "UAT reorder ingredient",
+      unit_id: "55555555-5555-4555-8555-555555555555",
       current_quantity: 10,
       reorder_point: null,
       average_cost: 1200,
@@ -77,6 +78,7 @@ function makeFakeSupabase() {
     {
       supplier_id: SUPPLIER_ID,
       inventory_item_id: ITEM_ID,
+      unit_id: "55555555-5555-4555-8555-555555555555",
       name: "UAT reorder ingredient",
       unit_price: 1300,
       lead_time_days: 3,
