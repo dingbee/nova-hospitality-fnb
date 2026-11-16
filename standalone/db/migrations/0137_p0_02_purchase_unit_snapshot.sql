@@ -166,6 +166,8 @@ AS $$
 DECLARE
   _po_id uuid;
   _receipt_po_item_id uuid;
+  _receipt_purchase_order_id uuid;
+  _receipt_status text;
   _applied_id uuid;
 BEGIN
   IF _received_delta < 0 OR _accepted_delta < 0 OR _rejected_delta < 0 OR
@@ -181,12 +183,17 @@ BEGIN
     RAISE EXCEPTION 'Purchase order item not found for this tenant.';
   END IF;
 
-  SELECT r.purchase_order_item_id INTO _receipt_po_item_id
-  FROM public.restaurant_goods_receipt_items r
-  WHERE r.tenant_id = _tenant AND r.id = _receipt_item_id;
+  SELECT ri.purchase_order_item_id, gr.purchase_order_id, gr.status
+    INTO _receipt_po_item_id, _receipt_purchase_order_id, _receipt_status
+  FROM public.restaurant_goods_receipt_items ri
+  JOIN public.restaurant_goods_receipts gr
+    ON gr.id = ri.receipt_id AND gr.tenant_id = ri.tenant_id
+  WHERE ri.tenant_id = _tenant AND ri.id = _receipt_item_id;
 
-  IF _receipt_po_item_id IS DISTINCT FROM _po_item_id THEN
-    RAISE EXCEPTION 'Goods receipt item does not belong to the supplied purchase order item.';
+  IF _receipt_po_item_id IS DISTINCT FROM _po_item_id OR
+     _receipt_purchase_order_id IS DISTINCT FROM _po_id OR
+     _receipt_status IS DISTINCT FROM 'draft' THEN
+    RAISE EXCEPTION 'Goods receipt item is not in a draft receipt for the supplied purchase order.';
   END IF;
 
   IF NOT public.restaurant_can_write_scoped(
