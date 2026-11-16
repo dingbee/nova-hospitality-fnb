@@ -24,6 +24,7 @@ function fakeSupabase() {
       const filters: Array<[string, any, string]> = [];
       const query: any = {
         select: () => query,
+        or: () => query,
         eq: (column: string, value: any) => {
           filters.push([column, value, "eq"]);
           return query;
