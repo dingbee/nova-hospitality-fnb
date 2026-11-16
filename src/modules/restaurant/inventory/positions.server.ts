@@ -167,6 +167,7 @@ export interface ReplenishmentPositionEvidence {
   onHand: number;
   reservations: Array<{ id: string; quantity: number; status: string; expiresAt: string | null }>;
   inbound: InboundCommitment[];
+  receivingRecords: Array<{ purchaseOrderItemId: string; ordered: number; received: number; accepted: number; rejectedOrDamaged: number }>;
   lastMovementAt: string | null;
   ledgerLocations: Array<{ locationId: string | null; movementCount: number; lastMovementAt: string | null }>;
   manualReviewReasons: string[];
@@ -277,6 +278,7 @@ export async function getStockPositionEvidenceForReplenishment(
       onHand: 0,
       reservations: [],
       inbound: [],
+      receivingRecords: [],
       lastMovementAt: null,
       ledgerLocations: [],
       manualReviewReasons: [],
@@ -358,7 +360,7 @@ export async function getStockPositionEvidenceForReplenishment(
   const [poLinesRes, confirmationsRes, transferLinesRes] = await Promise.all([
     orderIds.length
       ? sb.from("restaurant_purchase_order_items")
-          .select("id, purchase_order_id, inventory_item_id, supplier_product_id, unit_id, quantity, received_quantity, accepted_quantity")
+          .select("id, purchase_order_id, inventory_item_id, supplier_product_id, unit_id, quantity, received_quantity, accepted_quantity, rejected_quantity")
           .eq("tenant_id", input.tenantId)
           .in("purchase_order_id", orderIds)
           .in("inventory_item_id", input.itemIds)
@@ -427,11 +429,21 @@ export async function getStockPositionEvidenceForReplenishment(
     const quantity = Number(line.quantity);
     const received = Number(line.received_quantity);
     const accepted = Number(line.accepted_quantity);
+    const rejectedOrDamaged = Number(line.rejected_quantity ?? 0);
     if (!Number.isFinite(quantity) || !Number.isFinite(received) || !Number.isFinite(accepted) ||
-        quantity < 0 || received < 0 || accepted < 0 || received > quantity + 1e-8 || accepted > received + 1e-8) {
-      evidence.manualReviewReasons.push("Purchase-order line " + line.id + " has invalid ordered/received/accepted quantities.");
+        !Number.isFinite(rejectedOrDamaged) || quantity < 0 || received < 0 || accepted < 0 ||
+        rejectedOrDamaged < 0 || received > quantity + 1e-8 ||
+        accepted + rejectedOrDamaged > received + 1e-8) {
+      evidence.manualReviewReasons.push("Purchase-order line " + line.id + " has invalid ordered/received/accepted/rejected quantities.");
       continue;
     }
+    evidence.receivingRecords.push({
+      purchaseOrderItemId: line.id,
+      ordered: quantity,
+      received,
+      accepted,
+      rejectedOrDamaged,
+    });
     // All received goods (accepted, rejected or damaged) are no longer an
     // outstanding delivery. Only accepted goods have already entered on-hand;
     // rejected/damaged goods remain excluded until a replacement is confirmed.
