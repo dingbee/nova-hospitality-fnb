@@ -530,6 +530,9 @@ export async function getStockPositionEvidenceForReplenishment(
       evidence.manualReviewReasons.push("Transfer line " + line.id + " has invalid dispatched/received quantities.");
       continue;
     }
+    if (rejected > 0 || damaged > 0) {
+      evidence.manualReviewReasons.push("Transfer line " + line.id + " has rejected or damaged quantities requiring reconciliation.");
+    }
     const outstanding = Math.max(0, dispatched - received - rejected - damaged);
     if (outstanding <= 0) continue;
     const factor = stockUnitsPerUnit(line.unit_id, item.unit_id ?? null, item.purchase_unit_id ?? null, item.pack_size ?? null, units);
