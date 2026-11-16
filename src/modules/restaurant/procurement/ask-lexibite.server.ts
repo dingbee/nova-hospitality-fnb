@@ -286,7 +286,7 @@ export async function previewIntelligentPurchaseOrders(
       .eq("tenant_id", tenantId)
       .in("inventory_item_id", itemIds),
     sb.from("restaurant_suppliers").select("id, name, status").eq("tenant_id", tenantId),
-    sb.from("restaurant_inventory_units").select("id, dimension, base_unit_id, factor").eq("tenant_id", tenantId),
+    sb.from("restaurant_inventory_units").select("id, dimension, base_unit_id, factor").or("tenant_id.eq." + tenantId + ",tenant_id.is.null"),
   ]);
   if (itemError)
     throw new Error("Unable to validate replenishment inventory: " + itemError.message);
