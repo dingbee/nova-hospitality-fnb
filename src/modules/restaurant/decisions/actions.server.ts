@@ -621,6 +621,8 @@ async function runProcurementDraftExecution(
             supplier_product_id: supplierProductId,
             recommended_stock_quantity: recommendedStockQuantity,
             purchase_quantity: purchaseQuantity,
+            purchase_unit_price: purchaseUnitPrice,
+            currency,
             purchase_unit_id: purchaseUnitId,
             stock_unit_id: stockUnitId,
             stock_units_per_purchase_unit: stockUnitsPerPurchaseUnit,
