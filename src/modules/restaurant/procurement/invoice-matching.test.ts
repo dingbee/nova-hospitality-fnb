@@ -79,4 +79,18 @@ describe("PW-08 supplier invoice reconciliation", () => {
     expect(calculateSupplierInvoiceMatch(evidence).dimensions.map((d) => d.code)).toContain("RECEIPT_CURRENCY_MISMATCH");
     expect(calculateSupplierInvoiceMatch(evidence).matchStatus).toBe("mismatched");
   });
+
+  it("accounts for earlier invoices when reconciling a later installment", () => {
+    const evidence = base();
+    evidence.invoiceLines[0]!.quantity = 1;
+    evidence.invoice.subtotal = 100;
+    evidence.invoice.total = 118;
+    evidence.previouslyInvoicedQuantities = { "po-line-1": 1 };
+    expect(calculateSupplierInvoiceMatch(evidence).matchStatus).toBe("matched");
+  });
+  it("detects cumulative overbilling across multiple invoices", () => {
+    const evidence = base();
+    evidence.previouslyInvoicedQuantities = { "po-line-1": 1 };
+    expect(calculateSupplierInvoiceMatch(evidence).dimensions.map((d) => d.code)).toContain("INVOICED_ABOVE_ACCEPTED");
+  });
 });
