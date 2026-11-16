@@ -515,13 +515,15 @@ async function runProcurementDraftExecution(
     !sameNumber(freshSuggestion.purchaseQuantity, purchaseQuantity) ||
     !sameNumber(freshSuggestion.purchaseUnitPrice, purchaseUnitPrice) ||
     !sameNumber(freshSuggestion.stockUnitsPerPurchaseUnit, stockUnitsPerPurchaseUnit) ||
+    !sameNumber(freshSuggestion.minimumOrderQuantity ?? 0, minimumOrderQuantity) ||
+    !sameNumber(freshSuggestion.orderMultiple ?? 1, orderMultiple) ||
     !sameNumber(freshSuggestion.recommendedQuantity, recommendedStockQuantity) ||
     !sameNumber(freshSuggestion.netAvailable, facts.netAvailable) ||
     !sameNumber(freshSuggestion.forecastDemand, facts.forecastDemand) ||
     !sameNumber(freshSuggestion.safetyStock, facts.safetyStock) ||
     freshSuggestion.effectivePriceDate !== (facts.effectivePriceDate ?? null) ||
     freshSuggestion.forecastConfidence !== facts.forecastConfidence ||
-    freshSuggestion.currency !== currency
+    freshSuggestion.purchaseCurrency !== currency
   ) {
     return failAction(
       sb,
