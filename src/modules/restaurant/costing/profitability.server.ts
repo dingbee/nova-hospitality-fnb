@@ -86,7 +86,7 @@ export async function computeProfitability(
 
   let orderQuery = sb
     .from("restaurant_orders")
-    .select("id, currency, property_id, location_id, source, subtotal, discount_total, tax_total, service_charge")
+    .select("id, currency, property_id, location_id, source, subtotal, discount_total, tax_total, service_charge, total")
     .eq("tenant_id", input.tenantId)
     .eq("status", "closed")
     .gte("opened_at", input.from)
@@ -296,6 +296,24 @@ export async function computeProfitability(
       refundByLine.set(item.id, orderRefund * (Number(item.line_total ?? 0) / orderRevenue));
     }
   }
+  const orderLineTotals = new Map<string, { total: number; discount: number; tax: number; serviceCharge: number }>();
+  for (const item of itemRows) {
+    if (item.is_comp) continue;
+    const row = orderLineTotals.get(item.order_id) ?? { total: 0, discount: 0, tax: 0, serviceCharge: 0 };
+    row.total += Number(item.line_total ?? 0);
+    row.discount += Number(item.discount ?? 0);
+    row.tax += Number(item.tax_amount ?? 0);
+    row.serviceCharge += Number(item.service_charge_amount ?? 0);
+    orderLineTotals.set(item.order_id, row);
+  }
+  const orderSourceMismatchIds = orderRows.filter((order) => {
+    const totals = orderLineTotals.get(order.id) ?? { total: 0, discount: 0, tax: 0, serviceCharge: 0 };
+    return Math.abs(totals.total - Number(order.total ?? 0)) > 0.01 ||
+      Math.abs(totals.discount - Number(order.discount_total ?? 0)) > 0.01 ||
+      Math.abs(totals.tax - Number(order.tax_total ?? 0)) > 0.01 ||
+      Math.abs(totals.serviceCharge - Number(order.service_charge ?? 0)) > 0.01;
+  }).map((order) => order.id);
+  const salesSourceMismatch = orderSourceMismatchIds.length > 0;
   const grossSales = itemRows.filter((i) => !i.is_comp).reduce((sum, i) => sum + Number(i.line_total ?? 0) + Number(i.discount ?? 0), 0);
   const discounts = itemRows.filter((i) => !i.is_comp).reduce((sum, i) => sum + Number(i.discount ?? 0), 0);
   const refunds = [...refundByOrder.values()].reduce((sum, amount) => sum + amount, 0);
@@ -390,7 +408,7 @@ export async function computeProfitability(
     unallocatedOperatingExpenses: Number(unallocatedOperatingExpenses.toFixed(2)),
     pendingExpenseVerification,
     partiallyReconciled,
-    incompleteSourceData: consumableCoverageIncomplete,
+    incompleteSourceData: consumableCoverageIncomplete || salesSourceMismatch,
   });
   const netSalesByLine = new Map<string, number>();
   const dimensionMap = new Map<string, { dimension_type: "channel" | "outlet" | "property"; dimension_key: string; dimension_name: string; property_id: string | null; location_id: string | null; net_sales: number; direct_variable_costs: number; contribution: number; operating_profit: number }>();
@@ -569,6 +587,7 @@ export async function computeProfitability(
         confidence_state: operational.reconciliationState,
         source_counts: {
           orders: orderRows.length, order_items: itemRows.length,
+          order_source_mismatches: orderSourceMismatchIds.length,
           stock_movements: ((movements ?? []) as any[]).length,
           refunds: (payments ?? []).filter((p: any) => p.refund_of && p.state === "refunded").length,
           consumable_events: consumptionEventRows.length,
@@ -578,6 +597,7 @@ export async function computeProfitability(
         },
         source_references: {
           order_ids: orderIds,
+          order_source_mismatch_ids: orderSourceMismatchIds,
           stock_movement_ids: ((movements ?? []) as any[]).map((m) => m.id),
           payment_ids: ((payments ?? []) as any[]).map((p: any) => p.id),
           consumable_event_ids: consumptionEventRows.map((e) => e.id),
