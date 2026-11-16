@@ -14,7 +14,7 @@ create table if not exists public.restaurant_consumption_profiles (
  created_at timestamptz not null default now(),
  check(effective_to is null or effective_to>=effective_from),
  check(property_id is not null or location_id is null),
- unique(tenant_id,property_id,location_id,name)
+ unique nulls not distinct(tenant_id,property_id,location_id,name)
 );
 create table if not exists public.restaurant_consumption_rules (
  id uuid primary key default gen_random_uuid(),
