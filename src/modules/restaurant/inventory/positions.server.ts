@@ -217,7 +217,6 @@ export async function getStockPositionEvidenceForReplenishment(
           .select("id, supplier_id, status, expected_at, property_id, location_id, currency")
           .eq("tenant_id", input.tenantId)
           .in("status", OPEN_PO_STATUSES);
-        if (input.propertyId) q = q.eq("property_id", input.propertyId);
         if (input.locationId) q = q.eq("location_id", input.locationId);
         return q;
       })(),
@@ -226,7 +225,6 @@ export async function getStockPositionEvidenceForReplenishment(
           .select("id, property_id, source_location_id, destination_location_id, status, dispatched_at")
           .eq("tenant_id", input.tenantId)
           .in("status", ["dispatched", "partially_received"]);
-        if (input.propertyId) q = q.eq("property_id", input.propertyId);
         if (input.locationId) q = q.eq("destination_location_id", input.locationId);
         return q;
       })(),
@@ -312,7 +310,8 @@ export async function getStockPositionEvidenceForReplenishment(
     const inScope = input.locationId
       ? locationId === input.locationId
       : input.propertyId
-        ? row.property_id === input.propertyId && location?.property_id === input.propertyId
+        ? (row.property_id === input.propertyId || location?.property_id === input.propertyId) &&
+          location?.property_id === input.propertyId
         : locationId === null || allowedLocationIds.has(locationId);
     if (!evidence || !inScope) continue;
     const factor = stockUnitsPerUnit(row.unit_id, itemById.get(row.inventory_item_id)?.unit_id ?? null,
@@ -332,9 +331,20 @@ export async function getStockPositionEvidenceForReplenishment(
     });
   }
 
-  const orders = (ordersRes.data ?? []) as any[];
+  const orders = ((ordersRes.data ?? []) as any[]).filter((order) => {
+    if (input.locationId) return order.location_id === input.locationId;
+    if (input.propertyId) {
+      return order.property_id === input.propertyId ||
+        (order.location_id && locationById.get(order.location_id)?.property_id === input.propertyId);
+    }
+    return true;
+  });
   const orderIds = orders.map((row) => row.id);
-  const transfers = (transfersRes.data ?? []) as any[];
+  const transfers = ((transfersRes.data ?? []) as any[]).filter((transfer) => {
+    if (input.locationId) return transfer.destination_location_id === input.locationId;
+    if (input.propertyId) return locationById.get(transfer.destination_location_id)?.property_id === input.propertyId;
+    return true;
+  });
   const transferIds = transfers.map((row) => row.id);
   const [poLinesRes, confirmationsRes, transferLinesRes] = await Promise.all([
     orderIds.length
