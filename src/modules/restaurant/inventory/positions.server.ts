@@ -199,6 +199,9 @@ export async function getStockPositionEvidenceForReplenishment(
     asOf: string;
   },
 ): Promise<Map<string, ReplenishmentPositionEvidence>> {
+  if (!input.propertyId && !input.locationId) {
+    throw new Error("Stock-position evidence requires an explicit property or stock-location scope.");
+  }
   await assertTenantRead(sb, userId, input.tenantId, {
     propertyId: input.propertyId ?? null,
     locationId: input.locationId ?? null,
@@ -297,7 +300,7 @@ export async function getStockPositionEvidenceForReplenishment(
     const inScope = input.locationId
       ? locationId === input.locationId
       : input.propertyId
-        ? location?.property_id === input.propertyId
+        ? location?.property_id === input.propertyId && location?.is_storage === true
         : locationId === null || allowedLocationIds.has(locationId);
     if (!inScope) continue;
     const evidence = result.get(row.inventory_item_id);
@@ -326,7 +329,7 @@ export async function getStockPositionEvidenceForReplenishment(
     const inScope = input.locationId
       ? locationId === input.locationId
       : input.propertyId
-        ? (row.property_id === input.propertyId && (!locationId || location?.property_id === input.propertyId)) ||
+        ? (row.property_id === input.propertyId && (!locationId || (location?.property_id === input.propertyId && location?.is_storage === true))) ||
           (location?.property_id === input.propertyId && location?.is_storage === true)
         : locationId === null || allowedLocationIds.has(locationId);
     if (!evidence || !inScope) continue;
