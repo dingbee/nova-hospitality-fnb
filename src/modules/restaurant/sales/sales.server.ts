@@ -23,7 +23,7 @@ import type {
 import { assertCapability, assertTenantRead, type TenantScope } from "../core/access.server";
 import { resolveOrderScope } from "./orderScope.server";
 import { emitRestaurantEvent } from "../events/emit.server";
-import { consumeForOrderItem } from "../inventory/movements.server";
+import { consumeForOrderItem, consumeOperationalConsumablesForOrder } from "../inventory/movements.server";
 import { activeRecipeForMenuItem } from "../products/recipes.server";
 import { consumeForRecipeSale } from "../products/consumption.server";
 import { currentFxRate, loadRuleSet, quoteWithRuleSet } from "../pricing/resolution.server";
@@ -1106,6 +1106,20 @@ export async function transitionOrder(
           theoretical_cost: Number(item.line_cost ?? 0),
         },
         dedupeKey: `sold:${item.id}`,
+      });
+    }
+
+    // Service consumables are consumed once per order using guest covers,
+    // not once per menu line. The movement dedupe key makes close retries safe.
+    if (order.property_id && order.location_id) {
+      actualCost += await consumeOperationalConsumablesForOrder(sb, userId, {
+        tenantId: input.tenantId,
+        propertyId: order.property_id,
+        locationId: order.location_id,
+        orderId: order.id,
+        guestCount: Number(order.guest_count ?? 1),
+        currency: order.currency,
+        occurredAt: new Date().toISOString(),
       });
     }
 
