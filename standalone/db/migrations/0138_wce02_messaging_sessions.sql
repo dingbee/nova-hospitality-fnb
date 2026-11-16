@@ -71,7 +71,7 @@ RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $wce$
 DECLARE
   location_tenant uuid;
   location_property uuid;
@@ -118,7 +118,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$;
+$wce$;
 
 REVOKE ALL ON FUNCTION public.wa_validate_phone_number_binding_scope() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.wa_validate_phone_number_binding_scope() TO service_role;
@@ -410,7 +410,7 @@ RETURNS SETOF public.wa_webhook_events
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $wce$
 BEGIN
   RETURN QUERY
   WITH candidates AS (
@@ -443,7 +443,7 @@ BEGIN
   WHERE e.id = c.id
   RETURNING e.*;
 END;
-$$;
+$wce$;
 
 REVOKE ALL ON FUNCTION public.wa_claim_webhook_events(integer, integer, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.wa_claim_webhook_events(integer, integer, text) TO service_role;
@@ -458,7 +458,7 @@ RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $wce$
 DECLARE
   current_status text;
   current_rank integer;
@@ -512,7 +512,7 @@ BEGIN
 
   RETURN true;
 END;
-$$;
+$wce$;
 
 REVOKE ALL ON FUNCTION public.wa_apply_message_delivery_status(text, text, timestamptz, text)
   FROM PUBLIC, anon, authenticated;
