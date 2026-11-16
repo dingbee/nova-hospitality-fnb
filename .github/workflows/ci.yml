@@ -158,6 +158,29 @@ jobs:
             ) THEN
               RAISE EXCEPTION 'Private WhatsApp inbox/session tables must not have authenticated policies';
             END IF;
+            IF to_regclass('public.wa_outbound_jobs') IS NULL
+              OR NOT EXISTS (
+                SELECT 1 FROM pg_class
+                WHERE oid = 'public.wa_outbound_jobs'::regclass AND relrowsecurity
+              ) THEN
+              RAISE EXCEPTION 'Encrypted WhatsApp outbound queue is missing or RLS-disabled';
+            END IF;
+            IF has_function_privilege('anon', 'public.wa_claim_outbound_jobs(integer,integer,text)', 'EXECUTE')
+              OR has_function_privilege('authenticated', 'public.wa_claim_outbound_jobs(integer,integer,text)', 'EXECUTE')
+              OR EXISTS (
+                SELECT 1 FROM pg_policies
+                WHERE schemaname = 'public' AND tablename = 'wa_outbound_jobs'
+              ) THEN
+              RAISE EXCEPTION 'WhatsApp outbound queue must remain service-role only';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'wa_messages'
+                AND column_name = 'outbound_job_id'
+            ) THEN
+              RAISE EXCEPTION 'WhatsApp outbound message linkage is missing';
+            END IF;
           END $verify$;
           SELECT count(*) FILTER (WHERE status = 'applied') AS applied_migrations,
                  count(*) FILTER (WHERE status = 'skipped') AS policy_skipped_migrations
