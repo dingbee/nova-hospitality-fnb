@@ -36,6 +36,10 @@ function fakeSupabase() {
           filters.push([column, value, "gte"]);
           return query;
         },
+        lte: (column: string, value: any) => {
+          filters.push([column, value, "lte"]);
+          return query;
+        },
         then: (resolve: (value: any) => unknown, reject?: (reason: any) => unknown) => {
           try {
             if (queryErrors[table])
@@ -45,6 +49,7 @@ function fakeSupabase() {
                 if (op === "eq") return row[column] === value;
                 if (op === "in") return value.includes(row[column]);
                 if (op === "gte") return String(row[column] ?? "") >= String(value);
+                if (op === "lte") return String(row[column] ?? "") <= String(value);
                 return true;
               }),
             );
@@ -82,20 +87,35 @@ function seed(options?: {
         purchase_unit_id:
           options?.purchaseUnit === undefined ? PURCHASE_UNIT : options.purchaseUnit,
         pack_size: options?.packSize ?? 5,
+        metadata: { safety_stock_quantity: 0 },
       },
     ],
-    restaurant_stock_movements: [
-      {
-        tenant_id: TENANT,
-        property_id: null,
-        location_id: null,
-        inventory_item_id: ITEM,
-        movement_type: "consumption",
-        quantity: 30,
-        total_cost: 600,
-        occurred_at: new Date(now - 86400000).toISOString(),
-      },
-    ],
+    restaurant_stock_movements: Array.from({ length: 7 }, (_, index) => ({
+      tenant_id: TENANT,
+      property_id: null,
+      location_id: null,
+      inventory_item_id: ITEM,
+      movement_type: "consumption",
+      quantity: 30 / 7,
+      total_cost: (30 / 7) * 20,
+      occurred_at: new Date(now - (index + 1) * 86400000).toISOString(),
+    })),
+    restaurant_stock_positions_v: [{
+      tenant_id: TENANT,
+      inventory_item_id: ITEM,
+      location_id: null,
+      on_hand: 2,
+      movement_count: 8,
+      last_movement_at: new Date(now - 86400000).toISOString(),
+    }],
+    restaurant_locations: [],
+    restaurant_stock_reservations: [],
+    restaurant_stock_transfers: [],
+    restaurant_stock_transfer_lines: [],
+    restaurant_supplier_confirmations: [],
+    restaurant_supplier_confirmation_items: [],
+    restaurant_inventory_units: [],
+    restaurant_supplier_price_history: [],
     restaurant_supplier_products: [
       {
         tenant_id: TENANT,
@@ -104,8 +124,11 @@ function seed(options?: {
         unit_id: PURCHASE_UNIT,
         pack_size: options?.packSize ?? 5,
         unit_price: 50,
+        currency: "TZS",
+        min_order_quantity: 0,
         lead_time_days: 2,
         active: true,
+        id: "88888888-8888-4888-8888-888888888888",
       },
     ],
     restaurant_suppliers: [
@@ -125,7 +148,7 @@ function seed(options?: {
         supplier_id: SUPPLIER,
         status: "approved",
         order_date: null,
-        expected_at: null,
+        expected_at: new Date(now + 2 * 86400000).toISOString().slice(0, 10),
         received_at: null,
         total: 100,
         property_id: null,
@@ -137,6 +160,7 @@ function seed(options?: {
         tenant_id: TENANT,
         purchase_order_id: PO,
         inventory_item_id: ITEM,
+        supplier_product_id: "88888888-8888-4888-8888-888888888888",
         unit_id: options?.openLineUnit ?? PURCHASE_UNIT,
         quantity: options?.openQuantity ?? 2,
         received_quantity: 1,
@@ -156,12 +180,14 @@ describe("Purchasing Intelligence procurement integrity", () => {
       windowDays: 30,
     });
     expect(result.suggestions).toHaveLength(1);
-    // Demand needs 9 stock units (1/day × (2 lead + 7 cover)); current stock 2
-    // plus one remaining 5-unit pack covers 7, so only 2 stock units are needed.
+    // Thirty units over a 30-day observed series produce 1/day. The open
+    // supplier carton contributes 5 stock units; the recommendation is one
+    // indivisible carton after netting current stock and inbound.
     expect(result.suggestions[0]).toMatchObject({
       inventoryItemId: ITEM,
-      recommendedQuantity: 2,
-      estimatedCost: 20,
+      recommendedQuantity: 5,
+      purchaseQuantity: 1,
+      estimatedCost: 50,
       supplierId: SUPPLIER,
     });
   });
@@ -175,8 +201,11 @@ describe("Purchasing Intelligence procurement integrity", () => {
       unit_id: STOCK_UNIT,
       pack_size: 1,
       unit_price: 8,
+      currency: "TZS",
+      min_order_quantity: 0,
       lead_time_days: 2,
       active: true,
+      id: "99999999-9999-4999-8999-999999999999",
     });
     tables.restaurant_suppliers.push({
       tenant_id: TENANT,
@@ -193,6 +222,7 @@ describe("Purchasing Intelligence procurement integrity", () => {
     expect(result.suggestions[0]).toMatchObject({
       supplierId: cheaperSupplier,
       recommendedQuantity: 2,
+      purchaseQuantity: 2,
       estimatedCost: 16,
     });
   });
@@ -214,6 +244,6 @@ describe("Purchasing Intelligence procurement integrity", () => {
         tenantId: TENANT,
         windowDays: 30,
       }),
-    ).rejects.toThrow(/Unable to account for outstanding purchase orders: database unavailable/);
+    ).rejects.toThrow(/Unable to load purchase-order lines for replenishment: database unavailable/);
   });
 });
