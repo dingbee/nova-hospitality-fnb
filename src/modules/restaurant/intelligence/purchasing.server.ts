@@ -309,7 +309,17 @@ export async function getPurchasingIntelligence(
       netAvailable: stockPosition.netAvailable,
       demandObservations: forecast.observations,
       forecastConfidence: forecast.confidence,
-      stockPositionEvidence: stockPosition,
+      stockPositionEvidence: {
+        ...stockPosition,
+        ledgerLocations: evidence.ledgerLocations,
+        reservationRecords: evidence.reservations.map((row) => ({
+          id: row.id,
+          quantity: row.quantity,
+          expiresAt: row.expiresAt,
+        })),
+        receivingRecords: evidence.receivingRecords,
+        manualReviewReasons: evidence.manualReviewReasons,
+      },
     });
   }
   suggestions.sort((a, b) => b.estimatedCost - a.estimatedCost);
