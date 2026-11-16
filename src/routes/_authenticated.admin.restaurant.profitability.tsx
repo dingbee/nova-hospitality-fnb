@@ -275,7 +275,9 @@ function ProfitabilityPage() {
 
       <SectionCard
         title="Saved snapshots"
-        description="Every computation is stored so trends survive price and recipe changes."
+        description={effectivePropertyId
+          ? "Property-scoped computations are saved with their source references and confidence state."
+          : "Select a property to save a scoped snapshot. Tenant-wide comparisons remain view-only to preserve property-level access boundaries."}
       >
         {(snapshots.data ?? []).length === 0 ? (
           <EmptyState
