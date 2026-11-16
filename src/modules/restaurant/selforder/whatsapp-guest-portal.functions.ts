@@ -6,7 +6,7 @@ const tokenSchema = z.object({
 });
 
 /** Public guest read: the opaque token is resolved server-side; internal scope IDs are never serialized. */
-export const whatsappGuestPortalPageFn = createServerFn({ method: "GET" })
+export const whatsappGuestPortalPageFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => tokenSchema.parse(data))
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
