@@ -1,7 +1,6 @@
 import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  MetaGraphError,
   assertRequiredWhatsAppPermissions,
   checkPhoneNumberHealth,
   exchangeEmbeddedSignupCode,
