@@ -439,7 +439,7 @@ function ProfitabilityPage() {
           <ul className="divide-y text-sm">
             {dimensions.map((d: any) => (
               <li key={`${d.dimension_type}:${d.dimension_key}`} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                <div><span className="font-medium">{d.dimension_name}</span><p className="text-xs text-muted-foreground">{d.dimension_type.replace("_", " ")} · net sales {money(d.net_sales)}</p></div>
+                <div><span className="font-medium">{d.dimension_name}</span><p className="text-xs text-muted-foreground">{d.dimension_type.replace("_", " ")} · net sales {money(d.net_sales)} · {d.allocation_method.replaceAll("_", " ")} · {d.confidence_state.replaceAll("_", " ")}</p></div>
                 <span className="text-xs text-muted-foreground">Contribution {money(d.contribution)} · operating {money(d.operating_profit)}</span>
               </li>
             ))}
