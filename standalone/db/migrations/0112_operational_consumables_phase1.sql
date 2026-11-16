@@ -56,6 +56,42 @@ create index if not exists restaurant_consumption_events_order_idx
  on public.restaurant_consumption_events(tenant_id,order_id,occurred_at);
 create index if not exists restaurant_consumption_rules_item_idx
  on public.restaurant_consumption_rules(tenant_id,inventory_item_id,active);
+create or replace function public.restaurant_validate_consumption_profile_scope()
+returns trigger language plpgsql security invoker set search_path=public as $
+begin
+ if new.property_id is not null and not exists(
+  select 1 from public.restaurant_properties p where p.id=new.property_id and p.tenant_id=new.tenant_id
+ ) then raise exception 'Consumption profile property is outside its tenant'; end if;
+ if new.location_id is not null and not exists(
+  select 1 from public.restaurant_locations l where l.id=new.location_id and l.tenant_id=new.tenant_id and l.property_id=new.property_id
+ ) then raise exception 'Consumption profile location is outside its property'; end if;
+ return new;
+end $;
+drop trigger if exists restaurant_consumption_profile_scope_guard on public.restaurant_consumption_profiles;
+create trigger restaurant_consumption_profile_scope_guard
+ before insert or update on public.restaurant_consumption_profiles
+ for each row execute function public.restaurant_validate_consumption_profile_scope();
+
+create or replace function public.restaurant_validate_consumption_rule_scope()
+returns trigger language plpgsql security invoker set search_path=public as $
+declare profile_tenant uuid; profile_property uuid; item_tenant uuid; item_property uuid;
+begin
+ select tenant_id,property_id into profile_tenant,profile_property
+ from public.restaurant_consumption_profiles where id=new.profile_id;
+ if not found or profile_tenant<>new.tenant_id then raise exception 'Consumption rule profile is outside its tenant'; end if;
+ select tenant_id,property_id into item_tenant,item_property
+ from public.restaurant_inventory_items where id=new.inventory_item_id;
+ if not found or item_tenant<>new.tenant_id then raise exception 'Consumption rule inventory item is outside its tenant'; end if;
+ if profile_property is not null and item_property is distinct from profile_property then
+  raise exception 'Consumption rule inventory item is outside its profile property';
+ end if;
+ return new;
+end $;
+drop trigger if exists restaurant_consumption_rule_scope_guard on public.restaurant_consumption_rules;
+create trigger restaurant_consumption_rule_scope_guard
+ before insert or update on public.restaurant_consumption_rules
+ for each row execute function public.restaurant_validate_consumption_rule_scope();
+
 alter table public.restaurant_consumption_profiles enable row level security;
 alter table public.restaurant_consumption_rules enable row level security;
 alter table public.restaurant_consumption_events enable row level security;
@@ -73,11 +109,8 @@ create policy restaurant_consumption_rules_write on public.restaurant_consumptio
  with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','inventory_manager','accountant']::restaurant_role[],(select p.property_id from public.restaurant_consumption_profiles p where p.id=profile_id)));
 create policy restaurant_consumption_events_read on public.restaurant_consumption_events
  for select to authenticated using(public.restaurant_can_read_scoped(tenant_id,property_id));
-create policy restaurant_consumption_events_write on public.restaurant_consumption_events
- for all to authenticated
- using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','inventory_manager','accountant','chef','kitchen_manager']::restaurant_role[],property_id))
- with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','inventory_manager','accountant','chef','kitchen_manager']::restaurant_role[],property_id));
-grant select,insert,update,delete on public.restaurant_consumption_profiles,public.restaurant_consumption_rules,public.restaurant_consumption_events to authenticated;
+grant select,insert,update,delete on public.restaurant_consumption_profiles,public.restaurant_consumption_rules to authenticated;
+grant select on public.restaurant_consumption_events to authenticated;
 grant all on public.restaurant_consumption_profiles,public.restaurant_consumption_rules,public.restaurant_consumption_events to service_role;
 
 create or replace function public.restaurant_capture_operational_consumption()
