@@ -78,7 +78,7 @@ CREATE TABLE public.restaurant_members (
 GRANT SELECT ON public.restaurant_members TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.restaurant_can_read(_tenant uuid)
-RETURNS boolean LANGUAGE sql STABLE AS $$$
+RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.restaurant_members m
     WHERE m.tenant_id = _tenant AND m.user_id = auth.uid() AND m.active
