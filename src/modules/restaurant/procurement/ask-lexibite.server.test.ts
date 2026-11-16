@@ -96,10 +96,17 @@ function sbWithExisting(
               unit_price: 12000,
               currency: "TZS",
               min_order_quantity: 0,
+              order_multiple: 1,
               pack_size: packSize,
               active: true,
             },
           ],
+          error: null,
+        });
+      }
+      if (table === "restaurant_inventory_units") {
+        return chain({
+          data: [{ id: productUnitId, dimension: "count", base_unit_id: null, factor: 1 }],
           error: null,
         });
       }
