@@ -274,3 +274,52 @@ export async function requeueMetaWebhookDeadLetter(
   });
   return { eventId, status: "pending" as const };
 }
+
+
+/** Release a poison event after explicit operator review; this unblocks later phone events. */
+export async function rejectMetaWebhookDeadLetter(
+  admin: Db,
+  userDb: Db,
+  userId: string,
+  eventId: string,
+  rawReason: string,
+) {
+  const reason = rawReason.trim().replace(/[\\r\\n\\t]+/g, " ").slice(0, 200);
+  if (reason.length < 10) throw new Error("A review reason of at least 10 characters is required.");
+
+  const { data: event, error: lookupError } = await admin
+    .from("wa_webhook_events")
+    .select("id, tenant_id, property_id, status")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (lookupError || !event || event.status !== "dead_letter" || !event.tenant_id || !event.property_id) {
+    throw new Error("Dead-letter event is unavailable for operator rejection.");
+  }
+
+  await assertCapability(userDb, userId, event.tenant_id, "tenant.manage", {
+    propertyId: event.property_id,
+  });
+  const { error } = await admin
+    .from("wa_webhook_events")
+    .update({
+      status: "rejected",
+      processed_at: new Date().toISOString(),
+      locked_at: null,
+      locked_by: null,
+      last_error: "operator_discarded_after_review",
+    })
+    .eq("id", eventId)
+    .eq("status", "dead_letter");
+  if (error) throw new Error("Dead-letter event could not be rejected.");
+
+  await writeCommercialAudit(userDb, {
+    actorId: userId,
+    action: "whatsapp.webhook_event.rejected",
+    entityType: "wa_webhook_event",
+    entityId: eventId,
+    tenantId: event.tenant_id,
+    reason,
+    after: { propertyId: event.property_id, status: "rejected" },
+  });
+  return { eventId, status: "rejected" as const };
+}
