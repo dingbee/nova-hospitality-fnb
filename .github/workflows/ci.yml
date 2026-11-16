@@ -292,3 +292,24 @@ jobs:
             pr188-migration-replay-schema.sql
           if-no-files-found: error
           retention-days: 14
+
+      - name: Fingerprint both isolated replay schemas for live comparison
+        env:
+          PGPASSWORD: postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -X -A -t -F ',' -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/p0-01-schema-fingerprint.sql > p0-01-main-schema-fingerprint.csv
+          psql -X -A -t -F ',' -h localhost -U postgres -d lexibite_pr188_lineage_replay \
+            -f standalone/db/verification/p0-01-schema-fingerprint.sql > p0-01-pr188-schema-fingerprint.csv
+
+      - name: Upload P0-01 schema fingerprints
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-01-schema-fingerprints-${{ github.sha }}
+          path: |
+            p0-01-main-schema-fingerprint.csv
+            p0-01-pr188-schema-fingerprint.csv
+          if-no-files-found: error
+          retention-days: 14
