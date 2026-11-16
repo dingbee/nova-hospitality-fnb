@@ -130,3 +130,17 @@ export const approveCostAllocationRuleFn = createServerFn({method:"POST"}).middl
 export const allocateOperationalExpenseByRuleFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
  .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),expenseId:z.string().uuid(),ruleId:z.string().uuid()}).parse(d))
  .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.allocateOperationalExpenseByRule(context.supabase,context.userId,data);});
+
+
+const costReconciliationInput = z.object({tenantId:z.string().uuid(),propertyId:z.string().uuid(),periodStart:z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),periodEnd:z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/)});
+export const runCostReconciliationFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>costReconciliationInput.parse(d)).handler(async({data,context})=>{
+  const mod=await import("./cost-reconciliation.server");return mod.runOperationalAllocationReconciliation(context.supabase,context.userId,data);
+ });
+export const listCostReconciliationDashboardFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),propertyId:z.string().uuid().optional()}).parse(d)).handler(async({data,context})=>{
+  const mod=await import("./cost-reconciliation.server");return mod.listCostReconciliationDashboard(context.supabase,context.userId,data);
+ });
+export const updateCostVarianceCaseFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),varianceId:z.string().uuid(),status:z.enum(["under_investigation","awaiting_explanation","action_required","resolved","closed","reopened"]),note:z.string().trim().min(3).max(1000).optional(),resolutionDetails:z.string().trim().min(3).max(2000).optional()}).parse(d))
+ .handler(async({data,context})=>{const mod=await import("./cost-reconciliation.server");return mod.updateCostVarianceCase(context.supabase,context.userId,data);});
