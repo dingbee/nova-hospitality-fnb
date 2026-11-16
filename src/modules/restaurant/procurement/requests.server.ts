@@ -348,8 +348,9 @@ export async function convertRequestToOrder(
       throw new Error("An approved purchase-request line has invalid item, quantity or price data.");
     }
     if (line.supplier_product_id && (!line.unit_id || !line.stock_unit_id || stockFactor == null ||
-        !Number.isFinite(stockFactor) || stockFactor <= 0)) {
-      throw new Error("A supplier-linked request line is missing its immutable purchase-to-stock conversion snapshot.");
+        !Number.isFinite(stockFactor) || stockFactor <= 0 || orderMultiple == null ||
+        !Number.isFinite(orderMultiple) || orderMultiple <= 0)) {
+      throw new Error("A supplier-linked request line is missing its immutable purchase-to-stock conversion or order-multiple snapshot.");
     }
     if (stockFactor != null && (!line.stock_unit_id || !Number.isFinite(stockFactor) || stockFactor <= 0)) {
       throw new Error("A purchase-request line has an invalid stock-unit conversion snapshot.");
@@ -411,7 +412,8 @@ export async function convertRequestToOrder(
       !sameNumber(freshSuggestion.purchaseUnitPrice, recommendation.purchase_unit_price) ||
       !sameNumber(freshSuggestion.stockUnitsPerPurchaseUnit, recommendation.stock_units_per_purchase_unit) ||
       !sameNumber(freshSuggestion.minimumOrderQuantity ?? 0, recommendation.minimum_order_quantity ?? 0) ||
-      !sameNumber(freshSuggestion.orderMultiple ?? 1, recommendation.order_multiple ?? 1) ||
+      freshSuggestion.orderMultiple == null || recommendation.order_multiple == null ||
+      !sameNumber(freshSuggestion.orderMultiple, recommendation.order_multiple) ||
       !sameNumber(freshSuggestion.recommendedQuantity, recommendation.recommended_stock_quantity) ||
       !sameNumber(freshSuggestion.netAvailable, recommendation.net_available) ||
       !sameNumber(freshSuggestion.forecastDemand, recommendation.forecast_demand) ||
