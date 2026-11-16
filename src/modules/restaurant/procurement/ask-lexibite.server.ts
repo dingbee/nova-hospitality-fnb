@@ -370,7 +370,7 @@ export async function previewIntelligentPurchaseOrders(
       continue;
     }
     const propertyScopeId = item.property_id ?? scopedPropertyId;
-    const deliveryLocationId = input.locationId ?? item.location_id ?? null;
+    const deliveryLocationId = input.locationId ?? null;
     if (!deliveryLocationId || (!propertyScopeId && !input.locationId)) {
       skipped.push(suggestion.name + ": an explicit purchasing property or authorized central-store location is required.");
       continue;
