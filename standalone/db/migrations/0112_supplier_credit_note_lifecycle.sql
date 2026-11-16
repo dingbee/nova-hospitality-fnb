@@ -230,6 +230,16 @@ BEGIN
       'purchasing_officer'::public.restaurant_role,
       'accountant'::public.restaurant_role
     ],
+    v_note.property_id
+  ) OR NOT public.restaurant_can_write_scoped(
+    _tenant_id,
+    ARRAY[
+      'owner'::public.restaurant_role,
+      'general_manager'::public.restaurant_role,
+      'restaurant_manager'::public.restaurant_role,
+      'purchasing_officer'::public.restaurant_role,
+      'accountant'::public.restaurant_role
+    ],
     v_invoice.property_id
   ) THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'CREDIT_NOTE_APPLICATION_PROPERTY_FORBIDDEN';
