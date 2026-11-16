@@ -113,7 +113,9 @@ describe("PW-08 supplier invoice reconciliation", () => {
   it("accounts for earlier invoices when reconciling a later installment", () => {
     const evidence = base();
     evidence.invoiceLines[0]!.quantity = 1;
+    evidence.invoiceLines[0]!.taxAmount = 18;
     evidence.invoice.subtotal = 100;
+    evidence.invoice.taxTotal = 18;
     evidence.invoice.total = 118;
     evidence.previouslyInvoicedQuantities = { "po-line-1": 1 };
     expect(calculateSupplierInvoiceMatch(evidence).matchStatus).toBe("matched");
