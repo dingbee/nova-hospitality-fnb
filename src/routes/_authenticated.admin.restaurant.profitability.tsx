@@ -286,10 +286,13 @@ function ProfitabilityPage() {
           <ul className="divide-y text-sm">
             {(snapshots.data ?? []).slice(0, 25).map((s: any) => (
               <li key={s.id} className="flex items-center justify-between py-2">
-                <span>{s.menu_item_name}</span>
+                <span>
+                  {s.menu_item_name}
+                  {s.confidence_state ? <span className="ml-2 text-xs text-muted-foreground">{s.confidence_state.replaceAll("_", " ")}</span> : null}
+                </span>
                 <span className="text-xs text-muted-foreground">
                   {s.period_start} → {s.period_end} · {s.currency}{" "}
-                  {Number(s.gross_profit).toLocaleString()} GP
+                  {Number(s.gross_profit).toLocaleString()} {s.snapshot_type === "operational" ? "operating profit" : "GP"}
                   {s.food_cost_percent != null ? ` · ${s.food_cost_percent}% food cost` : ""}
                 </span>
               </li>
