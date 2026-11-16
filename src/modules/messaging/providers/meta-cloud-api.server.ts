@@ -58,15 +58,18 @@ function graphUrl(path: string, config?: Pick<MetaPlatformConfig, "graphApiVersi
 }
 
 async function readGraphResponse<T>(response: Response): Promise<T> {
-  let body: any;
+  let body: unknown;
   try {
     body = await response.json();
   } catch {
     body = null;
   }
 
-  if (!response.ok || body?.error) {
-    const error = (body?.error ?? {}) as MetaGraphErrorInfo;
+  const payload = typeof body === "object" && body !== null ? body as Record<string, unknown> : {};
+  const error = typeof payload.error === "object" && payload.error !== null
+    ? payload.error as MetaGraphErrorInfo
+    : {};
+  if (!response.ok || payload.error) {
     const message = typeof error.message === "string" ? error.message.slice(0, 500) : "Meta Graph API request failed.";
     throw new MetaGraphError(message, response.status, typeof error.code === "number" ? error.code : null,
       typeof error.error_subcode === "number" ? error.error_subcode : null);
@@ -136,6 +139,45 @@ export async function exchangeEmbeddedSignupCode(
     tokenType: body.token_type ?? "bearer",
     expiresIn: typeof body.expires_in === "number" ? body.expires_in : null,
   };
+}
+
+export type MetaTokenInspection = {
+  is_valid: boolean;
+  app_id?: string;
+  type?: string;
+  expires_at?: number;
+  scopes?: string[];
+  granular_scopes?: Array<{ scope: string; target_ids?: string[] }>;
+};
+
+/** Inspects a tenant token using Meta's app-scoped debug_token endpoint. */
+export async function inspectAccessToken(
+  accessToken: string,
+  platform: MetaPlatformConfig,
+): Promise<MetaTokenInspection> {
+  const appId = required(platform.appId, "META_APP_ID");
+  const appSecret = required(platform.appSecret, "META_APP_SECRET");
+  const url = graphUrl("debug_token", platform);
+  url.searchParams.set("input_token", required(accessToken, "Meta access token"));
+  url.searchParams.set("access_token", `${appId}|${appSecret}`);
+
+  let response: Response;
+  try {
+    response = await fetch(url, { method: "GET", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+  } catch {
+    throw new MetaGraphError("Meta token inspection failed due to a network or timeout error.", null);
+  }
+  const body = await readGraphResponse<{ data?: MetaTokenInspection }>(response);
+  if (!body.data) throw new MetaGraphError("Meta token inspection returned no token data.", response.status);
+  return body.data;
+}
+
+export function assertRequiredWhatsAppPermissions(token: MetaTokenInspection): void {
+  if (!token.is_valid) throw new Error("Meta access token is invalid or expired.");
+  const scopes = new Set(token.scopes ?? []);
+  const requiredScopes = ["whatsapp_business_management", "whatsapp_business_messaging"];
+  const missing = requiredScopes.filter((scope) => !scopes.has(scope));
+  if (missing.length) throw new Error(`Meta token is missing required permissions: ${missing.join(", ")}.`);
 }
 
 export type MetaWabaDetails = {
