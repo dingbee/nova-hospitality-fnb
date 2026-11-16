@@ -280,6 +280,8 @@ jobs:
 
           psql -X -A -t -F ',' -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
             -f standalone/db/verification/p0-01-schema-fingerprint.sql > pr188-baseline-schema-fingerprint.csv
+          psql -X -A -t -F '|' -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -f standalone/db/verification/p0-01-schema-object-fingerprint.sql > pr188-baseline-object-fingerprint.csv
           psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
             -c "\\copy (SELECT filename, checksum, status, applied_at, note FROM nova_local.schema_migrations ORDER BY filename) TO STDOUT WITH CSV HEADER" > pr188-baseline-migration-ledger.csv
           pg_container="$(docker ps -q --filter ancestor=postgres:17 | head -1)"
@@ -306,6 +308,8 @@ jobs:
           psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
             -c "\\copy (SELECT filename, checksum, status, applied_at, note FROM nova_local.schema_migrations ORDER BY filename) TO STDOUT WITH CSV HEADER" > pr188-hardened-migration-ledger.csv
           docker exec -e PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" "$pg_container" pg_dump -h localhost -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" --schema-only --no-owner --no-privileges > pr188-hardened-schema.sql
+          psql -X -A -t -F '|' -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -f standalone/db/verification/p0-01-schema-object-fingerprint.sql > pr188-hardened-object-fingerprint.csv
 
       - name: Upload PR #188 baseline and hardened replay evidence
         uses: actions/upload-artifact@v4
@@ -316,6 +320,8 @@ jobs:
             pr188-baseline-schema.sql
             pr188-baseline-schema-fingerprint.csv
             pr188-hardened-migration-ledger.csv
+            pr188-baseline-object-fingerprint.csv
+            pr188-hardened-object-fingerprint.csv
             pr188-hardened-schema.sql
           if-no-files-found: error
           retention-days: 14
@@ -330,6 +336,10 @@ jobs:
             -f standalone/db/verification/test-procurement-tenant-referential-integrity.sql
           psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_pr188_lineage_replay \
             -f standalone/db/verification/test-procurement-tenant-referential-integrity.sql
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/test-me03-financial-function-reconstruction.sql
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_pr188_lineage_replay \
+            -f standalone/db/verification/test-me03-financial-function-reconstruction.sql
 
       - name: Fingerprint both isolated replay schemas for live comparison
         env:
@@ -341,6 +351,9 @@ jobs:
             -f standalone/db/verification/p0-01-schema-fingerprint.sql > p0-01-main-schema-fingerprint.csv
           psql -X -A -t -F ',' -h localhost -U postgres -d lexibite_pr188_lineage_replay \
             -f standalone/db/verification/p0-01-schema-fingerprint.sql > p0-01-pr188-schema-fingerprint.csv
+          psql -X -A -t -F '|' -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/p0-01-schema-object-fingerprint.sql > p0-01-main-object-fingerprint.csv
+          cp pr188-hardened-object-fingerprint.csv p0-01-pr188-hardened-object-fingerprint.csv
 
       - name: Upload P0-01 schema fingerprints
         uses: actions/upload-artifact@v4
@@ -349,5 +362,7 @@ jobs:
           path: |
             p0-01-main-schema-fingerprint.csv
             p0-01-pr188-schema-fingerprint.csv
+            p0-01-main-object-fingerprint.csv
+            p0-01-pr188-hardened-object-fingerprint.csv
           if-no-files-found: error
           retention-days: 14
