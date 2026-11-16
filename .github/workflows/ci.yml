@@ -156,6 +156,9 @@ jobs:
           createdb -h localhost -U postgres lexibite_consumables_test
           psql -h localhost -U postgres -d lexibite_consumables_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-operational-consumables-phase1.sql
 
+      - name: Verify Phase 1 per-cover operational consumption service
+        run: bunx vitest run src/modules/restaurant/inventory/movements.server.test.ts
+
       - name: Verify operational profitability snapshot schema and RLS
         env:
           PGPASSWORD: postgres
