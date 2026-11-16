@@ -388,6 +388,12 @@ function ProfitabilityPage() {
             icon={Calculator}
             hint="Captured from classified stock movements at order close"
           />
+          <StatCard
+            label="Other direct variable costs"
+            value={money(result.totals.other_direct_variable_costs)}
+            icon={Calculator}
+            hint="Classified stock usage beyond recipe COGS and service supplies"
+          />
         </div>
       )}
 
