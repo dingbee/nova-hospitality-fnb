@@ -14,6 +14,7 @@ import { emitRestaurantEvent } from "../events/emit.server";
 import { nextDocumentNumber, recordProcurementAudit } from "./audit.server";
 import { recordPriceObservation } from "./pricing.server";
 import { raiseVariance } from "./variances.server";
+import { calculateSupplierInvoiceMatch } from "./invoice-matching";
 import {
   DOCUMENT_PREFIX,
   type RecordInvoiceInput,
@@ -155,165 +156,147 @@ export async function recordSupplierInvoice(sb: Sb, userId: string, input: Recor
   return { id: invoice.id, documentNumber, total, match };
 }
 
-/** Three-way match: order vs accepted receipts vs invoice. Reports, never approves. */
+/** Three-way match using only tenant-scoped, posted and currency-consistent evidence. */
 export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: string, invoiceId: string) {
   await assertCapability(sb, userId, tenantId, "invoice.manage");
 
-  const { data: invoice, error } = await sb
+  const { data: invoice, error: invoiceError } = await sb
     .from("restaurant_supplier_invoices")
-    .select(
-      "id, tenant_id, supplier_id, purchase_order_id, document_number, total, currency, property_id, location_id",
-    )
+    .select("id, tenant_id, supplier_id, purchase_order_id, document_number, subtotal, tax_total, total, currency, property_id, location_id")
     .eq("tenant_id", tenantId)
     .eq("id", invoiceId)
     .single();
-  if (error || !invoice) throw new Error("Supplier invoice not found.");
+  if (invoiceError || !invoice) throw new Error("Supplier invoice not found.");
 
-  const invoiceTotal = Number(invoice.total ?? 0);
+  const { data: invoiceLines, error: invoiceLinesError } = await sb
+    .from("restaurant_supplier_invoice_items")
+    .select("id, purchase_order_item_id, receipt_item_id, description, quantity, unit_price, tax_amount")
+    .eq("tenant_id", tenantId)
+    .eq("invoice_id", invoice.id);
+  if (invoiceLinesError) throw new Error("Unable to load supplier invoice lines: " + invoiceLinesError.message);
+
+  let purchaseOrder: { currency: string; lines: any[] } | null = null;
   let orderTotal: number | null = null;
   let receivedValue: number | null = null;
-  const dimensions: Array<{ dimension: "quantity" | "price"; label: string; expected: number; actual: number }> = [];
+  let receiptCurrencies: string[] = [];
+  let receiptEvidence: any[] = [];
 
   if (invoice.purchase_order_id) {
-    const { data: po } = await sb
+    const { data: po, error: poError } = await sb
       .from("restaurant_purchase_orders")
-      .select("id, total")
+      .select("id, supplier_id, total, currency")
       .eq("tenant_id", tenantId)
       .eq("id", invoice.purchase_order_id)
       .single();
-    orderTotal = po ? Number(po.total ?? 0) : null;
+    if (poError || !po) throw new Error("Linked purchase order is missing or inaccessible.");
+    if (po.supplier_id !== invoice.supplier_id) {
+      throw new Error("Supplier invoice and linked purchase order belong to different suppliers.");
+    }
+    orderTotal = Number(po.total ?? 0);
 
-    const { data: receipts } = await sb
+    const { data: receipts, error: receiptsError } = await sb
       .from("restaurant_goods_receipts")
-      .select("id, accepted_value, status")
+      .select("id, accepted_value, status, currency")
       .eq("tenant_id", tenantId)
       .eq("purchase_order_id", invoice.purchase_order_id)
       .eq("status", "posted");
-    receivedValue = ((receipts ?? []) as any[]).reduce((s, r) => s + Number(r.accepted_value ?? 0), 0);
+    if (receiptsError) throw new Error("Unable to load posted receipt evidence: " + receiptsError.message);
+    const postedReceipts = (receipts ?? []) as any[];
+    receivedValue = postedReceipts.reduce((sum, row) => sum + Number(row.accepted_value ?? 0), 0);
+    receiptCurrencies = postedReceipts.map((row) => String(row.currency ?? po.currency ?? ""));
 
-    // ---- line-level match: quantity and price are separate dimensions -----
-    const [{ data: invoiceLines }, { data: orderLines }, { data: receiptLines }] = await Promise.all([
-      sb
-        .from("restaurant_supplier_invoice_items")
-        .select("id, purchase_order_item_id, description, quantity, unit_price")
+    const { data: orderLines, error: orderLinesError } = await sb
+      .from("restaurant_purchase_order_items")
+      .select("id, description, quantity, unit_price")
+      .eq("tenant_id", tenantId)
+      .eq("purchase_order_id", invoice.purchase_order_id);
+    if (orderLinesError) throw new Error("Unable to load purchase-order lines: " + orderLinesError.message);
+
+    let receiptLines: any[] = [];
+    if (postedReceipts.length > 0) {
+      const { data, error } = await sb
+        .from("restaurant_goods_receipt_items")
+        .select("id, receipt_id, purchase_order_item_id, accepted_quantity")
         .eq("tenant_id", tenantId)
-        .eq("invoice_id", invoice.id),
-      sb
-        .from("restaurant_purchase_order_items")
-        .select("id, description, quantity, unit_price")
-        .eq("tenant_id", tenantId)
-        .eq("purchase_order_id", invoice.purchase_order_id),
-      ((receipts ?? []) as any[]).length
-        ? sb
-            .from("restaurant_goods_receipt_items")
-            .select("purchase_order_item_id, accepted_quantity")
-            .eq("tenant_id", tenantId)
-            .in(
-              "receipt_id",
-              ((receipts ?? []) as any[]).map((r) => r.id),
-            )
-        : Promise.resolve({ data: [] }),
-    ]);
-
-    const orderById = new Map(((orderLines ?? []) as any[]).map((o) => [o.id, o]));
-    const acceptedByOrderItem = new Map<string, number>();
-    for (const r of (receiptLines ?? []) as any[]) {
-      if (!r.purchase_order_item_id) continue;
-      acceptedByOrderItem.set(
-        r.purchase_order_item_id,
-        (acceptedByOrderItem.get(r.purchase_order_item_id) ?? 0) + Number(r.accepted_quantity ?? 0),
-      );
+        .in("receipt_id", postedReceipts.map((row) => row.id));
+      if (error) throw new Error("Unable to load accepted receipt lines: " + error.message);
+      receiptLines = (data ?? []) as any[];
     }
-
-    for (const line of (invoiceLines ?? []) as any[]) {
-      if (!line.purchase_order_item_id) continue;
-      const order = orderById.get(line.purchase_order_item_id);
-      if (!order) continue;
-      const invoicedQty = Number(line.quantity ?? 0);
-      const invoicedPrice = Number(line.unit_price ?? 0);
-      const acceptedQty = acceptedByOrderItem.get(line.purchase_order_item_id) ?? 0;
-      const orderedPrice = Number(order.unit_price ?? 0);
-
-      if (Math.abs(invoicedQty - acceptedQty) > 0.0001) {
-        dimensions.push({
-          dimension: "quantity",
-          label: `${line.description}: invoiced ${invoicedQty} against ${acceptedQty} accepted`,
-          expected: acceptedQty,
-          actual: invoicedQty,
-        });
-      }
-      if (orderedPrice > 0 && Math.abs(invoicedPrice - orderedPrice) > 0.0001) {
-        dimensions.push({
-          dimension: "price",
-          label: `${line.description}: invoiced at ${invoicedPrice} against ${orderedPrice} ordered`,
-          expected: orderedPrice,
-          actual: invoicedPrice,
-        });
-      }
-    }
-
-    for (const d of dimensions) {
-      await raiseVariance(sb, userId, {
-        tenantId,
-        propertyId: invoice.property_id,
-        locationId: invoice.location_id,
-        varianceType: d.dimension,
-        severity: "high",
-        label: d.label,
-        purchaseOrderId: invoice.purchase_order_id,
-        invoiceId: invoice.id,
-        supplierId: invoice.supplier_id,
-        expectedValue: d.expected,
-        actualValue: d.actual,
-        currency: invoice.currency,
-        detail: { stage: "three_way_match", dimension: d.dimension },
-        dedupeKey: `invoice-${d.dimension}:${invoice.id}:${d.label}`,
-      });
-    }
+    const postedIds = new Set(postedReceipts.map((row) => row.id));
+    receiptEvidence = receiptLines.map((line) => ({
+      id: line.id,
+      purchaseOrderItemId: line.purchase_order_item_id ?? null,
+      acceptedQuantity: Number(line.accepted_quantity ?? 0),
+      posted: postedIds.has(line.receipt_id),
+    }));
+    purchaseOrder = {
+      currency: String(po.currency ?? ""),
+      lines: ((orderLines ?? []) as any[]).map((line) => ({
+        id: line.id,
+        quantity: Number(line.quantity ?? 0),
+        unitPrice: Number(line.unit_price ?? 0),
+      })),
+    };
   }
 
-  const tolerance = 0.01; // 1% commercial tolerance
-  const within = (a: number | null, b: number) =>
-    a == null ? null : Math.abs(a - b) <= Math.max(Math.abs(a), Math.abs(b)) * tolerance + 0.5;
+  const result = calculateSupplierInvoiceMatch({
+    invoice: {
+      currency: String(invoice.currency ?? ""),
+      subtotal: Number(invoice.subtotal ?? 0),
+      taxTotal: Number(invoice.tax_total ?? 0),
+      total: Number(invoice.total ?? 0),
+    },
+    purchaseOrder,
+    receipts: receiptEvidence,
+    receiptCurrencies,
+    invoiceLines: ((invoiceLines ?? []) as any[]).map((line) => ({
+      id: line.id,
+      purchaseOrderItemId: line.purchase_order_item_id ?? null,
+      receiptItemId: line.receipt_item_id ?? null,
+      description: String(line.description ?? "Invoice line"),
+      quantity: Number(line.quantity ?? 0),
+      unitPrice: Number(line.unit_price ?? 0),
+      taxAmount: Number(line.tax_amount ?? 0),
+    })),
+  });
 
-  const orderOk = within(orderTotal, invoiceTotal);
-  const receiptOk = within(receivedValue, invoiceTotal);
-
-  let matchStatus: "unmatched" | "matched" | "partially_matched" | "mismatched";
-  if (orderTotal == null && receivedValue == null) matchStatus = "unmatched";
-  else if (dimensions.length > 0) matchStatus = "mismatched";
-  else if (orderOk !== false && receiptOk !== false) matchStatus = "matched";
-  else if (orderOk === true || receiptOk === true) matchStatus = "partially_matched";
-  else matchStatus = "mismatched";
-
-  if (receivedValue != null && receiptOk === false) {
+  for (const dimension of result.dimensions) {
     await raiseVariance(sb, userId, {
       tenantId,
       propertyId: invoice.property_id,
       locationId: invoice.location_id,
-      varianceType: "invoice",
+      varianceType: dimension.dimension,
       severity: "high",
-      label: `Invoice ${invoice.document_number} does not match accepted goods value`,
+      label: dimension.label,
       purchaseOrderId: invoice.purchase_order_id,
       invoiceId: invoice.id,
       supplierId: invoice.supplier_id,
-      expectedValue: receivedValue,
-      actualValue: invoiceTotal,
+      expectedValue: dimension.expected,
+      actualValue: dimension.actual,
       currency: invoice.currency,
-      detail: { stage: "three_way_match", order_total: orderTotal },
-      dedupeKey: `invoice-match:${invoice.id}`,
+      detail: {
+        stage: "pw08_three_way_match",
+        code: dimension.code,
+        dimension: dimension.dimension,
+      },
+      dedupeKey: `pw08:${dimension.code}:${invoice.id}`,
     });
   }
 
-  await sb
+  const { error: updateError } = await sb
     .from("restaurant_supplier_invoices")
     .update({
-      match_status: matchStatus,
+      match_status: result.matchStatus,
       matched_at: new Date().toISOString(),
-      status: matchStatus === "mismatched" ? "disputed" : matchStatus === "matched" ? "matched" : "recorded",
+      status: result.matchStatus === "mismatched"
+        ? "disputed"
+        : result.matchStatus === "matched"
+          ? "matched"
+          : "recorded",
     })
     .eq("tenant_id", tenantId)
     .eq("id", invoice.id);
+  if (updateError) throw new Error("Unable to persist invoice match result: " + updateError.message);
 
   await recordProcurementAudit(sb, userId, {
     tenantId,
@@ -321,8 +304,17 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
     documentId: invoice.id,
     documentNumber: invoice.document_number,
     action: "matched",
-    newState: matchStatus,
-    metadata: { order_total: orderTotal, received_value: receivedValue, invoice_total: invoiceTotal },
+    newState: result.matchStatus,
+    metadata: {
+      order_total: orderTotal,
+      accepted_receipt_value: receivedValue,
+      invoice_subtotal: result.netSubtotal,
+      invoice_tax: result.taxTotal,
+      invoice_total: result.grossTotal,
+      variance_codes: result.dimensions.map((dimension) => dimension.code),
+      accepted_line_count: result.acceptedLineCount,
+      pending_line_count: result.pendingLineCount,
+    },
   });
 
   await emitRestaurantEvent(sb, userId, {
@@ -333,17 +325,27 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
     entityType: "restaurant_supplier_invoice",
     entityId: invoice.id,
     source: "restaurant-os",
-    dedupeKey: `restaurant.invoice.${invoice.id}.${matchStatus}`,
+    dedupeKey: `restaurant.invoice.${invoice.id}.${result.matchStatus}`,
     payload: {
-      match_status: matchStatus,
+      match_status: result.matchStatus,
       order_total: orderTotal,
-      received_value: receivedValue,
-      invoice_total: invoiceTotal,
-      variance_dimensions: dimensions.map((d) => d.dimension),
+      accepted_receipt_value: receivedValue,
+      invoice_subtotal: result.netSubtotal,
+      invoice_tax: result.taxTotal,
+      invoice_total: result.grossTotal,
+      variance_codes: result.dimensions.map((dimension) => dimension.code),
     },
   });
 
-  return { matchStatus, orderTotal, receivedValue, invoiceTotal, dimensions };
+  return {
+    matchStatus: result.matchStatus,
+    orderTotal,
+    receivedValue,
+    invoiceTotal: result.grossTotal,
+    invoiceSubtotal: result.netSubtotal,
+    taxTotal: result.taxTotal,
+    dimensions: result.dimensions,
+  };
 }
 
 export async function setInvoicePaymentStatus(
