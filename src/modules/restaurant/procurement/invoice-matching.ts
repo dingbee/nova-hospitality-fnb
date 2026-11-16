@@ -31,6 +31,7 @@ export interface InvoiceMatchEvidence {
   purchaseOrder: { currency: string; lines: PurchaseOrderMatchLine[] } | null;
   receipts: ReceiptMatchLine[];
   invoiceLines: InvoiceMatchLine[];
+  receiptCurrencies?: string[];
 }
 export interface InvoiceMatchDimension {
   dimension: InvoiceVarianceDimension;
@@ -88,6 +89,9 @@ export function calculateSupplierInvoiceMatch(evidence: InvoiceMatchEvidence): I
 
   if (currency(invoice.currency) !== currency(purchaseOrder.currency)) {
     add("invoice", "CURRENCY_MISMATCH", "Invoice and purchase order currencies differ; conversion is not inferred.");
+  }
+  if ((evidence.receiptCurrencies ?? []).some((value) => currency(value) !== currency(invoice.currency))) {
+    add("invoice", "RECEIPT_CURRENCY_MISMATCH", "Invoice and posted receipt currencies differ; conversion is not inferred.");
   }
 
   const orderById = new Map(purchaseOrder.lines.map((line) => [line.id, line]));
