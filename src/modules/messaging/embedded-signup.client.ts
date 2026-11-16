@@ -139,7 +139,10 @@ export function loadMetaFacebookSdk(config: MetaEmbeddedSignupConfig): Promise<v
   return sdkPromise;
 }
 
-export function parseMetaEmbeddedSignupMessage(origin: string, rawData: unknown): MetaEmbeddedSignupEvent | null {
+export function parseMetaEmbeddedSignupMessage(
+  origin: string,
+  rawData: unknown,
+): MetaEmbeddedSignupEvent | null {
   if (origin !== "https://www.facebook.com" && origin !== "https://web.facebook.com") return null;
   if (typeof rawData !== "string") return null;
 
@@ -152,9 +155,10 @@ export function parseMetaEmbeddedSignupMessage(origin: string, rawData: unknown)
   if (typeof parsed !== "object" || parsed === null) return null;
   const envelope = parsed as { type?: unknown; event?: unknown; data?: unknown };
   if (envelope.type !== "WA_EMBEDDED_SIGNUP" || typeof envelope.event !== "string") return null;
-  const data = typeof envelope.data === "object" && envelope.data !== null
-    ? envelope.data as Record<string, unknown>
-    : {};
+  const data =
+    typeof envelope.data === "object" && envelope.data !== null
+      ? (envelope.data as Record<string, unknown>)
+      : {};
 
   if (envelope.event === "FINISH") {
     if (typeof data.waba_id !== "string" || typeof data.phone_number_id !== "string") return null;
