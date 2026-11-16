@@ -29,6 +29,8 @@ vi.mock("../inventory/movements.server", () => ({
     if (movements.some((x) => x.dedupeKey === m.dedupeKey)) return null;
     const row = { id: `mv-${movements.length + 1}`, ...m };
     movements.push(row);
+    db["restaurant_stock_movements"] ??= [];
+    db["restaurant_stock_movements"].push({ id: row.id, tenant_id: m.tenantId, dedupe_key: m.dedupeKey });
     return row;
   }),
 }));
@@ -258,6 +260,33 @@ describe("receiving cannot bypass the purchase order state machine", () => {
     expect(movements).toHaveLength(0);
     expect(events).toHaveLength(0);
     expect(db["restaurant_goods_receipts"]).toHaveLength(0);
+  });
+
+  it("recovers a partially posted receipt without duplicating stock or PO fulfilment", async () => {
+    const { orderId, itemId } = seedOrder("approved", 100);
+    const draft = await createGoodsReceipt(sb, USER, {
+      tenantId: TENANT,
+      purchaseOrderId: orderId,
+      currency: "TZS",
+      post: false,
+      lines: [line(itemId, 40)],
+    } as any);
+
+    await postGoodsReceipt(sb, USER, TENANT, draft.id);
+    expect(movements).toHaveLength(1);
+    expect(db["restaurant_purchase_order_items"]![0]!.received_quantity).toBe(40);
+
+    // Simulate failure after ledger/fulfilment side effects but before the
+    // receipt header is marked posted. The next attempt must reconcile the
+    // existing movement and must not apply PO counters a second time.
+    db["restaurant_goods_receipts"]![0]!.status = "draft";
+    db["restaurant_goods_receipt_items"]![0]!.stock_movement_id = null;
+    await postGoodsReceipt(sb, USER, TENANT, draft.id);
+
+    expect(movements).toHaveLength(1);
+    expect(db["restaurant_purchase_order_items"]![0]!.received_quantity).toBe(40);
+    expect(db["restaurant_purchase_order_items"]![0]!.accepted_quantity).toBe(40);
+    expect(db["restaurant_goods_receipt_items"]![0]!.stock_movement_id).toBe(movements[0]!.id);
   });
 
   it("refuses to resurrect an order cancelled after the receipt was drafted", async () => {
