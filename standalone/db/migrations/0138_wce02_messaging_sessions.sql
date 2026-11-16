@@ -421,7 +421,7 @@ BEGIN
       FROM public.wa_webhook_events earlier
       WHERE earlier.phone_number_id = e.phone_number_id
         AND (earlier.received_at, earlier.id) < (e.received_at, e.id)
-        AND earlier.status IN ('pending', 'processing', 'retry')
+        AND earlier.status IN ('pending', 'processing', 'retry', 'dead_letter')
     )
     ORDER BY e.received_at, e.id
     FOR UPDATE SKIP LOCKED
