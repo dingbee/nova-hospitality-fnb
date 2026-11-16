@@ -177,32 +177,6 @@ export async function computeProfitability(
   const allocatedOperatingExpenses = Number(
     allocationRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0).toFixed(2),
   );
-  if (orderIds.length === 0) {
-    return {
-      periodStart: input.from,
-      periodEnd: input.to,
-      rows: [],
-      totals: {
-        quantity_sold: 0, revenue: 0, theoretical_cost: 0, actual_cost: 0, variance: 0,
-        gross_profit: 0, margin_percent: null, food_cost_percent: null,
-        allocated_operating_expenses: allocatedOperatingExpenses,
-        contribution_profit: 0, contribution_margin_percent: null,
-        operating_profit: Number((-allocatedOperatingExpenses).toFixed(2)), operating_margin_percent: null,
-        currency, gross_sales: 0, discounts: 0, refunds: 0, tax_collected: 0, net_sales: 0,
-        service_consumables: 0, other_direct_variable_costs: 0, direct_variable_costs: 0,
-        unallocated_operating_expenses: 0, confidence_state: "incomplete_source_data",
-      },
-      operational: calculateOperationalProfitability({
-        currency, grossSales: 0, discounts: 0, refunds: 0, salesAdjustments: 0, taxCollected: 0,
-        recipeCogs: 0, recipeCostBasis: "standard", serviceConsumables: 0,
-        consumablesCostBasis: "estimated", otherDirectVariableCosts: 0,
-        allocatedOperatingExpenses, unallocatedOperatingExpenses: 0,
-        pendingExpenseVerification: false, incompleteSourceData: true,
-      }),
-      dimensions: [],
-    };
-  }
-
   const [{ data: items, error: itemError }, { data: movements, error: movementError }, { data: payments, error: paymentError }, { data: unallocated, error: unallocatedError }, { data: pendingExpenses, error: pendingExpenseError }] = await Promise.all([
     sb.from("restaurant_order_items")
       .select("id, order_id, menu_item_id, description, quantity, line_total, line_cost, discount, tax_amount, service_charge_amount, status, is_comp, channel")
