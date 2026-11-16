@@ -2,6 +2,7 @@
 begin;
 create extension if not exists pgcrypto;
 create schema if not exists auth;
+create table auth.users(id uuid primary key);
 do $$ begin create type public.restaurant_role as enum('owner','general_manager','restaurant_manager','accountant'); exception when duplicate_object then null; end $$;
 create table public.restaurant_tenants(id uuid primary key);
 create table public.restaurant_properties(id uuid primary key,tenant_id uuid not null references public.restaurant_tenants(id));
@@ -167,6 +168,24 @@ do $$ begin
  if (select sum(amount) from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002')<>1250 then raise exception 'Activity driver allocation did not reconcile'; end if;
  if (select amount from public.restaurant_cost_allocations where source_type='operational_consumption' and source_id='50000000-0000-0000-0000-000000000002' and property_id='20000000-0000-0000-0000-000000000001')<>750 then raise exception 'Activity driver weight 3/5 was not applied'; end if;
 end $$;
+-- Phase 4 additive reconciliation schema and property isolation.
+insert into public.restaurant_cost_reconciliation_runs(tenant_id,property_id,period_start,period_end,currency,source_fingerprint)
+values
+ ('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','2026-11-01','2026-11-30','TZS','fixture-property-1'),
+ ('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000003','2026-11-01','2026-11-30','TZS','fixture-property-3');
+insert into public.restaurant_cost_reconciliation_lines(tenant_id,run_id,property_id,source_type,source_id,variance_kind,currency,expected_amount,actual_amount,variance_amount)
+select tenant_id,id,property_id,'stock_movement','50000000-0000-0000-0000-000000000001','stock_quantity','TZS',100,125,25
+from public.restaurant_cost_reconciliation_runs;
+insert into public.restaurant_cost_variances(tenant_id,property_id,reconciliation_line_id,severity)
+select tenant_id,property_id,id,'medium' from public.restaurant_cost_reconciliation_lines;
+-- Property-scoped user must see only the reconciliation and variance for their assigned property.
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000002',true);
+set local role authenticated;
+do $phase4$ begin
+ if (select count(*) from public.restaurant_cost_reconciliation_runs) <> 1 then raise exception 'Phase 4 run RLS leaked across properties'; end if;
+ if (select count(*) from public.restaurant_cost_variances) <> 1 then raise exception 'Phase 4 variance RLS leaked across properties'; end if;
+end $phase4$;
+reset role;
 -- Property-scoped membership cannot read or write another property in the same tenant.
 insert into public.restaurant_members values
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','restaurant_manager','20000000-0000-0000-0000-000000000001');
