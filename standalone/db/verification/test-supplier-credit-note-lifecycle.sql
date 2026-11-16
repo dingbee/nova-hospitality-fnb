@@ -278,24 +278,31 @@ BEGIN
 END
 $credit_note_rejections$;
 
+SELECT public.restaurant_apply_supplier_credit_note(
+ '10000000-0000-4000-8000-000000000001',
+ '40000000-0000-4000-8000-000000000001',
+ '30000000-0000-4000-8000-000000000001',
+ 10,'Apply remaining credit','60000000-0000-4000-8000-000000000009'
+);
+
 RESET ROLE;
 
 DO $credit_note_assertions$
 BEGIN
-  IF (SELECT status FROM public.restaurant_supplier_credit_notes WHERE id='40000000-0000-4000-8000-000000000001') <> 'partially_applied' THEN
-    RAISE EXCEPTION 'Credit note status should be partially_applied after the first application';
+  IF (SELECT status FROM public.restaurant_supplier_credit_notes WHERE id='40000000-0000-4000-8000-000000000001') <> 'applied' THEN
+    RAISE EXCEPTION 'Credit note status should be applied after full allocation';
   END IF;
-  IF (SELECT count(*) FROM public.restaurant_supplier_credit_note_applications WHERE credit_note_id='40000000-0000-4000-8000-000000000001') <> 1 THEN
-    RAISE EXCEPTION 'Idempotent replay created a duplicate application';
+  IF (SELECT count(*) FROM public.restaurant_supplier_credit_note_applications WHERE credit_note_id='40000000-0000-4000-8000-000000000001') <> 2 THEN
+    RAISE EXCEPTION 'Idempotent replay or final application count is incorrect';
   END IF;
   IF (SELECT round(total - amount_paid - (SELECT sum(amount) FROM public.restaurant_supplier_credit_note_applications WHERE invoice_id='30000000-0000-4000-8000-000000000001'),2)
-      FROM public.restaurant_supplier_invoices WHERE id='30000000-0000-4000-8000-000000000001') <> 30 THEN
-    RAISE EXCEPTION 'Invoice outstanding balance did not net the credit application';
+      FROM public.restaurant_supplier_invoices WHERE id='30000000-0000-4000-8000-000000000001') <> 20 THEN
+    RAISE EXCEPTION 'Invoice outstanding balance did not net the full credit application';
   END IF;
   IF (SELECT payment_status FROM public.restaurant_supplier_invoices WHERE id='30000000-0000-4000-8000-000000000001') <> 'partially_paid' THEN
     RAISE EXCEPTION 'Invoice payment status did not reflect applied supplier credit';
   END IF;
-  IF (SELECT count(*) FROM public.restaurant_procurement_audit WHERE document_type='supplier_credit_note' AND action='credit_note_applied') <> 1 THEN
+  IF (SELECT count(*) FROM public.restaurant_procurement_audit WHERE document_type='supplier_credit_note' AND action='credit_note_applied') <> 2 THEN
     RAISE EXCEPTION 'Credit application audit was not written atomically';
   END IF;
 END
