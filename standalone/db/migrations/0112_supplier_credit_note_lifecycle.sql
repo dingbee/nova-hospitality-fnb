@@ -231,6 +231,15 @@ BEGIN
   SET status = CASE WHEN v_note_remaining <= 0.01 THEN 'applied' ELSE 'partially_applied' END
   WHERE tenant_id = _tenant_id AND id = _credit_note_id;
 
+  UPDATE public.restaurant_supplier_invoices
+  SET payment_status = CASE
+    WHEN payment_status = 'disputed' THEN payment_status
+    WHEN amount_paid + v_invoice_credits + round(_amount, 2) >= total - 0.01 THEN 'paid'
+    WHEN amount_paid + v_invoice_credits + round(_amount, 2) > 0 THEN 'partially_paid'
+    ELSE 'unpaid'
+  END
+  WHERE tenant_id = _tenant_id AND id = _invoice_id;
+
   INSERT INTO public.restaurant_procurement_audit (
     tenant_id, document_type, document_id, document_number, action,
     previous_state, new_state, reason, actor_id, metadata
