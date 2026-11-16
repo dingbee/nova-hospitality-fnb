@@ -230,7 +230,7 @@ export async function getStockPositionEvidenceForReplenishment(
       })(),
       sb.from("restaurant_inventory_units")
         .select("id, dimension, base_unit_id, factor")
-        .eq("tenant_id", input.tenantId),
+        .or("tenant_id.eq." + input.tenantId + ",tenant_id.is.null"),
     ]);
 
   for (const [label, result] of [
