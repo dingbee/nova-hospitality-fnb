@@ -160,16 +160,16 @@ export async function computeProfitability(
     .select("id, amount, currency, approval_status, property_id, location_id")
     .eq("tenant_id", input.tenantId).gte("incurred_on", periodFrom).lte("incurred_on", periodTo).eq("approval_status", "pending");
   let consumptionProfileQuery = sb.from("restaurant_consumption_profiles")
-    .select("id, cost_class, property_id, location_id")
+    .select("id, cost_class, property_id, location_id, effective_from, effective_to")
     .eq("tenant_id", input.tenantId).eq("active", true);
   if (input.propertyId) pendingExpenseQuery = pendingExpenseQuery.eq("property_id", input.propertyId);
   if (input.locationId) pendingExpenseQuery = pendingExpenseQuery.eq("location_id", input.locationId);
-  const [{ data: items, error: itemError }, { data: movements, error: movementError }, { data: payments, error: paymentError }, { data: unallocated, error: unallocatedError }, { data: pendingExpenses, error: pendingExpenseError }, { data: consumptionEvents, error: consumptionError }, { data: consumptionProfiles, error: consumptionProfileError }] = await Promise.all([
+  const [{ data: items, error: itemError }, { data: movements, error: movementError }, { data: payments, error: paymentError }, { data: unallocated, error: unallocatedError }, { data: pendingExpenses, error: pendingExpenseError }, { data: consumptionEvents, error: consumptionError }, { data: consumptionProfiles, error: consumptionProfileError }, { data: consumptionRules, error: consumptionRuleError }] = await Promise.all([
     sb.from("restaurant_order_items")
       .select("id, order_id, menu_item_id, description, quantity, line_total, line_cost, discount, tax_amount, service_charge_amount, status, is_comp, channel")
       .eq("tenant_id", input.tenantId).in("order_id", orderIds),
     sb.from("restaurant_stock_movements")
-      .select("id, order_item_id, total_cost, currency, reference_id")
+      .select("id, order_item_id, inventory_item_id, total_cost, currency, reference_type, reference_id")
       .eq("tenant_id", input.tenantId).eq("movement_type", "consumption")
       .in("reference_id", orderIds),
     sb.from("restaurant_payments")
@@ -181,6 +181,9 @@ export async function computeProfitability(
       .select("id, stock_movement_id, order_id, order_item_id, cost_class, total_cost, currency")
       .eq("tenant_id", input.tenantId).in("order_id", orderIds),
     consumptionProfileQuery,
+    sb.from("restaurant_consumption_rules")
+      .select("id, profile_id, inventory_item_id, active, effective_from, effective_to")
+      .eq("tenant_id", input.tenantId).eq("active", true),
   ]);
   if (itemError) throw new Error(itemError.message);
   if (movementError) throw new Error(movementError.message);
@@ -189,22 +192,55 @@ export async function computeProfitability(
   if (pendingExpenseError) throw new Error(pendingExpenseError.message);
   if (consumptionError) throw new Error(consumptionError.message);
   if (consumptionProfileError) throw new Error(consumptionProfileError.message);
+  if (consumptionRuleError) throw new Error(consumptionRuleError.message);
 
+  const itemRows = ((items ?? []) as any[]).filter((i) => i.status !== "voided");
+  const profileRows = ((consumptionProfiles ?? []) as any[]).filter((p) =>
+    p.active !== false && p.effective_from <= periodTo && (!p.effective_to || p.effective_to >= periodFrom) &&
+    reportPropertyIds.some((propertyId) => p.property_id === null || p.property_id === propertyId) &&
+    (!input.locationId || p.location_id === null || p.location_id === input.locationId)
+  );
+  const profileById = new Map(profileRows.map((p) => [p.id, p]));
+  const ruleRows = ((consumptionRules ?? []) as any[]).filter((r) =>
+    r.active !== false && r.effective_from <= periodTo && (!r.effective_to || r.effective_to >= periodFrom) &&
+    profileById.has(r.profile_id)
+  );
+  const costClassByInventoryItem = new Map<string, "service_consumable" | "other_direct_variable">();
+  for (const rule of ruleRows) {
+    const profile = profileById.get(rule.profile_id);
+    if (profile) costClassByInventoryItem.set(rule.inventory_item_id, profile.cost_class);
+  }
+  const movementRows = (movements ?? []) as any[];
+  const consumptionEventRows = (consumptionEvents ?? []) as any[];
+  const capturedConsumableMovementIds = new Set(consumptionEventRows.map((e) => e.stock_movement_id));
+  const missingConsumableMovements = movementRows.filter((m) =>
+    costClassByInventoryItem.has(m.inventory_item_id) && !capturedConsumableMovementIds.has(m.id)
+  );
+  const missingServiceConsumables = missingConsumableMovements
+    .filter((m) => costClassByInventoryItem.get(m.inventory_item_id) === "service_consumable")
+    .reduce((sum, m) => sum + Number(m.total_cost ?? 0), 0);
+  const missingOtherDirectCosts = missingConsumableMovements
+    .filter((m) => costClassByInventoryItem.get(m.inventory_item_id) === "other_direct_variable")
+    .reduce((sum, m) => sum + Number(m.total_cost ?? 0), 0);
+  const hasConsumptionProfiles = reportPropertyIds.length > 0 && reportPropertyIds.every((propertyId) =>
+    profileRows.some((p) => p.property_id === null || p.property_id === propertyId) &&
+    ruleRows.some((r) => profileById.get(r.profile_id)?.property_id === null || profileById.get(r.profile_id)?.property_id === propertyId)
+  );
+  const consumableCoverageIncomplete = !hasConsumptionProfiles || missingConsumableMovements.length > 0;
   // Service consumable movements are projected separately by Phase 1;
   // exclude them from recipe COGS so direct costs are never double-counted.
   const capturedConsumableMovementIds = new Set(
     ((consumptionEvents ?? []) as any[]).map((e) => e.stock_movement_id),
   );
   const actualByItem = new Map<string, number>();
-  for (const m of (movements ?? []) as any[]) {
-    if (!m.order_item_id || capturedConsumableMovementIds.has(m.id)) continue;
+  for (const m of movementRows) {
+    if (!m.order_item_id || costClassByInventoryItem.has(m.inventory_item_id)) continue;
     actualByItem.set(
       m.order_item_id,
       (actualByItem.get(m.order_item_id) ?? 0) + Number(m.total_cost ?? 0),
     );
   }
 
-  const itemRows = ((items ?? []) as any[]).filter((i) => i.status !== "voided");
   const orderById = new Map(orderRows.map((o) => [o.id, o]));
   const refundByOrder = new Map<string, number>();
   for (const payment of (payments ?? []) as any[]) {
@@ -254,15 +290,8 @@ export async function computeProfitability(
   const pendingRows = (pendingExpenses ?? []) as any[];
   const unallocatedOperatingExpenses = unallocatedRows.reduce((sum, r) => sum + Number(r.source_amount ?? 0), 0);
   const pendingExpenseVerification = pendingRows.length > 0;
-  const consumptionEventRows = (consumptionEvents ?? []) as any[];
-  const serviceConsumables = consumptionEventRows.filter((e) => e.cost_class === "service_consumable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0);
-  const otherDirectVariableCosts = consumptionEventRows.filter((e) => e.cost_class === "other_direct_variable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0);
-  const profileRows = (consumptionProfiles ?? []) as any[];
-  const reportPropertyIds = ((reportingProperties ?? []) as any[]).map((property) => property.id);
-  const hasConsumptionProfiles = reportPropertyIds.length > 0 && reportPropertyIds.every((propertyId) =>
-    profileRows.some((p) => p.active !== false && (p.property_id === null || p.property_id === propertyId) &&
-      (!input.locationId || p.location_id === null || p.location_id === input.locationId))
-  );
+  const serviceConsumables = consumptionEventRows.filter((e) => e.cost_class === "service_consumable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0) + missingServiceConsumables;
+  const otherDirectVariableCosts = consumptionEventRows.filter((e) => e.cost_class === "other_direct_variable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0) + missingOtherDirectCosts;
   const { data: reconciliationRuns, error: reconciliationError } = reportPropertyIds.length > 0
     ? await sb.from("restaurant_cost_reconciliation_runs")
         .select("id, property_id, status, source_counts, created_at")
@@ -276,7 +305,6 @@ export async function computeProfitability(
   if (reconciliationError) throw new Error(reconciliationError.message);
   const completedPropertyIds = new Set(((reconciliationRuns ?? []) as any[]).map((r) => r.property_id));
   const partiallyReconciled = reportPropertyIds.some((propertyId) => !completedPropertyIds.has(propertyId));
-  const movementRows = (movements ?? []) as any[];
   const paymentRows = (payments ?? []) as any[];
   const currencyRows = [
     ...movementRows.map((r) => r.currency),
@@ -290,25 +318,27 @@ export async function computeProfitability(
     throw new Error("Profitability source records contain missing or mismatched currency.");
   }
   const consumableCostByOrderItem = new Map<string, number>();
-  for (const event of consumptionEventRows) {
-    if (event.order_item_id) {
-      consumableCostByOrderItem.set(
-        event.order_item_id,
-        (consumableCostByOrderItem.get(event.order_item_id) ?? 0) + Number(event.total_cost ?? 0),
-      );
-    } else if (event.order_id) {
-      const orderLines = itemRows.filter((item) => item.order_id === event.order_id && !item.is_comp);
+  const addConsumableCost = (orderItemId: string | null, orderId: string | null, amount: number) => {
+    if (orderItemId) {
+      consumableCostByOrderItem.set(orderItemId, (consumableCostByOrderItem.get(orderItemId) ?? 0) + amount);
+    } else if (orderId) {
+      const orderLines = itemRows.filter((item) => item.order_id === orderId && !item.is_comp);
       const orderLineValue = orderLines.reduce((sum, item) => sum + Math.max(0, Number(item.line_total ?? 0)), 0);
       for (const item of orderLines) {
-        const share = orderLineValue > 0
-          ? Math.max(0, Number(item.line_total ?? 0)) / orderLineValue
-          : 1 / Math.max(orderLines.length, 1);
-        consumableCostByOrderItem.set(
-          item.id,
-          (consumableCostByOrderItem.get(item.id) ?? 0) + Number(event.total_cost ?? 0) * share,
-        );
+        const share = orderLineValue > 0 ? Math.max(0, Number(item.line_total ?? 0)) / orderLineValue : 1 / Math.max(orderLines.length, 1);
+        consumableCostByOrderItem.set(item.id, (consumableCostByOrderItem.get(item.id) ?? 0) + amount * share);
       }
     }
+  };
+  for (const event of consumptionEventRows) {
+    addConsumableCost(event.order_item_id ?? null, event.order_id ?? null, Number(event.total_cost ?? 0));
+  }
+  for (const movement of missingConsumableMovements) {
+    addConsumableCost(
+      movement.order_item_id ?? null,
+      movement.reference_type === "restaurant_order" ? movement.reference_id : null,
+      Number(movement.total_cost ?? 0),
+    );
   }
   const operational = calculateOperationalProfitability({
     currency,
@@ -326,7 +356,7 @@ export async function computeProfitability(
     unallocatedOperatingExpenses: Number(unallocatedOperatingExpenses.toFixed(2)),
     pendingExpenseVerification,
     partiallyReconciled,
-    incompleteSourceData: !hasConsumptionProfiles,
+    incompleteSourceData: consumableCoverageIncomplete,
   });
   const netSalesByLine = new Map<string, number>();
   const dimensionMap = new Map<string, { dimension_type: "channel" | "outlet" | "property"; dimension_key: string; dimension_name: string; property_id: string | null; location_id: string | null; net_sales: number; direct_variable_costs: number; contribution: number; operating_profit: number }>();
@@ -514,6 +544,7 @@ export async function computeProfitability(
           stock_movement_ids: ((movements ?? []) as any[]).map((m) => m.id),
           payment_ids: ((payments ?? []) as any[]).map((p: any) => p.id),
           consumable_event_ids: consumptionEventRows.map((e) => e.id),
+          unclassified_consumable_movement_ids: missingConsumableMovements.map((m) => m.id),
           reconciliation_run_ids: ((reconciliationRuns ?? []) as any[]).map((r) => r.id),
           allocation_source_ids: allocationRows.map((a) => a.source_id).filter(Boolean),
           unallocated_source_ids: unallocatedRows.map((a) => a.source_id).filter(Boolean),
