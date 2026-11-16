@@ -402,7 +402,7 @@ function ProfitabilityPage() {
           title="Operational confidence"
           description={`Data confidence: ${(result.operational?.reconciliationState ?? result.totals.confidence_state).replaceAll("_", " ")}. ${confidenceDescriptions[result.operational?.reconciliationState ?? result.totals.confidence_state] ?? "Review source coverage before relying on this report."}`}
         >
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-md border p-3 text-sm">
               <p className="text-muted-foreground">Gross sales</p>
               <p className="font-semibold">{money(result.operational?.grossSales ?? result.totals.gross_sales)}</p>
@@ -414,6 +414,10 @@ function ProfitabilityPage() {
             <div className="rounded-md border p-3 text-sm">
               <p className="text-muted-foreground">Unallocated operating costs</p>
               <p className="font-semibold">{money(result.operational?.unallocatedOperatingExpenses ?? result.totals.unallocated_operating_expenses)}</p>
+            </div>
+            <div className="rounded-md border p-3 text-sm">
+              <p className="text-muted-foreground">Pending expense verification</p>
+              <p className="font-semibold">{money(result.operational?.pendingExpenseAmount ?? result.totals.pending_expense_amount)}</p>
             </div>
           </div>
         </SectionCard>
