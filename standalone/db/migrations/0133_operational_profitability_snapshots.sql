@@ -26,6 +26,7 @@ create table if not exists public.restaurant_operational_profitability_snapshots
  contribution_margin_percent numeric(6,2),
  operating_margin_percent numeric(6,2),
  confidence_state text not null check(confidence_state in ('fully_reconciled','partially_reconciled','estimated','pending_expense_verification','unallocated_costs_present','incomplete_source_data')),
+ calculation_inputs jsonb not null default '{}'::jsonb check(jsonb_typeof(calculation_inputs)='object'),
  source_counts jsonb not null default '{}'::jsonb check(jsonb_typeof(source_counts)='object'),
  source_references jsonb not null default '{}'::jsonb check(jsonb_typeof(source_references)='object'),
  calculation_version text not null,
@@ -71,10 +72,17 @@ create policy restaurant_operational_profitability_snapshots_read on public.rest
   and public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id)
  );
 drop policy if exists restaurant_operational_profitability_snapshots_write on public.restaurant_operational_profitability_snapshots;
-create policy restaurant_operational_profitability_snapshots_write on public.restaurant_operational_profitability_snapshots
- for all to authenticated
- using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id))
+drop policy if exists restaurant_operational_profitability_snapshots_insert on public.restaurant_operational_profitability_snapshots;
+create policy restaurant_operational_profitability_snapshots_insert on public.restaurant_operational_profitability_snapshots
+ for insert to authenticated
  with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id));
+drop policy if exists restaurant_operational_profitability_snapshots_rollback_delete on public.restaurant_operational_profitability_snapshots;
+create policy restaurant_operational_profitability_snapshots_rollback_delete on public.restaurant_operational_profitability_snapshots
+ for delete to authenticated
+ using(
+  computed_by=auth.uid()
+  and not exists(select 1 from public.restaurant_operational_profitability_dimensions d where d.snapshot_id=id)
+ );
 drop policy if exists restaurant_operational_profitability_dimensions_read on public.restaurant_operational_profitability_dimensions;
 create policy restaurant_operational_profitability_dimensions_read on public.restaurant_operational_profitability_dimensions
  for select to authenticated using(
@@ -82,9 +90,11 @@ create policy restaurant_operational_profitability_dimensions_read on public.res
   and public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id)
  );
 drop policy if exists restaurant_operational_profitability_dimensions_write on public.restaurant_operational_profitability_dimensions;
-create policy restaurant_operational_profitability_dimensions_write on public.restaurant_operational_profitability_dimensions
- for all to authenticated
- using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id))
+drop policy if exists restaurant_operational_profitability_dimensions_insert on public.restaurant_operational_profitability_dimensions;
+create policy restaurant_operational_profitability_dimensions_insert on public.restaurant_operational_profitability_dimensions
+ for insert to authenticated
  with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id));
-grant select,insert,update,delete on public.restaurant_operational_profitability_snapshots,public.restaurant_operational_profitability_dimensions to authenticated;
+revoke update,delete on public.restaurant_operational_profitability_snapshots,public.restaurant_operational_profitability_dimensions from authenticated;
+grant select,insert,delete on public.restaurant_operational_profitability_snapshots to authenticated;
+grant select,insert on public.restaurant_operational_profitability_dimensions to authenticated;
 grant all on public.restaurant_operational_profitability_snapshots,public.restaurant_operational_profitability_dimensions to service_role;
