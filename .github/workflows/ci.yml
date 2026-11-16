@@ -289,16 +289,19 @@ jobs:
           # Apply the exact P0-01 corrective migration only after capturing the
           # unmodified PR #188 baseline for comparison with production.
           cp standalone/db/migrations/0134_procurement_tenant_referential_integrity.sql "$replay_migrations/"
+          cp standalone/db/migrations/0135_member_station_assignment_rls_overlap_cleanup.sql "$replay_migrations/"
           ./local/scripts/apply-migrations.sh
 
-          expected_hardened="$((expected_base + 1))"
+          expected_hardened="$((expected_base + 2))"
           applied_hardened="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'applied'")"
           skipped_hardened="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'skipped'")"
           hardening_migration="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE filename = '0134_procurement_tenant_referential_integrity.sql' AND status = 'applied'")"
-          echo "PR #188 hardened: repository files=$expected_hardened; applied=$applied_hardened; skipped=$skipped_hardened; P0-01 migration=$hardening_migration"
+          station_policy_migration="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE filename = '0135_member_station_assignment_rls_overlap_cleanup.sql' AND status = 'applied'")"
+          echo "PR #188 hardened: repository files=$expected_hardened; applied=$applied_hardened; skipped=$skipped_hardened; P0-01 migration=$hardening_migration; station policy fix=$station_policy_migration"
           test "$applied_hardened" -eq "$((expected_hardened + 1))"
           test "$skipped_hardened" -eq 0
           test "$hardening_migration" -eq 1
+          test "$station_policy_migration" -eq 1
 
           psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
             -c "\\copy (SELECT filename, checksum, status, applied_at, note FROM nova_local.schema_migrations ORDER BY filename) TO STDOUT WITH CSV HEADER" > pr188-hardened-migration-ledger.csv
