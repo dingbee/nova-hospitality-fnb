@@ -112,6 +112,7 @@ export function SupplierCreditNoteSheet({ open, onOpenChange, tenantId }: SheetP
     Boolean(supplierId) &&
     creditNoteNumber.trim().length > 0 &&
     reason.trim().length >= 5 &&
+    currency.trim().length === 3 &&
     subtotal + taxTotal > 0;
 
   return (
@@ -229,7 +230,9 @@ export function ApplySupplierCreditNoteSheet({
         invoice.supplier_id === creditNote?.supplier_id &&
         invoice.currency === creditNote?.currency &&
         invoice.status !== "cancelled" &&
-        (!creditNote?.reference_invoice_id || invoice.id === creditNote.reference_invoice_id),
+        (!creditNote?.reference_invoice_id || invoice.id === creditNote.reference_invoice_id) &&
+        (!creditNote?.property_id || invoice.property_id === creditNote.property_id) &&
+        (!creditNote?.location_id || invoice.location_id === creditNote.location_id),
     )
     .map((invoice) => ({
       value: invoice.id,
@@ -287,7 +290,13 @@ export function ApplySupplierCreditNoteSheet({
       }
       submitLabel="Apply credit"
       pending={apply.isPending}
-      disabled={!creditNote || !invoiceId || amount <= 0 || !reason.trim()}
+      disabled={
+        !creditNote ||
+        !invoiceId ||
+        amount <= 0 ||
+        amount - Number(creditNote.remaining_amount ?? creditNote.total ?? 0) > 0.0001 ||
+        !reason.trim()
+      }
       onSubmit={() => apply.mutate(undefined)}
     >
       <Field label="Target invoice" required>
