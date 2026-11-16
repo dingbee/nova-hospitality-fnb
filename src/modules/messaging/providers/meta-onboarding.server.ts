@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Supabase rows are untyped at this boundary. */
 import { z } from "zod";
 import { registerIntegration, updateIntegration } from "@/modules/api-platform/integrations.server";
 import { assertEntitled } from "@/modules/commercial/resolver.server";
