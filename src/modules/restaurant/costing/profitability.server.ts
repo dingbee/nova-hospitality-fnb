@@ -182,7 +182,7 @@ export async function computeProfitability(
       .select("id, order_id, menu_item_id, description, quantity, line_total, line_cost, discount, tax_amount, service_charge_amount, status, is_comp, channel")
       .eq("tenant_id", input.tenantId).in("order_id", orderIds),
     sb.from("restaurant_stock_movements")
-      .select("id, order_item_id, inventory_item_id, property_id, location_id, total_cost, currency, reference_type, reference_id")
+      .select("id, order_item_id, inventory_item_id, property_id, location_id, total_cost, currency, reference_type, reference_id, reason")
       .eq("tenant_id", input.tenantId).eq("movement_type", "consumption")
       .in("reference_id", orderIds),
     sb.from("restaurant_payments")
@@ -231,6 +231,8 @@ export async function computeProfitability(
     rulesByInventoryItem.set(rule.inventory_item_id, matches);
   }
   const classifyConsumableMovement = (movement: any): "service_consumable" | "other_direct_variable" | null => {
+    if (String(movement.reason ?? "").startsWith("Operational service consumable")) return "service_consumable";
+    if (String(movement.reason ?? "").startsWith("Operational other direct variable")) return "other_direct_variable";
     const matches = (rulesByInventoryItem.get(movement.inventory_item_id) ?? [])
       .filter(({ profile }) =>
         (profile.property_id === null || profile.property_id === movement.property_id) &&
