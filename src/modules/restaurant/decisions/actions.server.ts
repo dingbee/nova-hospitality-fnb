@@ -443,6 +443,18 @@ async function runProcurementDraftExecution(
   const orderMultiple = Number(facts.orderMultiple ?? 1);
   const currency = typeof facts.currency === "string" ? facts.currency : null;
 
+  if (typeof facts.purchaseQuantity !== "number" ||
+      typeof purchaseUnitId !== "string" || typeof stockUnitId !== "string") {
+    return failAction(
+      sb,
+      userId,
+      action,
+      tenantId,
+      module,
+      "The decision contains no structured purchasing data or purchase-unit evidence.",
+    );
+  }
+
   if (typeof supplierId !== "string" || typeof supplierProductId !== "string") {
     return failAction(
       sb,
