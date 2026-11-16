@@ -389,6 +389,13 @@ select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000
  '60000000-0000-0000-0000-000000000001','Facilities quarterly service',75000,'TZS','quarterly',
  date '2026-11-16',date '2027-05-16','30000000-0000-0000-0000-000000000001'
 from public.restaurant_operational_expense_categories where category_key='utilities';
+do $phase2$ begin
+ if not exists(
+  select 1 from public.restaurant_operational_expense_schedules s
+  join public.restaurant_operational_expense_categories c on c.id=s.category_id
+  where s.description='Facilities quarterly service' and s.active and c.category_key='utilities'
+ ) then raise exception 'Recurring expense schedule fixture was not created'; end if;
+end $phase2$;
 update public.restaurant_operational_expense_schedules set active=false
 where description='Facilities quarterly service';
 update public.restaurant_operational_expense_schedules set active=true
