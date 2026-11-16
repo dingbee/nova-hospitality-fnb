@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Meta webhook payload is validated at the trust boundary. */
 import { createHash } from "node:crypto";
 import { verifyWebhookSignature } from "./providers/meta-cloud-api.server";
 
