@@ -95,21 +95,27 @@ create trigger restaurant_consumption_rule_scope_guard
 alter table public.restaurant_consumption_profiles enable row level security;
 alter table public.restaurant_consumption_rules enable row level security;
 alter table public.restaurant_consumption_events enable row level security;
+drop policy if exists restaurant_consumption_profiles_read on public.restaurant_consumption_profiles;
 create policy restaurant_consumption_profiles_read on public.restaurant_consumption_profiles
  for select to authenticated using(public.restaurant_can_read_scoped(tenant_id,property_id));
+drop policy if exists restaurant_consumption_profiles_write on public.restaurant_consumption_profiles;
 create policy restaurant_consumption_profiles_write on public.restaurant_consumption_profiles
  for all to authenticated
  using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','inventory_manager','accountant']::restaurant_role[],property_id))
  with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','inventory_manager','accountant']::restaurant_role[],property_id));
+drop policy if exists restaurant_consumption_rules_read on public.restaurant_consumption_rules;
 create policy restaurant_consumption_rules_read on public.restaurant_consumption_rules
  for select to authenticated using(public.restaurant_can_read_scoped(tenant_id,(select p.property_id from public.restaurant_consumption_profiles p where p.id=profile_id)));
+drop policy if exists restaurant_consumption_rules_write on public.restaurant_consumption_rules;
 create policy restaurant_consumption_rules_write on public.restaurant_consumption_rules
  for all to authenticated
  using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','inventory_manager','accountant']::restaurant_role[],(select p.property_id from public.restaurant_consumption_profiles p where p.id=profile_id)))
  with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','inventory_manager','accountant']::restaurant_role[],(select p.property_id from public.restaurant_consumption_profiles p where p.id=profile_id)));
+drop policy if exists restaurant_consumption_events_read on public.restaurant_consumption_events;
 create policy restaurant_consumption_events_read on public.restaurant_consumption_events
  for select to authenticated using(public.restaurant_can_read_scoped(tenant_id,property_id));
 grant select,insert,update,delete on public.restaurant_consumption_profiles,public.restaurant_consumption_rules to authenticated;
+revoke insert,update,delete on public.restaurant_consumption_events from authenticated;
 grant select on public.restaurant_consumption_events to authenticated;
 grant all on public.restaurant_consumption_profiles,public.restaurant_consumption_rules,public.restaurant_consumption_events to service_role;
 
