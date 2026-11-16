@@ -72,6 +72,8 @@ export interface MenuIntelligence {
   promote: MenuItemIntelligence[];
   costReview: MenuItemIntelligence[];
   insights: RestaurantInsight[];
+  /** Items withheld from automated replenishment pending evidence or configuration. */
+  reviewItems?: ReplenishmentReviewItem[];
 }
 
 /* --------------------------- 3.2 Inventory --------------------------- */
