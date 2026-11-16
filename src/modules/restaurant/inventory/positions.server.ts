@@ -259,11 +259,17 @@ export async function getStockPositionEvidenceForReplenishment(
     input.locationId
       ? [input.locationId]
       : input.propertyId
-        ? locationRows.filter((row) => row.property_id === input.propertyId).map((row) => row.id)
-        : locationRows.map((row) => row.id),
+        ? locationRows.filter((row) => row.property_id === input.propertyId && row.is_storage === true).map((row) => row.id)
+        : locationRows.filter((row) => row.is_storage === true).map((row) => row.id),
   );
   if (input.locationId && !locationById.has(input.locationId)) {
     throw new Error("Requested stock location does not belong to this tenant.");
+  }
+  if (input.locationId && locationById.get(input.locationId)?.is_storage !== true) {
+    throw new Error("Requested stock location is not configured as an inventory storage location.");
+  }
+  if (input.locationId && locationById.get(input.locationId)?.status !== "active") {
+    throw new Error("Requested stock location is inactive and cannot receive replenishment.");
   }
   if (input.locationId && input.propertyId &&
       locationById.get(input.locationId)?.property_id !== input.propertyId) {
@@ -321,7 +327,7 @@ export async function getStockPositionEvidenceForReplenishment(
       ? locationId === input.locationId
       : input.propertyId
         ? (row.property_id === input.propertyId && (!locationId || location?.property_id === input.propertyId)) ||
-          location?.property_id === input.propertyId
+          (location?.property_id === input.propertyId && location?.is_storage === true)
         : locationId === null || allowedLocationIds.has(locationId);
     if (!evidence || !inScope) continue;
     const factor = stockUnitsPerUnit(row.unit_id, itemById.get(row.inventory_item_id)?.unit_id ?? null,
@@ -426,6 +432,11 @@ export async function getStockPositionEvidenceForReplenishment(
     const order = orderById.get(line.purchase_order_id);
     const item = itemById.get(line.inventory_item_id);
     if (!evidence || !order || !item) continue;
+    const orderLocation = order.location_id ? locationById.get(order.location_id) : null;
+    if (!orderLocation || orderLocation.is_storage !== true || orderLocation.status !== "active") {
+      evidence.manualReviewReasons.push("Purchase order " + order.id + " has no active inventory delivery location.");
+      continue;
+    }
     const quantity = Number(line.quantity);
     const received = Number(line.received_quantity);
     const accepted = Number(line.accepted_quantity);
@@ -502,6 +513,11 @@ export async function getStockPositionEvidenceForReplenishment(
     const transfer = transferById.get(line.transfer_id);
     const item = itemById.get(line.inventory_item_id);
     if (!evidence || !transfer || !item) continue;
+    const destinationLocation = locationById.get(transfer.destination_location_id);
+    if (!destinationLocation || destinationLocation.is_storage !== true || destinationLocation.status !== "active") {
+      evidence.manualReviewReasons.push("In-transit transfer " + transfer.id + " has no active destination storage location.");
+      continue;
+    }
     const dispatched = Number(line.dispatched_quantity ?? 0);
     const received = Number(line.received_quantity ?? 0);
     const rejected = Number(line.rejected_quantity ?? 0);
