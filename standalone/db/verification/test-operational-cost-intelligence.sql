@@ -174,10 +174,11 @@ end $$;
 insert into public.restaurant_operational_cost_budgets(tenant_id,property_id,category_id,period_start,period_end,currency,budget_amount,status,approved_by,approved_at)
 select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,date '2026-11-01',date '2026-11-30','TZS',150000,'approved','30000000-0000-0000-0000-000000000001',now()
 from public.restaurant_operational_expense_categories where category_key='utilities';
-do $ begin
+do $$ begin
  if (select count(*) from public.restaurant_operational_cost_budgets where property_id='20000000-0000-0000-0000-000000000001' and status='approved')<>1 then raise exception 'Approved budget baseline was not persisted'; end if;
-end $;
-\n-- Phase 4 additive reconciliation schema and property isolation.
+end $$;
+
+-- Phase 4 additive reconciliation schema and property isolation.
 insert into public.restaurant_members values ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','restaurant_manager','20000000-0000-0000-0000-000000000001');
 insert into public.restaurant_cost_reconciliation_runs(tenant_id,property_id,period_start,period_end,currency,source_fingerprint)
 values
@@ -195,6 +196,10 @@ do $phase4$ begin
  if (select count(*) from public.restaurant_cost_reconciliation_runs) <> 1 then raise exception 'Phase 4 run RLS leaked across properties'; end if;
  if (select count(*) from public.restaurant_cost_variances) <> 1 then raise exception 'Phase 4 variance RLS leaked across properties'; end if;
  if (select count(*) from public.restaurant_operational_cost_budgets) <> 1 then raise exception 'Phase 4 approved budget RLS leaked across properties'; end if;
+ insert into public.restaurant_operational_cost_budgets(tenant_id,property_id,category_id,period_start,period_end,currency,budget_amount,status,approved_by,approved_at)
+ select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,date '2026-12-01',date '2026-12-31','TZS',175000,'approved','30000000-0000-0000-0000-000000000002',now()
+ from public.restaurant_operational_expense_categories where category_key='utilities';
+ if (select count(*) from public.restaurant_operational_cost_budgets where period_start=date '2026-12-01')<>1 then raise exception 'Authorized property member could not create a budget baseline'; end if;
  -- Authorized property member can create a reconciliation run and update a case within scope.
  insert into public.restaurant_cost_reconciliation_runs(tenant_id,property_id,period_start,period_end,currency,source_fingerprint)
  values('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','2026-12-01','2026-12-31','TZS','fixture-authorized-write');
