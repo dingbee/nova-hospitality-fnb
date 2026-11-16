@@ -190,10 +190,14 @@ export async function computeProfitability(
   if (consumptionError) throw new Error(consumptionError.message);
   if (consumptionProfileError) throw new Error(consumptionProfileError.message);
 
-  // Actual cost is attributed back to the exact order line that consumed it.
+  // Service consumable movements are projected separately by Phase 1;
+  // exclude them from recipe COGS so direct costs are never double-counted.
+  const capturedConsumableMovementIds = new Set(
+    ((consumptionEvents ?? []) as any[]).map((e) => e.stock_movement_id),
+  );
   const actualByItem = new Map<string, number>();
   for (const m of (movements ?? []) as any[]) {
-    if (!m.order_item_id) continue;
+    if (!m.order_item_id || capturedConsumableMovementIds.has(m.id)) continue;
     actualByItem.set(
       m.order_item_id,
       (actualByItem.get(m.order_item_id) ?? 0) + Number(m.total_cost ?? 0),
@@ -276,10 +280,24 @@ export async function computeProfitability(
   }
   const consumableCostByOrderItem = new Map<string, number>();
   for (const event of consumptionEventRows) {
-    if (event.order_item_id) consumableCostByOrderItem.set(
-      event.order_item_id,
-      (consumableCostByOrderItem.get(event.order_item_id) ?? 0) + Number(event.total_cost ?? 0),
-    );
+    if (event.order_item_id) {
+      consumableCostByOrderItem.set(
+        event.order_item_id,
+        (consumableCostByOrderItem.get(event.order_item_id) ?? 0) + Number(event.total_cost ?? 0),
+      );
+    } else if (event.order_id) {
+      const orderLines = itemRows.filter((item) => item.order_id === event.order_id && !item.is_comp);
+      const orderLineValue = orderLines.reduce((sum, item) => sum + Math.max(0, Number(item.line_total ?? 0)), 0);
+      for (const item of orderLines) {
+        const share = orderLineValue > 0
+          ? Math.max(0, Number(item.line_total ?? 0)) / orderLineValue
+          : 1 / Math.max(orderLines.length, 1);
+        consumableCostByOrderItem.set(
+          item.id,
+          (consumableCostByOrderItem.get(item.id) ?? 0) + Number(event.total_cost ?? 0) * share,
+        );
+      }
+    }
   }
   const operational = calculateOperationalProfitability({
     currency,
