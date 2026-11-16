@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase rows are untyped at this boundary. */
 import type { z } from "zod";
-import { assertCapability, assertTenantRead } from "../core/access.server";
+import { assertCapability, assertTenantRead, getTenantScope } from "../core/access.server";
 import { nextDocumentNumber, recordProcurementAuditStrict } from "./audit.server";
 import {
   DOCUMENT_PREFIX,
@@ -151,10 +151,17 @@ export async function listSupplierCreditNotes(
   userId: string,
   input: z.infer<typeof listSupplierCreditNotesSchema>,
 ) {
-  await assertTenantRead(sb, userId, input.tenantId, {
-    propertyId: input.propertyId,
-    locationId: input.locationId,
-  });
+  const tenantScope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(
+    sb,
+    userId,
+    input.tenantId,
+    {
+      propertyId: input.propertyId,
+      locationId: input.locationId,
+    },
+    tenantScope,
+  );
   let q = sb
     .from("restaurant_supplier_credit_notes")
     .select(
@@ -164,7 +171,16 @@ export async function listSupplierCreditNotes(
     .order("credit_date", { ascending: false })
     .limit(input.limit);
   if (input.supplierId) q = q.eq("supplier_id", input.supplierId);
-  if (input.propertyId) q = q.eq("property_id", input.propertyId);
+  if (input.propertyId) {
+    q = q.eq("property_id", input.propertyId);
+  } else if (
+    !tenantScope.platformAdmin &&
+    !tenantScope.grants.some((grant) => grant.propertyId === null)
+  ) {
+    const propertyIds = [...new Set(tenantScope.grants.map((grant) => grant.propertyId).filter(Boolean))] as string[];
+    if (propertyIds.length === 0) return [];
+    q = q.in("property_id", propertyIds);
+  }
   if (input.locationId) q = q.eq("location_id", input.locationId);
   if (input.status) q = q.eq("status", input.status);
 
