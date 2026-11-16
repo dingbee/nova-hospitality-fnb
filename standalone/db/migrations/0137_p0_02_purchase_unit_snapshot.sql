@@ -97,3 +97,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurant_purchase_order_items_source_act
 CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurant_purchase_order_items_source_request_item
   ON public.restaurant_purchase_order_items (source_request_item_id)
   WHERE source_request_item_id IS NOT NULL;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT purchase_request_id
+    FROM public.restaurant_purchase_orders
+    WHERE purchase_request_id IS NOT NULL
+    GROUP BY purchase_request_id
+    HAVING count(*) > 1
+  ) THEN
+    RAISE EXCEPTION 'P0-02 blocked: duplicate purchase orders already reference the same purchase request';
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurant_purchase_orders_purchase_request
+  ON public.restaurant_purchase_orders (purchase_request_id)
+  WHERE purchase_request_id IS NOT NULL;
