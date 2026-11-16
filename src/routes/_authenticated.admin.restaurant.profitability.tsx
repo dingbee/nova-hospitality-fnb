@@ -269,7 +269,7 @@ function ProfitabilityPage() {
             onChange={(e) => setTo(e.target.value)}
             className="w-auto"
           />
-          <Button size="sm" disabled={compute.isPending} onClick={() => compute.mutate(undefined)}>
+          <Button size="sm" disabled={compute.isPending || !validPeriod} onClick={() => compute.mutate(undefined)}>
             Compute profitability
           </Button>
         </div>
