@@ -564,6 +564,8 @@ export async function computeProfitability(
         allocated_operating_expenses: operational.allocatedOperatingExpenses,
         unallocated_operating_expenses: operational.unallocatedOperatingExpenses,
         operating_profit: operational.operatingProfit,
+        contribution_margin_percent: operational.contributionMarginPercent,
+        operating_margin_percent: operational.operatingMarginPercent,
         confidence_state: operational.reconciliationState,
         source_counts: {
           orders: orderRows.length, order_items: itemRows.length,
