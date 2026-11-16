@@ -593,3 +593,31 @@ GRANT ALL ON public.wa_phone_number_bindings, public.wa_webhook_events,
   TO service_role;
 
 NOTIFY pgrst, 'reload schema';
+
+-- Durable inbox is dispatched asynchronously. The existing Vault cron secret
+-- is reused; local replay records the job inactive and never makes HTTP calls.
+DO $wce$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM cron.job WHERE jobname = 'lexibite-wa-webhook-dispatch'
+  ) THEN
+    PERFORM cron.schedule(
+      'lexibite-wa-webhook-dispatch',
+      '* * * * *',
+      $job$
+        SELECT net.http_post(
+          url := 'https://lexibite.nolmark.co/api/internal/messaging/dispatch',
+          headers := jsonb_build_object(
+            'Authorization',
+            'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'lexibite_cron_secret'),
+            'Content-Type', 'application/json'
+          ),
+          body := '{}'::jsonb,
+          timeout_milliseconds := 15000
+        );
+      $job$
+    );
+  END IF;
+END;
+$wce$;
+
