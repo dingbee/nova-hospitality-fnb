@@ -154,6 +154,23 @@ describe("computeProfitability operating-cost integration", () => {
     expect(result.dimensions).toHaveLength(3);
   });
 
+  it("prorates monthly allocations to partial reporting periods", async () => {
+    const sb = makeSupabase({
+      restaurant_orders: [],
+      restaurant_cost_allocations: [{
+        amount: 3100, currency: "TZS", property_id: "property-1",
+        location_id: null, period_start: "2026-11-01",
+      }],
+    });
+    const result = await computeProfitability(sb, "user-1", {
+      ...input,
+      from: "2026-11-16T00:00:00.000Z",
+      to: "2026-11-30T23:59:59.999Z",
+    });
+    expect(result.operational.allocatedOperatingExpenses).toBe(1550);
+    expect(result.operational.operatingProfit).toBe(-1550);
+  });
+
   it("rejects a sales source with no currency even when operating costs have one", async () => {
     const sb = makeSupabase({
       restaurant_orders: [{ id: "order-1", currency: null }],
