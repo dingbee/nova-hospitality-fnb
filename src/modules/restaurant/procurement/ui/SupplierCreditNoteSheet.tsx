@@ -254,7 +254,7 @@ export function ApplySupplierCreditNoteSheet({
     setInvoiceId(null);
     setAmount(Number(creditNote.remaining_amount ?? creditNote.total ?? 0));
     setReason("Apply supplier credit note");
-  }, [open, creditNote?.id]);
+  }, [open, creditNote?.id, creditNote?.remaining_amount, creditNote?.total]);
 
   const apply = useAdminMutation({
     mutationFn: () =>
