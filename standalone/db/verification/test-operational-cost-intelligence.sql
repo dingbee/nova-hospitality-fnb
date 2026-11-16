@@ -388,7 +388,7 @@ insert into public.restaurant_operational_expense_schedules(tenant_id,property_i
 select '10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',id,
  '60000000-0000-0000-0000-000000000001','Facilities quarterly service',75000,'TZS','quarterly',
  date '2026-11-16',date '2027-05-16','30000000-0000-0000-0000-000000000001'
-from public.restaurant_operational_expense_categories where category_key='facilities_cleaning';
+from public.restaurant_operational_expense_categories where category_key='utilities';
 update public.restaurant_operational_expense_schedules set active=false
 where description='Facilities quarterly service';
 update public.restaurant_operational_expense_schedules set active=true
