@@ -354,15 +354,20 @@ export async function setInvoicePaymentStatus(
   input: z.infer<typeof setInvoicePaymentStatusSchema>,
 ) {
   await assertCapability(sb, userId, input.tenantId, "invoice.manage");
-  const { data: before } = await sb
+  const { data: before, error: readError } = await sb
     .from("restaurant_supplier_invoices")
-    .select("id, payment_status, document_number, total, match_status")
+    .select("id, payment_status, document_number, total, amount_paid, match_status")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.invoiceId)
     .single();
-  if (!before) throw new Error("Supplier invoice not found.");
-  // Settlement is separate from matching: paying an invoice never resolves a
-  // procurement variance, and an unmatched invoice is never quietly settled.
+  if (readError || !before) throw new Error("Supplier invoice not found.");
+
+  const total = Number(before.total ?? 0);
+  const previousAmountPaid = Number(before.amount_paid ?? 0);
+  if (!Number.isFinite(total) || total < 0 || !Number.isFinite(previousAmountPaid) || previousAmountPaid < 0) {
+    throw new Error("Invoice balance data is invalid; payment status cannot be changed.");
+  }
+
   const settling = input.paymentStatus === "paid" || input.paymentStatus === "partially_paid";
   if (settling && before.match_status !== "matched" && !input.reason) {
     throw new Error(
@@ -373,12 +378,35 @@ export async function setInvoicePaymentStatus(
     await assertCapability(sb, userId, input.tenantId, "variance.manage");
   }
 
+  const amountPaid = input.amountPaid ??
+    (input.paymentStatus === "paid" ? total : previousAmountPaid);
+  if (!Number.isFinite(amountPaid) || amountPaid < 0) {
+    throw new Error("Amount paid must be a finite, non-negative value.");
+  }
+  if (amountPaid + 0.01 < previousAmountPaid) {
+    throw new Error("Recorded payments cannot be reversed through invoice status; use a separately authorised refund or credit workflow.");
+  }
+  if (amountPaid - total > 0.01) {
+    throw new Error("Amount paid cannot exceed the supplier invoice total.");
+  }
+  if (input.paymentStatus === "unpaid" && amountPaid > 0.01) {
+    throw new Error("An invoice with a recorded payment cannot be marked unpaid.");
+  }
+  if (input.paymentStatus === "partially_paid" && !(amountPaid > 0.01 && amountPaid < total - 0.01)) {
+    throw new Error("Partially paid status requires a positive balance payment below the invoice total.");
+  }
+  if (input.paymentStatus === "paid" && Math.abs(amountPaid - total) > 0.01) {
+    throw new Error("Paid status requires the recorded amount to equal the invoice total.");
+  }
+  if (input.paymentStatus === "disputed" && input.amountPaid != null && amountPaid !== previousAmountPaid) {
+    throw new Error("Dispute status cannot alter the recorded payment amount.");
+  }
+
   const { data, error } = await sb
     .from("restaurant_supplier_invoices")
     .update({
       payment_status: input.paymentStatus,
-      amount_paid:
-        input.amountPaid ?? (input.paymentStatus === "paid" ? Number(before.total ?? 0) : undefined),
+      amount_paid: amountPaid,
     })
     .eq("tenant_id", input.tenantId)
     .eq("id", input.invoiceId)
@@ -395,7 +423,12 @@ export async function setInvoicePaymentStatus(
     previousState: before.payment_status,
     newState: input.paymentStatus,
     reason: input.reason ?? null,
-    metadata: { amount_paid: data.amount_paid },
+    metadata: {
+      previous_amount_paid: previousAmountPaid,
+      amount_paid: data.amount_paid,
+      invoice_total: total,
+      outstanding_balance: Number((total - Number(data.amount_paid ?? 0)).toFixed(2)),
+    },
   });
   return data;
 }
