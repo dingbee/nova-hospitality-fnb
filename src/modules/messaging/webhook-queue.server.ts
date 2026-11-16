@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- webhook JSON and privileged Supabase rows are validated at the boundary. */
 import { randomUUID } from "node:crypto";
 import { assertCapability } from "@/modules/restaurant/core/access.server";
 import { writeCommercialAudit } from "@/modules/commercial/audit.server";
