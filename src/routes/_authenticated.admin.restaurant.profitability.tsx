@@ -435,7 +435,7 @@ function ProfitabilityPage() {
         </SectionCard>
       )}
       {result && dimensions.length > 0 && (
-        <SectionCard title="Channel, outlet and property profitability" description="Contribution and operating profit are shown by source dimension.">
+        <SectionCard title="Channel, outlet and property profitability" description="Contribution and operating profit by source dimension. Property-level costs are attributed to outlets and channels using sales share and marked as estimated.">
           <ul className="divide-y text-sm">
             {dimensions.map((d: any) => (
               <li key={`${d.dimension_type}:${d.dimension_key}`} className="flex flex-wrap items-center justify-between gap-2 py-2">
