@@ -258,9 +258,7 @@ export async function computeProfitability(
   const serviceConsumables = consumptionEventRows.filter((e) => e.cost_class === "service_consumable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0);
   const otherDirectVariableCosts = consumptionEventRows.filter((e) => e.cost_class === "other_direct_variable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0);
   const profileRows = (consumptionProfiles ?? []) as any[];
-  const reportPropertyIds = input.propertyId
-    ? [input.propertyId]
-    : [...new Set(orderRows.map((o) => o.property_id).filter(Boolean))];
+  const reportPropertyIds = ((reportingProperties ?? []) as any[]).map((property) => property.id);
   const hasConsumptionProfiles = reportPropertyIds.length > 0 && reportPropertyIds.every((propertyId) =>
     profileRows.some((p) => p.active !== false && (p.property_id === null || p.property_id === propertyId) &&
       (!input.locationId || p.location_id === null || p.location_id === input.locationId))
