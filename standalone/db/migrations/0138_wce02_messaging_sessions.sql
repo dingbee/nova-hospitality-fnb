@@ -75,6 +75,9 @@ AS $wce$
 DECLARE
   location_tenant uuid;
   location_property uuid;
+  location_type text;
+  location_is_storage boolean;
+  location_status text;
   integration_tenant uuid;
   integration_property uuid;
   integration_provider text;
@@ -82,14 +85,17 @@ DECLARE
   integration_type text;
   integration_config jsonb;
 BEGIN
-  SELECT l.tenant_id, l.property_id
-  INTO location_tenant, location_property
+  SELECT l.tenant_id, l.property_id, l.location_type, l.is_storage, l.status
+  INTO location_tenant, location_property, location_type, location_is_storage, location_status
   FROM public.restaurant_locations l
   WHERE l.id = NEW.location_id;
 
   IF NOT FOUND
     OR location_tenant IS DISTINCT FROM NEW.tenant_id
-    OR location_property IS DISTINCT FROM NEW.property_id THEN
+    OR location_property IS DISTINCT FROM NEW.property_id
+    OR location_type NOT IN ('outlet', 'restaurant', 'bar')
+    OR location_is_storage IS DISTINCT FROM false
+    OR location_status IS DISTINCT FROM 'active' THEN
     RAISE EXCEPTION 'WhatsApp receiving number outlet is outside the selected tenant/property scope';
   END IF;
 
