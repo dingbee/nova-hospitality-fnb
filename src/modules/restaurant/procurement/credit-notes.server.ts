@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase rows are untyped at this boundary. */
 import type { z } from "zod";
 import { assertCapability, assertTenantRead, getTenantScope } from "../core/access.server";
-import { nextDocumentNumber, recordProcurementAuditStrict } from "./audit.server";
+import { nextDocumentNumber } from "./audit.server";
 import {
   DOCUMENT_PREFIX,
   type applySupplierCreditNoteSchema,
@@ -124,24 +124,6 @@ export async function recordSupplierCreditNote(
     .select("*")
     .single();
   if (error) throw new Error(error.message);
-
-  await recordProcurementAuditStrict(sb, userId, {
-    tenantId: input.tenantId,
-    documentType: "supplier_credit_note",
-    documentId: data.id,
-    documentNumber: data.document_number,
-    action: "recorded",
-    newState: "recorded",
-    reason: input.reason,
-    metadata: {
-      supplier_id: input.supplierId,
-      reference_invoice_id: input.referenceInvoiceId ?? null,
-      subtotal,
-      tax_total: taxTotal,
-      total,
-      currency: input.currency.toUpperCase(),
-    },
-  });
 
   return data;
 }
