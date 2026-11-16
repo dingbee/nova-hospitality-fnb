@@ -457,13 +457,14 @@ export async function getStockPositionEvidenceForReplenishment(
       // damaged) exactly once; only the confirmed remainder is eligible.
       const confirmedRemaining = Math.min(outstanding, Math.max(0, Number(confirmedTotal) - received));
       const confirmedDate = confirmation.row.confirmed_delivery_date ?? confirmation.header.confirmed_delivery_date ?? order.expected_at ?? null;
+      const confirmedExpectedAt = replenishmentDeliveryTimestamp(confirmedDate);
       if (confirmedRemaining > 0) {
-        if (!confirmedDate) evidence.manualReviewReasons.push("Supplier confirmation for PO line " + line.id + " has no delivery date.");
+        if (!confirmedExpectedAt) evidence.manualReviewReasons.push("Supplier confirmation for PO line " + line.id + " has no valid delivery date.");
         evidence.inbound.push({
           sourceId: confirmation.header.id,
           sourceType: "supplier_confirmation",
           quantityInStockUnits: confirmedRemaining * factor,
-          expectedAt: replenishmentDeliveryTimestamp(confirmedDate),
+          expectedAt: confirmedExpectedAt,
           status: confirmation.header.status,
         });
       }
@@ -471,12 +472,13 @@ export async function getStockPositionEvidenceForReplenishment(
         evidence.manualReviewReasons.push("Supplier has not confirmed the full outstanding quantity for PO line " + line.id + ".");
       }
     } else if (outstanding > 0) {
-      if (!order.expected_at) evidence.manualReviewReasons.push("Outstanding PO line " + line.id + " has no expected delivery date.");
+      const expectedAt = replenishmentDeliveryTimestamp(order.expected_at);
+      if (!expectedAt) evidence.manualReviewReasons.push("Outstanding PO line " + line.id + " has no valid expected delivery date.");
       evidence.inbound.push({
         sourceId: order.id + ":" + line.id,
         sourceType: "purchase_order",
         quantityInStockUnits: outstanding * factor,
-        expectedAt: replenishmentDeliveryTimestamp(order.expected_at),
+        expectedAt,
         status: order.status,
       });
     }
