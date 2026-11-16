@@ -21,6 +21,7 @@ create table if not exists public.restaurant_operational_profitability_snapshots
  contribution numeric(14,2) not null default 0,
  allocated_operating_expenses numeric(14,2) not null default 0,
  unallocated_operating_expenses numeric(14,2) not null default 0,
+ pending_expense_amount numeric(14,2) not null default 0,
  operating_profit numeric(14,2) not null default 0,
  contribution_margin_percent numeric(6,2),
  operating_margin_percent numeric(6,2),
