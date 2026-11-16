@@ -25,6 +25,16 @@ function fakeSupabase() {
       const query: any = {
         select: () => query,
         or: () => query,
+        is: (column: string, value: any) => {
+          filters.push([column, value, "is"]);
+          return query;
+        },
+        maybeSingle: async () => {
+          const rows = (tables[table] ?? []).filter((row) =>
+            filters.every(([column, value, op]) => op === "eq" ? row[column] === value : op === "is" ? row[column] === value : true),
+          );
+          return { data: rows[0] ?? null, error: null };
+        },
         eq: (column: string, value: any) => {
           filters.push([column, value, "eq"]);
           return query;
@@ -51,6 +61,7 @@ function fakeSupabase() {
                 if (op === "in") return value.includes(row[column]);
                 if (op === "gte") return String(row[column] ?? "") >= String(value);
                 if (op === "lte") return String(row[column] ?? "") <= String(value);
+                if (op === "is") return row[column] === value;
                 return true;
               }),
             );
@@ -93,8 +104,8 @@ function seed(options?: {
     ],
     restaurant_stock_movements: Array.from({ length: 7 }, (_, index) => ({
       tenant_id: TENANT,
-      property_id: null,
-      location_id: null,
+      property_id: PROPERTY,
+      location_id: LOCATION,
       inventory_item_id: ITEM,
       movement_type: "consumption",
       quantity: 30 / 7,
@@ -104,12 +115,19 @@ function seed(options?: {
     restaurant_stock_positions_v: [{
       tenant_id: TENANT,
       inventory_item_id: ITEM,
-      location_id: null,
+      location_id: LOCATION,
       on_hand: 2,
       movement_count: 8,
       last_movement_at: new Date(now - 86400000).toISOString(),
     }],
-    restaurant_locations: [],
+    restaurant_locations: [{
+      tenant_id: TENANT,
+      id: LOCATION,
+      property_id: PROPERTY,
+      scope: "property",
+      is_storage: true,
+      status: "active",
+    }],
     restaurant_stock_reservations: [],
     restaurant_stock_transfers: [],
     restaurant_stock_transfer_lines: [],
@@ -153,8 +171,8 @@ function seed(options?: {
         expected_at: new Date(now + 2 * 86400000).toISOString().slice(0, 10),
         received_at: null,
         total: 100,
-        property_id: null,
-        location_id: null,
+        property_id: PROPERTY,
+        location_id: LOCATION,
       },
     ],
     restaurant_purchase_order_items: [
@@ -167,6 +185,7 @@ function seed(options?: {
         quantity: options?.openQuantity ?? 2,
         received_quantity: 1,
         accepted_quantity: options?.accepted ?? 1,
+        rejected_quantity: 0,
       },
     ],
   };
@@ -180,6 +199,8 @@ describe("Purchasing Intelligence procurement integrity", () => {
     const result = await getPurchasingIntelligence(fakeSupabase(), "user-1", {
       tenantId: TENANT,
       windowDays: 30,
+      propertyId: PROPERTY,
+      locationId: LOCATION,
     });
     expect(result.suggestions).toHaveLength(1);
     // Thirty units over a 30-day observed series produce 1/day. The open
