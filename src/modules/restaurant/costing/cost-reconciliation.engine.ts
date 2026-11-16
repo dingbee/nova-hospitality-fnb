@@ -7,7 +7,7 @@ const minor=(v:number,label:string)=>{if(!Number.isSafeInteger(v)||v<0)throw new
 export function reconcileCost(i:ReconciliationInput):ReconciliationVariance|null {
  if(!i.tenantId||!i.sourceId||!i.sourceType)throw new Error("Tenant and source identity are required");
  if(!/^[A-Z]{3}$/.test(i.currency))throw new Error("Currency must be a three-letter uppercase code");
- if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(i.periodStart)||Number.isNaN(Date.parse(i.periodStart)))throw new Error("Period start must be a valid ISO date");
+ if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(i.periodStart)||(Number.isNaN(Date.parse(i.periodStart))||new Date(i.periodStart).toISOString().slice(0,10)!==i.periodStart))throw new Error("Period start must be a valid ISO date");
  const expected=minor(i.expectedMinor,"Expected amount"),actual=minor(i.actualMinor,"Actual amount"),threshold=minor(i.thresholdMinor??0,"Threshold");
  const delta=actual-expected,magnitude=Math.abs(delta);if(delta===0||magnitude<=threshold)return null;
  const severity:Severity=magnitude>=10000000?"critical":magnitude>=1000000?"high":magnitude>=100000?"medium":magnitude>=10000?"low":"info";
