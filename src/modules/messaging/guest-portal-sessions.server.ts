@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase result rows are validated at this boundary. */
 import { createHash, randomBytes } from "node:crypto";
 
 type Db = any;
