@@ -48,6 +48,18 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
   await assertCapability(sb, userId, input.tenantId, "purchasing.manage");
   await assertCapability(sb, userId, input.tenantId, "purchasing.approve");
 
+  for (const line of input.lines) {
+    const multiple = line.orderMultiple ?? 1;
+    const minimum = line.minimumOrderQuantity ?? 0;
+    if (line.stockUnitsPerPurchaseUnit != null && !line.stockUnitId) {
+      throw new Error("A stock-unit conversion snapshot requires an explicit stock unit.");
+    }
+    if (!Number.isFinite(multiple) || multiple <= 0 || !Number.isFinite(minimum) || minimum < 0 ||
+        line.quantity < minimum ||
+        Math.abs(line.quantity / multiple - Math.round(line.quantity / multiple)) > 0.000001) {
+      throw new Error("Purchase-order quantities must satisfy the stored supplier minimum and order multiple.");
+    }
+  }
   const subtotal = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
 
   // An explicit reference is client-supplied (e.g. a supplier's own PO
@@ -113,6 +125,11 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
         inventory_item_id: l.inventoryItemId ?? null,
         supplier_product_id: l.supplierProductId ?? null,
         unit_id: l.unitId ?? null,
+        stock_unit_id: l.stockUnitId ?? null,
+        stock_units_per_purchase_unit: l.stockUnitsPerPurchaseUnit ?? null,
+        minimum_order_quantity: l.minimumOrderQuantity ?? null,
+        order_multiple: l.orderMultiple ?? null,
+        source_action_id: l.sourceActionId ?? null,
         description: l.description,
         quantity: l.quantity,
         unit_price: l.unitPrice,
