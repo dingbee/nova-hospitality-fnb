@@ -12,7 +12,7 @@
  * number is used.
  */
 import { describe, expect, it } from "vitest";
-import { consumeForOrderItem } from "./movements.server";
+import { consumeForOrderItem, insertMovement } from "./movements.server";
 
 const TENANT = "11111111-1111-1111-1111-111111111111";
 const USER = "22222222-2222-2222-2222-222222222222";
@@ -359,5 +359,80 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
       }),
     ).rejects.toThrow(/cannot be converted/i);
     expect(fake.movements).toHaveLength(0); // nothing posted on refusal
+  });
+});
+
+
+describe("insertMovement — canonical stock-unit ledger contract", () => {
+  const baseMovement = {
+    tenantId: TENANT,
+    inventoryItemId: "item-stock",
+    movementType: "purchase_receipt" as const,
+    quantity: 2,
+    unitCost: 1000,
+    currency: "TZS",
+    dedupeKey: "p0-02-canonical-unit",
+  };
+
+  it("uses the inventory item's canonical stock unit when the caller omits unitId", async () => {
+    const fake = makeFakeSupabase({
+      items: [{
+        id: "item-stock",
+        name: "Stock item",
+        unit_id: KG.id,
+        allow_negative: true,
+        current_quantity: 0,
+      }],
+      components: [],
+      units: [KG],
+    });
+
+    await insertMovement(fake.supabase, USER, baseMovement);
+    expect(fake.movements).toHaveLength(1);
+    expect(fake.movements[0].unit_id).toBe(KG.id);
+  });
+
+  it("rejects a movement in a different unit before inserting into the ledger", async () => {
+    const fake = makeFakeSupabase({
+      items: [{
+        id: "item-stock",
+        name: "Stock item",
+        unit_id: KG.id,
+        allow_negative: true,
+        current_quantity: 0,
+      }],
+      components: [],
+      units: [KG, G],
+    });
+
+    await expect(insertMovement(fake.supabase, USER, { ...baseMovement, unitId: G.id }))
+      .rejects.toThrow(/canonical stock unit/i);
+    expect(fake.movements).toHaveLength(0);
+  });
+
+  it("rejects items with no configured stock unit", async () => {
+    const fake = makeFakeSupabase({
+      items: [{
+        id: "item-stock",
+        name: "Stock item",
+        unit_id: null,
+        allow_negative: true,
+        current_quantity: 0,
+      }],
+      components: [],
+      units: [],
+    });
+
+    await expect(insertMovement(fake.supabase, USER, baseMovement))
+      .rejects.toThrow(/no configured stock unit/i);
+    expect(fake.movements).toHaveLength(0);
+  });
+
+  it("rejects an inventory item outside the requested tenant", async () => {
+    const fake = makeFakeSupabase({ items: [], components: [], units: [] });
+
+    await expect(insertMovement(fake.supabase, USER, baseMovement))
+      .rejects.toThrow(/not found in the requested tenant/i);
+    expect(fake.movements).toHaveLength(0);
   });
 });
