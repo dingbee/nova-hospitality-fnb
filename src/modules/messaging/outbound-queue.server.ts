@@ -113,7 +113,29 @@ async function processOneOutboundJob(db: Db, job: ClaimedOutboundJob, workerId: 
     return "failed" as const;
   }
 
-  const accessToken = await getIntegrationSecret(db, job.tenant_id, integration.id);
+  const { data: conversation, error: conversationError } = await db
+    .from("wa_conversations")
+    .select("last_message_at")
+    .eq("id", job.conversation_id)
+    .eq("tenant_id", job.tenant_id)
+    .maybeSingle();
+  const lastInboundAt = conversation?.last_message_at ? new Date(conversation.last_message_at).getTime() : 0;
+  if (
+    conversationError ||
+    !Number.isFinite(lastInboundAt) ||
+    Date.now() - lastInboundAt > 24 * 60 * 60 * 1000
+  ) {
+    await markFailed(db, job, workerId, "meta_customer_service_window_expired");
+    return "failed" as const;
+  }
+
+  let accessToken: string | null;
+  try {
+    accessToken = await getIntegrationSecret(db, job.tenant_id, integration.id);
+  } catch {
+    await markFailed(db, job, workerId, "whatsapp_access_token_decryption_failed");
+    return "failed" as const;
+  }
   if (!accessToken) {
     await markFailed(db, job, workerId, "whatsapp_access_token_unavailable");
     return "failed" as const;
