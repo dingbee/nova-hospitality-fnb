@@ -99,7 +99,7 @@ export async function getPurchasingIntelligence(
           "id, supplier_id, status, order_date, expected_at, received_at, total, property_id, location_id",
         )
         .eq("tenant_id", tenantId);
-      if (input.propertyId) q = q.eq("property_id", input.propertyId);
+      if (propertyId) q = q.eq("property_id", propertyId);
       if (input.locationId) q = q.eq("location_id", input.locationId);
       return q;
     })(),
