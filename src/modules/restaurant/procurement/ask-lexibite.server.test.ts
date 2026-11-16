@@ -42,6 +42,8 @@ const SUPPLIER = "44444444-4444-4444-8444-444444444444";
 const PRODUCT = "55555555-5555-4555-8555-555555555555";
 const UNIT = "66666666-6666-4666-8666-666666666666";
 const IDEMPOTENCY = "77777777-7777-4777-8777-777777777777";
+const PROPERTY = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const LOCATION = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 function chain(result: unknown) {
   const q: any = {};
@@ -55,6 +57,7 @@ function sbWithExisting(
   productUnitId = UNIT,
   purchaseUnitId: string | null = null,
   packSize = 1,
+  persistedLines: Row[] = [],
 ) {
   return {
     from: vi.fn((table: string) => {
@@ -84,6 +87,9 @@ function sbWithExisting(
               inventory_item_id: ITEM,
               unit_id: productUnitId,
               unit_price: 12000,
+              currency: "TZS",
+              min_order_quantity: 0,
+              pack_size: packSize,
               active: true,
             },
           ],
@@ -91,7 +97,7 @@ function sbWithExisting(
         });
       }
       if (table === "restaurant_suppliers") {
-        return chain({ data: [{ id: SUPPLIER, name: "Fresh Supplier" }], error: null });
+        return chain({ data: [{ id: SUPPLIER, name: "Fresh Supplier", status: "active" }], error: null });
       }
       if (table === "restaurant_purchase_orders") {
         return chain({ data: existing, error: null });
@@ -109,7 +115,7 @@ function sbWithExisting(
                   unit_price: 12000,
                 },
               ]
-            : [],
+            : persistedLines,
           error: null,
         });
       }
@@ -122,7 +128,7 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
   it("normalizes supplier pack pricing and rounds stock demand up to whole purchase packs", async () => {
     mocks.assertCapability.mockResolvedValue(undefined);
     mocks.getTenantScope.mockResolvedValue({});
-    mocks.resolveMultiPropertyScope.mockResolvedValue(null);
+    mocks.resolveMultiPropertyScope.mockResolvedValue(PROPERTY);
     mocks.getPurchasingIntelligence.mockResolvedValue({
       generatedAt: "2026-10-05T00:00:00.000Z",
       windowDays: 30,
@@ -139,6 +145,14 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
           dailyVelocity: 1,
           leadTimeDays: 2,
           coverDays: 5,
+          purchaseQuantity: 2,
+          purchaseUnitId: "88888888-8888-4888-8888-888888888888",
+          supplierProductId: PRODUCT,
+          purchaseUnitPrice: 12000,
+          purchaseCurrency: "TZS",
+          stockUnitsPerPurchaseUnit: 6,
+          minimumOrderQuantity: 0,
+          orderMultiple: 1,
         },
       ],
       suppliers: [],
@@ -157,6 +171,8 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
       {
         tenantId: TENANT,
         inventoryItemIds: [],
+        propertyId: PROPERTY,
+        locationId: LOCATION,
         supplierId: null,
         idempotencyKey: IDEMPOTENCY,
         lineOverrides: [],
@@ -165,6 +181,7 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
     expect(plan.groups[0]?.lines[0]).toEqual(
       expect.objectContaining({
         quantity: 2,
+        recommendedPurchaseQuantity: 2,
         unitPrice: 12000,
         estimatedCost: 24000,
       }),
@@ -175,7 +192,7 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
   it("refuses a replenishment PO when supplier unit differs from the stock unit", async () => {
     mocks.assertCapability.mockResolvedValue(undefined);
     mocks.getTenantScope.mockResolvedValue({});
-    mocks.resolveMultiPropertyScope.mockResolvedValue(null);
+    mocks.resolveMultiPropertyScope.mockResolvedValue(PROPERTY);
     mocks.getPurchasingIntelligence.mockResolvedValue({
       generatedAt: "2026-10-05T00:00:00.000Z",
       windowDays: 30,
@@ -192,6 +209,14 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
           dailyVelocity: 1,
           leadTimeDays: 2,
           coverDays: 5,
+          purchaseQuantity: 10,
+          purchaseUnitId: "88888888-8888-4888-8888-888888888888",
+          supplierProductId: PRODUCT,
+          purchaseUnitPrice: 12000,
+          purchaseCurrency: "TZS",
+          stockUnitsPerPurchaseUnit: 10,
+          minimumOrderQuantity: 0,
+          orderMultiple: 1,
         },
       ],
       suppliers: [],
@@ -206,6 +231,8 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
       {
         tenantId: TENANT,
         inventoryItemIds: [],
+        propertyId: PROPERTY,
+        locationId: LOCATION,
         supplierId: null,
         idempotencyKey: IDEMPOTENCY,
         lineOverrides: [],
@@ -213,15 +240,13 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
     );
 
     expect(plan.groups).toHaveLength(0);
-    expect(plan.skipped).toContain(
-      "Beef: supplier purchase unit differs from the stock unit and no valid pack-size conversion is configured.",
-    );
+    expect(plan.skipped[0]).toMatch(/purchase-unit contract is incomplete or stale/i);
   });
 
   it("converts an explicitly requested stock quantity into configured supplier packs", async () => {
     mocks.assertCapability.mockResolvedValue(undefined);
     mocks.getTenantScope.mockResolvedValue({});
-    mocks.resolveMultiPropertyScope.mockResolvedValue(null);
+    mocks.resolveMultiPropertyScope.mockResolvedValue(PROPERTY);
     mocks.resolveTenantCurrency.mockResolvedValue("TZS");
     mocks.createPurchaseOrder.mockResolvedValue({
       id: "po-stock-unit",
@@ -262,7 +287,7 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
     mocks.createPurchaseOrder.mockClear();
     mocks.assertCapability.mockResolvedValue(undefined);
     mocks.getTenantScope.mockResolvedValue({});
-    mocks.resolveMultiPropertyScope.mockResolvedValue(null);
+    mocks.resolveMultiPropertyScope.mockResolvedValue(PROPERTY);
     mocks.resolveTenantCurrency.mockResolvedValue("TZS");
     mocks.getPurchasingIntelligence.mockResolvedValue({
       generatedAt: "2026-10-05T00:00:00.000Z",
@@ -280,6 +305,14 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
           dailyVelocity: 1,
           leadTimeDays: 2,
           coverDays: 5,
+          purchaseQuantity: 10,
+          purchaseUnitId: UNIT,
+          supplierProductId: PRODUCT,
+          purchaseUnitPrice: 12000,
+          purchaseCurrency: "TZS",
+          stockUnitsPerPurchaseUnit: 1,
+          minimumOrderQuantity: 0,
+          orderMultiple: 1,
         },
       ],
       suppliers: [],
@@ -295,10 +328,18 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
       currency: "TZS",
     });
 
-    const sb = sbWithExisting(null);
+    const sb = sbWithExisting(null, UNIT, null, 1, [{
+      inventory_item_id: ITEM,
+      supplier_product_id: PRODUCT,
+      unit_id: UNIT,
+      quantity: 8,
+      unit_price: 12000,
+    }]);
     await createIntelligentPurchaseOrders(sb, USER, {
       tenantId: TENANT,
       inventoryItemIds: [],
+      propertyId: PROPERTY,
+      locationId: LOCATION,
       supplierId: null,
       idempotencyKey: IDEMPOTENCY,
       lineOverrides: [{ inventoryItemId: ITEM, quantity: 8 }],
@@ -327,6 +368,14 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
           dailyVelocity: 1,
           leadTimeDays: 2,
           coverDays: 5,
+          purchaseQuantity: 10,
+          purchaseUnitId: UNIT,
+          supplierProductId: PRODUCT,
+          purchaseUnitPrice: 12000,
+          purchaseCurrency: "TZS",
+          stockUnitsPerPurchaseUnit: 1,
+          minimumOrderQuantity: 0,
+          orderMultiple: 1,
         },
       ],
       suppliers: [],
@@ -342,10 +391,18 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
       currency: "TZS",
     });
 
-    const sb = sbWithExisting(null);
+    const sb = sbWithExisting(null, UNIT, null, 1, [{
+      inventory_item_id: ITEM,
+      supplier_product_id: PRODUCT,
+      unit_id: UNIT,
+      quantity: 10,
+      unit_price: 12000,
+    }]);
     await createIntelligentPurchaseOrders(sb, USER, {
       tenantId: TENANT,
       inventoryItemIds: [],
+      propertyId: PROPERTY,
+      locationId: LOCATION,
       supplierId: null,
       idempotencyKey: IDEMPOTENCY,
       lineOverrides: [],
@@ -371,6 +428,14 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
           dailyVelocity: 1,
           leadTimeDays: 2,
           coverDays: 5,
+          purchaseQuantity: 10,
+          purchaseUnitId: UNIT,
+          supplierProductId: PRODUCT,
+          purchaseUnitPrice: 12000,
+          purchaseCurrency: "TZS",
+          stockUnitsPerPurchaseUnit: 1,
+          minimumOrderQuantity: 0,
+          orderMultiple: 1,
         },
       ],
       suppliers: [],
@@ -385,8 +450,8 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
       reference: "LEXI-INT-" + IDEMPOTENCY + "-c9c4c5e7",
       status: "draft",
       supplier_id: SUPPLIER,
-      property_id: null,
-      location_id: null,
+      property_id: PROPERTY,
+      location_id: LOCATION,
       total: 120000,
       currency: "TZS",
     };
@@ -395,6 +460,8 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
       createIntelligentPurchaseOrders(sb, USER, {
         tenantId: TENANT,
         inventoryItemIds: [],
+        propertyId: PROPERTY,
+        locationId: LOCATION,
         supplierId: null,
         idempotencyKey: IDEMPOTENCY,
         lineOverrides: [{ inventoryItemId: ITEM, quantity: 8 }],
@@ -420,6 +487,14 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
           dailyVelocity: 1,
           leadTimeDays: 2,
           coverDays: 5,
+          purchaseQuantity: 10,
+          purchaseUnitId: UNIT,
+          supplierProductId: PRODUCT,
+          purchaseUnitPrice: 12000,
+          purchaseCurrency: "TZS",
+          stockUnitsPerPurchaseUnit: 1,
+          minimumOrderQuantity: 0,
+          orderMultiple: 1,
         },
       ],
       suppliers: [],
@@ -435,8 +510,8 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
       reference: "LEXI-INT-existing",
       status: "draft",
       supplier_id: SUPPLIER,
-      property_id: null,
-      location_id: null,
+      property_id: PROPERTY,
+      location_id: LOCATION,
       total: 120000,
       currency: "TZS",
     };
@@ -445,6 +520,8 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
     const result = await createIntelligentPurchaseOrders(sb, USER, {
       tenantId: TENANT,
       inventoryItemIds: [],
+      propertyId: PROPERTY,
+      locationId: LOCATION,
       supplierId: null,
       idempotencyKey: IDEMPOTENCY,
       lineOverrides: [],
