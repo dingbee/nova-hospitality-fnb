@@ -49,8 +49,7 @@ export async function getPurchasingIntelligence(
       "id, name, property_id, location_id, current_quantity, average_cost, currency, unit_id, purchase_unit_id, pack_size, reorder_point, par_level, metadata, updated_at",
     )
     .eq("tenant_id", tenantId);
-  if (input.propertyId) itemsQuery = itemsQuery.eq("property_id", input.propertyId);
-  if (input.locationId) itemsQuery = itemsQuery.eq("location_id", input.locationId);
+  if (input.propertyId) itemsQuery = itemsQuery.or("property_id.eq." + input.propertyId + ",property_id.is.null");
 
   let movesQuery = sb
     .from("restaurant_stock_movements")
@@ -121,7 +120,7 @@ export async function getPurchasingIntelligence(
   const productIds = products.map((product) => product.id);
   const historyRes = productIds.length
     ? await sb.from("restaurant_supplier_price_history")
-        .select("supplier_product_id, unit_id, price, currency, effective_date, price_type")
+        .select("supplier_product_id, unit_id, price, currency, effective_date, price_type, created_at")
         .eq("tenant_id", tenantId)
         .in("supplier_product_id", productIds)
         .lte("effective_date", new Date(now).toISOString().slice(0, 10))
@@ -131,7 +130,7 @@ export async function getPurchasingIntelligence(
   const latestPriceByProduct = new Map<string, any>();
   for (const row of historyRows) {
     const previous = latestPriceByProduct.get(row.supplier_product_id);
-    if (!previous || String(row.effective_date) > String(previous.effective_date)) {
+    if (!previous || String(row.effective_date) > String(previous.effective_date) || (String(row.effective_date) === String(previous.effective_date) && String(row.created_at) > String(previous.created_at))) {
       latestPriceByProduct.set(row.supplier_product_id, row);
     }
   }
