@@ -125,6 +125,20 @@ Production catalogue checks confirmed:
 
 The fingerprint deltas are classified rather than represented as byte-identical catalog state: the isolated PostgreSQL replay has `citext`, `fuzzystrmatch`, `pg_trgm`, `pgcrypto` and `plpgsql`, while production additionally has `pg_cron`, `pg_net`, `pg_stat_statements`, `supabase_vault` and `uuid-ossp`; the four additional replay routines are the two local email-queue compatibility functions, the repository-only ME-13 PO-fulfilment helper, and the repository POS-session start function not present in the final production catalogue. The relation fingerprint also includes the intentional 0134 tenant-FK/index delta and repository-only schema features. The 19 financial functions and the P0-01-specific constraints, indexes, trigger and RLS policies were checked separately against production. Full raw fingerprints remain attached to CI artifacts for audit.
 
+### Follow-up provenance verification — 2026-11-16
+
+A fresh read-only production-ledger query found that three functions' latest CREATE sources are recorded under the ME-17R-06 production migration alias, not their original ME-03 reconstruction migration:
+
+- `restaurant_apply_giveaway`
+- `restaurant_cash_payout_total`
+- `restaurant_expected_tender`
+
+The authoritative production ledger entry is `20260920200912 — me17r06_security_definer_hardening`. The corresponding source is `standalone/db/migrations/0093_me17r06_security_definer_hardening.sql`; all three function bodies match the production ledger statements after whitespace normalization. Their live properties remain `SECURITY DEFINER`, `search_path=public`, and revoked from `anon`.
+
+The ME-17R-05 provenance verification SQL was corrected to expect this later, authoritative source for those three functions. A fresh read-only run then returned **19/19 PASS** for function presence, signature, latest migration provenance and security properties. This corrects a stale expected-ledger mapping; it does not change production or migration SQL.
+
+The live production fingerprint was also rerun from `p0-01-schema-fingerprint.sql`: 10 extensions, 221 relations, 126 routines, 1 public schema and 316 types, matching the recorded production counts.
+
 ### P0-01 acceptance disposition
 
 | Gate | Result |
