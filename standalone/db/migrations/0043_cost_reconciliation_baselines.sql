@@ -21,7 +21,7 @@ create table if not exists public.restaurant_operational_cost_budgets (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   check(period_end >= period_start),
-  check((status = 'approved') = (approved_by is not null and approved_at is not null)),
+  check(status <> 'approved' or (approved_by is not null and approved_at is not null)),
   unique(tenant_id,property_id,category_id,period_start,period_end,currency)
 );
 create index if not exists restaurant_operational_cost_budgets_scope_period_idx

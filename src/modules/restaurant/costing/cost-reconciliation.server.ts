@@ -9,8 +9,20 @@ const periodSchema = z.object({
 });
 const minor=(v:unknown)=>{const n=Number(v);if(!Number.isFinite(n)||n<0)throw new Error("Invalid source amount");const result=Math.round(n*100);if(!Number.isSafeInteger(result))throw new Error("Source amount exceeds safe minor-unit precision");return result;};
 const dayAfter=(date:string)=>{const d=new Date(date+"T00:00:00.000Z");d.setUTCDate(d.getUTCDate()+1);return d.toISOString().slice(0,10);};
-const dateStart=(date:string)=>date+"T00:00:00.000Z";
-const dateEndExclusive=(date:string)=>dayAfter(date)+"T00:00:00.000Z";
+const localMidnightIso=(date:string,timeZone:string)=>{
+ const [year,month,day]=date.split("-").map(Number);
+ const target=Date.UTC(year,month-1,day,0,0,0);
+ let candidate=target;
+ const formatter=new Intl.DateTimeFormat("en-GB",{timeZone,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"});
+ for(let attempt=0;attempt<4;attempt++){
+  const parts=Object.fromEntries(formatter.formatToParts(new Date(candidate)).map(part=>[part.type,part.value]));
+  const represented=Date.UTC(Number(parts.year),Number(parts.month)-1,Number(parts.day),Number(parts.hour),Number(parts.minute),Number(parts.second));
+  const delta=target-represented;
+  candidate+=delta;
+  if(delta===0)break;
+ }
+ return new Date(candidate).toISOString();
+};
 const validCurrency=(value:unknown):value is string=>typeof value==="string"&&/^[A-Z]{3}$/.test(value);
 
 async function persistVariance(sb:Sb,userId:string,runId:string,input:{tenantId:string;propertyId:string;periodStart:string;currency:string;sourceType:string;sourceId:string;kind:"allocation"|"purchase_price"|"consumption_cost"|"operating_expense";expectedMinor:number;actualMinor:number;thresholdMinor?:number;evidence:Record<string,unknown>}){
@@ -41,7 +53,9 @@ export async function runOperationalAllocationReconciliation(sb:Sb,userId:string
  const input=periodSchema.parse(raw);
  if(input.periodEnd<input.periodStart)throw new Error("Period end must not precede period start");
  await assertCapability(sb,userId,input.tenantId,"costing.manage",{propertyId:input.propertyId});
- const from=dateStart(input.periodStart),to=dateEndExclusive(input.periodEnd);
+ const {data:property,error:propertyError}=await sb.from("restaurant_properties").select("timezone").eq("tenant_id",input.tenantId).eq("id",input.propertyId).single();
+ if(propertyError||!property?.timezone)throw new Error("Property timezone is required for calendar-accurate reconciliation.");
+ const from=localMidnightIso(input.periodStart,property.timezone),to=localMidnightIso(dayAfter(input.periodEnd),property.timezone);
  const [expenseRes,budgetRes,receiptRes,orderRes]=await Promise.all([
   sb.from("restaurant_operational_expenses").select("id,property_id,category_id,amount,currency,incurred_on,description,approval_status")
    .eq("tenant_id",input.tenantId).eq("property_id",input.propertyId).gte("incurred_on",input.periodStart).lte("incurred_on",input.periodEnd).eq("approval_status","approved").order("id"),
@@ -67,6 +81,10 @@ export async function runOperationalAllocationReconciliation(sb:Sb,userId:string
  const receiptById=new Map(receipts.map(r=>[r.id,r]));
  const orderById=new Map(orders.map(o=>[o.id,o]));
  const recipeLineIds=orderLines.map(l=>l.id);
+ const recipeIds=[...new Set(orderLines.map(l=>l.recipe_id).filter(Boolean))];
+ const recipeCurrencyRes=recipeIds.length?await sb.from("restaurant_recipes").select("id,currency").eq("tenant_id",input.tenantId).in("id",recipeIds):{data:[],error:null};
+ if(recipeCurrencyRes.error)throw new Error(recipeCurrencyRes.error.message);
+ const recipeCurrencyById=new Map((recipeCurrencyRes.data??[]).map((r:any)=>[r.id,r.currency]));
  const movementRes=recipeLineIds.length?await sb.from("restaurant_stock_movements")
   .select("id,order_item_id,inventory_item_id,quantity,total_cost,currency,unit_id,occurred_at")
   .eq("tenant_id",input.tenantId).eq("property_id",input.propertyId).eq("movement_type","consumption").in("order_item_id",recipeLineIds):{data:[],error:null};
@@ -82,7 +100,7 @@ export async function runOperationalAllocationReconciliation(sb:Sb,userId:string
  const movementsByOrderLine=new Map<string,any[]>();
  for(const m of movements){const list=movementsByOrderLine.get(m.order_item_id)??[];list.push(m);movementsByOrderLine.set(m.order_item_id,list);}
  const consumptionRows=orderLines.flatMap(line=>{
-  const order=orderById.get(line.order_id);if(!order||!validCurrency(order.currency)||Number(line.theoretical_cost??0)<=0)return [];
+  const order=orderById.get(line.order_id);if(!order||!validCurrency(order.currency)||recipeCurrencyById.get(line.recipe_id)!==order.currency||Number(line.theoretical_cost??0)<=0)return [];
   const linked=movementsByOrderLine.get(line.id)??[];
   if(linked.some(m=>!validCurrency(m.currency)||m.currency!==order.currency))return [];
   const expected=minor(line.theoretical_cost),actual=linked.reduce((sum,m)=>sum+minor(m.total_cost??0),0);
@@ -110,7 +128,7 @@ export async function runOperationalAllocationReconciliation(sb:Sb,userId:string
   const sourceCounts={approved_expenses:expenseGroup.length,approved_budgets:budgetGroup.length,posted_receipt_lines:receiptGroup.length,recipe_sales_lines:consumptionGroup.length};
   const {data:run,error:runError}=await sb.from("restaurant_cost_reconciliation_runs").upsert({
    tenant_id:input.tenantId,property_id:input.propertyId,period_start:input.periodStart,period_end:input.periodEnd,currency,source_fingerprint:fingerprint,
-   status:"completed",source_counts:sourceCounts,limitations:[
+   status:"running",source_counts:sourceCounts,limitations:[
     "Operating-expense budget comparisons use only approved budgets matching this exact property, category, period and currency.",
     "Purchase-price comparisons use posted receipts with accepted quantity, a recorded ordered price, identical stock unit and matching currency.",
     "Consumption comparisons use closed recipe-linked order lines with a positive sale-time theoretical-cost snapshot and linked stock consumption movements; currency mismatches are excluded."
@@ -119,7 +137,10 @@ export async function runOperationalAllocationReconciliation(sb:Sb,userId:string
   if(runError)throw new Error(runError.message);
   let runId=run?.id;
   if(!runId){const found=await sb.from("restaurant_cost_reconciliation_runs").select("id").eq("tenant_id",input.tenantId).eq("property_id",input.propertyId).eq("period_start",input.periodStart).eq("period_end",input.periodEnd).eq("currency",currency).eq("source_fingerprint",fingerprint).single();if(found.error)throw new Error(found.error.message);runId=found.data.id;}
+  const startUpdate=await sb.from("restaurant_cost_reconciliation_runs").update({status:"running"}).eq("tenant_id",input.tenantId).eq("id",runId);
+  if(startUpdate.error)throw new Error(startUpdate.error.message);
   let varianceCount=0;
+  try {
   for(const e of expenseGroup){
    const expected=minor(e.amount),actual=allocated.get(e.id)??0;
    const ok=await persistVariance(sb,userId,runId,{tenantId:input.tenantId,propertyId:input.propertyId,periodStart:input.periodStart,currency,sourceType:"operational_expense",sourceId:e.id,kind:"allocation",expectedMinor:expected,actualMinor:actual,thresholdMinor:thresholdMap.get("allocation:"+currency),evidence:{description:e.description,category_id:e.category_id,incurred_on:e.incurred_on,source_amount:e.amount,allocated_amount:actual/100}});
@@ -139,7 +160,13 @@ export async function runOperationalAllocationReconciliation(sb:Sb,userId:string
    const ok=await persistVariance(sb,userId,runId,{tenantId:input.tenantId,propertyId:input.propertyId,periodStart:input.periodStart,currency,sourceType:"order_item",sourceId:x.line.id,kind:"consumption_cost",expectedMinor:x.expected,actualMinor:x.actual,thresholdMinor:thresholdMap.get("consumption_cost:"+currency),evidence:{description:x.line.description,order_id:x.order.id,recipe_id:x.line.recipe_id,recipe_version:x.line.recipe_version,quantity_sold:x.line.quantity,recipe_cost_snapshot:x.line.theoretical_cost,actual_stock_consumption_cost:x.actual/100,stock_movement_count:x.movementCount}});
    if(ok)varianceCount++;
   }
+  const completion=await sb.from("restaurant_cost_reconciliation_runs").update({status:"completed"}).eq("tenant_id",input.tenantId).eq("id",runId);
+  if(completion.error)throw new Error(completion.error.message);
   results.push({runId,currency,sourceCount:expenseGroup.length+budgetGroup.length+receiptGroup.length+consumptionGroup.length,varianceCount,sourceCounts});
+  } catch(error) {
+   await sb.from("restaurant_cost_reconciliation_runs").update({status:"failed"}).eq("tenant_id",input.tenantId).eq("id",runId);
+   throw error;
+  }
  }
  return {periodStart:input.periodStart,periodEnd:input.periodEnd,propertyId:input.propertyId,results,scope:"approved_expense_allocations_budgets_posted_purchase_receipts_and_recipe_sales_consumption"};
 }

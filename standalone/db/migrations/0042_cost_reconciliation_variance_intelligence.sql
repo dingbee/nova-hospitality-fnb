@@ -67,3 +67,9 @@ grant insert on public.restaurant_cost_reconciliation_runs,public.restaurant_cos
 grant update (investigation_status,assigned_to,resolution_details,resolved_at,resolved_by,updated_at) on public.restaurant_cost_variances to authenticated;
 grant insert, update, delete on public.restaurant_cost_variance_thresholds to authenticated;
 create policy restaurant_cost_variances_update on public.restaurant_cost_variances for update to authenticated using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id)) with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id));
+
+-- Reconciliation runs remain non-editable except for their execution state and captured metadata.
+grant update (status,source_counts,limitations) on public.restaurant_cost_reconciliation_runs to authenticated;
+create policy restaurant_cost_reconciliation_runs_update on public.restaurant_cost_reconciliation_runs for update to authenticated
+ using(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id))
+ with check(public.restaurant_can_write_scoped(tenant_id,array['owner','general_manager','restaurant_manager','accountant']::restaurant_role[],property_id));
