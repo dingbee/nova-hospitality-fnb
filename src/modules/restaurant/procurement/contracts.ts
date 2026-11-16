@@ -271,6 +271,8 @@ export type RecordInvoiceInput = z.infer<typeof recordInvoiceSchema>;
 export const listInvoicesSchema = z.object({
   tenantId: uuid,
   supplierId: uuid.optional(),
+  propertyId: uuid.optional(),
+  locationId: uuid.optional(),
   status: z.enum(INVOICE_STATUSES).optional(),
   paymentStatus: z.enum(PROCUREMENT_PAYMENT_STATUSES).optional(),
   limit: z.number().int().min(1).max(200).default(50),
