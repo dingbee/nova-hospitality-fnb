@@ -142,18 +142,22 @@ function query(table: string) {
   return api;
 }
 function rpc(name: string, args: any) {
-  if (name === "restaurant_increment_po_item_fulfilment") {
+  if (name === "restaurant_apply_po_receipt_fulfilment") {
+    const receiptLine = (db["restaurant_goods_receipt_items"] ?? []).find(
+      (r) => r.id === args._receipt_item_id && r.tenant_id === args._tenant,
+    );
     const rows = db["restaurant_purchase_order_items"] ?? [];
     const row = rows.find((r) => r.id === args._po_item_id && r.tenant_id === args._tenant);
-    if (row) {
-      row.received_quantity =
-        Number(row.received_quantity ?? 0) + Number(args._received_delta ?? 0);
-      row.accepted_quantity =
-        Number(row.accepted_quantity ?? 0) + Number(args._accepted_delta ?? 0);
-      row.rejected_quantity =
-        Number(row.rejected_quantity ?? 0) + Number(args._rejected_delta ?? 0);
+    if (!receiptLine || !row || receiptLine.purchase_order_item_id !== args._po_item_id) {
+      return Promise.resolve({ data: null, error: { message: "receipt line mismatch" } });
     }
-    return Promise.resolve({ data: row ? [row] : [], error: null });
+    if (!receiptLine.po_fulfilment_applied_at) {
+      receiptLine.po_fulfilment_applied_at = "applied";
+      row.received_quantity = Number(row.received_quantity ?? 0) + Number(args._received_delta ?? 0);
+      row.accepted_quantity = Number(row.accepted_quantity ?? 0) + Number(args._accepted_delta ?? 0);
+      row.rejected_quantity = Number(row.rejected_quantity ?? 0) + Number(args._rejected_delta ?? 0);
+    }
+    return Promise.resolve({ data: [row], error: null });
   }
   return Promise.resolve({ data: null, error: null });
 }
@@ -193,9 +197,19 @@ function seedOrder(status: string, quantity = 100) {
       rejected_quantity: 0,
       inventory_item_id: "inv-1",
       unit_id: "unit-1",
+      stock_unit_id: "unit-1",
+      stock_units_per_purchase_unit: 1,
+      supplier_product_id: null,
     },
   ];
-  db["restaurant_inventory_items"] = [{ id: "inv-1", tenant_id: TENANT, track_batches: false }];
+  db["restaurant_inventory_items"] = [{
+    id: "inv-1",
+    tenant_id: TENANT,
+    unit_id: "unit-1",
+    purchase_unit_id: null,
+    pack_size: 1,
+    track_batches: false,
+  }];
   db["restaurant_inventory_batches"] = [];
   db["restaurant_goods_receipts"] = [];
   db["restaurant_goods_receipt_items"] = [];
