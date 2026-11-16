@@ -72,7 +72,7 @@ jobs:
         run: |
           bash local/scripts/init-db.sh
           psql -h localhost -U postgres -d lexibite_migration_replay -v ON_ERROR_STOP=1 <<'SQL'
-          DO $
+          DO $verify$
           BEGIN
             IF NOT EXISTS (SELECT 1 FROM nova_local.schema_migrations WHERE filename = '0120_lb02zz_dispatch_cron_schedule.sql') THEN
               RAISE EXCEPTION 'LB-02 cron schedule was not replayed';
@@ -94,7 +94,7 @@ jobs:
             ) THEN
               RAISE EXCEPTION 'LB-03 audit immutability trigger function is missing';
             END IF;
-          END $;
+          END $verify$;
           SELECT count(*) FILTER (WHERE status = 'applied') AS applied_migrations,
                  count(*) FILTER (WHERE status = 'skipped') AS policy_skipped_migrations
           FROM nova_local.schema_migrations;
