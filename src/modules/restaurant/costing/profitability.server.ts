@@ -344,6 +344,7 @@ export async function computeProfitability(
   const pendingRows = (pendingExpenses ?? []) as any[];
   const unallocatedOperatingExpenses = unallocatedRows.reduce((sum, r) => sum + prorateMonthlyAmount(Number(r.source_amount ?? 0), r.period_start), 0);
   const pendingExpenseVerification = pendingRows.length > 0;
+  const pendingExpenseAmount = pendingRows.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
   const serviceConsumables = consumptionEventRows.filter((e) => e.cost_class === "service_consumable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0) + missingServiceConsumables;
   const otherDirectVariableCosts = consumptionEventRows.filter((e) => e.cost_class === "other_direct_variable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0) + missingOtherDirectCosts;
   const { data: reconciliationRuns, error: reconciliationError } = reportPropertyIds.length > 0
