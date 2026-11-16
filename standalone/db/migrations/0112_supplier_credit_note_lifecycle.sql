@@ -303,7 +303,7 @@ BEGIN
   SET payment_status = CASE
     WHEN payment_status = 'disputed' THEN payment_status
     WHEN amount_paid + v_invoice_credits + v_amount >= total - 0.01 THEN 'paid'
-    WHEN amount_paid + v_invoice_credits + round(_amount, 2) > 0 THEN 'partially_paid'
+    WHEN amount_paid + v_invoice_credits + v_amount > 0 THEN 'partially_paid'
     ELSE 'unpaid'
   END
   WHERE tenant_id = _tenant_id AND id = _invoice_id;
