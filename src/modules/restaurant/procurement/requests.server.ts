@@ -416,6 +416,10 @@ export async function convertRequestToOrder(
       !sameNumber(freshSuggestion.netAvailable, recommendation.net_available) ||
       !sameNumber(freshSuggestion.forecastDemand, recommendation.forecast_demand) ||
       !sameNumber(freshSuggestion.safetyStock, recommendation.safety_stock) ||
+      !sameNumber(freshSuggestion.dailyVelocity, recommendation.daily_velocity) ||
+      !sameNumber(freshSuggestion.leadTimeDays, recommendation.lead_time_days) ||
+      !sameNumber(freshSuggestion.targetCoverageDays, recommendation.target_coverage_days) ||
+      freshSuggestion.demandObservations !== recommendation.demand_observations ||
       freshSuggestion.effectivePriceDate !== (recommendation.effective_price_date ?? null) ||
       freshSuggestion.forecastConfidence !== recommendation.forecast_confidence ||
       freshSuggestion.purchaseCurrency !== recommendation.currency ||
