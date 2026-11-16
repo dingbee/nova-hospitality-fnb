@@ -89,7 +89,12 @@ function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[];
           return { data: null, error: { code: "23505", message: "duplicate" } };
         }
         seq += 1;
-        const stored = { ...row, id: `mv-${seq}`, balance_after: 0 };
+        const stored = {
+          ...row,
+          id: `mv-${seq}`,
+          total_cost: Math.abs(Number(row.quantity)) * Number(row.unit_cost),
+          balance_after: 0,
+        };
         movements.push(stored);
         return isSingleInsert ? { data: stored, error: null } : { data: [stored], error: null };
       }
@@ -102,6 +107,7 @@ function makeFakeSupabase(opts: { items: any[]; components: any[]; units: any[];
   return {
     supabase: { from: (table: string) => builder(table) },
     movements,
+    inventoryItems,
   };
 }
 
@@ -281,6 +287,47 @@ describe("consumeForOrderItem — recipe component costing and unit conversion",
     // webhook) must never double-deduct — the dedupe key is unchanged.
     await consumeForOrderItem(fake.supabase, USER, args);
     expect(fake.movements).toHaveLength(1);
+  });
+
+  it("reuses the committed recipe movement cost when average cost changes before a close retry", async () => {
+    const fake = makeFakeSupabase({
+      items: [{
+        id: "item-chicken",
+        name: "Chicken Breast",
+        average_cost: 14000,
+        currency: "TZS",
+        unit_id: KG.id,
+        allow_negative: true,
+        current_quantity: 100,
+      }],
+      components: [{
+        id: "comp-1",
+        menu_item_id: "menu-burger",
+        inventory_item_id: "item-chicken",
+        quantity: 180,
+        unit_id: G.id,
+        yield_percent: 100,
+      }],
+      units: [KG, G],
+    });
+    const args = {
+      tenantId: TENANT,
+      locationId: "location-1",
+      propertyId: "property-1",
+      orderId: "order-retry",
+      orderItemId: "item-retry",
+      menuItemId: "menu-burger",
+      quantity: 1,
+    };
+
+    const firstCost = await consumeForOrderItem(fake.supabase, USER, args);
+    fake.inventoryItems[0].average_cost = 20000;
+    const retryCost = await consumeForOrderItem(fake.supabase, USER, args);
+
+    expect(firstCost).toBe(2520);
+    expect(retryCost).toBe(2520);
+    expect(fake.movements).toHaveLength(1);
+    expect(fake.movements[0].total_cost).toBe(2520);
   });
 
   it("Section 18 scenario 6 — selling 60 pours of 150ml wine consumes exactly one carton's content (9,000ml = 12 bottles)", async () => {
