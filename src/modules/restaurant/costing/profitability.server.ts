@@ -417,7 +417,7 @@ export async function computeProfitability(
     incompleteSourceData: consumableCoverageIncomplete || salesSourceMismatch,
   });
   const netSalesByLine = new Map<string, number>();
-  const dimensionMap = new Map<string, { dimension_type: "channel" | "outlet" | "property"; dimension_key: string; dimension_name: string; property_id: string | null; location_id: string | null; net_sales: number; direct_variable_costs: number; contribution: number; allocated_operating_expenses: number; operating_profit: number }>();
+  const dimensionMap = new Map<string, { dimension_type: "channel" | "outlet" | "property"; dimension_key: string; dimension_name: string; property_id: string | null; location_id: string | null; net_sales: number; direct_variable_costs: number; contribution: number; allocated_operating_expenses: number; operating_profit: number; source_references: string[] }>();
   const propertyNetSalesById = new Map<string, number>();
   const locationNetSalesByKey = new Map<string, number>();
   const channelNetSalesByPropertyKey = new Map<string, number>();
@@ -430,6 +430,7 @@ export async function computeProfitability(
     cost: number,
     propertyId: string | null,
     locationId: string | null,
+    sourceId: string,
   ) => {
     const id = `${type}:${propertyId ?? "tenant"}:${locationId ?? "all"}:${key}`;
     const current = dimensionMap.get(id) ?? {
@@ -443,7 +444,9 @@ export async function computeProfitability(
       contribution: 0,
       allocated_operating_expenses: 0,
       operating_profit: 0,
+      source_references: [],
     };
+    if (!current.source_references.includes(sourceId)) current.source_references.push(sourceId);
     current.net_sales += net;
     current.direct_variable_costs += cost;
     current.contribution += net - cost;
@@ -463,7 +466,7 @@ export async function computeProfitability(
     netSalesByLine.set(item.id, lineNet);
     const channel = String(item.channel ?? order.source ?? "unknown");
     const channelKey = `${order.property_id ?? "tenant"}:${channel}`;
-    addDimension("channel", channelKey, channel, lineNet, lineCost, order.property_id ?? null, null);
+    addDimension("channel", channelKey, channel, lineNet, lineCost, order.property_id ?? null, null, order.id);
     if (order.property_id) {
       propertyNetSalesById.set(order.property_id, (propertyNetSalesById.get(order.property_id) ?? 0) + lineNet);
       channelNetSalesByPropertyKey.set(channelKey, (channelNetSalesByPropertyKey.get(channelKey) ?? 0) + lineNet);
@@ -473,10 +476,10 @@ export async function computeProfitability(
         const channelLocationKey = `${locationKey}:${channel}`;
         channelNetSalesByLocationKey.set(channelLocationKey, (channelNetSalesByLocationKey.get(channelLocationKey) ?? 0) + lineNet);
       }
-      addDimension("property", order.property_id, order.property_id, lineNet, lineCost, order.property_id, null);
+      addDimension("property", order.property_id, order.property_id, lineNet, lineCost, order.property_id, null, order.id);
     }
     if (order.location_id) {
-      addDimension("outlet", order.location_id, order.location_id, lineNet, lineCost, order.property_id ?? null, order.location_id);
+      addDimension("outlet", order.location_id, order.location_id, lineNet, lineCost, order.property_id ?? null, order.location_id, order.id);
     }
   }
   const sumAllocationRows = (rows: any[]) =>
@@ -722,7 +725,7 @@ export async function computeProfitability(
         operating_profit: d.operating_profit,
         allocation_method: d.allocation_method,
         confidence_state: d.confidence_state,
-        source_references: orderIds,
+        source_references: d.source_references,
       }));
       const { error: dimensionError } = await sb
         .from("restaurant_operational_profitability_dimensions")
