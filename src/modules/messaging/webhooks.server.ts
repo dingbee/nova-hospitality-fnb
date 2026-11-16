@@ -104,7 +104,7 @@ export async function ingestMetaWhatsAppWebhook(
       ) {
         const { data: integration, error: integrationError } = await admin
           .from("api_integrations")
-          .select("id, status, provider, channel_key")
+          .select("id, status, provider, channel_key, integration_type")
           .eq("id", binding.integration_id)
           .eq("tenant_id", binding.tenant_id)
           .eq("property_id", binding.property_id)
@@ -113,7 +113,8 @@ export async function ingestMetaWhatsAppWebhook(
         if (
           integration?.status === "active" &&
           integration.provider === "meta-whatsapp" &&
-          integration.channel_key === "whatsapp"
+          integration.channel_key === "whatsapp" &&
+          integration.integration_type === "channel"
         ) {
           resolvedBinding = binding;
         }
