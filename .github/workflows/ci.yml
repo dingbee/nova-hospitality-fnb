@@ -7,10 +7,12 @@ on:
       - main
       - "release/**"
       - "feat/operational-cost-intelligence-phase3-workaround"
+      - "feature/**"
   pull_request:
     branches:
       - main
       - "release/**"
+      - "integration/**"
 
 concurrency:
   group: lexibite-ci-${{ github.workflow }}-${{ github.ref }}
