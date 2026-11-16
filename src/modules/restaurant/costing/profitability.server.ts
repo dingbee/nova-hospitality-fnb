@@ -265,6 +265,19 @@ export async function computeProfitability(
     profileRows.some((p) => p.active !== false && (p.property_id === null || p.property_id === propertyId) &&
       (!input.locationId || p.location_id === null || p.location_id === input.locationId))
   );
+  const { data: reconciliationRuns, error: reconciliationError } = reportPropertyIds.length > 0
+    ? await sb.from("restaurant_cost_reconciliation_runs")
+        .select("id, property_id, status, source_counts, created_at")
+        .eq("tenant_id", input.tenantId)
+        .in("property_id", reportPropertyIds)
+        .eq("period_start", periodFrom)
+        .eq("period_end", periodTo)
+        .eq("currency", currency)
+        .eq("status", "completed")
+    : { data: [], error: null };
+  if (reconciliationError) throw new Error(reconciliationError.message);
+  const completedPropertyIds = new Set(((reconciliationRuns ?? []) as any[]).map((r) => r.property_id));
+  const partiallyReconciled = reportPropertyIds.some((propertyId) => !completedPropertyIds.has(propertyId));
   const movementRows = (movements ?? []) as any[];
   const paymentRows = (payments ?? []) as any[];
   const currencyRows = [
@@ -314,6 +327,7 @@ export async function computeProfitability(
     allocatedOperatingExpenses,
     unallocatedOperatingExpenses: Number(unallocatedOperatingExpenses.toFixed(2)),
     pendingExpenseVerification,
+    partiallyReconciled,
     incompleteSourceData: !hasConsumptionProfiles,
   });
   const netSalesByLine = new Map<string, number>();
@@ -502,6 +516,7 @@ export async function computeProfitability(
           stock_movement_ids: ((movements ?? []) as any[]).map((m) => m.id),
           payment_ids: ((payments ?? []) as any[]).map((p: any) => p.id),
           consumable_event_ids: consumptionEventRows.map((e) => e.id),
+          reconciliation_run_ids: ((reconciliationRuns ?? []) as any[]).map((r) => r.id),
           allocation_source_ids: allocationRows.map((a) => a.source_id).filter(Boolean),
           unallocated_source_ids: unallocatedRows.map((a) => a.source_id).filter(Boolean),
           pending_expense_ids: pendingRows.map((e) => e.id),
@@ -585,7 +600,43 @@ export async function listProfitability(
     const ids = await accessibleLocationIds(sb, scope);
     if (ids !== null) q = q.in("location_id", ids.length ? ids : [NO_MATCH_ID]);
   }
-  const { data, error } = await q;
+  const [{ data, error }, { data: operationalSnapshots, error: operationalSnapshotError }] = await Promise.all([
+    q,
+    (() => {
+      let operationalQuery = sb
+        .from("restaurant_operational_profitability_snapshots")
+        .select("id, property_id, location_id, period_start, period_end, currency, net_sales, direct_variable_costs, contribution, operating_profit, operating_margin_percent, confidence_state, computed_at")
+        .eq("tenant_id", input.tenantId)
+        .order("computed_at", { ascending: false })
+        .limit(input.limit);
+      if (input.locationId) operationalQuery = operationalQuery.eq("location_id", input.locationId);
+      if (input.propertyId) operationalQuery = operationalQuery.eq("property_id", input.propertyId);
+      return operationalQuery;
+    })(),
+  ]);
   if (error) throw new Error(error.message);
-  return data ?? [];
+  if (operationalSnapshotError) throw new Error(operationalSnapshotError.message);
+  const operationalRows = ((operationalSnapshots ?? []) as any[]).map((s) => ({
+    id: s.id,
+    menu_item_id: null,
+    menu_item_name: "Operational profitability",
+    period_start: s.period_start,
+    period_end: s.period_end,
+    quantity_sold: 0,
+    revenue: Number(s.net_sales ?? 0),
+    theoretical_cost: 0,
+    actual_cost: Number(s.direct_variable_costs ?? 0),
+    variance: 0,
+    gross_profit: Number(s.operating_profit ?? 0),
+    margin_percent: s.operating_margin_percent,
+    food_cost_percent: null,
+    currency: s.currency,
+    computed_at: s.computed_at,
+    snapshot_type: "operational",
+    contribution: Number(s.contribution ?? 0),
+    confidence_state: s.confidence_state,
+  }));
+  return [...(data ?? []), ...operationalRows]
+    .sort((a: any, b: any) => new Date(b.computed_at).getTime() - new Date(a.computed_at).getTime())
+    .slice(0, input.limit);
 }
