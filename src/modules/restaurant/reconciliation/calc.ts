@@ -634,6 +634,11 @@ export interface InvoiceFact {
   due_date?: string | null;
 }
 
+export interface CreditApplicationFact {
+  invoice_id: string;
+  amount?: number | null;
+}
+
 export interface ProcurementVarianceFact {
   id: string;
   variance_type: string;
@@ -662,8 +667,16 @@ export function detectProcurementExceptions(
   receipts: GoodsReceiptFact[],
   invoices: InvoiceFact[],
   variances: ProcurementVarianceFact[],
+  creditApplications: CreditApplicationFact[] = [],
 ): ExceptionDraft[] {
   const out: ExceptionDraft[] = [];
+  const creditByInvoice = new Map<string, number>();
+  for (const application of creditApplications) {
+    creditByInvoice.set(
+      application.invoice_id,
+      (creditByInvoice.get(application.invoice_id) ?? 0) + n(application.amount),
+    );
+  }
   const invoicedOrders = new Set(invoices.map((i) => i.purchase_order_id).filter(Boolean) as string[]);
 
   for (const v of variances) {
@@ -717,9 +730,11 @@ export function detectProcurementExceptions(
         }),
       );
     }
-    const outstanding = round2(n(i.total) - n(i.amount_paid));
+    const outstanding = round2(
+      Math.max(0, n(i.total) - n(i.amount_paid) - (creditByInvoice.get(i.id) ?? 0)),
+    );
     const overdue = Boolean(i.due_date && i.due_date < businessDate);
-    if (overdue && i.payment_status !== "paid" && outstanding > MATERIALITY.moneyEpsilon) {
+    if (overdue && outstanding > MATERIALITY.moneyEpsilon) {
       out.push(
         draftException("procurement.outstanding_supplier_amount", businessDate, i.id, {
           whatHappened: `Invoice ${i.supplier_invoice_number ?? i.id} was due ${i.due_date} with ${outstanding} outstanding.`,
