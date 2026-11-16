@@ -1,5 +1,5 @@
-/** Deterministic Phase 4 cost reconciliation kernel. Monetary values are integer minor units. */
-export type VarianceKind = "stock_quantity" | "purchase_price" | "operating_expense" | "allocation" | "data_integrity";
+/** Deterministic Phase 4 reconciliation kernel. Monetary values are integer minor units. */
+export type VarianceKind = "stock_quantity" | "consumption_cost" | "purchase_price" | "operating_expense" | "allocation" | "data_integrity";
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
 export interface ReconciliationInput { tenantId:string; propertyId:string|null; periodStart:string; currency:string; expectedMinor:number; actualMinor:number; sourceType:string; sourceId:string; kind:VarianceKind; thresholdMinor?:number }
 export interface ReconciliationVariance { tenantId:string; propertyId:string|null; periodStart:string; currency:string; sourceType:string; sourceId:string; kind:VarianceKind; expectedMinor:number; actualMinor:number; varianceMinor:number; severity:Severity; explanation:string }
