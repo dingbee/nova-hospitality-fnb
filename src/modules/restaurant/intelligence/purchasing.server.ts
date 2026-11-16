@@ -399,7 +399,8 @@ export async function getPurchasingIntelligence(
         (m) =>
           (m.movement_type === "consumption" || m.movement_type === "wastage") &&
           m.occurred_at >= from &&
-          (to ? m.occurred_at < to : true),
+          (to ? m.occurred_at < to : true) &&
+          itemById.get(m.inventory_item_id)?.currency === currency,
       )
       .reduce((s, m) => s + Math.abs(Number(m.total_cost ?? 0)), 0);
   const previousMonthlySpend = spendCost(prevMonthStart, monthStart);
