@@ -437,11 +437,23 @@ export async function convertRequestToOrder(
     .eq("purchase_request_id", input.requestId)
     .maybeSingle();
   if (existingPoError) throw new Error("Unable to check for an existing purchase order: " + existingPoError.message);
-  if (req.status === "converted_to_po" && !existingPo && !req.converted_purchase_order_id) {
+  let recoveredByConvertedId: any = null;
+  if (!existingPo && req.converted_purchase_order_id) {
+    const { data: convertedPo, error: convertedPoError } = await sb
+      .from("restaurant_purchase_orders")
+      .select("id, document_number, reference, status, supplier_id, property_id, location_id, purchase_request_id, total, currency, metadata")
+      .eq("tenant_id", input.tenantId)
+      .eq("id", req.converted_purchase_order_id)
+      .maybeSingle();
+    if (convertedPoError) throw new Error("Unable to recover the request's converted purchase order: " + convertedPoError.message);
+    recoveredByConvertedId = convertedPo;
+  }
+  const resolvedExistingPo = existingPo ?? recoveredByConvertedId;
+  if (req.status === "converted_to_po" && !resolvedExistingPo) {
     throw new Error("The request is marked converted but its purchase order cannot be found. Manual reconciliation is required.");
   }
 
-  let po: any = existingPo;
+  let po: any = resolvedExistingPo;
   let poCreated = false;
   if (!po) {
     try {
@@ -499,7 +511,7 @@ export async function convertRequestToOrder(
     }
   }
 
-  if (po.purchase_request_id !== input.requestId || po.supplier_id !== input.supplierId ||
+  if ((po.purchase_request_id && po.purchase_request_id !== input.requestId) || po.supplier_id !== input.supplierId ||
       po.property_id !== req.property_id || po.location_id !== req.location_id || po.currency !== req.currency) {
     throw new Error("An existing purchase order linked to this request has conflicting supplier, property, location or currency scope.");
   }
@@ -522,6 +534,7 @@ export async function convertRequestToOrder(
   }
 
   const lineMatches = (saved: any, line: (typeof orderLines)[number]) =>
+    Boolean(saved) &&
     saved.inventory_item_id === line.inventoryItemId &&
     saved.supplier_product_id === line.supplierProductId &&
     saved.source_action_id === line.sourceActionId &&
