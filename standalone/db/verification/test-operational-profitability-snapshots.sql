@@ -24,7 +24,9 @@ grant select on public.restaurant_members to authenticated;
 \ir ../migrations/0133_operational_profitability_snapshots.sql
 insert into public.restaurant_tenants values('10000000-0000-0000-0000-000000000001'),('10000000-0000-0000-0000-000000000002');
 insert into public.restaurant_properties values('20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001'),('20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002');
-insert into public.restaurant_members values('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','accountant',null);
+insert into public.restaurant_members values
+('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','accountant',null),
+('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','chef',null);
 select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000001',true);
 insert into public.restaurant_operational_profitability_snapshots(tenant_id,property_id,period_start,period_end,currency,net_sales,contribution,operating_profit,confidence_state,calculation_version)
 values('10000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','2026-11-01','2026-11-30','TZS',20000,12050,8050,'estimated','phase5-v1');
@@ -35,11 +37,18 @@ do $$ begin
  if (select count(*) from public.restaurant_operational_profitability_snapshots)<>1 then raise exception 'Snapshot persistence failed'; end if;
  if (select count(*) from public.restaurant_operational_profitability_dimensions)<>1 then raise exception 'Dimension persistence failed'; end if;
  if exists(select 1 from public.restaurant_operational_profitability_snapshots where currency<>'TZS') then raise exception 'Currency integrity failed'; end if;
+ if not exists(select 1 from information_schema.columns where table_schema='public' and table_name='restaurant_operational_profitability_snapshots' and column_name='operating_margin_percent') then raise exception 'Operating margin snapshot column missing'; end if;
 end $$;
 set local role authenticated;
 do $$ begin
  if (select count(*) from public.restaurant_operational_profitability_snapshots)<>1 then raise exception 'Scoped accountant read failed'; end if;
  if exists(select 1 from public.restaurant_operational_profitability_snapshots where tenant_id='10000000-0000-0000-0000-000000000002') then raise exception 'Cross-tenant read isolation failed'; end if;
-end $$;
+end $;
+reset role;
+select set_config('request.jwt.claim.sub','30000000-0000-0000-0000-000000000002',true);
+set local role authenticated;
+do $ begin
+ if (select count(*) from public.restaurant_operational_profitability_snapshots)<>0 then raise exception 'Chef role must not read financial profitability snapshots'; end if;
+end $;
 reset role;
 rollback;
