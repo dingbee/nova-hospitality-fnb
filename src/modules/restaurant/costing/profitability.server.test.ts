@@ -129,7 +129,7 @@ describe("computeProfitability operating-cost integration", () => {
         location_id: null, effective_from: "2025-01-01", effective_to: null, active: true,
       }],
       restaurant_consumption_rules: [{
-        id: "rule-1", profile_id: "profile-1", inventory_item_id: "napkin",
+        id: "rule-1", profile_id: "profile-1", inventory_item_id: "napkin", quantity_per_cover: 1,
         effective_from: "2025-01-01", effective_to: null, active: true,
       }],
       restaurant_consumption_events: [{
@@ -168,6 +168,12 @@ describe("computeProfitability operating-cost integration", () => {
       restaurant_stock_movements: [
         { id: "movement-pos", order_item_id: "line-pos", inventory_item_id: "rice-pos", property_id: "property-1", location_id: "outlet-1", total_cost: 10, currency: "TZS", reference_type: "restaurant_order", reference_id: "order-pos", reason: "Recipe consumption" },
         { id: "movement-delivery", order_item_id: "line-delivery", inventory_item_id: "rice-delivery", property_id: "property-1", location_id: "outlet-2", total_cost: 10, currency: "TZS", reference_type: "restaurant_order", reference_id: "order-delivery", reason: "Recipe consumption" },
+        { id: "napkin-pos", order_item_id: null, inventory_item_id: "napkin", property_id: "property-1", location_id: "outlet-1", total_cost: 0, currency: "TZS", reference_type: "restaurant_order", reference_id: "order-pos", reason: "Operational service consumable" },
+        { id: "napkin-delivery", order_item_id: null, inventory_item_id: "napkin", property_id: "property-1", location_id: "outlet-2", total_cost: 0, currency: "TZS", reference_type: "restaurant_order", reference_id: "order-delivery", reason: "Operational service consumable" },
+      ],
+      restaurant_consumption_events: [
+        { id: "event-pos", stock_movement_id: "napkin-pos", order_id: "order-pos", cost_class: "service_consumable", total_cost: 0, currency: "TZS" },
+        { id: "event-delivery", stock_movement_id: "napkin-delivery", order_id: "order-delivery", cost_class: "service_consumable", total_cost: 0, currency: "TZS" },
       ],
       restaurant_cost_allocations: [
         { id: "property-rent", source_type: "operational_expense", source_id: "expense-1", property_id: "property-1", location_id: null, amount: 1000, currency: "TZS", period_start: "2026-11-01", allocation_method: "direct" },
