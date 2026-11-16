@@ -408,8 +408,20 @@ function ProfitabilityPage() {
               <p className="font-semibold">{money(result.operational?.grossSales ?? result.totals.gross_sales)}</p>
             </div>
             <div className="rounded-md border p-3 text-sm">
+              <p className="text-muted-foreground">Discounts</p>
+              <p className="font-semibold">{money(result.operational?.discounts ?? result.totals.discounts)}</p>
+            </div>
+            <div className="rounded-md border p-3 text-sm">
               <p className="text-muted-foreground">Refunds</p>
               <p className="font-semibold">{money(result.operational?.refunds ?? result.totals.refunds)}</p>
+            </div>
+            <div className="rounded-md border p-3 text-sm">
+              <p className="text-muted-foreground">Tax collected (net of refunds)</p>
+              <p className="font-semibold">{money(result.operational?.taxCollected ?? result.totals.tax_collected)}</p>
+            </div>
+            <div className="rounded-md border p-3 text-sm">
+              <p className="text-muted-foreground">Sales adjustments</p>
+              <p className="font-semibold">{money(result.operational?.salesAdjustments ?? result.totals.sales_adjustments)}</p>
             </div>
             <div className="rounded-md border p-3 text-sm">
               <p className="text-muted-foreground">Unallocated operating costs</p>
