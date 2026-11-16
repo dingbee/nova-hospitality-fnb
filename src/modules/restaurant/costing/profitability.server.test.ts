@@ -104,6 +104,56 @@ describe("computeProfitability operating-cost integration", () => {
     expect(persisted[2]).toHaveLength(1);
   });
 
+  it("nets refunds and tax while including classified service consumables exactly once", async () => {
+    const sb = makeSupabase({
+      restaurant_orders: [{
+        id: "order-1", currency: "TZS", property_id: "property-1",
+        location_id: "outlet-1", source: "pos",
+      }],
+      restaurant_order_items: [{
+        id: "line-1", order_id: "order-1", menu_item_id: "menu-1", description: "Pilau",
+        quantity: 1, line_total: 1100, line_cost: 400, discount: 100, tax_amount: 100,
+        status: "served", is_comp: false, channel: "pos",
+      }],
+      restaurant_stock_movements: [
+        { id: "recipe-movement", order_item_id: "line-1", inventory_item_id: "rice", total_cost: 400, currency: "TZS" },
+        { id: "napkin-movement", order_item_id: "line-1", inventory_item_id: "napkin", total_cost: 50, currency: "TZS", reference_type: "restaurant_order", reference_id: "order-1" },
+      ],
+      restaurant_payments: [{
+        id: "refund-1", order_id: "order-1", amount: -550, state: "refunded",
+        refund_of: "payment-1", currency: "TZS",
+      }],
+      restaurant_consumption_profiles: [{
+        id: "profile-1", cost_class: "service_consumable", property_id: "property-1",
+        location_id: null, effective_from: "2025-01-01", effective_to: null, active: true,
+      }],
+      restaurant_consumption_rules: [{
+        id: "rule-1", profile_id: "profile-1", inventory_item_id: "napkin",
+        effective_from: "2025-01-01", effective_to: null, active: true,
+      }],
+      restaurant_consumption_events: [{
+        id: "event-1", stock_movement_id: "napkin-movement", order_id: "order-1",
+        order_item_id: "line-1", cost_class: "service_consumable", total_cost: 50, currency: "TZS",
+      }],
+    });
+    const result = await computeProfitability(sb, "user-1", input);
+    expect(result.operational).toMatchObject({
+      grossSales: 1200,
+      discounts: 100,
+      refunds: 550,
+      taxCollected: 50,
+      netSales: 500,
+      recipeCogs: 400,
+      serviceConsumables: 50,
+      directVariableCosts: 450,
+      contribution: 50,
+      operatingProfit: 50,
+      reconciliationState: "partially_reconciled",
+    });
+    expect(result.totals.actual_cost).toBe(450);
+    expect(result.dimensions).toHaveLength(3);
+  });
+
   it("rejects a sales source with no currency even when operating costs have one", async () => {
     const sb = makeSupabase({
       restaurant_orders: [{ id: "order-1", currency: null }],
