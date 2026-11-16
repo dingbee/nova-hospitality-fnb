@@ -41,6 +41,8 @@ export interface ProfitabilityTotals extends Omit<ProfitabilityRow, "menu_item_i
   allocated_operating_expenses: number;
   contribution_profit: number;
   contribution_margin_percent: number | null;
+  operating_profit: number;
+  operating_margin_percent: number | null;
 }
 
 export async function computeProfitability(
@@ -89,7 +91,57 @@ export async function computeProfitability(
   const currencies = new Set(((expenseAllocations ?? []) as any[]).map((r) => r.currency).filter(Boolean));
   const currencySet = new Set([...orderCurrencies, ...currencies]);
   if (currencySet.size > 1) throw new Error("Profitability cannot combine sales and operating costs across currencies.");
-  const currency = [...currencySet][0] ?? "TZS";
+  let currency = [...currencySet][0];
+  if (!currency) {
+    if (input.propertyId) {
+      const { data: property, error: propertyError } = await sb
+        .from("restaurant_properties")
+        .select("currency")
+        .eq("tenant_id", input.tenantId)
+        .eq("id", input.propertyId)
+        .single();
+      if (propertyError || !/^[A-Z]{3}$/.test(String(property?.currency ?? ""))) {
+        throw new Error("A valid property reporting currency is required.");
+      }
+      currency = property.currency;
+    } else if (input.locationId) {
+      const { data: location, error: locationError } = await sb
+        .from("restaurant_locations")
+        .select("property_id")
+        .eq("tenant_id", input.tenantId)
+        .eq("id", input.locationId)
+        .single();
+      if (locationError || !location?.property_id) {
+        throw new Error("A valid property reporting currency is required.");
+      }
+      const { data: property, error: propertyError } = await sb
+        .from("restaurant_properties")
+        .select("currency")
+        .eq("tenant_id", input.tenantId)
+        .eq("id", location.property_id)
+        .single();
+      if (propertyError || !/^[A-Z]{3}$/.test(String(property?.currency ?? ""))) {
+        throw new Error("A valid property reporting currency is required.");
+      }
+      currency = property.currency;
+    } else {
+      const { data: properties, error: propertyError } = await sb
+        .from("restaurant_properties")
+        .select("currency")
+        .eq("tenant_id", input.tenantId);
+      if (propertyError) throw new Error(propertyError.message);
+      const propertyCurrencies = new Set(
+        ((properties ?? []) as any[]).map((p) => p.currency).filter((v) => /^[A-Z]{3}$/.test(String(v))),
+      );
+      if (propertyCurrencies.size !== 1) {
+        throw new Error("A single property reporting currency is required for a tenant-wide profitability report.");
+      }
+      currency = [...propertyCurrencies][0];
+    }
+  }
+  if (!/^[A-Z]{3}$/.test(String(currency))) {
+    throw new Error("A valid property reporting currency is required.");
+  }
   const allocatedOperatingExpenses = Number(
     ((expenseAllocations ?? []) as any[]).reduce((sum, row) => sum + Number(row.amount ?? 0), 0).toFixed(2),
   );
@@ -102,8 +154,10 @@ export async function computeProfitability(
         quantity_sold: 0, revenue: 0, theoretical_cost: 0, actual_cost: 0, variance: 0,
         gross_profit: 0, margin_percent: null, food_cost_percent: null,
         allocated_operating_expenses: allocatedOperatingExpenses,
-        contribution_profit: Number((-allocatedOperatingExpenses).toFixed(2)),
+        contribution_profit: 0,
         contribution_margin_percent: null,
+        operating_profit: Number((-allocatedOperatingExpenses).toFixed(2)),
+        operating_margin_percent: null,
         currency,
       },
     };
@@ -193,8 +247,14 @@ export async function computeProfitability(
     margin_percent: revenue > 0 ? Number((((revenue - actual) / revenue) * 100).toFixed(2)) : null,
     food_cost_percent: revenue > 0 ? Number(((actual / revenue) * 100).toFixed(2)) : null,
     allocated_operating_expenses: allocatedOperatingExpenses,
-    contribution_profit: Number((revenue - actual - allocatedOperatingExpenses).toFixed(2)),
+    // Contribution is net menu revenue less direct recipe cost. Allocated
+    // operating expenses are deducted only after contribution is calculated.
+    contribution_profit: Number((revenue - actual).toFixed(2)),
     contribution_margin_percent: revenue > 0
+      ? Number((((revenue - actual) / revenue) * 100).toFixed(2))
+      : null,
+    operating_profit: Number((revenue - actual - allocatedOperatingExpenses).toFixed(2)),
+    operating_margin_percent: revenue > 0
       ? Number((((revenue - actual - allocatedOperatingExpenses) / revenue) * 100).toFixed(2))
       : null,
     currency,
