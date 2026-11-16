@@ -52,6 +52,7 @@ export async function listSupplierInvoices(sb: Sb, userId: string, input: z.infe
 export async function recordSupplierInvoice(sb: Sb, userId: string, input: RecordInvoiceInput) {
   await assertCapability(sb, userId, input.tenantId, "invoice.manage");
 
+  let linkedOrderScope: { property_id?: string | null; location_id?: string | null } = {};
   const { data: supplier, error: supplierError } = await sb
     .from("restaurant_suppliers")
     .select("id")
@@ -80,6 +81,10 @@ export async function recordSupplierInvoice(sb: Sb, userId: string, input: Recor
     if (input.locationId && linkedOrder.location_id && input.locationId !== linkedOrder.location_id) {
       throw new Error("Supplier invoice location does not match the linked purchase order.");
     }
+    linkedOrderScope = {
+      property_id: linkedOrder.property_id ?? null,
+      location_id: linkedOrder.location_id ?? null,
+    };
   }
 
   const subtotal = input.lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
@@ -97,8 +102,8 @@ export async function recordSupplierInvoice(sb: Sb, userId: string, input: Recor
     .from("restaurant_supplier_invoices")
     .insert({
       tenant_id: input.tenantId,
-      property_id: input.propertyId ?? null,
-      location_id: input.locationId ?? null,
+      property_id: input.propertyId ?? linkedOrderScope.property_id ?? null,
+      location_id: input.locationId ?? linkedOrderScope.location_id ?? null,
       supplier_id: input.supplierId,
       purchase_order_id: input.purchaseOrderId ?? null,
       document_number: documentNumber,
@@ -173,8 +178,8 @@ export async function recordSupplierInvoice(sb: Sb, userId: string, input: Recor
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.purchase.invoice.recorded",
     tenantId: input.tenantId,
-    propertyId: input.propertyId,
-    locationId: input.locationId,
+    propertyId: input.propertyId ?? linkedOrderScope.property_id ?? undefined,
+    locationId: input.locationId ?? linkedOrderScope.location_id ?? undefined,
     entityType: "restaurant_supplier_invoice",
     entityId: invoice.id,
     source: "restaurant-os",
