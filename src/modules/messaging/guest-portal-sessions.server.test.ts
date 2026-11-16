@@ -44,6 +44,12 @@ function makeAdmin(overrides: Record<string, unknown> = {}) {
       property_id: scope.propertyId,
       location_id: scope.locationId,
     },
+    restaurant_locations: {
+      id: scope.locationId,
+      location_type: "outlet",
+      is_storage: false,
+      status: "active",
+    },
     restaurant_properties: { currency: "TZS" },
     ...overrides,
   };
