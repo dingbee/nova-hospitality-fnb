@@ -131,6 +131,33 @@ jobs:
             IF to_regprocedure('public.restaurant_bootstrap_owner_pos_pin(uuid,uuid,text)') IS NOT NULL THEN
               RAISE EXCEPTION 'Temporary owner POS PIN recovery function was not removed';
             END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM cron.job
+              WHERE jobname = 'lexibite-wa-webhook-dispatch' AND active = false
+            ) THEN
+              RAISE EXCEPTION 'WhatsApp webhook dispatcher schedule is missing or active in isolated replay';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM public.api_channel_definitions
+              WHERE key = 'whatsapp' AND provider_key = 'meta-whatsapp' AND category = 'messaging'
+            ) THEN
+              RAISE EXCEPTION 'WhatsApp messaging channel definition is missing';
+            END IF;
+            IF has_function_privilege('anon', 'public.wa_claim_webhook_events(integer,integer,text)', 'EXECUTE')
+              OR has_function_privilege('authenticated', 'public.wa_claim_webhook_events(integer,integer,text)', 'EXECUTE')
+              OR has_function_privilege('anon', 'public.wa_resolve_guest_portal_session(text)', 'EXECUTE')
+              OR has_function_privilege('authenticated', 'public.wa_resolve_guest_portal_session(text)', 'EXECUTE')
+              OR has_function_privilege('anon', 'public.wa_apply_message_delivery_status(text,text,timestamptz,text)', 'EXECUTE')
+              OR has_function_privilege('authenticated', 'public.wa_apply_message_delivery_status(text,text,timestamptz,text)', 'EXECUTE') THEN
+              RAISE EXCEPTION 'WhatsApp service-only RPC privilege boundary is incorrect';
+            END IF;
+            IF EXISTS (
+              SELECT 1 FROM pg_policies
+              WHERE schemaname = 'public'
+                AND tablename IN ('wa_webhook_events', 'wa_guest_portal_sessions')
+            ) THEN
+              RAISE EXCEPTION 'Private WhatsApp inbox/session tables must not have authenticated policies';
+            END IF;
           END $verify$;
           SELECT count(*) FILTER (WHERE status = 'applied') AS applied_migrations,
                  count(*) FILTER (WHERE status = 'skipped') AS policy_skipped_migrations
