@@ -159,6 +159,12 @@ jobs:
       - name: Verify Phase 1 per-cover operational consumption service
         run: bunx vitest run src/modules/restaurant/inventory/movements.server.test.ts
 
+      - name: Verify pinned recipe consumption cost idempotency and currency integrity
+        run: bunx vitest run src/modules/restaurant/products/consumption.server.test.ts
+
+      - name: Verify operational profitability calculation contract
+        run: bunx vitest run src/modules/restaurant/costing/operational-profitability.calculation.test.ts
+
       - name: Verify operational profitability snapshot schema and RLS
         env:
           PGPASSWORD: postgres
