@@ -238,7 +238,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dingbee/nova-hospitality-fnb
-          ref: 9544c198aa5fa854f64d4038c02d43becb6a0723
+          ref: 7791ba40abf16c8bb24cb9eb2d1417da8554a7e5
           path: .p0-01-integrated
           fetch-depth: 1
 
