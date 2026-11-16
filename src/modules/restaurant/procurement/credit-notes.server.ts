@@ -16,6 +16,7 @@ export async function recordSupplierCreditNote(
   userId: string,
   input: z.infer<typeof recordSupplierCreditNoteSchema>,
 ) {
+  await assertCapability(sb, userId, input.tenantId, "invoice.manage");
   const { data: supplier, error: supplierError } = await sb
     .from("restaurant_suppliers")
     .select("id")
