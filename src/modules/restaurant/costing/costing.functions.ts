@@ -91,9 +91,8 @@ export const listOperationalExpenseCategoriesFn = createServerFn({method:"POST"}
 export const createOperationalExpenseFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
  .inputValidator((d:unknown)=>z.object({
   tenantId:z.string().uuid(),propertyId:z.string().uuid().nullable().optional(),locationId:z.string().uuid().nullable().optional(),
-  categoryId:z.string().uuid(),supplierId:z.string().uuid().nullable().optional(),description:z.string().trim().min(2).max(240),
-  amount:z.number().positive().finite(),currency:z.string().regex(/^[A-Z]{3}$/),incurredOn:z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
-  expenseStatus:z.enum(["draft","recorded"]).default("recorded"),
+  categoryId:z.string().uuid(),description:z.string().trim().min(2).max(240),amount:z.number().positive().finite(),
+  currency:z.string().regex(/^[A-Z]{3}$/),incurredOn:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
  }).parse(d)).handler(async({data,context})=>{
   const mod=await import("./costing.server"); return mod.createOperationalExpense(context.supabase,context.userId,data);
  });
@@ -108,8 +107,9 @@ export const allocateOperationalExpenseDirectFn = createServerFn({method:"POST"}
  .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.allocateOperationalExpenseDirect(context.supabase,context.userId,data);});
 
 export const createOperationalExpenseCategoryFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
- .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),name:z.string().trim().min(2).max(80),categoryKey:z.string().regex(/^[a-z][a-z0-9_]{1,63}$/),parentCategoryId:z.string().uuid().nullable().optional()}).parse(d))
+ .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),name:z.string().trim().min(2).max(80),categoryKey:z.string().regex(/^[a-z][a-z0-9_]{1,63}$/)}).parse(d))
  .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.createOperationalExpenseCategory(context.supabase,context.userId,data);});
+
 
 const allocationRuleValidator = z.object({
   tenantId:z.string().uuid(), name:z.string().trim().min(2).max(100), currency:z.string().regex(/^[A-Z]{3}$/),
@@ -130,6 +130,29 @@ export const approveCostAllocationRuleFn = createServerFn({method:"POST"}).middl
 export const allocateOperationalExpenseByRuleFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
  .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),expenseId:z.string().uuid(),ruleId:z.string().uuid()}).parse(d))
  .handler(async({data,context})=>{const mod=await import("./costing.server");return mod.allocateOperationalExpenseByRule(context.supabase,context.userId,data);});
+
+
+const costReconciliationInput = z.object({tenantId:z.string().uuid(),propertyId:z.string().uuid(),periodStart:z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),periodEnd:z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/)});
+export const runCostReconciliationFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>costReconciliationInput.parse(d)).handler(async({data,context})=>{
+  const mod=await import("./cost-reconciliation.server");return mod.runOperationalAllocationReconciliation(context.supabase,context.userId,data);
+ });
+export const listCostReconciliationDashboardFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),propertyId:z.string().uuid().optional(),periodStart:z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/).optional(),periodEnd:z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/).optional()}).parse(d)).handler(async({data,context})=>{
+  const mod=await import("./cost-reconciliation.server");return mod.listCostReconciliationDashboard(context.supabase,context.userId,data);
+ });
+export const updateCostVarianceCaseFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>z.object({tenantId:z.string().uuid(),varianceId:z.string().uuid(),status:z.enum(["under_investigation","awaiting_explanation","action_required","resolved","closed","reopened"]),note:z.string().trim().min(3).max(1000).optional(),resolutionDetails:z.string().trim().min(3).max(2000).optional()}).parse(d))
+ .handler(async({data,context})=>{const mod=await import("./cost-reconciliation.server");return mod.updateCostVarianceCase(context.supabase,context.userId,data);});
+
+export const saveOperationalCostBudgetFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
+ .inputValidator((d:unknown)=>z.object({
+  tenantId:z.string().uuid(),propertyId:z.string().uuid(),categoryId:z.string().uuid(),
+  periodStart:z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),periodEnd:z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+  currency:z.string().regex(/^[A-Z]{3}$/),budgetAmount:z.number().positive().finite()
+ }).parse(d)).handler(async({data,context})=>{
+  const mod=await import("./cost-reconciliation.server");return mod.saveOperationalCostBudget(context.supabase,context.userId,data);
+ });
 
 export const updateOperationalExpenseFn = createServerFn({method:"POST"}).middleware([requireSupabaseAuth])
  .inputValidator((d:unknown)=>z.object({
