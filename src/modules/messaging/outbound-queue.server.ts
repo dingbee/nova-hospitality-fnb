@@ -160,7 +160,19 @@ async function processOneOutboundJob(db: Db, job: ClaimedOutboundJob, workerId: 
       payload: { provider: "meta-whatsapp", messageType: "text" },
       provider_timestamp: sentAt,
     });
-    if (messageError && messageError.code !== "23505") {
+    if (messageError) {
+      if (messageError.code === "23505") {
+        const recorded = await findExistingOutboundMessage(db, job.id);
+        if (recorded) {
+          await updateJob(db, job, workerId, {
+            status: "sent",
+            provider_message_id: recorded.provider_message_id,
+            sent_at: recorded.provider_timestamp ?? sentAt,
+            last_error: null,
+          });
+          return "sent" as const;
+        }
+      }
       await markUncertain(db, job, workerId, "meta_sent_message_record_uncertain");
       return "uncertain" as const;
     }
