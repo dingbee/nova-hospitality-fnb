@@ -107,7 +107,7 @@ export async function computeProfitability(
   const periodTo = input.to.slice(0, 10);
   let expenseAllocationQuery = sb
     .from("restaurant_cost_allocations")
-    .select("amount, currency")
+    .select("amount, currency, property_id, location_id, source_id")
     .eq("tenant_id", input.tenantId)
     .eq("source_type", "operational_expense")
     .gte("period_start", periodFrom)
@@ -285,6 +285,26 @@ export async function computeProfitability(
   const serviceConsumables = consumptionEventRows.filter((e) => e.cost_class === "service_consumable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0);
   const otherDirectVariableCosts = consumptionEventRows.filter((e) => e.cost_class === "other_direct_variable").reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0);
   const hasConsumptionProfiles = ((consumptionProfiles ?? []) as any[]).length > 0;
+  const movementRows = (movements ?? []) as any[];
+  const paymentRows = (payments ?? []) as any[];
+  const currencyRows = [
+    ...movementRows.map((r) => r.currency),
+    ...paymentRows.map((r) => r.currency),
+    ...consumptionEventRows.map((r) => r.currency),
+    ...pendingRows.map((r) => r.currency),
+    ...unallocatedRows.map((r) => r.currency),
+  ];
+  if (currencyRows.some((v) => !/^[A-Z]{3}$/.test(String(v ?? ""))) ||
+      currencyRows.some((v) => v !== currency)) {
+    throw new Error("Profitability source records contain missing or mismatched currency.");
+  }
+  const consumableCostByOrderItem = new Map<string, number>();
+  for (const event of consumptionEventRows) {
+    if (event.order_item_id) consumableCostByOrderItem.set(
+      event.order_item_id,
+      (consumableCostByOrderItem.get(event.order_item_id) ?? 0) + Number(event.total_cost ?? 0),
+    );
+  }
   const operational = calculateOperationalProfitability({
     currency,
     grossSales: Number(grossSales.toFixed(2)),
@@ -302,6 +322,7 @@ export async function computeProfitability(
     pendingExpenseVerification,
     incompleteSourceData: !hasConsumptionProfiles,
   });
+  const netSalesByLine = new Map<string, number>();
   const dimensionMap = new Map<string, { dimension_type: "channel" | "outlet" | "property"; dimension_key: string; dimension_name: string; net_sales: number; direct_variable_costs: number; contribution: number; operating_profit: number }>();
   const addDimension = (type: "channel" | "outlet" | "property", key: string, name: string, net: number, cost: number) => {
     const id = `${type}:${key}`;
@@ -320,7 +341,8 @@ export async function computeProfitability(
       ? Number(item.tax_amount ?? 0) * (refundGross / Number(item.line_total))
       : 0;
     const lineNet = lineGross - Number(item.discount ?? 0) - Number(item.tax_amount ?? 0) - refundGross + refundedTaxForLine;
-    const lineCost = actualByItem.has(item.id) ? actualByItem.get(item.id)! : Number(item.line_cost ?? 0);
+    const lineCost = (actualByItem.has(item.id) ? actualByItem.get(item.id)! : Number(item.line_cost ?? 0)) + (consumableCostByOrderItem.get(item.id) ?? 0);
+    netSalesByLine.set(item.id, lineNet);
     addDimension("channel", String(item.channel ?? order.source ?? "unknown"), String(item.channel ?? order.source ?? "Unknown channel"), lineNet, lineCost);
     if (order.location_id) addDimension("outlet", order.location_id, order.location_id, lineNet, lineCost);
     if (order.property_id) addDimension("property", order.property_id, order.property_id, lineNet, lineCost);
@@ -362,9 +384,9 @@ export async function computeProfitability(
       } satisfies ProfitabilityRow);
 
     row.quantity_sold += Number(item.quantity ?? 0);
-    row.revenue += item.is_comp ? 0 : Number(item.line_total ?? 0);
+    row.revenue += item.is_comp ? 0 : (netSalesByLine.get(item.id) ?? Number(item.line_total ?? 0));
     row.theoretical_cost += Number(item.line_cost ?? 0);
-    row.actual_cost += actualByItem.get(item.id) ?? Number(item.line_cost ?? 0);
+    row.actual_cost += (actualByItem.get(item.id) ?? Number(item.line_cost ?? 0)) + (consumableCostByOrderItem.get(item.id) ?? 0);
     agg.set(key, row);
   }
 
