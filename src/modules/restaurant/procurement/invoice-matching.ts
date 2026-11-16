@@ -32,6 +32,7 @@ export interface InvoiceMatchEvidence {
   receipts: ReceiptMatchLine[];
   invoiceLines: InvoiceMatchLine[];
   receiptCurrencies?: string[];
+  previouslyInvoicedQuantities?: Record<string, number>;
 }
 export interface InvoiceMatchDimension {
   dimension: InvoiceVarianceDimension;
@@ -147,15 +148,21 @@ export function calculateSupplierInvoiceMatch(evidence: InvoiceMatchEvidence): I
   for (const [orderLineId, invoicedQuantity] of invoicedByOrderLine) {
     const acceptedQuantity = acceptedByOrderLine.get(orderLineId) ?? 0;
     if (acceptedQuantity <= EPSILON) continue;
-    if (invoicedQuantity - acceptedQuantity > EPSILON) {
+    const previouslyInvoiced = evidence.previouslyInvoicedQuantities?.[orderLineId] ?? 0;
+    if (!valid(previouslyInvoiced)) {
+      add("invoice", "INVALID_PRIOR_INVOICE_QUANTITY", "Prior invoice evidence contains an invalid quantity.");
+      continue;
+    }
+    const cumulativeInvoicedQuantity = previouslyInvoiced + invoicedQuantity;
+    if (cumulativeInvoicedQuantity - acceptedQuantity > EPSILON) {
       add(
         "quantity",
         "INVOICED_ABOVE_ACCEPTED",
         "Purchase-order line " + orderLineId + ": invoiced quantity exceeds posted accepted quantity.",
         acceptedQuantity,
-        invoicedQuantity,
+        cumulativeInvoicedQuantity,
       );
-    } else if (invoicedQuantity + EPSILON < acceptedQuantity) {
+    } else if (cumulativeInvoicedQuantity + EPSILON < acceptedQuantity) {
       pendingLineCount++;
     } else {
       acceptedLineCount++;
