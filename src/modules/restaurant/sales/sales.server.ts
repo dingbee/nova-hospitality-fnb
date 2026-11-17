@@ -775,6 +775,7 @@ export async function createGuestOrder(
     /** One-time WhatsApp Guest Portal session provenance for non-table orders. */
     guestPortalSessionId?: string | null;
     guestCustomerId?: string | null;
+    guestReservationId?: string | null;
   },
 ) {
   const { data: order, error } = await sb
@@ -797,6 +798,7 @@ export async function createGuestOrder(
       guest_session_id: input.guestSessionId ?? null,
       guest_portal_session_id: input.guestPortalSessionId ?? null,
       guest_customer_id: input.guestCustomerId ?? null,
+      guest_reservation_id: input.guestReservationId ?? null,
     })
     .select("id, order_number, currency")
     .single();
