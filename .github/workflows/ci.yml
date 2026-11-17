@@ -62,11 +62,11 @@ jobs:
         run: bun run build
 
       - name: Typecheck (strict repository gate)
+        id: typecheck
         run: bun run typecheck
 
       - name: Lint changed source
         id: lint
-        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -101,7 +101,7 @@ jobs:
         run: |
           psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-property-location-integrity-migration.sql
 
-      - name: Verify tenant central-store migration in isolated PostgreSQL
+      - name: Verify tenant central-store scope and activation migrations in isolated PostgreSQL
         env:
           PGPASSWORD: postgres
         run: |
@@ -125,6 +125,67 @@ jobs:
           psql -h localhost -U postgres -d lexibite_phase3_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-operational-cost-intelligence.sql
           bunx vitest run src/modules/restaurant/costing/hybrid-allocation.test.ts src/modules/restaurant/costing/profitability.server.test.ts
 
+      - name: Replay the complete repository migration chain on isolated PostgreSQL 17
+        env:
+          NOVA_DB_HOST: 127.0.0.1
+          NOVA_DB_PORT: 5432
+          NOVA_DB_NAME: lexibite_full_replay
+          NOVA_DB_SUPERUSER: postgres
+          NOVA_DB_SUPERUSER_PASSWORD: postgres
+          NOVA_DB_AUTHENTICATOR: nova_authenticator
+          NOVA_DB_AUTHENTICATOR_PASSWORD: p0-01-ci-only-authenticator-password
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          replay_migrations="$(mktemp -d)"
+          trap 'rm -rf "$replay_migrations"' EXIT
+          cp standalone/db/migrations/*.sql "$replay_migrations/"
+          cp standalone/db/verification/fixtures/p0-01-uat-bar-station-replay-fixture.sql \
+            "$replay_migrations/0086zz_p0-01_uat_bar_station_fixture.sql"
+          export NOVA_MIGRATIONS_DIR="$replay_migrations"
+
+          ./local/scripts/init-db.sh
+          before_ledger="$(PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*)::text || ':' || md5(coalesce(string_agg(filename || ':' || checksum || ':' || status, chr(10) ORDER BY filename), '')) FROM nova_local.schema_migrations")"
+          ./local/scripts/apply-migrations.sh
+          after_ledger="$(PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*)::text || ':' || md5(coalesce(string_agg(filename || ':' || checksum || ':' || status, chr(10) ORDER BY filename), '')) FROM nova_local.schema_migrations")"
+          echo "Full replay repeatability: before=$before_ledger after=$after_ledger"
+          test "$before_ledger" = "$after_ledger"
+
+          export PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD"
+
+          expected="$(find standalone/db/migrations -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
+          applied="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'applied'")"
+          skipped="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'skipped'")"
+          fixture="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE filename = '0086zz_p0-01_uat_bar_station_fixture.sql' AND status = 'applied'")"
+          version="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SHOW server_version_num")"
+          bar_station="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM public.restaurant_stations s JOIN public.restaurant_tenants t ON t.id = s.tenant_id WHERE t.slug = 'p0-01-uat-fixture' AND s.code = 'UAT-BAR'")"
+
+          echo "PostgreSQL server_version_num=$version"
+          echo "Repository migration files=$expected; applied=$applied; skipped=$skipped; test fixture=$fixture"
+          echo "UAT bar-station repair assertion=$bar_station"
+          test "$version" -ge 170000
+          test "$applied" -eq "$((expected + 1))"
+          test "$skipped" -eq 0
+          test "$fixture" -eq 1
+          test "$bar_station" -eq 1
+
+          psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "\\copy (SELECT filename, checksum, status, applied_at, note FROM nova_local.schema_migrations ORDER BY filename) TO STDOUT WITH CSV HEADER" > migration-replay-ledger.csv
+
+          pg_container="$(docker ps -q --filter ancestor=postgres:17 | head -1)"
+          test -n "$pg_container"
+          docker exec -e PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" "$pg_container" pg_dump -h localhost -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" --schema-only --no-owner --no-privileges > migration-replay-schema.sql
+
+      - name: Upload isolated migration replay evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-01-migration-replay-${{ github.sha }}
+          path: |
+            migration-replay-ledger.csv
+            migration-replay-schema.sql
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Scoped GTM and changed-path functional tests
         run: |
           bunx vitest run \
@@ -139,11 +200,14 @@ jobs:
             src/modules/restaurant/bar/ticket-items.test.ts \
             src/modules/restaurant/sales/service-recovery.contracts.test.ts \
             src/modules/restaurant/ui/useRestaurantWorkspace.test.ts \
-            src/modules/restaurant/inventory/locations.server.test.ts
+            src/modules/restaurant/inventory/locations.server.test.ts \
+            src/modules/restaurant/intelligence/purchasing.server.test.ts \
+            src/modules/restaurant/procurement/ask-lexibite.server.test.ts \
+            src/modules/restaurant/procurement/receiving-governance.test.ts \
+            src/modules/restaurant/procurement/receiving-units.test.ts
 
       - name: Full test suite (repository baseline)
         id: full_tests
-        continue-on-error: true
         run: bun run test
 
       - name: Report full test baseline
@@ -175,3 +239,194 @@ jobs:
 
       - name: Verify bundle origin
         run: bun run verify:bundle -- .output
+
+      
+      - name: Enforce clean repository-wide quality gates
+        if: always()
+        env:
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          FULL_TESTS_OUTCOME: ${{ steps.full_tests.outcome }}
+        run: |
+          failed=0
+          for gate in TYPECHECK LINT FULL_TESTS; do
+            var="${gate}_OUTCOME"
+            outcome="${!var}"
+            if [ "$outcome" != "success" ]; then
+              echo "::error::$gate gate did not pass (outcome: $outcome)."
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+      - name: Checkout integrated production lineage (operational expense and Phase 5)
+        uses: actions/checkout@v4
+        with:
+          repository: dingbee/nova-hospitality-fnb
+          ref: 53d4d60b73a6021eff8b693b799dc12b8cee966c
+          path: .p0-01-integrated
+          fetch-depth: 1
+
+      - name: Replay integrated operational-cost lineage, fingerprint baseline, then apply P0-01 hardening
+        env:
+          NOVA_DB_HOST: 127.0.0.1
+          NOVA_DB_PORT: 5432
+          NOVA_DB_NAME: lexibite_integrated_lineage_replay
+          NOVA_DB_SUPERUSER: postgres
+          NOVA_DB_SUPERUSER_PASSWORD: postgres
+          NOVA_DB_AUTHENTICATOR: nova_authenticator
+          NOVA_DB_AUTHENTICATOR_PASSWORD: p0-01-ci-only-authenticator-password
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          replay_migrations="$(mktemp -d)"
+          trap 'rm -rf "$replay_migrations"' EXIT
+          cp .p0-01-integrated/standalone/db/migrations/*.sql "$replay_migrations/"
+          # Use the verified production-v2 correction already fixed on PW-07.
+          cp standalone/db/migrations/0088_commercial_capability_activation_reconciliation.sql "$replay_migrations/"
+          cp standalone/db/verification/fixtures/p0-01-uat-bar-station-replay-fixture.sql \
+            "$replay_migrations/0086zz_p0-01_uat_bar_station_fixture.sql"
+          export NOVA_MIGRATIONS_DIR="$replay_migrations"
+
+          ./local/scripts/init-db.sh
+          export PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD"
+
+          expected_base="$(find .p0-01-integrated/standalone/db/migrations -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
+          applied_base="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'applied'")"
+          skipped_base="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'skipped'")"
+          fixture="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE filename = '0086zz_p0-01_uat_bar_station_fixture.sql' AND status = 'applied'")"
+          version="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SHOW server_version_num")"
+          expense_tables="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('restaurant_operational_expense_attachments','restaurant_operational_expense_audit_events')")"
+          consumables_tables="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('restaurant_consumption_profiles','restaurant_consumption_rules','restaurant_consumption_events')")"
+          profitability_tables="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('restaurant_operational_profitability_snapshots','restaurant_operational_profitability_dimensions')")"
+          bar_station="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM public.restaurant_stations s JOIN public.restaurant_tenants t ON t.id = s.tenant_id WHERE t.slug = 'p0-01-uat-fixture' AND s.code = 'UAT-BAR'")"
+
+          echo "integrated lineage baseline: PostgreSQL=$version; repository files=$expected_base; applied=$applied_base; skipped=$skipped_base; fixture=$fixture"
+          echo "Operational-expense tables=$expense_tables; consumables tables=$consumables_tables; profitability tables=$profitability_tables; UAT bar-station repair assertion=$bar_station"
+          test "$version" -ge 170000
+          test "$applied_base" -eq "$((expected_base + 1))"
+          test "$skipped_base" -eq 0
+          test "$fixture" -eq 1
+          test "$expense_tables" -eq 2
+          test "$consumables_tables" -eq 3
+          test "$profitability_tables" -eq 2
+          test "$bar_station" -eq 1
+
+          psql -X -A -t -F ',' -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -f standalone/db/verification/p0-01-schema-fingerprint.sql > integrated-baseline-schema-fingerprint.csv
+          psql -X -A -t -F '|' -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -f standalone/db/verification/p0-01-schema-object-fingerprint.sql > integrated-baseline-object-fingerprint.csv
+          psql -X -A -t -F '|' -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -f standalone/db/verification/p0-01-schema-component-fingerprint.sql > integrated-baseline-component-fingerprint.csv
+          psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -c "\\copy (SELECT filename, checksum, status, applied_at, note FROM nova_local.schema_migrations ORDER BY filename) TO STDOUT WITH CSV HEADER" > integrated-baseline-migration-ledger.csv
+          pg_container="$(docker ps -q --filter ancestor=postgres:17 | head -1)"
+          test -n "$pg_container"
+          docker exec -e PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" "$pg_container" pg_dump -h localhost -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" --schema-only --no-owner --no-privileges > integrated-baseline-schema.sql
+
+          # Apply the exact P0-01 corrective migration only after capturing the
+          # unmodified integrated lineage baseline for comparison with production.
+          cp standalone/db/migrations/0134_procurement_tenant_referential_integrity.sql "$replay_migrations/"
+          cp standalone/db/migrations/0135_member_station_assignment_rls_overlap_cleanup.sql "$replay_migrations/"
+          cp standalone/db/migrations/0136_restore_documented_production_hotfixes.sql "$replay_migrations/"
+          ./local/scripts/apply-migrations.sh
+          before_hardened_ledger="$(PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*)::text || ':' || md5(coalesce(string_agg(filename || ':' || checksum || ':' || status, chr(10) ORDER BY filename), '')) FROM nova_local.schema_migrations")"
+          NOVA_MIGRATIONS_DIR="$replay_migrations" ./local/scripts/apply-migrations.sh
+          after_hardened_ledger="$(PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*)::text || ':' || md5(coalesce(string_agg(filename || ':' || checksum || ':' || status, chr(10) ORDER BY filename), '')) FROM nova_local.schema_migrations")"
+          echo "Integrated hardened replay repeatability: before=$before_hardened_ledger after=$after_hardened_ledger"
+          test "$before_hardened_ledger" = "$after_hardened_ledger"
+
+          expected_hardened="$((expected_base + 3))"
+          applied_hardened="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'applied'")"
+          skipped_hardened="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE status = 'skipped'")"
+          hardening_migration="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE filename = '0134_procurement_tenant_referential_integrity.sql' AND status = 'applied'")"
+          station_policy_migration="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE filename = '0135_member_station_assignment_rls_overlap_cleanup.sql' AND status = 'applied'")"
+          hotfix_migration="$(psql -X -At -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "SELECT count(*) FROM nova_local.schema_migrations WHERE filename = '0136_restore_documented_production_hotfixes.sql' AND status = 'applied'")"
+          echo "integrated historical branch hardened: repository files=$expected_hardened; applied=$applied_hardened; skipped=$skipped_hardened; P0-01 migration=$hardening_migration; station policy fix=$station_policy_migration; hotfix parity=$hotfix_migration"
+          test "$applied_hardened" -eq "$((expected_hardened + 1))"
+          test "$skipped_hardened" -eq 0
+          test "$hardening_migration" -eq 1
+          test "$station_policy_migration" -eq 1
+          test "$hotfix_migration" -eq 1
+
+          psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -c "\\copy (SELECT filename, checksum, status, applied_at, note FROM nova_local.schema_migrations ORDER BY filename) TO STDOUT WITH CSV HEADER" > integrated-hardened-migration-ledger.csv
+          docker exec -e PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" "$pg_container" pg_dump -h localhost -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" --schema-only --no-owner --no-privileges > integrated-hardened-schema.sql
+          psql -X -A -t -F '|' -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -f standalone/db/verification/p0-01-schema-object-fingerprint.sql > integrated-hardened-object-fingerprint.csv
+          psql -X -A -t -F '|' -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -f standalone/db/verification/p0-01-schema-component-fingerprint.sql > integrated-hardened-component-fingerprint.csv
+
+      - name: Upload integrated lineage baseline and hardened replay evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-01-integrated-lineage-replay-${{ github.sha }}
+          path: |
+            integrated-baseline-migration-ledger.csv
+            integrated-baseline-schema.sql
+            integrated-baseline-schema-fingerprint.csv
+            integrated-hardened-migration-ledger.csv
+            integrated-baseline-object-fingerprint.csv
+            integrated-hardened-object-fingerprint.csv
+            integrated-baseline-component-fingerprint.csv
+            integrated-hardened-component-fingerprint.csv
+            integrated-hardened-schema.sql
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Verify procurement tenant referential integrity in isolated replays
+        env:
+          PGPASSWORD: postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/test-procurement-tenant-referential-integrity.sql
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_integrated_lineage_replay \
+            -f standalone/db/verification/test-procurement-tenant-referential-integrity.sql
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/test-p0-01-tenant-fk-catalog.sql
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_integrated_lineage_replay \
+            -f standalone/db/verification/test-p0-01-tenant-fk-catalog.sql
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/test-p0-01-hotfix-parity.sql
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_integrated_lineage_replay \
+            -f standalone/db/verification/test-p0-01-hotfix-parity.sql
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/test-p0-01-security-policy-hardening.sql
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/test-me03-financial-function-reconstruction.sql
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_integrated_lineage_replay \
+            -f standalone/db/verification/test-me03-financial-function-reconstruction.sql
+
+      - name: Fingerprint both isolated replay schemas for live comparison
+        env:
+          PGPASSWORD: postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -X -A -t -F ',' -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/p0-01-schema-fingerprint.sql > p0-01-main-schema-fingerprint.csv
+          psql -X -A -t -F ',' -h localhost -U postgres -d lexibite_integrated_lineage_replay \
+            -f standalone/db/verification/p0-01-schema-fingerprint.sql > p0-01-integrated-schema-fingerprint.csv
+          psql -X -A -t -F '|' -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/p0-01-schema-object-fingerprint.sql > p0-01-main-object-fingerprint.csv
+          cp integrated-hardened-object-fingerprint.csv p0-01-integrated-hardened-object-fingerprint.csv
+          psql -X -A -t -F '|' -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/p0-01-schema-component-fingerprint.sql > p0-01-main-component-fingerprint.csv
+          cp integrated-hardened-component-fingerprint.csv p0-01-integrated-hardened-component-fingerprint.csv
+
+      - name: Upload P0-01 schema fingerprints
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-01-schema-fingerprints-${{ github.sha }}
+          path: |
+            p0-01-main-schema-fingerprint.csv
+            p0-01-integrated-schema-fingerprint.csv
+            p0-01-main-object-fingerprint.csv
+            p0-01-integrated-hardened-object-fingerprint.csv
+            p0-01-main-component-fingerprint.csv
+            p0-01-integrated-hardened-component-fingerprint.csv
+          if-no-files-found: error
+          retention-days: 14
