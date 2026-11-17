@@ -157,6 +157,7 @@ function seed(options?: {
         last_price_at: new Date(now - 86400000).toISOString(),
         currency: "TZS",
         min_order_quantity: 0,
+        order_multiple: 1,
         lead_time_days: 2,
         active: true,
         id: "88888888-8888-4888-8888-888888888888",
@@ -197,6 +198,8 @@ function seed(options?: {
         received_quantity: 1,
         accepted_quantity: options?.accepted ?? 1,
         rejected_quantity: 0,
+        stock_unit_id: STOCK_UNIT,
+        stock_units_per_purchase_unit: options?.openLineUnit ? null : 5,
       },
     ],
   };
@@ -246,6 +249,7 @@ describe("Purchasing Intelligence procurement integrity", () => {
       last_price_at: new Date(Date.now() - 86400000).toISOString(),
       currency: "TZS",
       min_order_quantity: 0,
+      order_multiple: 1,
       lead_time_days: 2,
       active: true,
       id: "99999999-9999-4999-8999-999999999999",
@@ -286,6 +290,7 @@ describe("Purchasing Intelligence procurement integrity", () => {
 
   it("requires an explicit supplier order multiple for non-count purchase units", async () => {
     seed({ packSize: 1 });
+    delete tables.restaurant_supplier_products[0]!.order_multiple;
     tables.restaurant_inventory_units = [
       { id: STOCK_UNIT, dimension: "mass", base_unit_id: null, factor: 1 },
       { id: PURCHASE_UNIT, dimension: "mass", base_unit_id: STOCK_UNIT, factor: 1 },

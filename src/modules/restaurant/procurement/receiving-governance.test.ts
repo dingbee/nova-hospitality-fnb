@@ -22,7 +22,7 @@ vi.mock("../core/access.server", () => ({
   isPlatformAdmin: vi.fn(async () => true),
   rolesInTenant: vi.fn(async () => ["owner"]),
   getTenantScope: vi.fn(async () => ({})),
-  resolveMultiPropertyScope: vi.fn(async () => null),
+  resolveMultiPropertyScope: vi.fn(async () => "property-bridge"),
 }));
 vi.mock("../inventory/movements.server", () => ({
   insertMovement: vi.fn(async (_sb: unknown, _u: string, m: any) => {
@@ -347,14 +347,17 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
     const idempotencyKey = "77777777-7777-4777-8777-777777777777";
     const recent = new Date(Date.now() - 86400000).toISOString();
 
+    db["restaurant_properties"] = [{ id: "property-bridge", tenant_id: TENANT, currency: "TZS" }];
+    db["restaurant_inventory_units"] = [{ id: stockUnitId, tenant_id: TENANT, dimension: "count", base_unit_id: null, factor: 1 }];
     db["restaurant_inventory_items"] = [
       {
         id: inventoryId,
         tenant_id: TENANT,
-        property_id: null,
+        property_id: "property-bridge",
         location_id: null,
         name: "Tomatoes",
-        current_quantity: 2,
+        current_quantity: 0,
+        metadata: { safety_stock_quantity: 0 },
         average_cost: 1000,
         currency: "TZS",
         unit_id: stockUnitId,
@@ -363,18 +366,16 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
         track_batches: false,
       },
     ];
-    db["restaurant_stock_movements"] = [
-      {
-        tenant_id: TENANT,
-        property_id: null,
-        location_id: null,
-        inventory_item_id: inventoryId,
-        movement_type: "consumption",
-        quantity: 300,
-        total_cost: 300000,
-        occurred_at: recent,
-      },
-    ];
+    db["restaurant_stock_movements"] = Array.from({ length: 7 }, (_, index) => ({
+      tenant_id: TENANT,
+      property_id: "property-bridge",
+      location_id: null,
+      inventory_item_id: inventoryId,
+      movement_type: "consumption",
+      quantity: 300 / 7,
+      total_cost: (300 / 7) * 1000,
+      occurred_at: new Date(Date.now() - (index + 1) * 86400000).toISOString(),
+    }));
     db["restaurant_supplier_products"] = [
       {
         id: supplierProductId,
@@ -383,7 +384,11 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
         inventory_item_id: inventoryId,
         unit_id: stockUnitId,
         unit_price: 1000,
+        currency: "TZS",
         pack_size: 1,
+        min_order_quantity: 0,
+        order_multiple: 1,
+        last_price_at: recent,
         lead_time_days: 2,
         active: true,
       },
@@ -432,6 +437,10 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
             inventory_item_id: item.inventoryItemId,
             supplier_product_id: item.supplierProductId,
             unit_id: item.unitId,
+            stock_unit_id: item.stockUnitId,
+            stock_units_per_purchase_unit: item.stockUnitsPerPurchaseUnit,
+            minimum_order_quantity: item.minimumOrderQuantity,
+            order_multiple: item.orderMultiple,
             description: item.description,
             quantity: item.quantity,
             unit_price: item.unitPrice,
@@ -453,6 +462,7 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
     const request = {
       tenantId: TENANT,
       inventoryItemIds: [],
+      propertyId: "property-bridge",
       supplierId: supplierId,
       idempotencyKey,
       lineOverrides: [],

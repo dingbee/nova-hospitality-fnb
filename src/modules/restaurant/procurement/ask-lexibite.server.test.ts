@@ -127,7 +127,7 @@ function sbWithExisting(
                   id: "line-1",
                   inventory_item_id: ITEM,
                   supplier_product_id: PRODUCT,
-                  unit_id: UNIT,
+                  unit_id: productUnitId,
                   stock_unit_id: UNIT,
                   stock_units_per_purchase_unit: 1,
                   minimum_order_quantity: 0,
@@ -544,6 +544,7 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
       location_id: LOCATION,
       total: 120000,
       currency: "TZS",
+      metadata: { intelligent_replenishment: { engine: "p0-02-stock-position-v1" } },
     };
     const sb = sbWithExisting(existing);
 
