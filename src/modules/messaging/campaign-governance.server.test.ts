@@ -1,6 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- mocked Supabase builder is intentionally untyped. */
 import { describe, expect, it, vi } from "vitest";
-import { recordWhatsAppCampaignUsage, resolveEffectiveMetaMessageRate } from "./campaign-governance.server";
+import {
+  recordWhatsAppCampaignUsage,
+  resolveEffectiveMetaMessageRate,
+} from "./campaign-governance.server";
 
 function usageDb(result: { data?: unknown; error?: { code?: string } | null }) {
   const inserted: Record<string, unknown>[] = [];
@@ -71,13 +74,13 @@ describe("WCE-06 campaign usage evidence", () => {
     const { admin, inserted } = usageDb({ data: null, error: null });
     await expect(
       recordWhatsAppCampaignUsage(admin, {
-      tenantId: "tenant-1",
-      propertyId: "property-1",
-      usageComponent: "lexibite_commercial",
-      usageEvent: "campaign_fee",
-      quantity: 0,
-      unitPrice: 10,
-      currency: "USD",
+        tenantId: "tenant-1",
+        propertyId: "property-1",
+        usageComponent: "lexibite_commercial",
+        usageEvent: "campaign_fee",
+        quantity: 0,
+        unitPrice: 10,
+        currency: "USD",
         idempotencyKey: "campaign:fee-1",
       }),
     ).rejects.toThrow("usage_input_invalid");
