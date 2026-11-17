@@ -35,8 +35,7 @@ vi.mock("../prepare/resolve.server", () => ({
   resolveTenantCurrency: vi.fn(async () => "TZS"),
 }));
 vi.mock("../purchasing/purchasing.server", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../purchasing/purchasing.server")>();
+  const actual = await importOriginal<typeof import("../purchasing/purchasing.server")>();
   return {
     ...actual,
     createPurchaseOrder: (...args: any[]) => poBridgeMocks.createPurchaseOrder(...args),
