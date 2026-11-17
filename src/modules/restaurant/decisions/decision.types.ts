@@ -44,6 +44,8 @@ export interface RestaurantPrediction {
 }
 
 /** A Phase 3 finding, promoted into a decision candidate. */
+export type RestaurantFactValue = string | number | boolean | null | RestaurantFactValue[] | { [key: string]: RestaurantFactValue };
+
 export interface RestaurantFinding {
   key: string;
   kind: RestaurantFindingKind;
@@ -55,7 +57,7 @@ export interface RestaurantFinding {
   evidence: Array<{ label: string; value: string }>;
   prediction: RestaurantPrediction;
   /** Facts the option catalogue reads when scoring, e.g. star dish, no supplier. */
-  facts: Record<string, string | number | boolean | null>;
+  facts: Record<string, RestaurantFactValue>;
 }
 
 export interface RestaurantDecisionCandidate {
