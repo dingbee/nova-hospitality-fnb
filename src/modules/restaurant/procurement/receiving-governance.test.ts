@@ -13,7 +13,6 @@ const movements: any[] = [];
 const events: any[] = [];
 const poBridgeMocks = vi.hoisted(() => ({
   createPurchaseOrder: vi.fn(),
-  transitionPurchaseOrder: vi.fn(),
 }));
 
 vi.mock("../core/access.server", () => ({
@@ -35,10 +34,13 @@ vi.mock("../inventory/movements.server", () => ({
 vi.mock("../prepare/resolve.server", () => ({
   resolveTenantCurrency: vi.fn(async () => "TZS"),
 }));
-vi.mock("../purchasing/purchasing.server", () => ({
-  createPurchaseOrder: (...args: any[]) => poBridgeMocks.createPurchaseOrder(...args),
-  transitionPurchaseOrder: (...args: any[]) => poBridgeMocks.transitionPurchaseOrder(...args),
-}));
+vi.mock("../purchasing/purchasing.server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../purchasing/purchasing.server")>();
+  return {
+    ...actual,
+    createPurchaseOrder: (...args: any[]) => poBridgeMocks.createPurchaseOrder(...args),
+  };
+});
 vi.mock("../events/emit.server", () => ({
   emitRestaurantEvent: vi.fn(async (_sb: unknown, _u: string, e: any) => {
     if (events.some((x) => x.dedupeKey === e.dedupeKey)) return null;
@@ -54,7 +56,10 @@ vi.mock("./pricing.server", () => ({ recordPriceObservation: vi.fn(async () => u
 vi.mock("./variances.server", () => ({ raiseVariance: vi.fn(async () => null) }));
 
 import { createGoodsReceipt, postGoodsReceipt } from "./receiving.server";
-import { createIntelligentPurchaseOrders } from "./ask-lexibite.server";
+import {
+  createIntelligentPurchaseOrders,
+  transitionAskLexiBitePurchaseOrder,
+} from "./ask-lexibite.server";
 
 /* ---------------- minimal in-memory Supabase ---------------- */
 
@@ -223,7 +228,6 @@ beforeEach(() => {
   movements.length = 0;
   events.length = 0;
   poBridgeMocks.createPurchaseOrder.mockReset();
-  poBridgeMocks.transitionPurchaseOrder.mockReset();
   for (const k of Object.keys(db)) delete db[k];
 });
 
@@ -423,7 +427,21 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
 
     const persistedPo = db["restaurant_purchase_orders"]![0]!;
     const persistedLine = db["restaurant_purchase_order_items"]![0]!;
-    persistedPo.status = "approved";
+    const submission = await transitionAskLexiBitePurchaseOrder(sb, USER, {
+      tenantId: TENANT,
+      purchaseOrderId,
+      status: "submitted",
+    });
+    expect(submission.status).toBe("submitted");
+    const approval = await transitionAskLexiBitePurchaseOrder(sb, USER, {
+      tenantId: TENANT,
+      purchaseOrderId,
+      status: "approved",
+    });
+    expect(approval.status).toBe("approved");
+    expect(persistedPo.status).toBe("approved");
+    expect(persistedPo.approved_by).toBe(USER);
+    expect(persistedPo.approved_at).toBeTruthy();
     const receipt = await createGoodsReceipt(sb, USER, {
       tenantId: TENANT,
       purchaseOrderId,
