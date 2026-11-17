@@ -132,6 +132,10 @@ export function createPesapalAdapter(
   return {
     name: "pesapal",
 
+    async testConnection() {
+      await getToken();
+    },
+
     async initiate({ amount, currency, merchantReference, description, returnUrl, signal }) {
       const notificationId = await ensureIpnId(signal);
       const body = await pesapalFetch("/api/Transactions/SubmitOrderRequest", {
