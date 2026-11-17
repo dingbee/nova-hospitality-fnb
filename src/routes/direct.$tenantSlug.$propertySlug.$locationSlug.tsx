@@ -19,8 +19,10 @@ export const Route = createFileRoute("/direct/$tenantSlug/$propertySlug/$locatio
       { "http-equiv": "Cache-Control", content: "no-store, private, max-age=0" },
     ],
   }),
-  component: () => {
-    const data = Route.useLoaderData();
-    return <GuestCommerceEntry portalUrl={data.portalUrl} />;
-  },
+  component: DirectGuestCommerceEntry,
 });
+
+function DirectGuestCommerceEntry() {
+  const data = Route.useLoaderData();
+  return <GuestCommerceEntry portalUrl={data.portalUrl} />;
+}
