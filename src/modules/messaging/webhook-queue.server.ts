@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { assertCapability } from "@/modules/restaurant/core/access.server";
 import { writeCommercialAudit } from "@/modules/commercial/audit.server";
+import { handleWhatsAppGuestCommerceMessage } from "./guest-commerce.server";
 
 type Db = any;
 type ClaimedEvent = {
@@ -110,6 +111,10 @@ async function processMessages(db: Db, event: ClaimedEvent, value: Record<string
     });
     if (insertError && insertError.code !== "23505") {
       throw new Error("inbound_message_persistence_failed");
+    }
+    // A repeated Meta delivery must not trigger a second customer-facing action.
+    if (!insertError) {
+      await handleWhatsAppGuestCommerceMessage(db, event, conversation.id, message);
     }
 
     if (!conversation.last_message_at || new Date(at) > new Date(conversation.last_message_at)) {
