@@ -121,7 +121,7 @@ async function processOneOutboundJob(db: Db, job: ClaimedOutboundJob, workerId: 
 
   if (job.portal_session_id) {
     const { data: portalSession, error: portalSessionError } = await db
-      .from("wa_guest_portal_sessions")
+      .from("restaurant_guest_commerce_sessions")
       .select("expires_at, revoked_at")
       .eq("id", job.portal_session_id)
       .eq("tenant_id", job.tenant_id)
