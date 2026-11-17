@@ -95,7 +95,13 @@ describe("WhatsApp outbound queue", () => {
     };
     const { admin, updates } = fakeAdmin(templateMessage);
     const result = await processPendingWhatsAppOutboundMessages(admin, { workerId: "worker-template" });
-    expect(result).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0 });
+    expect(result).toEqual({
+      claimed: 1,
+      sent: 1,
+      retried: 0,
+      failed: 0,
+      campaignReconciliationRequired: 0,
+    });
     expect(sendTemplateMessage).toHaveBeenCalledWith(
       { accessToken: "tenant-token", wabaId: "987654321", phoneNumberId: "123456789" },
       "255700000000",
