@@ -71,12 +71,24 @@ jobs:
           set -euo pipefail
           base_sha="$(git merge-base origin/main HEAD)"
           files="$(git diff --name-only "$base_sha" "$GITHUB_SHA" -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
+          : > p0-02-prettier.patch
           if [ -n "$files" ]; then
             printf '%s\n' "$files"
+            bunx prettier --write $files
+            git diff --binary -- $files > p0-02-prettier.patch
             bunx eslint $files
           else
             echo "No changed source files require linting."
           fi
+
+      - name: Upload P0-02 formatting patch
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-02-prettier-patch
+          path: p0-02-prettier.patch
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Report lint baseline
         if: steps.lint.outcome == 'failure'
