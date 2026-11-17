@@ -365,7 +365,7 @@ export function WhatsAppOperationsCentre() {
                 </select>
                 <select className="h-9 rounded-md border bg-background px-2 text-sm" value={campaignBindingId} onChange={(event) => setCampaignBindingId(event.target.value)} required>
                   <option value="">Select active phone binding</option>
-                  {(campaigns.data?.bindings ?? []).map((binding: any) => <option key={binding.id} value={binding.id}>{binding.display_phone_number ?? binding.phone_number_id}</option>)}
+                  {(campaigns.data?.bindings ?? []).filter((binding: any) => binding.location_id === campaignLocationId).map((binding: any) => <option key={binding.id} value={binding.id}>{binding.display_phone_number ?? binding.phone_number_id}</option>)}
                 </select>
                 <input className="h-9 rounded-md border bg-background px-3 text-sm uppercase" placeholder="Market code (e.g. TZ)" value={campaignMarketCode} onChange={(event) => setCampaignMarketCode(event.target.value.toUpperCase())} required minLength={2} maxLength={3} />
                 <select className="h-9 rounded-md border bg-background px-2 text-sm" value={campaignTriggerType} onChange={(event) => setCampaignTriggerType(event.target.value as typeof campaignTriggerType)}>
