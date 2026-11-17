@@ -52,7 +52,7 @@ export async function getGuestCommercePage(admin: Db, token: string) {
     !location ||
     location.status !== "active" ||
     location.is_storage ||
-    !["outlet", "restaurant", "bar"].includes(location.location_type) ||
+    !["outlet", "restaurant", "bar", "cafe", "store", "room_service"].includes(location.location_type) ||
     (session.sourceChannel === "whatsapp" && (!binding || binding.status !== "active"))
   ) {
     throw new Error("This restaurant ordering link is no longer available. Request a fresh link on WhatsApp.");
