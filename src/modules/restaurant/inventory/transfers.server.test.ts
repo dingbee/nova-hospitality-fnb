@@ -639,6 +639,24 @@ describe("P1 property scope — stock transfers dual-location AND/OR matrix", ()
     expect(created.id).toBeDefined();
   });
 
+  it("a transfer requester cannot approve their own approval-required transfer", async () => {
+    const fixture = makeScopeFixture();
+    const ownTransfer = await makeTransfer(
+      fixture,
+      USER_A1_MANAGER,
+      LOC_A1_STORE,
+      LOC_A1_KITCHEN,
+      true,
+    );
+    await expect(
+      approveTransfer(fixture.supabase, USER_A1_MANAGER, {
+        tenantId: TENANT_A,
+        transferId: ownTransfer.id,
+        approve: true,
+      }),
+    ).rejects.toThrow(/Separation of duties/);
+  });
+
   it("A1-manager can APPROVE a transfer that touches only their own property, but is DENIED approving one reaching into Property A2", async () => {
     const fixture = makeScopeFixture();
     const ownTransfer = await makeTransfer(
