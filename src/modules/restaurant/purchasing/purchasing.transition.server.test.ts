@@ -88,6 +88,7 @@ describe("purchase-order maker-checker", () => {
 
     expect(mocks.assertCapability).toHaveBeenCalledWith(sb, USER, TENANT, "purchasing.approve", {
       propertyId: PROPERTY,
+      locationId: null,
     });
     expect(mocks.assertMayApprove).toHaveBeenCalledWith(sb, USER, {
       tenantId: TENANT,
