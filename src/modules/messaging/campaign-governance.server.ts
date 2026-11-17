@@ -432,6 +432,7 @@ export async function evaluateWhatsAppCampaignAudience(
     propertyId: string;
     campaignId: string;
     eventKey?: string | null;
+    guestCustomerId?: string | null;
     limit?: number;
   },
 ) {
@@ -449,6 +450,7 @@ export async function evaluateWhatsAppCampaignAudience(
     .eq("status", "active")
     .not("whatsapp_user_id", "is", null)
     .or("first_property_id.eq." + input.propertyId + ",last_property_id.eq." + input.propertyId);
+  if (input.guestCustomerId) query = query.eq("id", input.guestCustomerId);
   if (filter.preferredLanguage === "en" || filter.preferredLanguage === "sw")
     query = query.eq("preferred_language", filter.preferredLanguage);
   if (typeof filter.lastSeenAfter === "string")
@@ -484,6 +486,7 @@ export async function runWhatsAppCampaign(
     propertyId: string;
     campaignId: string;
     eventKey?: string | null;
+    guestCustomerId?: string | null;
     limit?: number;
   },
 ) {
@@ -914,7 +917,7 @@ export async function processDueWhatsAppCampaigns(
 /** Entry point for trusted domain events; the caller supplies server-derived tenant/property scope. */
 export async function triggerEventWhatsAppCampaigns(
   admin: Db,
-  input: { tenantId: string; propertyId: string; eventKey: string; limit?: number },
+  input: { tenantId: string; propertyId: string; eventKey: string; guestCustomerId?: string | null; limit?: number },
 ) {
   const campaignIds = await findEventTriggeredWhatsAppCampaigns(admin, input);
   const limit = Math.min(Math.max(input.limit ?? 10, 1), 25);
@@ -926,6 +929,7 @@ export async function triggerEventWhatsAppCampaigns(
         propertyId: input.propertyId,
         campaignId,
         eventKey: input.eventKey,
+        guestCustomerId: input.guestCustomerId,
       });
       results.push({ campaignId, status: "completed" });
     } catch (error) {
