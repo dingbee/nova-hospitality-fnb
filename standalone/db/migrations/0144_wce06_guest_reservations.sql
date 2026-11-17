@@ -52,6 +52,31 @@ CREATE TABLE IF NOT EXISTS public.restaurant_table_reservations (
     REFERENCES public.restaurant_guest_customers (id, tenant_id) ON DELETE SET NULL (guest_customer_id)
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS restaurant_table_reservations_id_tenant_uq
+  ON public.restaurant_table_reservations (id, tenant_id);
+
+ALTER TABLE public.restaurant_orders
+  ADD COLUMN IF NOT EXISTS guest_reservation_id uuid;
+
+DO $
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'restaurant_orders_guest_reservation_fk'
+      AND conrelid = 'public.restaurant_orders'::regclass
+  ) THEN
+    ALTER TABLE public.restaurant_orders
+      ADD CONSTRAINT restaurant_orders_guest_reservation_fk
+      FOREIGN KEY (guest_reservation_id, tenant_id)
+      REFERENCES public.restaurant_table_reservations (id, tenant_id)
+      ON DELETE SET NULL (guest_reservation_id);
+  END IF;
+END $;
+
+CREATE INDEX IF NOT EXISTS restaurant_orders_guest_reservation_idx
+  ON public.restaurant_orders (tenant_id, guest_reservation_id)
+  WHERE guest_reservation_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS restaurant_table_reservations_slot_idx
   ON public.restaurant_table_reservations
     (tenant_id, property_id, location_id, starts_at, ends_at)
