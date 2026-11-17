@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   resolveGuestCommerceSession: vi.fn(),
   resolveGuestPaymentTiming: vi.fn(),
   resolveServiceConfiguration: vi.fn(),
+  mergePropertyServiceSettings: vi.fn((tenantSettings: unknown) => tenantSettings),
   fetchSellableCatalog: vi.fn(),
   createGuestOrder: vi.fn(),
   recalcOrder: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@/modules/restaurant/payments/payment-timing", () => ({
 }));
 vi.mock("@/modules/restaurant/operations/service-config", () => ({
   resolveServiceConfiguration: mocks.resolveServiceConfiguration,
+  mergePropertyServiceSettings: mocks.mergePropertyServiceSettings,
 }));
 vi.mock("@/modules/restaurant/sales/pos.server", () => ({
   fetchSellableCatalog: mocks.fetchSellableCatalog,
