@@ -13,7 +13,7 @@ import type { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { insertMovement } from "../inventory/movements.server";
-import { assertLocationInTenant } from "../inventory/locations.server";
+import { assertActiveStorageLocations } from "../inventory/locations.server";
 import { purchaseToStock, convertUnits, type UnitRow } from "../inventory/units";
 import {
   assertPurchaseOrderReceivable,
@@ -174,13 +174,11 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
   // location. At minimum it must belong to this tenant; per-line storage
   // locations get the same check below.
   const resolvedLocationId = input.locationId ?? po?.location_id ?? null;
-  await assertLocationInTenant(sb, input.tenantId, resolvedLocationId);
-  const lineStorageLocationIds = [
-    ...new Set(input.lines.map((l) => l.storageLocationId).filter(Boolean) as string[]),
-  ];
-  if (lineStorageLocationIds.length > 0) {
-    await assertLocationInTenant(sb, input.tenantId, ...lineStorageLocationIds);
+  const lineStorageLocationIds = input.lines.map((line) => line.storageLocationId ?? resolvedLocationId);
+  if (lineStorageLocationIds.some((id) => !id)) {
+    throw new Error("Every goods-receipt line requires an explicit active inventory storage location.");
   }
+  await assertActiveStorageLocations(sb, input.tenantId, ...lineStorageLocationIds);
 
   const { data: receipt, error } = await sb
     .from("restaurant_goods_receipts")
@@ -337,6 +335,11 @@ export async function postGoodsReceipt(
     .eq("receipt_id", receipt.id);
 
   const rows = (lines ?? []) as any[];
+  const receiptLocationIds = rows.map((line) => line.storage_location_id ?? receipt.location_id);
+  if (receiptLocationIds.some((id) => !id)) {
+    throw new Error("Every goods-receipt line requires an active inventory storage location before posting.");
+  }
+  await assertActiveStorageLocations(sb, tenantId, ...receiptLocationIds);
   const poItemIds = [...new Set(rows.map((line) => line.purchase_order_item_id).filter(Boolean))] as string[];
   const { data: poItems, error: poItemsError } = receipt.purchase_order_id && poItemIds.length
     ? await sb
