@@ -306,7 +306,6 @@ export async function processPendingWhatsAppOutboundMessages(
         .eq("status", "queued")
         .eq("locked_by", workerId);
       if (stateError) throw new Error("whatsapp_outbox_failure_state_failed");
-      const campaignRecipientId = message.payload?.campaign_recipient_id;
       if (
         typeof campaignRecipientId === "string" &&
         !(retryable && message.delivery_attempts < 8)
