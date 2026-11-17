@@ -274,7 +274,7 @@ export function calculateReplenishment(
     };
   }
   const minimum = input.minimumOrderQuantity ?? 0;
-  const multiple = input.orderMultiple ?? 1;
+  const multiple = input.orderMultiple == null ? NaN : input.orderMultiple;
   if (!nonNegative(minimum) || !finite(multiple) || multiple <= 0) {
     return {
       status: "manual_review",
