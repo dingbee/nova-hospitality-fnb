@@ -235,9 +235,20 @@ export async function getConfiguredProvider(
     ipnId,
     ipnUrl,
     onIpnRegistered: async (registeredIpnId) => {
+      const { data: latest, error: readError } = await sb
+        .from("api_integrations")
+        .select("config")
+        .eq("id", integration.id)
+        .eq("tenant_id", tenantId)
+        .eq("property_id", propertyId)
+        .eq("status", "active")
+        .maybeSingle();
+      if (readError || !latest) {
+        throw new Error("The property Pesapal integration changed during IPN registration.");
+      }
       const { error: persistError } = await sb
         .from("api_integrations")
-        .update({ config: { ...config, ipnId: registeredIpnId } })
+        .update({ config: { ...(latest.config ?? {}), ipnId: registeredIpnId } })
         .eq("id", integration.id)
         .eq("tenant_id", tenantId)
         .eq("property_id", propertyId)
