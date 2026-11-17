@@ -50,8 +50,8 @@ function makeFakeSupabase(opts: {
     current_quantity: opts.itemQuantity ?? 20,
   };
   const locations = [
-    { id: SOURCE, tenant_id: TENANT_A, name: "Main Store", location_type: "storage" },
-    { id: DEST, tenant_id: TENANT_A, name: "Kitchen", location_type: "kitchen" },
+    { id: SOURCE, tenant_id: TENANT_A, property_id: null, scope: "tenant", status: "active", is_storage: true, name: "Main Store", location_type: "storage" },
+    { id: DEST, tenant_id: TENANT_A, property_id: null, scope: "tenant", status: "active", is_storage: true, name: "Kitchen", location_type: "kitchen" },
   ];
   const members: Member[] =
     opts.members ?? ([{ tenantId: TENANT_A, userId: OWNER, role: "owner" }] as Member[]);
@@ -214,16 +214,23 @@ function makeFakeSupabase(opts: {
         }
         if (op === "update") {
           const id = filters.id as string;
-          transferLines[id] = { ...transferLines[id], ...payload };
-          return { data: null, error: null };
+          const current = transferLines[id];
+          if (
+            filters.dispatched_quantity !== undefined &&
+            Number(current?.dispatched_quantity ?? 0) !== Number(filters.dispatched_quantity)
+          ) {
+            return { data: null, error: null };
+          }
+          transferLines[id] = { ...current, ...payload };
+          return { data: single ? transferLines[id] : [transferLines[id]], error: null };
         }
-        const transferId = filters.transfer_id as string;
         const rows = Object.values(transferLines).filter(
-          (l: any) =>
-            l.transfer_id === transferId &&
-            (filters.tenant_id === undefined || l.tenant_id === filters.tenant_id),
+          (line: any) =>
+            (filters.transfer_id === undefined || line.transfer_id === filters.transfer_id) &&
+            (filters.id === undefined || line.id === filters.id) &&
+            (filters.tenant_id === undefined || line.tenant_id === filters.tenant_id),
         );
-        return { data: rows, error: null };
+        return { data: single ? (rows[0] ?? null) : rows, error: null };
       }
 
       if (table === "intelligence_memory") {
