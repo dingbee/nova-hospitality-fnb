@@ -71,10 +71,14 @@ function WhatsAppGuestPortal() {
   const { token } = Route.useParams();
   const loadMenu = useServerFn(guestPortalMenuFn);
   const submitOrder = useServerFn(submitGuestCommerceOrderFn);
+  const [fulfilmentMethod, setFulfilmentMethod] = useState<"pickup" | "dine_in">("pickup");
   const initiatePayment = useServerFn(initiateGuestCommercePaymentFn);
   const menu = useQuery({
-    queryKey: ["whatsapp-guest-portal", token],
-    queryFn: () => loadMenu({ data: { token } }),
+    queryKey: ["whatsapp-guest-portal", token, fulfilmentMethod],
+    queryFn: () =>
+      loadMenu({
+        data: { token, orderType: fulfilmentMethod === "dine_in" ? "dine_in" : "takeaway" },
+      }),
     retry: false,
     networkMode: "always",
   });
@@ -92,7 +96,14 @@ function WhatsAppGuestPortal() {
   const order = useMutation({
     mutationFn: (lines: GuestLineInput[]) =>
       submitOrder({
-        data: { token, guestName, clientRequestId, lines },
+        data: {
+          token,
+          guestName,
+          clientRequestId,
+          fulfilmentMethod,
+          reservationId: fulfilmentMethod === "dine_in" ? reservation.data?.reservationId : undefined,
+          lines,
+        },
       }),
   });
   const payment = useMutation({
@@ -129,6 +140,7 @@ function WhatsAppGuestPortal() {
           clientRequestId: reservationRequestId,
         },
       }),
+    onSuccess: () => setFulfilmentMethod("dine_in"),
   });
 
   useEffect(() => {
@@ -541,6 +553,17 @@ function WhatsAppGuestPortal() {
               </h2>
             </div>
             <label className="mb-3 block text-sm">
+              Fulfilment
+              <select
+                value={fulfilmentMethod}
+                onChange={(event) => setFulfilmentMethod(event.target.value as "pickup" | "dine_in")}
+                className="mt-1 block w-full rounded-lg border border-border bg-background px-3 py-2"
+              >
+                <option value="pickup">Pickup / takeaway</option>
+                {reservation.data ? <option value="dine_in">Dine in — {reservation.data.bookingReference}</option> : null}
+              </select>
+            </label>
+            <label className="mb-3 block text-sm">
               Name (optional)
               <input
                 value={guestName}
@@ -565,10 +588,19 @@ function WhatsAppGuestPortal() {
             <button
               type="button"
               className="w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50"
-              disabled={!clientRequestId || missingRequiredModifiers || order.isPending}
+              disabled={
+                !clientRequestId ||
+                missingRequiredModifiers ||
+                order.isPending ||
+                (fulfilmentMethod === "dine_in" && !reservation.data)
+              }
               onClick={() => order.mutate(lines)}
             >
-              {order.isPending ? "Submitting order…" : "Place takeaway order"}
+              {order.isPending
+                ? "Submitting order…"
+                : fulfilmentMethod === "dine_in"
+                  ? "Place dine-in order"
+                  : "Place pickup order"}
             </button>
           </section>
         ) : null}
