@@ -18,15 +18,19 @@ export async function resolveMenuAvailability(
   }
   const [recipesResult, linesResult, inventoryResult] = await Promise.all([
     sb.from("restaurant_recipes").select("id, status").eq("tenant_id", tenantId),
-    sb.from("restaurant_recipe_lines")
+    sb
+      .from("restaurant_recipe_lines")
       .select("recipe_id, inventory_item_id, sub_recipe_id, component_kind, is_optional, quantity")
       .eq("tenant_id", tenantId),
     (() => {
-      let query = sb.from("restaurant_inventory_items")
+      let query = sb
+        .from("restaurant_inventory_items")
         .select("id, name, current_quantity, status, property_id, location_id")
         .eq("tenant_id", tenantId);
-      if (scope.propertyId) query = query.or("property_id.is.null,property_id.eq." + scope.propertyId);
-      if (scope.locationId) query = query.or("location_id.is.null,location_id.eq." + scope.locationId);
+      if (scope.propertyId)
+        query = query.or("property_id.is.null,property_id.eq." + scope.propertyId);
+      if (scope.locationId)
+        query = query.or("location_id.is.null,location_id.eq." + scope.locationId);
       return query;
     })(),
   ]);
@@ -75,15 +79,19 @@ export async function resolveMenuAvailability(
     const product = productByItem.get(item.id) ?? null;
     const recipeId = product?.recipe_id ?? null;
     const reasons: string[] = [];
-    if (item.available === false) reasons.push(String(item.unavailable_reason || "Menu item is unavailable"));
-    if (item.lifecycle_status && item.lifecycle_status !== "active") reasons.push("Menu item is " + item.lifecycle_status);
+    if (item.available === false)
+      reasons.push(String(item.unavailable_reason || "Menu item is unavailable"));
+    if (item.lifecycle_status && item.lifecycle_status !== "active")
+      reasons.push("Menu item is " + item.lifecycle_status);
     if (product && product.active === false) reasons.push("Product is inactive");
     if (recipeId && !recipeStatus.has(recipeId)) reasons.push("Recipe is unavailable");
     if (recipeId && recipeStatus.has(recipeId) && recipeStatus.get(recipeId) !== "active") {
       reasons.push("Recipe is " + recipeStatus.get(recipeId));
     }
-    const stockIssues = recipeId && recipeStatus.get(recipeId) === "active" ? missingStock(recipeId) : [];
-    if (stockIssues.length) reasons.push("Insufficient stock: " + stockIssues.slice(0, 3).join(", "));
+    const stockIssues =
+      recipeId && recipeStatus.get(recipeId) === "active" ? missingStock(recipeId) : [];
+    if (stockIssues.length)
+      reasons.push("Insufficient stock: " + stockIssues.slice(0, 3).join(", "));
     result.set(item.id, {
       available: reasons.length === 0,
       inventoryReady: recipeId ? stockIssues.length === 0 : null,

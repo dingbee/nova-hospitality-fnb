@@ -30,9 +30,12 @@ async function dispatch(request: Request) {
       limit: 25,
       workerId: randomUUID(),
     });
-    return Response.json({ inbound, outbound }, {
-      headers: { "Cache-Control": "no-store, private, max-age=0" },
-    });
+    return Response.json(
+      { inbound, outbound },
+      {
+        headers: { "Cache-Control": "no-store, private, max-age=0" },
+      },
+    );
   } catch {
     return Response.json({ error: "webhook_dispatch_failed" }, { status: 503 });
   }

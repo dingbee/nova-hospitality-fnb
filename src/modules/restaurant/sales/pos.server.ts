@@ -356,9 +356,12 @@ export async function fetchSellableCatalog(
     modifierGroups: groupList,
     items: ((items ?? []) as any[]).map((i) => {
       const product = productByMenuItem.get(i.id) ?? null;
-      const groupIds = product?.active !== false && product
-        ? ((links ?? []) as any[]).filter((l) => l.product_id === product.id).map((l) => l.group_id)
-        : [];
+      const groupIds =
+        product?.active !== false && product
+          ? ((links ?? []) as any[])
+              .filter((l) => l.product_id === product.id)
+              .map((l) => l.group_id)
+          : [];
       const stock = availability.get(i.id);
       const resolved = resolveDisplayPrice(rules, {
         at: priceAt,
@@ -378,9 +381,10 @@ export async function fetchSellableCatalog(
         inventory_ready: stock?.inventoryReady ?? null,
         product_id: product?.id ?? null,
         station_id: product?.station_id ?? null,
-        variants: product?.active !== false && product
-          ? ((variants ?? []) as any[]).filter((v) => v.product_id === product.id)
-          : [],
+        variants:
+          product?.active !== false && product
+            ? ((variants ?? []) as any[]).filter((v) => v.product_id === product.id)
+            : [],
         modifier_group_ids: groupIds,
         // No `?? i.price` fallback here on purpose: i.price is the menu
         // item's own base/display field, never an authoritative Pricing
@@ -603,17 +607,20 @@ export async function voidPosLine(sb: Sb, userId: string, input: VoidPosLineInpu
   // Only an un-fired line can safely unwind its stock movements. Once a line
   // has reached a production/service state, consumption remains in the ledger:
   // reversing it would put already-prepared/served goods back into inventory.
-  const stockDisposition = ["fired", "sent", "preparing", "ready", "served"].includes(String(item.status))
+  const stockDisposition = ["fired", "sent", "preparing", "ready", "served"].includes(
+    String(item.status),
+  )
     ? "preserve_consumption"
     : "reverse_unprepared";
-  const reversal = stockDisposition === "reverse_unprepared"
-    ? await reverseMovementsForOrderItem(sb, userId, {
-        tenantId: input.tenantId,
-        orderItemId: item.id,
-        reason: `Line void: ${input.reason}`,
-        reasonCode: REASON_CODES.saleReversal,
-      })
-    : { reversed: 0, alreadyReversed: 0, costRestored: 0, movementIds: [] as string[] };
+  const reversal =
+    stockDisposition === "reverse_unprepared"
+      ? await reverseMovementsForOrderItem(sb, userId, {
+          tenantId: input.tenantId,
+          orderItemId: item.id,
+          reason: `Line void: ${input.reason}`,
+          reasonCode: REASON_CODES.saleReversal,
+        })
+      : { reversed: 0, alreadyReversed: 0, costRestored: 0, movementIds: [] as string[] };
 
   const { error } = await sb
     .from("restaurant_order_items")

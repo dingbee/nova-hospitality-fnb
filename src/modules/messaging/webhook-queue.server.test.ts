@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase test double mirrors untyped query builders. */
 import { describe, expect, it, vi } from "vitest";
-vi.mock("./guest-commerce.server", () => ({ handleWhatsAppGuestCommerceMessage: vi.fn().mockResolvedValue({ handled: false }) }));
+vi.mock("./guest-commerce.server", () => ({
+  handleWhatsAppGuestCommerceMessage: vi.fn().mockResolvedValue({ handled: false }),
+}));
 import { processPendingMetaWebhookEvents } from "./webhook-queue.server";
 
 const baseEvent = {
@@ -13,13 +15,15 @@ const baseEvent = {
   event_type: "messages",
   payload: {
     value: {
-      messages: [{
-        id: "wamid.inbound.1",
-        from: "255700000000",
-        timestamp: "1794850000",
-        type: "text",
-        text: { body: "Hello LexiBite" },
-      }],
+      messages: [
+        {
+          id: "wamid.inbound.1",
+          from: "255700000000",
+          timestamp: "1794850000",
+          type: "text",
+          text: { body: "Hello LexiBite" },
+        },
+      ],
     },
   },
   attempt_count: 1,
@@ -108,7 +112,11 @@ describe("Meta WhatsApp durable webhook worker", () => {
   it("retries a delivery status that arrives before its outbound message exists", async () => {
     const statusEvent = {
       ...baseEvent,
-      payload: { value: { statuses: [{ id: "wamid.outbound.1", status: "delivered", timestamp: "1794850000" }] } },
+      payload: {
+        value: {
+          statuses: [{ id: "wamid.outbound.1", status: "delivered", timestamp: "1794850000" }],
+        },
+      },
     };
     const { db, updates } = makeDb([statusEvent], { statusResult: false });
 
@@ -125,7 +133,11 @@ describe("Meta WhatsApp durable webhook worker", () => {
   it("moves an event to dead letter after its maximum attempts", async () => {
     const exhausted = {
       ...baseEvent,
-      payload: { value: { statuses: [{ id: "wamid.outbound.1", status: "delivered", timestamp: "1794850000" }] } },
+      payload: {
+        value: {
+          statuses: [{ id: "wamid.outbound.1", status: "delivered", timestamp: "1794850000" }],
+        },
+      },
       attempt_count: 8,
       max_attempts: 8,
     };

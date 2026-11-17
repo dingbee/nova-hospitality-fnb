@@ -24,7 +24,10 @@ import type {
 import { assertCapability, assertTenantRead, type TenantScope } from "../core/access.server";
 import { resolveOrderScope } from "./orderScope.server";
 import { emitRestaurantEvent } from "../events/emit.server";
-import { consumeForOrderItem, consumeOperationalConsumablesForOrder } from "../inventory/movements.server";
+import {
+  consumeForOrderItem,
+  consumeOperationalConsumablesForOrder,
+} from "../inventory/movements.server";
 import { activeRecipeForMenuItem } from "../products/recipes.server";
 import { consumeForRecipeSale } from "../products/consumption.server";
 import { currentFxRate, loadRuleSet, quoteWithRuleSet } from "../pricing/resolution.server";
@@ -577,7 +580,7 @@ export async function recalcOrder(sb: Sb, tenantId: string, orderId: string) {
   // Complimentary lines remain real production/stock costs, but are not
   // payable guest revenue. Keep them in cost_total while excluding them from
   // every commercial amount shown on the bill.
-  const chargeable = live.filter((i) => !Boolean(i.is_comp));
+  const chargeable = live.filter((i) => !i.is_comp);
   const subtotal = chargeable.reduce(
     (s, i) => s + Number(i.quantity ?? 0) * Number(i.unit_price ?? 0),
     0,
