@@ -25,6 +25,78 @@ VALUES
   ('b2000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000001', 'property', 'p0-04-b-store', 'P0-04 B Store', 'store', true, 'active'),
   ('b2000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000001', 'property', 'p0-04-b-kitchen', 'P0-04 B Kitchen', 'kitchen', true, 'active');
 
+INSERT INTO public.restaurant_locations
+  (id, tenant_id, property_id, scope, slug, name, location_type, is_storage, status, parent_id)
+VALUES
+  ('a2000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000001', NULL, 'tenant', 'p0-04-a-central', 'P0-04 A Central Store', 'store', true, 'active', NULL);
+
+INSERT INTO public.restaurant_members (tenant_id, property_id, user_id, role)
+VALUES
+  ('a0000000-0000-4000-8000-000000000001', 'a1000000-0000-4000-8000-000000000001', 'a9000000-0000-4000-8000-000000000001', 'restaurant_manager'),
+  ('a0000000-0000-4000-8000-000000000001', NULL, 'a9000000-0000-4000-8000-000000000002', 'owner');
+
+-- Exercise actual PostgreSQL RLS as authenticated users, not merely the
+-- helper predicates. Property-only staff must not see or mutate the central
+-- store and cannot create a transfer touching it. A tenant-wide owner can
+-- read the central store and create an authorized central-to-property
+-- transfer. The test role is reset before the composite-FK probes below.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-000000000001', true);
+
+DO $rls$
+DECLARE
+  v_count integer;
+  v_rows integer;
+BEGIN
+  SELECT count(*) INTO v_count
+  FROM public.restaurant_locations
+  WHERE id = 'a2000000-0000-4000-8000-000000000003';
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION 'P0-04 FAIL: property-only user can read tenant central store';
+  END IF;
+
+  UPDATE public.restaurant_locations
+  SET name = 'Unauthorized central-store rename'
+  WHERE id = 'a2000000-0000-4000-8000-000000000003';
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows <> 0 THEN
+    RAISE EXCEPTION 'P0-04 FAIL: property-only user updated tenant central store';
+  END IF;
+
+  BEGIN
+    INSERT INTO public.restaurant_stock_transfers
+      (tenant_id, transfer_number, source_location_id, destination_location_id)
+    VALUES
+      ('a0000000-0000-4000-8000-000000000001', 'P0-04-DENIED-CENTRAL', 'a2000000-0000-4000-8000-000000000003', 'a2000000-0000-4000-8000-000000000001');
+    RAISE EXCEPTION 'P0-04 FAIL: property-only user created a central-store transfer';
+  EXCEPTION WHEN insufficient_privilege THEN
+    RAISE NOTICE 'P0-04 PASS: property-only user cannot create central-store transfer';
+  END;
+END;
+$rls$;
+
+SELECT set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-000000000002', true);
+
+DO $owner_rls$
+DECLARE
+  v_count integer;
+BEGIN
+  SELECT count(*) INTO v_count
+  FROM public.restaurant_locations
+  WHERE id = 'a2000000-0000-4000-8000-000000000003';
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'P0-04 FAIL: tenant-wide owner cannot read own central store';
+  END IF;
+
+  INSERT INTO public.restaurant_stock_transfers
+    (tenant_id, transfer_number, source_location_id, destination_location_id)
+  VALUES
+    ('a0000000-0000-4000-8000-000000000001', 'P0-04-OWNER-CENTRAL', 'a2000000-0000-4000-8000-000000000003', 'a2000000-0000-4000-8000-000000000001');
+END;
+$owner_rls$;
+
+RESET ROLE;
+
 INSERT INTO public.restaurant_inventory_items (id, tenant_id, property_id, name)
 VALUES
   ('a3000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'a1000000-0000-4000-8000-000000000001', 'P0-04 A Item'),
