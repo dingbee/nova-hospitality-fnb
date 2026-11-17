@@ -53,6 +53,8 @@ export async function resolveMenuAvailability(
           .select("inventory_item_id, location_id, quantity")
           .eq("tenant_id", tenantId)
           .eq("status", "active");
+        if (scope.propertyId)
+          query = query.or("property_id.is.null,property_id.eq." + scope.propertyId);
         if (scope.locationId) query = query.eq("location_id", scope.locationId);
         return query;
       })(),
@@ -115,6 +117,13 @@ export async function resolveMenuAvailability(
         continue;
       }
       if (line.component_kind === "sub_recipe" && line.sub_recipe_id) {
+        const nestedStatus = recipeStatus.get(line.sub_recipe_id);
+        if (nestedStatus !== "active") {
+          issues.push(
+            nestedStatus ? "Sub-recipe is " + nestedStatus : "Sub-recipe is unavailable",
+          );
+          continue;
+        }
         const nested = requiredStock(line.sub_recipe_id, quantity, depth + 1, nextSeen);
         issues.push(...nested.issues);
         for (const [id, required] of nested.requirements) {
