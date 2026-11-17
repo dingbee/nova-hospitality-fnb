@@ -77,7 +77,7 @@ export async function assertWhatsAppCampaignReady(
  */
 export async function prepareWhatsAppCampaignRecipient(
   admin: Db,
-  input: { tenantId: string; propertyId: string; campaignId: string; guestCustomerId: string },
+  input: { tenantId: string; propertyId: string; campaignId: string; guestCustomerId: string; eventKey?: string | null },
 ) {
   const { campaign } = await assertWhatsAppCampaignReady(
     admin,
@@ -91,6 +91,7 @@ export async function prepareWhatsAppCampaignRecipient(
     _campaign_id: campaign.id,
     _guest_customer_id: input.guestCustomerId,
     _idempotency_key: "campaign:" + campaign.id + ":guest:" + input.guestCustomerId,
+    _event_key: input.eventKey ?? null,
   });
   if (error) throw new WhatsAppCampaignGovernanceError("recipient_preparation_failed");
   const row = Array.isArray(data) ? data[0] : data;
