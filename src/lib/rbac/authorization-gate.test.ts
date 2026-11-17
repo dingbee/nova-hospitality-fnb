@@ -324,6 +324,7 @@ describe("direct server-function bypass", () => {
     join(ROOT, "src/modules/restaurant/selforder/selfsession.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfstaff.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selftrack.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/whatsapp-guest-portal.functions.ts"),
   ].sort();
 
   it("every server function authenticates, except the token-scoped guest surfaces", () => {
