@@ -7,6 +7,8 @@ import {
   guestPortalMenuFn,
   submitGuestCommerceOrderFn,
   initiateGuestCommercePaymentFn,
+  checkGuestReservationAvailabilityFn,
+  createGuestReservationFn,
 } from "@/modules/messaging/guest-portal.functions";
 import type { GuestLineInput } from "@/modules/restaurant/selforder/selforder.contracts";
 
@@ -37,6 +39,8 @@ type GuestPortalMenuData = {
   outletName: string;
   guestName: string | null;
   loyaltyPointsBalance: number;
+  timezone: string;
+  reservationDurationMinutes: number;
   currency: string;
   categories: Array<{ id: string; name: string; sortOrder: number }>;
   modifierGroups: Array<{
@@ -80,6 +84,11 @@ function WhatsAppGuestPortal() {
   const [guestName, setGuestName] = useState("");
   const [clientRequestId, setClientRequestId] = useState("");
   const [paymentError, setPaymentError] = useState("");
+  const [reservationLocalStart, setReservationLocalStart] = useState("");
+  const [reservationPartySize, setReservationPartySize] = useState(2);
+  const [reservationRequestId, setReservationRequestId] = useState("");
+  const reservationAvailabilityFn = useServerFn(checkGuestReservationAvailabilityFn);
+  const createReservationFn = useServerFn(createGuestReservationFn);
   const order = useMutation({
     mutationFn: (lines: GuestLineInput[]) =>
       submitOrder({
@@ -103,6 +112,24 @@ function WhatsAppGuestPortal() {
       );
     },
   });
+  const reservationAvailability = useMutation({
+    mutationFn: () =>
+      reservationAvailabilityFn({
+        data: { token, localStart: reservationLocalStart, partySize: reservationPartySize },
+      }),
+  });
+  const reservation = useMutation({
+    mutationFn: () =>
+      createReservationFn({
+        data: {
+          token,
+          localStart: reservationLocalStart,
+          partySize: reservationPartySize,
+          guestName,
+          clientRequestId: reservationRequestId,
+        },
+      }),
+  });
 
   useEffect(() => {
     const key = "lexibite:wa-checkout:" + token;
@@ -112,6 +139,13 @@ function WhatsAppGuestPortal() {
       sessionStorage.setItem(key, requestId);
     }
     setClientRequestId(requestId);
+    const reservationKey = "lexibite:wa-reservation:" + token;
+    let reservationId = sessionStorage.getItem(reservationKey);
+    if (!reservationId) {
+      reservationId = crypto.randomUUID();
+      sessionStorage.setItem(reservationKey, reservationId);
+    }
+    setReservationRequestId(reservationId);
   }, [token]);
 
   if (menu.isPending)
@@ -251,6 +285,97 @@ function WhatsAppGuestPortal() {
             ) : null}
           </section>
         ) : null}
+        <section className="mb-8 rounded-2xl border border-border p-5">
+          <h2 className="text-lg font-semibold">Reserve a table</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Choose a time at {data.outletName}. Times are interpreted in {data.timezone}.
+            Standard seating duration: {data.reservationDurationMinutes} minutes.
+          </p>
+          {reservation.data ? (
+            <div className="mt-3 rounded-xl bg-primary/10 p-3 text-sm">
+              <p className="font-semibold">Reservation confirmed</p>
+              <p className="mt-1">Reference: {reservation.data.bookingReference}</p>
+              <p className="text-muted-foreground">
+                {new Date(reservation.data.startsAt).toLocaleString()}
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <label className="block text-sm">
+                  Date and time
+                  <input
+                    type="datetime-local"
+                    value={reservationLocalStart}
+                    onChange={(event) => {
+                      setReservationLocalStart(event.target.value);
+                      reservationAvailability.reset();
+                    }}
+                    className="mt-1 block w-full rounded-lg border border-border bg-background px-3 py-2"
+                  />
+                </label>
+                <label className="block text-sm">
+                  Party size
+                  <select
+                    value={reservationPartySize}
+                    onChange={(event) => {
+                      setReservationPartySize(Number(event.target.value));
+                      reservationAvailability.reset();
+                    }}
+                    className="mt-1 block w-full rounded-lg border border-border bg-background px-3 py-2"
+                  >
+                    {Array.from({ length: 12 }, (_, index) => index + 1).map((size) => (
+                      <option key={size} value={size}>
+                        {size} {size === 1 ? "guest" : "guests"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              {reservationAvailability.data ? (
+                <p className="mt-3 text-sm">
+                  {reservationAvailability.data.available
+                    ? `${reservationAvailability.data.availableTableCount} suitable table(s) are available for this time.`
+                    : "No suitable table is available for this time and party size."}
+                </p>
+              ) : null}
+              {reservationAvailability.isError ? (
+                <p className="mt-2 text-sm text-destructive">
+                  {reservationAvailability.error instanceof Error
+                    ? reservationAvailability.error.message
+                    : "Availability could not be checked."}
+                </p>
+              ) : null}
+              {reservation.isError ? (
+                <p className="mt-2 text-sm text-destructive">
+                  {reservation.error instanceof Error
+                    ? reservation.error.message
+                    : "Reservation could not be confirmed."}
+                </p>
+              ) : null}
+              <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  className="flex-1 rounded-xl border border-border px-4 py-3 text-sm font-semibold disabled:opacity-50"
+                  disabled={!reservationLocalStart || reservationAvailability.isPending}
+                  onClick={() => reservationAvailability.mutate()}
+                >
+                  {reservationAvailability.isPending ? "Checking availability…" : "Check availability"}
+                </button>
+                {reservationAvailability.data?.available ? (
+                  <button
+                    type="button"
+                    className="flex-1 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+                    disabled={!reservationRequestId || reservation.isPending}
+                    onClick={() => reservation.mutate()}
+                  >
+                    {reservation.isPending ? "Confirming reservation…" : "Confirm reservation"}
+                  </button>
+                ) : null}
+              </div>
+            </>
+          )}
+        </section>
         <div className="mb-6">
           <h1 className="text-2xl font-semibold tracking-tight">Explore the menu</h1>
           <p className="mt-1 text-sm text-muted-foreground">
