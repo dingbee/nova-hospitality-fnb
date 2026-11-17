@@ -131,8 +131,6 @@ async function resolveWhatsAppPropertyCredentials(
   tenantId: string,
   propertyId: string,
 ) {
-  if (!/^[A-Z]{2,3}$/.test(input.marketCode.toUpperCase()))
-    throw new WhatsAppCampaignGovernanceError("campaign_market_code_invalid");
   const { data: binding, error: bindingError } = await admin
     .from("wa_phone_number_bindings")
     .select("id, phone_number_id, integration_id, waba_id, status")
@@ -290,6 +288,9 @@ export async function createWhatsAppCampaign(
     throw new WhatsAppCampaignGovernanceError("campaign_daily_cap_invalid");
   if (input.totalCap !== undefined && input.totalCap !== null && input.totalCap < 0)
     throw new WhatsAppCampaignGovernanceError("campaign_total_cap_invalid");
+
+  if (!/^[A-Z]{2,3}$/.test(input.marketCode.toUpperCase()))
+    throw new WhatsAppCampaignGovernanceError("campaign_market_code_invalid");
 
   const { data: binding, error: bindingError } = await admin
     .from("wa_phone_number_bindings")
