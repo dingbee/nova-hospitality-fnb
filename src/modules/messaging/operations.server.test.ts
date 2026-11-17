@@ -49,12 +49,12 @@ describe("WhatsApp operations authorization", () => {
     expect(db.from).not.toHaveBeenCalled();
   });
 
-  it("checks guest-management capability before writing or exposing CRM data", async () => {
-    vi.mocked(assertCapability).mockRejectedValueOnce(new Error("guest management required"));
+  it("checks guest-read capability before exposing CRM data", async () => {
+    vi.mocked(assertCapability).mockRejectedValueOnce(new Error("guest read required"));
     const db = { from: vi.fn() };
     await expect(
       listWhatsAppGuestCRM(db, "read-only-user", { tenantId: "tenant-1" }),
-    ).rejects.toThrow("guest management required");
+    ).rejects.toThrow("guest read required");
     expect(db.from).not.toHaveBeenCalled();
   });
 });
