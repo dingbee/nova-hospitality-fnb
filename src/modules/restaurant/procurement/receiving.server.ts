@@ -94,9 +94,11 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
     assertPurchaseOrderReceivable(data.status);
     po = data;
   }
-  await assertCapability(sb, userId, input.tenantId, "receiving.manage", {
+  const scope = {
     propertyId: input.propertyId ?? po?.property_id ?? null,
-  });
+    locationId: input.locationId ?? po?.location_id ?? null,
+  };
+  await assertCapability(sb, userId, input.tenantId, "receiving.manage", scope);
 
   for (const l of input.lines) {
     if (l.acceptedQuantity + l.rejectedQuantity + l.damagedQuantity > l.receivedQuantity + 0.0001) {
@@ -156,7 +158,7 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
       );
     }
     // Over-receipt is a buying decision, so it needs ordering authority.
-    await assertCapability(sb, userId, input.tenantId, "purchasing.approve");
+    await assertCapability(sb, userId, input.tenantId, "purchasing.approve", scope);
   }
 
   const documentNumber = await nextDocumentNumber(
@@ -288,8 +290,6 @@ export async function postGoodsReceipt(
   tenantId: string,
   receiptId: string,
 ) {
-  await assertCapability(sb, userId, tenantId, "receiving.manage");
-
   const { data: receipt, error } = await sb
     .from("restaurant_goods_receipts")
     .select(
@@ -299,6 +299,10 @@ export async function postGoodsReceipt(
     .eq("id", receiptId)
     .single();
   if (error || !receipt) throw new Error("Goods receipt not found.");
+  await assertCapability(sb, userId, tenantId, "receiving.manage", {
+    propertyId: receipt.property_id ?? null,
+    locationId: receipt.location_id ?? null,
+  });
   if (receipt.status === "cancelled") throw new Error("A cancelled receipt cannot be posted.");
   if (receipt.status === "posted") {
     return {
