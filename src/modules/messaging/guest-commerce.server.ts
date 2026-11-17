@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase rows are validated at this boundary. */
-import { getIntegrationSecret } from "@/modules/api-platform/integrations.server";
 import { createWhatsAppGuestPortalSession } from "./guest-portal-sessions.server";
 
 type Db = any;
