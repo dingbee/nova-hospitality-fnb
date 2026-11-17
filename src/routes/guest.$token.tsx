@@ -72,6 +72,7 @@ function WhatsAppGuestPortal() {
   const loadMenu = useServerFn(guestPortalMenuFn);
   const submitOrder = useServerFn(submitGuestCommerceOrderFn);
   const [fulfilmentMethod, setFulfilmentMethod] = useState<"pickup" | "dine_in">("pickup");
+  const [confirmedReservationId, setConfirmedReservationId] = useState<string | null>(null);
   const initiatePayment = useServerFn(initiateGuestCommercePaymentFn);
   const menu = useQuery({
     queryKey: ["whatsapp-guest-portal", token, fulfilmentMethod],
@@ -101,7 +102,7 @@ function WhatsAppGuestPortal() {
           guestName,
           clientRequestId,
           fulfilmentMethod,
-          reservationId: fulfilmentMethod === "dine_in" ? reservation.data?.reservationId : undefined,
+          reservationId: fulfilmentMethod === "dine_in" ? confirmedReservationId ?? undefined : undefined,
           lines,
         },
       }),
@@ -140,7 +141,10 @@ function WhatsAppGuestPortal() {
           clientRequestId: reservationRequestId,
         },
       }),
-    onSuccess: () => setFulfilmentMethod("dine_in"),
+    onSuccess: (result) => {
+      setConfirmedReservationId(result.reservationId);
+      setFulfilmentMethod("dine_in");
+    },
   });
 
   useEffect(() => {
