@@ -18,6 +18,7 @@
 import { PRODUCT } from "@/config/product";
 import { assertAiCapability, recordAiUsage } from "@/modules/commercial/ai-governance.server";
 import { guestMenu } from "./selforder.server";
+import { fetchSellableCatalog } from "../sales/pos.server";
 import {
   buildNovaCatalogContext,
   resolveNovaOperations,
@@ -72,6 +73,7 @@ RULES — these must never be broken:
 - You may ONLY recommend, describe or price items that appear in the MENU JSON below. Never invent a dish, price, ingredient, modifier or promotion, and never claim an item is available if it isn't in the MENU JSON.
 - The "tags" and "allergens" fields are the ONLY dietary/allergen facts you know for each item. If a guest asks about diet or allergies and the relevant item has no tags/allergens listed, say plainly that you don't have reliable information for that item and suggest they ask a member of staff — never guess or infer.
 - Keep replies short (2-4 sentences), warm, and focused on helping the guest choose. Never use technical words like "id", "operation", "payload" or "tool call" — speak like restaurant staff, not a developer.
+- Reply in the language the guest uses. Support both English and Swahili; do not switch languages unless the guest does.
 - You are PREPARING a proposed order for the guest to review, never placing a real order — never say the order has been "placed", "sent" or "confirmed"; say you've "prepared" or "added" it, and that it's ready for the guest's review.
 - CURRENT BASKET JSON below lists what the guest already has prepared. "Add another one", "make that two", "remove the drink" etc. refer to that basket — resolve them against it.
 - If the guest's request could match more than one real menu item (e.g. two different colas), do NOT guess — ask which one they mean in your reply and leave "operations" empty.
@@ -125,9 +127,12 @@ export type AskNovaResult =
 export async function askNova(
   sb: Sb,
   input: {
-    tableId: string;
+    tableId?: string;
+    /** WCE-05 — server-issued WhatsApp Guest Portal bearer token; never a client-supplied tenant/property/outlet id. */
+    guestPortalToken?: string;
     message: string;
     history?: AiTurn[];
+    interactionMode?: "basket" | "discovery";
     /** GEP2 — the guest's current basket (menuItemId + quantity only), a hint for resolving "remove"/"another one"/"make that two" references. Never trusted for price or identity. */
     basket?: NovaBasketLine[];
   },
@@ -136,7 +141,27 @@ export async function askNova(
   // The one and only source of what NOVA is allowed to know — the same
   // guest-authorization boundary and the same sellable catalogue every
   // other guest surface in this module reads.
-  const menu = await guestMenu(sb, input.tableId);
+  if (Boolean(input.tableId) === Boolean(input.guestPortalToken)) {
+    throw new Error("Ask NOVA requires exactly one authorized guest context.");
+  }
+  const menu = input.tableId
+    ? await guestMenu(sb, input.tableId)
+    : await (async () => {
+        const { resolveWhatsAppGuestPortalSession } = await import("@/modules/messaging/guest-portal-sessions.server");
+        const session = await resolveWhatsAppGuestPortalSession(sb, input.guestPortalToken!);
+        if (!session || session.scope !== "guest_commerce") throw new Error("Guest Portal session is unavailable.");
+        const catalog = await fetchSellableCatalog(sb, session.tenantId, {
+          propertyId: session.propertyId,
+          locationId: session.locationId,
+          orderType: "takeaway",
+        });
+        return {
+          table: { tenantId: session.tenantId, propertyId: session.propertyId },
+          categories: catalog.categories,
+          modifierGroups: catalog.modifierGroups,
+          items: catalog.items.filter((item: any) => item.available !== false && item.priceConfigured !== false),
+        };
+      })();
 
   const categories = ((menu.categories ?? []) as any[]).map((c) => ({ id: c.id, name: c.name }));
   const modifierGroupNameById = new Map(
@@ -188,9 +213,12 @@ export async function askNova(
     await assertAiCapability(sb, menu.table.tenantId, "ai_concierge", menu.table.propertyId);
 
     const context = buildNovaCatalogContext({ items: novaItems, categories });
+    const discoveryInstructions = input.interactionMode === "discovery"
+      ? "\n\nWHATSAPP DISCOVERY MODE: Answer questions and recommend only. Do not claim to add, remove, prepare, or change basket items. Always return an empty operations array. Direct the guest to the secure Guest Portal to select items and submit an order."
+      : "";
     const result = await aiCaller({
       system:
-        NOVA_SYSTEM_PROMPT + JSON.stringify(basket) + "\n\nMENU JSON:\n" + JSON.stringify(context),
+        NOVA_SYSTEM_PROMPT + discoveryInstructions + JSON.stringify(basket) + "\n\nMENU JSON:\n" + JSON.stringify(context),
       user: input.message,
       history: (input.history ?? []).slice(-6),
       jsonMode: true,
@@ -241,11 +269,13 @@ export async function askNova(
       categoryId: i.categoryId,
     }));
 
-  const operations = resolveNovaOperations(
-    rawOperations,
-    { items: resolvableItems, modifierGroups: resolvableGroups },
-    basket,
-  );
+  const operations = input.interactionMode === "discovery"
+    ? []
+    : resolveNovaOperations(
+        rawOperations,
+        { items: resolvableItems, modifierGroups: resolvableGroups },
+        basket,
+      );
 
   return { ok: true, reply: validated.reply, recommendedItems, operations };
 }
