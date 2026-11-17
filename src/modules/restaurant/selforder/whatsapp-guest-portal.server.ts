@@ -7,10 +7,10 @@ type Db = any;
 export async function getGuestCommercePage(admin: Db, token: string) {
   const session = await resolveWhatsAppGuestPortalSession(admin, token);
   if (!session) {
-    throw new Error("This Guest Portal link has expired or is no longer valid. Request a new link on WhatsApp.");
+    throw new Error("This Guest Commerce link has expired or is no longer valid. Reopen the restaurant storefront.");
   }
 
-  const [tenantResult, propertyResult, locationResult, bindingResult] = await Promise.all([
+  const [tenantResult, propertyResult, locationResult] = await Promise.all([
     admin
       .from("restaurant_tenants")
       .select("id, name, status, settings")
@@ -29,15 +29,18 @@ export async function getGuestCommercePage(admin: Db, token: string) {
       .eq("tenant_id", session.tenantId)
       .eq("property_id", session.propertyId)
       .maybeSingle(),
-    admin
-      .from("wa_phone_number_bindings")
-      .select("display_phone_number, verified_name, status")
-      .eq("id", session.bindingId)
-      .eq("tenant_id", session.tenantId)
-      .eq("property_id", session.propertyId)
-      .eq("location_id", session.locationId)
-      .maybeSingle(),
   ]);
+
+  const bindingResult = session.sourceChannel === "whatsapp"
+    ? await admin
+        .from("wa_phone_number_bindings")
+        .select("display_phone_number, verified_name, status")
+        .eq("id", session.bindingId)
+        .eq("tenant_id", session.tenantId)
+        .eq("property_id", session.propertyId)
+        .eq("location_id", session.locationId)
+        .maybeSingle()
+    : { data: null, error: null };
 
   const tenant = tenantResult.data;
   const property = propertyResult.data;
@@ -55,7 +58,7 @@ export async function getGuestCommercePage(admin: Db, token: string) {
     !["outlet", "restaurant", "bar", "cafe", "store", "room_service"].includes(location.location_type) ||
     (session.sourceChannel === "whatsapp" && (!binding || binding.status !== "active"))
   ) {
-    throw new Error("This restaurant ordering link is no longer available. Request a fresh link on WhatsApp.");
+    throw new Error("This restaurant storefront is no longer available. Reopen the restaurant menu.");
   }
 
   const settings = (tenant.settings ?? {}) as {
