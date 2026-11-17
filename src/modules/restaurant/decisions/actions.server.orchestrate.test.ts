@@ -15,7 +15,36 @@
  * and the real executeRestaurantAction — the fake below is a database, not a
  * stub of either function.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("../intelligence/purchasing.server", () => ({
+  getPurchasingIntelligence: vi.fn(async () => ({
+    currency: "TZS",
+    suggestions: ["item-1", "item-2", "item-3"].map((inventoryItemId) => ({
+      inventoryItemId,
+      supplierId: "77777777-7777-4777-8777-777777777777",
+      supplierProductId: "88888888-8888-4888-8888-888888888888",
+      purchaseUnitId: "99999999-9999-4999-8999-999999999999",
+      stockUnitId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      purchaseQuantity: 10,
+      purchaseUnitPrice: 1000,
+      stockUnitsPerPurchaseUnit: 1,
+      minimumOrderQuantity: 1,
+      orderMultiple: 1,
+      recommendedQuantity: 10,
+      netAvailable: 0,
+      forecastDemand: 10,
+      safetyStock: 0,
+      dailyVelocity: 1,
+      leadTimeDays: 3,
+      targetCoverageDays: 7,
+      demandObservations: 7,
+      effectivePriceDate: "2026-11-16",
+      forecastConfidence: "medium",
+      purchaseCurrency: "TZS",
+    })),
+  })),
+}));
+
 import { executeRestaurantAction, orchestrateApprovedRestaurantActions } from "./actions.server";
 
 // Registers the restaurant provider + its tenant scope checker, exactly
@@ -27,6 +56,7 @@ const TENANT_B = "22222222-2222-2222-2222-222222222222";
 const OWNER = "33333333-3333-3333-3333-333333333333";
 const WAITER = "44444444-4444-4444-4444-444444444444";
 const SUPPLIER_ID = "77777777-7777-7777-7777-777777777777";
+const LOCATION_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
 function matchesFilters(row: Record<string, any>, filters: Record<string, unknown>) {
   return Object.entries(filters).every(([k, v]) => row[k] === v);
@@ -69,7 +99,7 @@ function decisionRow(id: string, tenantId: string, itemId: string) {
     module: "restaurant",
     decision_key: `restaurant.${tenantId}.finding.purchasing.${itemId}`,
     property_id: null,
-    location_id: null,
+    location_id: LOCATION_ID,
     context: {
       finding: {
         subject: `Item ${itemId}`,
@@ -129,6 +159,7 @@ function makeFakeSb(opts: {
         filters[col] = val;
         return api;
       },
+      is: (col: string, val: unknown) => { filters[col] = val; return api; },
       in: (col: string, vals: unknown[]) => {
         inFilter = { col, vals };
         return api;
@@ -189,6 +220,11 @@ function makeFakeSb(opts: {
         }
         if (table === "restaurant_members") {
           return { data: applyFilters(opts.members), error: null };
+        }
+        if (table === "restaurant_locations") {
+          const row = { id: LOCATION_ID, tenant_id: TENANT_A, property_id: null, scope: "tenant", is_storage: true, status: "active" };
+          const matches = filters.id === undefined || filters.id === LOCATION_ID;
+          return { data: matches && filters.tenant_id === TENANT_A ? (mode === "many" ? [row] : row) : (mode === "many" ? [] : null), error: null };
         }
         if (table === "restaurant_purchase_requests") {
           const matches = applyFilters(requests);
