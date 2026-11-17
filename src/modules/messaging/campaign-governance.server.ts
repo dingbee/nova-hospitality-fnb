@@ -21,6 +21,7 @@ type Campaign = {
   scheduled_at: string | null;
   daily_cap: number | null;
   total_cap: number | null;
+  message_components: Array<Record<string, unknown>>;
 };
 type Template = {
   id: string;
@@ -51,7 +52,7 @@ export async function assertWhatsAppCampaignReady(
   const { data: campaign, error: campaignError } = await admin
     .from("wa_campaigns")
     .select(
-      "id, tenant_id, property_id, location_id, binding_id, template_id, status, trigger_type, scheduled_at, daily_cap, total_cap",
+      "id, tenant_id, property_id, location_id, binding_id, template_id, status, trigger_type, scheduled_at, daily_cap, total_cap, message_components",
     )
     .eq("id", campaignId)
     .eq("tenant_id", tenantId)
@@ -368,7 +369,7 @@ export async function queueWhatsAppCampaignRecipient(
         template: {
           name: template.template_name,
           language: template.language,
-          components: [],
+          components: campaign.message_components ?? [],
         },
         campaign_id: campaign.id,
         campaign_recipient_id: recipient.id,
