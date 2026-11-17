@@ -626,8 +626,6 @@ export async function createOrder(
   const scope = await resolveOrderScope(sb, input.tenantId, input);
   await assertCapability(sb, userId, input.tenantId, "sales.manage", scope, tenantScope);
 
-  const orderType = input.orderType ?? "dine_in";
-  const tableId = input.tableId ?? null;
   const { data: order, error } = await sb
     .from("restaurant_orders")
     .insert({
@@ -775,6 +773,8 @@ export async function createGuestOrder(
     guestSessionId?: string | null;
   },
 ) {
+  const orderType = input.orderType ?? "dine_in";
+  const tableId = input.tableId ?? null;
   const { data: order, error } = await sb
     .from("restaurant_orders")
     .insert({
