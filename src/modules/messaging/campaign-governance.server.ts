@@ -620,21 +620,26 @@ export async function queueWhatsAppCampaignRecipient(
   const clientRequestId = "wa-campaign:" + campaign.id + ":" + recipient.guest_customer_id;
   const { data: existingMessage, error: existingMessageError } = await admin
     .from("wa_messages")
-    .select("id")
+    .select("id, status")
     .eq("tenant_id", input.tenantId)
     .eq("client_request_id", clientRequestId)
     .maybeSingle();
   if (existingMessageError)
     throw new WhatsAppCampaignGovernanceError("campaign_outbox_idempotency_lookup_failed");
   if (existingMessage) {
+    const terminalFailure = existingMessage.status === "failed";
     const { error: recipientUpdateError } = await admin
       .from("wa_campaign_recipients")
-      .update({ state: "queued", message_id: existingMessage.id })
+      .update({
+        state: terminalFailure ? "failed" : existingMessage.status === "sent" ? "sent" : "queued",
+        message_id: existingMessage.id,
+      })
       .eq("id", recipient.id)
       .eq("tenant_id", input.tenantId)
       .eq("state", "eligible");
     if (recipientUpdateError)
       throw new WhatsAppCampaignGovernanceError("campaign_recipient_queue_state_failed");
+    if (terminalFailure) return { queued: false as const, reason: "existing_delivery_failed" };
     return { queued: true as const, duplicate: true as const, messageId: String(existingMessage.id) };
   }
   const metaRate = await resolveEffectiveMetaMessageRate(
