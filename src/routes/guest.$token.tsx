@@ -296,7 +296,11 @@ function WhatsAppGuestPortal() {
               <p className="font-semibold">Reservation confirmed</p>
               <p className="mt-1">Reference: {reservation.data.bookingReference}</p>
               <p className="text-muted-foreground">
-                {new Date(reservation.data.startsAt).toLocaleString()}
+                {new Intl.DateTimeFormat(undefined, {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                  timeZone: data.timezone,
+                }).format(new Date(reservation.data.startsAt))}
               </p>
             </div>
           ) : (
@@ -312,6 +316,16 @@ function WhatsAppGuestPortal() {
                       reservationAvailability.reset();
                     }}
                     className="mt-1 block w-full rounded-lg border border-border bg-background px-3 py-2"
+                  />
+                </label>
+                <label className="block text-sm">
+                  Your name
+                  <input
+                    value={guestName}
+                    onChange={(event) => setGuestName(event.target.value)}
+                    maxLength={160}
+                    className="mt-1 block w-full rounded-lg border border-border bg-background px-3 py-2"
+                    placeholder={data.guestName || "Name for the reservation"}
                   />
                 </label>
                 <label className="block text-sm">
