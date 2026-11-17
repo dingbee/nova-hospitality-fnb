@@ -112,6 +112,23 @@ describe("canonical stock-position contract", () => {
     });
   });
 
+  it("requires manual review when supplier order multiple is missing", () => {
+    expect(calculateReplenishment({
+      forecastDemand: 10,
+      safetyStock: 2,
+      netAvailable: 1,
+      leadTimeDays: 3,
+      targetCoverageDays: 7,
+      stockUnitsPerPurchaseUnit: 1,
+      minimumOrderQuantity: 0,
+    })).toMatchObject({
+      status: "manual_review",
+      recommendedPurchaseUnits: null,
+      recommendedStockUnits: null,
+      reason: "Supplier minimum order quantity or order multiple is invalid.",
+    });
+  });
+
   it("requires manual review when lead time or unit conversion is missing", () => {
     expect(calculateReplenishment({
       forecastDemand: 10, safetyStock: 2, netAvailable: 1,
