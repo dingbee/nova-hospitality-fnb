@@ -48,11 +48,28 @@ export async function processPendingWhatsAppOutboundMessages(
   let failed = 0;
   let campaignReconciliationRequired = 0;
   let campaignDispatchDeferred = 0;
+  let providerDispatchDeferred = 0;
   let campaignDispatchSuppressed = 0;
 
   for (const message of messages) {
     const campaignId = message.payload?.campaign_id;
     const campaignRecipientId = message.payload?.campaign_recipient_id;
+    if (process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED !== "true") {
+      const { error: releaseError } = await admin
+        .from("wa_messages")
+        .update({
+          locked_at: null,
+          locked_by: null,
+          next_attempt_at: new Date(Date.now() + 60_000).toISOString(),
+          last_error: "provider_dispatch_disabled",
+        })
+        .eq("id", message.id)
+        .eq("status", "queued")
+        .eq("locked_by", workerId);
+      if (releaseError) throw new Error("whatsapp_provider_dispatch_release_failed");
+      providerDispatchDeferred++;
+      continue;
+    }
     if (
       typeof campaignId === "string" &&
       process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED !== "true"
@@ -341,5 +358,6 @@ export async function processPendingWhatsAppOutboundMessages(
     campaignReconciliationRequired,
     campaignDispatchDeferred,
     campaignDispatchSuppressed,
+    providerDispatchDeferred,
   };
 }
