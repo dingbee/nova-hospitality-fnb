@@ -52,7 +52,13 @@ export async function listLocations(sb: Sb, userId: string, input: z.infer<typeo
 }
 
 export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocationInput) {
-  await assertCapability(sb, userId, input.tenantId, "location.manage");
+  await assertCapability(
+    sb,
+    userId,
+    input.tenantId,
+    "location.manage",
+    input.scope === "tenant" ? { tenantWide: true } : { propertyId: input.propertyId },
+  );
   if (input.parentId && input.parentId === input.id) throw new Error("A location cannot be its own parent.");
 
   // Scope is an identity boundary: editing cannot silently change tenant/property ownership.
