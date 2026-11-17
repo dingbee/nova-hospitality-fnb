@@ -140,7 +140,7 @@ export async function enqueueWhatsAppGuestPortalHandoff(
       if (session) await admin.rpc("wa_revoke_guest_portal_session", { _session_id: session.sessionId });
       throw new Error("portal_handoff_job_requeue_failed");
     }
-    return { queued: true, jobId: eventJob.id, sessionId: session.sessionId };
+    return { queued: true, jobId: eventJob.id, sessionId: session?.sessionId ?? null };
   }
 
   const { data: created, error: createError } = await admin
