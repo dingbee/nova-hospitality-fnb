@@ -332,8 +332,11 @@ function makeFakeSupabase(opts: {
         return { data: { id }, error: null };
       }
       if (table === "restaurant_purchase_request_items") {
-        lineInsertCount += 1;
         if (opts.failLineInsert) return { data: null, error: { message: "line insert failed" } };
+        if (items.some((r) => r.tenant_id === payload.tenant_id && r.source_action_id === payload.source_action_id)) {
+          return { data: null, error: { message: "duplicate source action line", code: "23505" } };
+        }
+        lineInsertCount += 1;
         const id = `item-${lineInsertCount}`;
         items.push({ id, ...payload });
         return { data: { id }, error: null };
@@ -552,6 +555,7 @@ describe("executeRestaurantAction — Act", () => {
         tenant_id: TENANT_A,
         correlation_id: actionRow().id,
         status: "draft",
+        metadata: { inventory_recommendation: {} },
       },
     });
 
@@ -1176,6 +1180,7 @@ describe("restaurant.inventory.replenish_review — I5", () => {
           tenant_id: TENANT_A,
           correlation_id: executed.id,
           status: "draft",
+          metadata: { inventory_recommendation: {} },
         },
       ],
       existingItems: [
@@ -1224,6 +1229,7 @@ describe("restaurant.inventory.replenish_review — I5", () => {
           tenant_id: TENANT_A,
           correlation_id: executed.id,
           status: "draft",
+          metadata: { inventory_recommendation: {} },
         },
       ],
       existingItems: [
@@ -1271,12 +1277,14 @@ describe("restaurant.inventory.replenish_review — I5", () => {
           tenant_id: TENANT_A,
           correlation_id: executed.id,
           status: "draft",
+          metadata: { inventory_recommendation: {} },
         },
         {
           id: "req-replenish-3b",
           tenant_id: TENANT_A,
           correlation_id: executed.id,
           status: "draft",
+          metadata: { inventory_recommendation: {} },
         },
       ],
       existingItems: [
@@ -1285,6 +1293,15 @@ describe("restaurant.inventory.replenish_review — I5", () => {
           purchase_request_id: "req-replenish-3",
           inventory_item_id: INVENTORY_ITEM_ID,
           quantity: 30,
+          source_action_id: executed.id,
+          preferred_supplier_id: SUPPLIER_ID,
+          supplier_product_id: SUPPLIER_PRODUCT_ID,
+          unit_id: PURCHASE_UNIT_ID,
+          stock_unit_id: STOCK_UNIT_ID,
+          stock_units_per_purchase_unit: 1,
+          minimum_order_quantity: 0,
+          order_multiple: 1,
+          estimated_unit_cost: 1500,
         },
       ],
     });
@@ -1442,6 +1459,15 @@ describe("restaurant.inventory.replenish_review — I5", () => {
               reorderPoint: 25,
               recommendedQuantity: 30,
               supplierId: null,
+              supplierProductId: null,
+              purchaseUnitId: PURCHASE_UNIT_ID,
+              stockUnitId: STOCK_UNIT_ID,
+              purchaseQuantity: 30,
+              purchaseUnitPrice: 1500,
+              stockUnitsPerPurchaseUnit: 1,
+              minimumOrderQuantity: 0,
+              orderMultiple: 1,
+              supplierProductMissing: true,
               estimatedUnitCost: null,
               estimatedCost: null,
               currency: "TZS",
