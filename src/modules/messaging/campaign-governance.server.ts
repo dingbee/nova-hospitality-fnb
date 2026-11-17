@@ -245,7 +245,7 @@ export async function syncWhatsAppMessageTemplateStatuses(
         updated_at: new Date().toISOString(),
       })
       .eq("tenant_id", input.tenantId)
-      .eq("property_id", input.propertyId)
+      .or("property_id.eq." + input.propertyId + ",property_id.is.null")
       .eq("meta_template_id", providerTemplate.id);
     if (error) throw new WhatsAppCampaignGovernanceError("template_status_sync_failed");
     updated++;
@@ -428,8 +428,13 @@ export async function evaluateWhatsAppCampaignAudience(
     query = query.eq("preferred_language", filter.preferredLanguage);
   if (typeof filter.lastSeenAfter === "string") query = query.gte("last_seen_at", filter.lastSeenAfter);
   if (typeof filter.lastSeenBefore === "string") query = query.lte("last_seen_at", filter.lastSeenBefore);
-  const { data: guests, error } = await query.limit(Math.min(Math.max(input.limit ?? 500, 1), 1000));
+  const audienceLimit = Math.min(Math.max(input.limit ?? 500, 1), 1000);
+  const { data: guests, error, count } = await query
+    .select("id", { count: "exact" })
+    .limit(audienceLimit + 1);
   if (error) throw new WhatsAppCampaignGovernanceError("campaign_audience_query_failed");
+  if ((typeof count === "number" && count > audienceLimit) || (guests ?? []).length > audienceLimit)
+    throw new WhatsAppCampaignGovernanceError("campaign_audience_exceeds_single_execution_limit");
 
   let eligible = 0;
   let suppressed = 0;
