@@ -9,13 +9,19 @@ export function normalizeWhatsAppPhone(raw: string): { phoneE164: string; whatsa
 
 export function detectGuestLanguage(text: string | null | undefined): "en" | "sw" {
   if (!text) return "en";
-  const swahili = /\b(habari|tafadhali|asante|nataka|naomba|ndiyo|ndio|hapana|chakula|msaada|bei|karibu|pole|samahani|nime|tuna|wapi|lini)\b/i;
+  const swahili =
+    /\b(habari|tafadhali|asante|nataka|naomba|ndiyo|ndio|hapana|chakula|msaada|bei|karibu|pole|samahani|nime|tuna|wapi|lini)\b/i;
   return swahili.test(text) ? "sw" : "en";
 }
 
 export type WhatsAppConsentCommand = "subscribe" | "unsubscribe" | null;
-export function parseWhatsAppConsentCommand(text: string | null | undefined): WhatsAppConsentCommand {
-  const value = (text ?? "").trim().toLowerCase().replace(/[.!?]+$/g, "");
+export function parseWhatsAppConsentCommand(
+  text: string | null | undefined,
+): WhatsAppConsentCommand {
+  const value = (text ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "");
   if (["join", "subscribe", "start", "opt in", "opt-in"].includes(value)) return "subscribe";
   if (["stop", "unsubscribe", "opt out", "opt-out"].includes(value)) return "unsubscribe";
   return null;
@@ -45,7 +51,8 @@ export async function upsertWhatsAppGuestCustomer(
   if (lookupError) throw new Error("Guest CRM identity lookup failed.");
 
   if (existing) {
-    const { data, error } = await admin.from("restaurant_guest_customers")
+    const { data, error } = await admin
+      .from("restaurant_guest_customers")
       .update({
         whatsapp_user_id: identity.whatsappUserId,
         display_name: displayName ?? existing.display_name,
@@ -53,14 +60,16 @@ export async function upsertWhatsAppGuestCustomer(
         preferred_language: preferredLanguage,
         last_seen_at: now,
       })
-      .eq("id", existing.id).eq("tenant_id", input.tenantId)
+      .eq("id", existing.id)
+      .eq("tenant_id", input.tenantId)
       .select("id, phone_e164, display_name, preferred_language, status")
       .single();
     if (error || !data) throw new Error("Guest CRM identity update failed.");
     return data;
   }
 
-  const { data, error } = await admin.from("restaurant_guest_customers")
+  const { data, error } = await admin
+    .from("restaurant_guest_customers")
     .insert({
       tenant_id: input.tenantId,
       first_property_id: input.propertyId,
@@ -92,7 +101,8 @@ export async function recordWhatsAppGuestConsent(
   },
 ) {
   const dedupeKey = "wa:" + input.sourceEventId + ":marketing:" + input.state;
-  const { data, error } = await admin.from("restaurant_guest_customer_consents")
+  const { data, error } = await admin
+    .from("restaurant_guest_customer_consents")
     .insert({
       tenant_id: input.tenantId,
       property_id: input.propertyId,
@@ -108,7 +118,11 @@ export async function recordWhatsAppGuestConsent(
     .single();
   if (error?.code === "23505") return { duplicate: true as const, state: input.state };
   if (error || !data) throw new Error("WhatsApp marketing consent could not be recorded.");
-  return { duplicate: false as const, state: data.state as "granted" | "revoked", recordedAt: data.recorded_at };
+  return {
+    duplicate: false as const,
+    state: data.state as "granted" | "revoked",
+    recordedAt: data.recorded_at,
+  };
 }
 
 /** Marketing is denied unless the latest immutable consent event is an explicit grant. */
@@ -117,7 +131,8 @@ export async function hasWhatsAppGuestMarketingConsent(
   tenantId: string,
   guestCustomerId: string,
 ): Promise<boolean> {
-  const { data, error } = await admin.from("restaurant_guest_customer_consents")
+  const { data, error } = await admin
+    .from("restaurant_guest_customer_consents")
     .select("state")
     .eq("tenant_id", tenantId)
     .eq("guest_customer_id", guestCustomerId)
@@ -137,7 +152,8 @@ export async function getWhatsAppGuestCustomerHistory(
   guestCustomerId: string,
 ) {
   const [{ data: orders, error: orderError }, marketingConsent] = await Promise.all([
-    admin.from("restaurant_orders")
+    admin
+      .from("restaurant_orders")
       .select("id, order_number, order_type, status, total, currency, opened_at, closed_at")
       .eq("tenant_id", tenantId)
       .eq("guest_customer_id", guestCustomerId)
@@ -148,7 +164,8 @@ export async function getWhatsAppGuestCustomerHistory(
   if (orderError) throw new Error("Guest CRM order history could not be loaded.");
   const orderIds = (orders ?? []).map((order: any) => order.id);
   const { data: lines, error: linesError } = orderIds.length
-    ? await admin.from("restaurant_order_items")
+    ? await admin
+        .from("restaurant_order_items")
         .select("order_id, description, quantity")
         .eq("tenant_id", tenantId)
         .in("order_id", orderIds)

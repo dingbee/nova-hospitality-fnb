@@ -17,20 +17,19 @@ type CommerceEvent = {
 };
 type InboundMessage = { id: string; from: string; text?: { body?: string } };
 export type GuestCommerceIntent =
-  | "menu"
-  | "order"
-  | "help"
-  | "subscribe"
-  | "unsubscribe"
-  | "unknown";
+  "menu" | "order" | "help" | "subscribe" | "unsubscribe" | "unknown";
 
 export function classifyGuestCommerceIntent(value: unknown): GuestCommerceIntent {
   if (typeof value !== "string") return "unknown";
-  const normalised = value.trim().toLocaleLowerCase().replace(/[.!?]+$/g, "");
+  const normalised = value
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[.!?]+$/g, "");
   const consent = parseWhatsAppConsentCommand(normalised);
   if (consent === "subscribe") return "subscribe";
   if (consent === "unsubscribe") return "unsubscribe";
-  if (/^(menu|menyu|browse|catalogue|catalog|start|hi|hello|habari)$/.test(normalised)) return "menu";
+  if (/^(menu|menyu|browse|catalogue|catalog|start|hi|hello|habari)$/.test(normalised))
+    return "menu";
   if (/^(order|oda|place order|buy)$/.test(normalised)) return "order";
   if (/^(help|msaada|support)$/.test(normalised)) return "help";
   return "unknown";
@@ -163,16 +162,30 @@ export async function handleWhatsAppGuestCommerceMessage(
       .limit(6);
     if (historyError) throw new Error("whatsapp_concierge_history_unavailable");
     const history = (historyRows ?? []).reverse().map((row: any) => ({
-      role: row.direction === "inbound" ? "user" as const : "assistant" as const,
+      role: row.direction === "inbound" ? ("user" as const) : ("assistant" as const),
       content: String(row.content ?? ""),
     }));
-    let conciergeReply = "I can help with menu questions and recommendations. Reply MENU or ORDER to open the secure Guest Portal.";
+    let conciergeReply =
+      "I can help with menu questions and recommendations. Reply MENU or ORDER to open the secure Guest Portal.";
     try {
-      let customerContext: { displayName?: string | null; recentOrders?: Array<{ orderNumber: string; status: string; items: Array<{ name: string; quantity: number }> }> } | undefined;
+      let customerContext:
+        | {
+            displayName?: string | null;
+            recentOrders?: Array<{
+              orderNumber: string;
+              status: string;
+              items: Array<{ name: string; quantity: number }>;
+            }>;
+          }
+        | undefined;
       if (conversation.guest_customer_id) {
         const [{ data: customer }, crmHistory] = await Promise.all([
-          admin.from("restaurant_guest_customers").select("display_name")
-            .eq("id", conversation.guest_customer_id).eq("tenant_id", event.tenant_id).maybeSingle(),
+          admin
+            .from("restaurant_guest_customers")
+            .select("display_name")
+            .eq("id", conversation.guest_customer_id)
+            .eq("tenant_id", event.tenant_id)
+            .maybeSingle(),
           getWhatsAppGuestCustomerHistory(admin, event.tenant_id, conversation.guest_customer_id),
         ]);
         customerContext = {

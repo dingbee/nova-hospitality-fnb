@@ -135,7 +135,14 @@ export async function askNova(
     message: string;
     history?: AiTurn[];
     interactionMode?: "basket" | "discovery";
-    customerContext?: { displayName?: string | null; recentOrders?: Array<{ orderNumber: string; status: string; items: Array<{ name: string; quantity: number }> }> };
+    customerContext?: {
+      displayName?: string | null;
+      recentOrders?: Array<{
+        orderNumber: string;
+        status: string;
+        items: Array<{ name: string; quantity: number }>;
+      }>;
+    };
     /** GEP2 — the guest's current basket (menuItemId + quantity only), a hint for resolving "remove"/"another one"/"make that two" references. Never trusted for price or identity. */
     basket?: NovaBasketLine[];
   },
@@ -144,8 +151,12 @@ export async function askNova(
   // The one and only source of what NOVA is allowed to know — the same
   // guest-authorization boundary and the same sellable catalogue every
   // other guest surface in this module reads.
-  const contextCount = Number(Boolean(input.tableId)) + Number(Boolean(input.guestPortalToken)) + Number(Boolean(input.guestPortalScope));
-  if (contextCount !== 1) throw new Error("Ask NOVA requires exactly one authorized guest context.");
+  const contextCount =
+    Number(Boolean(input.tableId)) +
+    Number(Boolean(input.guestPortalToken)) +
+    Number(Boolean(input.guestPortalScope));
+  if (contextCount !== 1)
+    throw new Error("Ask NOVA requires exactly one authorized guest context.");
   const menu = input.tableId
     ? await guestMenu(sb, input.tableId)
     : await (async () => {
@@ -153,9 +164,11 @@ export async function askNova(
         let propertyId: string;
         let locationId: string;
         if (input.guestPortalToken) {
-          const { resolveWhatsAppGuestPortalSession } = await import("@/modules/messaging/guest-portal-sessions.server");
+          const { resolveWhatsAppGuestPortalSession } =
+            await import("@/modules/messaging/guest-portal-sessions.server");
           const session = await resolveWhatsAppGuestPortalSession(sb, input.guestPortalToken);
-          if (!session || session.scope !== "guest_commerce") throw new Error("Guest Portal session is unavailable.");
+          if (!session || session.scope !== "guest_commerce")
+            throw new Error("Guest Portal session is unavailable.");
           tenantId = session.tenantId;
           propertyId = session.propertyId;
           locationId = session.locationId;
@@ -163,22 +176,46 @@ export async function askNova(
           tenantId = input.guestPortalScope!.tenantId;
           propertyId = input.guestPortalScope!.propertyId;
           locationId = input.guestPortalScope!.locationId;
-          const { data: binding, error: bindingError } = await sb.from("wa_phone_number_bindings")
+          const { data: binding, error: bindingError } = await sb
+            .from("wa_phone_number_bindings")
             .select("id, integration_id, status")
-            .eq("tenant_id", tenantId).eq("property_id", propertyId).eq("location_id", locationId)
-            .eq("status", "active").maybeSingle();
-          if (bindingError || !binding) throw new Error("Verified WhatsApp outlet scope is unavailable.");
-          const { data: integration, error: integrationError } = await sb.from("api_integrations")
-            .select("id, status, provider, channel_key")
-            .eq("id", binding.integration_id).eq("tenant_id", tenantId).eq("property_id", propertyId)
+            .eq("tenant_id", tenantId)
+            .eq("property_id", propertyId)
+            .eq("location_id", locationId)
+            .eq("status", "active")
             .maybeSingle();
-          if (integrationError || !integration || integration.status !== "active" || integration.provider !== "meta-whatsapp" || integration.channel_key !== "whatsapp") {
+          if (bindingError || !binding)
+            throw new Error("Verified WhatsApp outlet scope is unavailable.");
+          const { data: integration, error: integrationError } = await sb
+            .from("api_integrations")
+            .select("id, status, provider, channel_key")
+            .eq("id", binding.integration_id)
+            .eq("tenant_id", tenantId)
+            .eq("property_id", propertyId)
+            .maybeSingle();
+          if (
+            integrationError ||
+            !integration ||
+            integration.status !== "active" ||
+            integration.provider !== "meta-whatsapp" ||
+            integration.channel_key !== "whatsapp"
+          ) {
             throw new Error("Verified WhatsApp integration is unavailable.");
           }
-          const { data: location, error: locationError } = await sb.from("restaurant_locations")
+          const { data: location, error: locationError } = await sb
+            .from("restaurant_locations")
             .select("id, status, location_type, is_storage")
-            .eq("id", locationId).eq("tenant_id", tenantId).eq("property_id", propertyId).maybeSingle();
-          if (locationError || !location || location.status !== "active" || location.is_storage || !["outlet", "restaurant", "bar"].includes(location.location_type)) {
+            .eq("id", locationId)
+            .eq("tenant_id", tenantId)
+            .eq("property_id", propertyId)
+            .maybeSingle();
+          if (
+            locationError ||
+            !location ||
+            location.status !== "active" ||
+            location.is_storage ||
+            !["outlet", "restaurant", "bar"].includes(location.location_type)
+          ) {
             throw new Error("Verified WhatsApp outlet is unavailable.");
           }
         }
@@ -191,7 +228,9 @@ export async function askNova(
           table: { tenantId, propertyId },
           categories: catalog.categories,
           modifierGroups: catalog.modifierGroups,
-          items: catalog.items.filter((item: any) => item.available !== false && item.priceConfigured !== false),
+          items: catalog.items.filter(
+            (item: any) => item.available !== false && item.priceConfigured !== false,
+          ),
         };
       })();
 
@@ -245,15 +284,21 @@ export async function askNova(
     await assertAiCapability(sb, menu.table.tenantId, "ai_concierge", menu.table.propertyId);
 
     const context = buildNovaCatalogContext({ items: novaItems, categories });
-    const discoveryInstructions = input.interactionMode === "discovery"
-      ? "\n\nWHATSAPP DISCOVERY MODE: Answer menu questions and recommend only. Do not claim to add, remove, prepare, or change basket items. Always return an empty operations array. Tell the guest to reply MENU or ORDER to open the secure Guest Portal and submit an order."
-      : "";
+    const discoveryInstructions =
+      input.interactionMode === "discovery"
+        ? "\n\nWHATSAPP DISCOVERY MODE: Answer menu questions and recommend only. Do not claim to add, remove, prepare, or change basket items. Always return an empty operations array. Tell the guest to reply MENU or ORDER to open the secure Guest Portal and submit an order."
+        : "";
     const customerContext = input.customerContext
       ? "\n\nGUEST CRM HISTORY JSON:\n" + JSON.stringify(input.customerContext)
       : "";
     const result = await aiCaller({
       system:
-        NOVA_SYSTEM_PROMPT + discoveryInstructions + customerContext + JSON.stringify(basket) + "\n\nMENU JSON:\n" + JSON.stringify(context),
+        NOVA_SYSTEM_PROMPT +
+        discoveryInstructions +
+        customerContext +
+        JSON.stringify(basket) +
+        "\n\nMENU JSON:\n" +
+        JSON.stringify(context),
       user: input.message,
       history: (input.history ?? []).slice(-6),
       jsonMode: true,
@@ -304,13 +349,14 @@ export async function askNova(
       categoryId: i.categoryId,
     }));
 
-  const operations = input.interactionMode === "discovery"
-    ? []
-    : resolveNovaOperations(
-        rawOperations,
-        { items: resolvableItems, modifierGroups: resolvableGroups },
-        basket,
-      );
+  const operations =
+    input.interactionMode === "discovery"
+      ? []
+      : resolveNovaOperations(
+          rawOperations,
+          { items: resolvableItems, modifierGroups: resolvableGroups },
+          basket,
+        );
 
   return { ok: true, reply: validated.reply, recommendedItems, operations };
 }

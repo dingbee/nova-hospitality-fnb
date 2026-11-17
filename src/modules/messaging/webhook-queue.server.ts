@@ -142,7 +142,8 @@ async function processMessages(db: Db, event: ClaimedEvent, value: Record<string
       displayName: typeof contact?.profile?.name === "string" ? contact.profile.name : null,
       messageText: messageContent(message),
     });
-    const { error: customerLinkError } = await db.from("wa_conversations")
+    const { error: customerLinkError } = await db
+      .from("wa_conversations")
       .update({ guest_customer_id: guestCustomer.id })
       .eq("id", conversation.id)
       .eq("tenant_id", event.tenant_id)

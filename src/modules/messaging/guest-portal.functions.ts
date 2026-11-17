@@ -191,10 +191,12 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
       .eq("property_id", session.propertyId)
       .eq("location_id", session.locationId)
       .maybeSingle();
-    if (conversationError || !conversation) throw new Error("The WhatsApp guest identity could not be verified.");
+    if (conversationError || !conversation)
+      throw new Error("The WhatsApp guest identity could not be verified.");
     const guestCustomerId = conversation.guest_customer_id as string | null;
     if (guestCustomerId && data.guestName?.trim()) {
-      const { error: profileError } = await supabaseAdmin.from("restaurant_guest_customers")
+      const { error: profileError } = await supabaseAdmin
+        .from("restaurant_guest_customers")
         .update({ display_name: data.guestName.trim().slice(0, 160) })
         .eq("id", guestCustomerId)
         .eq("tenant_id", session.tenantId);
