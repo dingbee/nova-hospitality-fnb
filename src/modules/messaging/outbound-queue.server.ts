@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase rows are validated at this boundary. */
 import { randomUUID } from "node:crypto";
 import { getIntegrationSecret } from "@/modules/api-platform/integrations.server";
-import { MetaGraphError, sendTextMessage } from "./providers/meta-cloud-api.server";
+import { MetaGraphError, sendTemplateMessage, sendTextMessage } from "./providers/meta-cloud-api.server";
 
 type Db = any;
 type Outbound = {
@@ -11,6 +11,7 @@ type Outbound = {
   location_id: string;
   conversation_id: string;
   content: string;
+  message_type: string;
   payload: Record<string, any>;
   delivery_attempts: number;
 };
@@ -80,18 +81,33 @@ export async function processPendingWhatsAppOutboundMessages(
 
       const token = await getIntegrationSecret(admin, message.tenant_id, integration.id);
       if (!token) throw new Error("whatsapp_outbox_credential_unavailable");
-      const result = await sendTextMessage(
-        {
-          accessToken: token,
-          wabaId: String(integration.config?.wabaId ?? ""),
-          phoneNumberId: binding.phone_number_id,
-        },
-        conversation.wa_user_id,
-        message.content,
-        {
-          graphApiVersion: integration.config?.graphApiVersion,
-        },
-      );
+      const providerCredentials = {
+        accessToken: token,
+        wabaId: String(integration.config?.wabaId ?? ""),
+        phoneNumberId: binding.phone_number_id,
+      };
+      const providerOptions = { graphApiVersion: integration.config?.graphApiVersion };
+      const template = message.payload?.template;
+      const result =
+        message.message_type === "template" && template
+          ? await sendTemplateMessage(
+              providerCredentials,
+              conversation.wa_user_id,
+              {
+                name: String(template.name ?? ""),
+                language: String(template.language ?? ""),
+                components: Array.isArray(template.components) ? template.components : [],
+              },
+              providerOptions,
+            )
+          : message.message_type === "text"
+            ? await sendTextMessage(
+                providerCredentials,
+                conversation.wa_user_id,
+                message.content,
+                providerOptions,
+              )
+            : (() => { throw new Error("whatsapp_outbox_message_type_unsupported"); })();
       const providerMessageId = result.messages?.[0]?.id;
       if (!providerMessageId) throw new Error("whatsapp_outbox_provider_id_missing");
 
