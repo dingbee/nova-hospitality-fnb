@@ -506,6 +506,95 @@ export async function createIntelligentPurchaseOrders(
   userId: string,
   input: IntelligentPurchaseOrderPlanInput,
 ) {
+  const overrideIds = input.lineOverrides.map((row) => row.inventoryItemId);
+  if (new Set(overrideIds).size !== overrideIds.length) {
+    throw new Error("A manual quantity override may be supplied only once per inventory item.");
+  }
+
+  const idempotencyPrefix = "LEXI-INT-" + input.idempotencyKey + "-";
+  const { data: existingOrders, error: existingOrdersError } = await sb
+    .from("restaurant_purchase_orders")
+    .select("id, document_number, reference, status, supplier_id, property_id, location_id, total, currency, metadata")
+    .eq("tenant_id", input.tenantId)
+    .like("reference", idempotencyPrefix + "%");
+  if (existingOrdersError) {
+    throw new Error("Unable to verify intelligent PO idempotency: " + existingOrdersError.message);
+  }
+
+  const existingRows = (existingOrders ?? []) as any[];
+  if (existingRows.length > 0) {
+    const validOrders = existingRows.filter((order) =>
+      (order.metadata as any)?.intelligent_replenishment?.idempotency_key === input.idempotencyKey &&
+      (order.metadata as any)?.intelligent_replenishment?.engine === "p0-02-stock-position-v1",
+    );
+    if (validOrders.length !== existingRows.length) {
+      throw new Error("An intelligent PO reference exists without matching durable idempotency evidence.");
+    }
+
+    const orderIds = validOrders.map((order) => order.id as string);
+    const supplierIds = [...new Set(validOrders.map((order) => order.supplier_id as string))];
+    const [{ data: existingLines, error: existingLinesError }, { data: suppliers, error: suppliersError }] =
+      await Promise.all([
+        sb.from("restaurant_purchase_order_items")
+          .select("purchase_order_id, inventory_item_id, supplier_product_id, unit_id, stock_unit_id, stock_units_per_purchase_unit, minimum_order_quantity, order_multiple, quantity, unit_price")
+          .eq("tenant_id", input.tenantId)
+          .in("purchase_order_id", orderIds),
+        sb.from("restaurant_suppliers")
+          .select("id, name")
+          .eq("tenant_id", input.tenantId)
+          .in("id", supplierIds),
+      ]);
+    if (existingLinesError) throw new Error("Unable to verify persisted intelligent PO lines: " + existingLinesError.message);
+    if (suppliersError) throw new Error("Unable to verify intelligent PO suppliers: " + suppliersError.message);
+
+    const supplierNames = new Map(((suppliers ?? []) as any[]).map((supplier) => [supplier.id, supplier.name]));
+    const persistedLines = (existingLines ?? []) as any[];
+    const overrideByItem = new Map(input.lineOverrides.map((row) => [row.inventoryItemId, row.quantity]));
+    const created = validOrders.map((order) => {
+      const evidence = (order.metadata as any).intelligent_replenishment;
+      const expectedLines = Array.isArray(evidence.lines) ? evidence.lines : [];
+      const actualLines = persistedLines.filter((line) => line.purchase_order_id === order.id);
+      const linesMatch = actualLines.length === expectedLines.length &&
+        expectedLines.every((expected: any) => {
+          const override = overrideByItem.get(expected.inventory_item_id);
+          const expectedFinalQuantity = override ?? expected.recommended_purchase_quantity;
+          return expected.override_applied === (override !== undefined) &&
+            Number(expected.final_purchase_quantity) === Number(expectedFinalQuantity) &&
+            actualLines.some((actual) =>
+              actual.inventory_item_id === expected.inventory_item_id &&
+              actual.supplier_product_id === expected.supplier_product_id &&
+              actual.unit_id === expected.unit_id &&
+              actual.stock_unit_id === expected.stock_unit_id &&
+              Number(actual.stock_units_per_purchase_unit) === Number(expected.stock_units_per_purchase_unit) &&
+              Number(actual.minimum_order_quantity ?? 0) === Number(expected.minimum_order_quantity ?? 0) &&
+              actual.order_multiple != null && Number(actual.order_multiple) === Number(expected.order_multiple) &&
+              Number(actual.quantity) === Number(expected.final_purchase_quantity) &&
+              Number(actual.unit_price) === Number(expected.unit_price),
+            );
+        });
+      if (!linesMatch || !supplierNames.has(order.supplier_id)) {
+        throw new Error("An intelligent PO already exists for this idempotency key but its persisted evidence differs. The existing order was not changed.");
+      }
+      return {
+        id: order.id as string,
+        documentNumber: order.document_number as string,
+        status: order.status as string,
+        supplierName: supplierNames.get(order.supplier_id) as string,
+        total: Number(order.total),
+        currency: order.currency as string,
+        lineCount: actualLines.length,
+      };
+    });
+    const currencies = new Set(created.map((order) => order.currency));
+    if (currencies.size !== 1) throw new Error("Existing intelligent POs for one idempotency key have inconsistent currencies.");
+    return {
+      created,
+      total: created.reduce((sum, order) => sum + order.total, 0),
+      currency: created[0]!.currency,
+      skipped: [],
+    };
+  }
+
   const plan = await previewIntelligentPurchaseOrders(sb, userId, input);
   if (plan.groups.length === 0) {
     throw new Error(
@@ -515,10 +604,6 @@ export async function createIntelligentPurchaseOrders(
     );
   }
 
-  const overrideIds = input.lineOverrides.map((row) => row.inventoryItemId);
-  if (new Set(overrideIds).size !== overrideIds.length) {
-    throw new Error("A manual quantity override may be supplied only once per inventory item.");
-  }
   const created = [];
   for (const group of plan.groups) {
     const reference = intelligentPurchaseOrderReference(input.idempotencyKey, group.key);
@@ -621,7 +706,12 @@ export async function createIntelligentPurchaseOrders(
             recommended_purchase_quantity: line.recommendedPurchaseQuantity,
             final_purchase_quantity: line.quantity,
             override_applied: Boolean(line.overrideApplied),
+            unit_id: line.unitId,
+            stock_unit_id: line.stockUnitId,
             stock_units_per_purchase_unit: line.stockUnitsPerPurchaseUnit,
+            minimum_order_quantity: line.minimumOrderQuantity,
+            order_multiple: line.orderMultiple,
+            unit_price: line.unitPrice,
             recommendation_evidence: line.recommendationEvidence,
           })),
         },

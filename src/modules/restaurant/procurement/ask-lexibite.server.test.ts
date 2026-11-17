@@ -50,6 +50,12 @@ const LOCATION = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 function chain(result: unknown) {
   const q: any = {};
   for (const method of ["select", "eq", "in", "or", "lte"]) q[method] = vi.fn(() => q);
+  q.like = vi.fn(() => {
+    if (result && typeof result === "object" && !Array.isArray((result as any).data) && (result as any).data) {
+      (result as any).data = [(result as any).data];
+    }
+    return q;
+  });
   q.maybeSingle = vi.fn(async () => ({
     ...(result as any),
     data: Array.isArray((result as any).data) ? (result as any).data[0] ?? null : (result as any).data,
@@ -483,7 +489,7 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
       location_id: LOCATION,
       total: 120000,
       currency: "TZS",
-      metadata: { intelligent_replenishment: { engine: "p0-02-stock-position-v1" } },
+      metadata: { intelligent_replenishment: { engine: "p0-02-stock-position-v1", idempotency_key: IDEMPOTENCY, lines: [{ inventory_item_id: ITEM, supplier_product_id: PRODUCT, recommended_purchase_quantity: 10, final_purchase_quantity: 10, override_applied: false, unit_id: UNIT, stock_unit_id: UNIT, stock_units_per_purchase_unit: 1, minimum_order_quantity: 0, order_multiple: 1, unit_price: 12000 }] } },
     };
     const sb = sbWithExisting(existing);
     await expect(
@@ -537,7 +543,7 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
     const existing = {
       id: "po-existing",
       document_number: "PO-EXISTING",
-      reference: "LEXI-INT-existing",
+      reference: "LEXI-INT-" + IDEMPOTENCY + "-existing",
       status: "draft",
       supplier_id: SUPPLIER,
       property_id: PROPERTY,

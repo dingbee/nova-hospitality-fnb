@@ -87,6 +87,10 @@ function query(table: string) {
       filters.push([col, val]);
       return api;
     },
+    like(col: string, val: string) {
+      filters.push(["__like:" + col, val]);
+      return api;
+    },
     or() {
       return api;
     },
@@ -113,6 +117,7 @@ function query(table: string) {
         filters.every(([c, v]) => {
           if (c.startsWith("__gte:")) return String(r[c.slice(6)] ?? "") >= String(v);
           if (c.startsWith("__lte:")) return String(r[c.slice(6)] ?? "") <= String(v);
+          if (c.startsWith("__like:")) return String(r[c.slice(7)] ?? "").startsWith(String(v).replace(/%$/, ""));
           return v && v.__in ? v.__in.includes(r[c]) : r[c] === v;
         }),
       );
