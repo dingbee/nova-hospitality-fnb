@@ -238,7 +238,6 @@ export async function postStocktake(
   userId: string,
   input: { tenantId: string; stocktakeId: string; approve: boolean; reason?: string },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "stocktake.approve");
   const { data: head } = await sb
     .from("restaurant_stocktakes")
     .select("*")
@@ -246,6 +245,16 @@ export async function postStocktake(
     .eq("id", input.stocktakeId)
     .single();
   if (!head) throw new Error("Stocktake not found.");
+  await assertCapability(sb, userId, input.tenantId, "stocktake.approve", {
+    propertyId: head.property_id ?? null,
+    locationId: head.location_id ?? null,
+  });
+  if (
+    input.approve &&
+    (head.created_by === userId || head.counted_by === userId)
+  ) {
+    throw new Error("Separation of duties — the stocktake creator or counter cannot approve their own stocktake.");
+  }
   if (!input.approve) {
     await sb
       .from("restaurant_stocktakes")
