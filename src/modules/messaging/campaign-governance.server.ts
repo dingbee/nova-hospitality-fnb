@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase rows are validated at this boundary. */
 import { assertEntitled } from "@/modules/commercial/resolver.server";
 import { incrementUsage } from "@/modules/commercial/quota.server";
-import { hasWhatsAppGuestMarketingConsent } from "./guest-crm.server";
 
 type Db = any;
 type Campaign = {
@@ -80,46 +79,28 @@ export async function prepareWhatsAppCampaignRecipient(
   admin: Db,
   input: { tenantId: string; propertyId: string; campaignId: string; guestCustomerId: string },
 ) {
-  const { campaign, template } = await assertWhatsAppCampaignReady(
+  const { campaign } = await assertWhatsAppCampaignReady(
     admin,
     input.tenantId,
     input.propertyId,
     input.campaignId,
   );
-  const { data: guest, error: guestError } = await admin
-    .from("restaurant_guest_customers")
-    .select("id, status")
-    .eq("id", input.guestCustomerId)
-    .eq("tenant_id", input.tenantId)
-    .maybeSingle();
-  if (guestError || !guest) throw new WhatsAppCampaignGovernanceError("guest_not_found");
-  let suppressionReason: string | null = guest.status === "blocked" ? "guest_blocked" : null;
-  if (!suppressionReason && template.category === "marketing") {
-    const consent = await hasWhatsAppGuestMarketingConsent(
-      admin,
-      input.tenantId,
-      input.guestCustomerId,
-    );
-    if (!consent) suppressionReason = "marketing_consent_missing";
-  }
-  const state = suppressionReason ? "suppressed" : "eligible";
-  const idempotencyKey = "campaign:" + campaign.id + ":guest:" + input.guestCustomerId;
-  const { data, error } = await admin
-    .from("wa_campaign_recipients")
-    .insert({
-      tenant_id: input.tenantId,
-      campaign_id: campaign.id,
-      guest_customer_id: input.guestCustomerId,
-      state,
-      suppression_reason: suppressionReason,
-      idempotency_key: idempotencyKey,
-      evaluated_at: new Date().toISOString(),
-    })
-    .select("id, state, suppression_reason")
-    .single();
-  if (error?.code === "23505") return { duplicate: true as const, state, suppressionReason };
-  if (error || !data) throw new WhatsAppCampaignGovernanceError("recipient_persistence_failed");
-  return { duplicate: false as const, recipientId: data.id, state, suppressionReason };
+  const { data, error } = await admin.rpc("wa_prepare_campaign_recipient", {
+    _tenant_id: input.tenantId,
+    _property_id: input.propertyId,
+    _campaign_id: campaign.id,
+    _guest_customer_id: input.guestCustomerId,
+    _idempotency_key: "campaign:" + campaign.id + ":guest:" + input.guestCustomerId,
+  });
+  if (error) throw new WhatsAppCampaignGovernanceError("recipient_preparation_failed");
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.recipient_id) throw new WhatsAppCampaignGovernanceError("recipient_persistence_failed");
+  return {
+    duplicate: false as const,
+    recipientId: String(row.recipient_id),
+    state: String(row.state),
+    suppressionReason: row.suppression_reason ? String(row.suppression_reason) : null,
+  };
 }
 
 /** Resolves the current effective Meta market/category rate without caching or rewriting historical rates. */
