@@ -550,6 +550,13 @@ export async function submitGuestOrder(
   if (valid.length === 0) {
     throw new Error("The order has no orderable items.");
   }
+  const stockExceeded = valid.some((line) => {
+    const item = (catalog.items as any[]).find((candidate) => candidate.id === line.menuItemId);
+    return item?.available_quantity != null && line.quantity > Number(item.available_quantity);
+  });
+  if (stockExceeded) {
+    throw new Error("The requested quantity exceeds current available stock. Update the basket and try again.");
+  }
 
   // unitPrice/discount/modifiers[].priceDelta are carried through here only
   // as values on the wire — none of them are money-authoritative.
