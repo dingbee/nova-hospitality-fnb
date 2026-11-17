@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- mocked Supabase rows are intentionally untyped in service-boundary tests. */
 import { describe, expect, it, vi } from "vitest";
 import {
   detectGuestLanguage,
