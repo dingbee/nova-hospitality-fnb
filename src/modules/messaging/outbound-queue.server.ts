@@ -114,7 +114,7 @@ async function processOneOutboundJob(db: Db, job: ClaimedOutboundJob, workerId: 
   }
 
   const wabaId = typeof integration.config?.wabaId === "string" ? integration.config.wabaId : "";
-  if (!/^\\d{3,32}$/.test(wabaId)) {
+  if (!/^\d{3,32}$/.test(wabaId)) {
     await markFailed(db, job, workerId, "whatsapp_waba_configuration_unavailable");
     return "failed" as const;
   }
