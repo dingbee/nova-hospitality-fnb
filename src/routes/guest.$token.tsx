@@ -128,7 +128,7 @@ function WhatsAppGuestPortal() {
               <div className="flex gap-4">
                 {item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" className="size-20 shrink-0 rounded-lg object-cover" /> : null}
                 <div className="min-w-0 flex-1"><h3 className="font-medium">{item.name}</h3>{item.description ? <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.description}</p> : null}
-                  <p className="mt-2 text-sm font-semibold">{formatMoney(Number(item.price), data.currency)}</p>
+                  <p className="mt-2 text-sm font-semibold">{formatMoney(Number(item.price), data.currency)}</p>{!item.available ? <p className="mt-1 text-xs text-destructive">{item.availabilityReasons[0] ?? "Currently unavailable"}</p> : null}
                   {item.variants.length ? <label className="mt-2 block text-xs text-muted-foreground">Option
                     <select className="mt-1 block w-full rounded-lg border border-border bg-background p-2 text-sm text-foreground" value={variantSelection[item.id] ?? ""} onChange={e => setVariantSelection(v => ({ ...v, [item.id]: e.target.value }))}>
                       <option value="">Standard</option>{item.variants.map((v: { id: string; name: string }) => <option key={v.id} value={v.id}>{v.name}</option>)}
@@ -138,7 +138,7 @@ function WhatsAppGuestPortal() {
                 <div className="flex shrink-0 items-center gap-2">
                   <button type="button" className="flex size-9 items-center justify-center rounded-full border border-border disabled:opacity-40" disabled={!quantities[item.id]} onClick={() => changeQuantity(item.id, -1)} aria-label={"Remove one " + item.name}><Minus className="size-4" /></button>
                   <span className="w-5 text-center text-sm tabular-nums">{quantities[item.id] ?? 0}</span>
-                  <button type="button" className="flex size-9 items-center justify-center rounded-full bg-primary text-primary-foreground" onClick={() => changeQuantity(item.id, 1)} aria-label={"Add one " + item.name}><Plus className="size-4" /></button>
+                  <button type="button" className="flex size-9 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40" disabled={!item.available} onClick={() => changeQuantity(item.id, 1)} aria-label={"Add one " + item.name}><Plus className="size-4" /></button>
                 </div>
               </div>
               {item.modifierGroupIds.map(groupId => {
