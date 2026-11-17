@@ -19,6 +19,7 @@ describe("createPesapalAdapter — property-configured credentials", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("returns null when credentials or the property IPN binding are absent", () => {
