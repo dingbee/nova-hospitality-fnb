@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase rows are validated at this boundary. */
 import { getIntegrationSecret } from "@/modules/api-platform/integrations.server";
 import { createWhatsAppGuestPortalSession } from "./guest-portal-sessions.server";
-import { sendTextMessage } from "./providers/meta-cloud-api.server";
 
 type Db = any;
 type CommerceEvent = { id: string; tenant_id: string; property_id: string; location_id: string; binding_id: string };
@@ -64,25 +63,18 @@ export async function handleWhatsAppGuestCommerceMessage(admin: Db, event: Comme
     portalUrl = session.portalUrl;
   }
 
-  const accessToken = await getIntegrationSecret(admin, event.tenant_id, integration.id);
-  if (!accessToken) throw new Error("whatsapp_commerce_credential_unavailable");
   const content = replyText(intent, portalUrl);
-  const result = await sendTextMessage({
-    accessToken, wabaId: String(integration.config?.wabaId ?? ""), phoneNumberId: binding.phone_number_id,
-  }, inbound.from, content, { graphApiVersion: integration.config?.graphApiVersion });
-  const providerMessageId = result.messages?.[0]?.id;
-  if (!providerMessageId) throw new Error("whatsapp_commerce_provider_message_id_missing");
-
-  const { error: persistError } = await admin.from("wa_messages").insert({
+  const clientRequestId = "wa:" + inbound.id;
+  const { data: queued, error: queueError } = await admin.from("wa_messages").insert({
     tenant_id: event.tenant_id, property_id: event.property_id, location_id: event.location_id,
-    conversation_id: conversationId, provider_message_id: providerMessageId, direction: "outbound",
-    message_type: "text", status: "sent", content,
+    conversation_id: conversationId, provider_message_id: null, client_request_id: clientRequestId,
+    direction: "outbound", message_type: "text", status: "queued", content,
     payload: { reply_to_provider_message_id: inbound.id, intent, portal_url_issued: Boolean(portalUrl) },
-    sent_at: new Date().toISOString(),
-  });
-  if (persistError) {
-    if (persistError.code === "23505") return { handled: true as const, duplicate: true as const };
-    throw new Error("whatsapp_commerce_outbound_persistence_failed");
+    next_attempt_at: new Date().toISOString(),
+  }).select("id").single();
+  if (queueError) {
+    if (queueError.code === "23505") return { handled: true as const, duplicate: true as const };
+    throw new Error("whatsapp_commerce_outbound_queue_failed");
   }
-  return { handled: true as const, duplicate: false as const, intent, providerMessageId };
+  return { handled: true as const, duplicate: false as const, intent, queuedMessageId: queued.id };
 }
