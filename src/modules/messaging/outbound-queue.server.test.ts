@@ -143,6 +143,7 @@ describe("WhatsApp outbound queue", () => {
       campaignReconciliationRequired: 0,
       campaignDispatchDeferred: 0,
       campaignDispatchSuppressed: 0,
+      providerDispatchDeferred: 0,
     });
     expect(sendTextMessage).toHaveBeenCalledWith(
       { accessToken: "tenant-token", wabaId: "987654321", phoneNumberId: "123456789" },
