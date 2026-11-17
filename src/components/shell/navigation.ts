@@ -395,6 +395,13 @@ export const NAV_GROUPS: NavGroup[] = [
         exact: true,
         hint: "Plans, pricing, entitlements, quotas and commercial governance",
       },
+      {
+        to: "/admin/commercial/whatsapp",
+        label: "WhatsApp Platform Control",
+        icon: MessageSquare,
+        requiresCommercialAdmin: true,
+        hint: "Provider onboarding, webhook health, usage and security",
+      },
     ],
   },
 ];
