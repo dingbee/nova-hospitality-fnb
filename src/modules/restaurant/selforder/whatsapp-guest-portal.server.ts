@@ -89,8 +89,8 @@ export async function getGuestCommercePage(admin: Db, token: string) {
     categories: catalog.categories,
     modifierGroups: catalog.modifierGroups,
     items: catalog.items.filter(
-      (item: any) => item.available !== false &&
-        item.priceConfigured !== false &&
+      (item: any) => item.is_available === true &&
+        item.priceConfigured === true &&
         typeof item.price === "number" &&
         Number.isFinite(item.price),
     ),
