@@ -197,10 +197,10 @@ export async function transitionPurchaseOrder(
     input.status === "approved" &&
     (current.created_by === userId || current.buyer_id === userId)
   ) {
-    const { isPlatformAdmin } = await import("../core/access.server");
-    if (!(await isPlatformAdmin(sb, userId))) {
-      throw new Error("Separation of duties — the buyer who raised this order cannot approve it.");
-    }
+    // No implicit platform-admin exception: an emergency override must be a
+    // separately authorized, justified and immutably audited workflow. Until
+    // that workflow exists, maker-checker applies to every identity.
+    throw new Error("Separation of duties — the buyer who raised this order cannot approve it.");
   }
 
   const patch: Record<string, unknown> = {
