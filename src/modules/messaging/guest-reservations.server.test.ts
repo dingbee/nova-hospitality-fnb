@@ -27,7 +27,7 @@ function futureLocalDateTime() {
 }
 
 function reservationDb(rows: Record<string, any[]>, rpcResult: unknown = null) {
-  const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
+  const rpc = vi.fn(async (name: string) => {
     if (name === "wa_resolve_guest_portal_session") {
       return {
         data: {
@@ -56,6 +56,10 @@ function reservationDb(rows: Record<string, any[]>, rpcResult: unknown = null) {
         select: () => builder,
         eq: (column: string, value: unknown) => {
           filtered = filtered.filter((row) => row[column] === value);
+          return builder;
+        },
+        neq: (column: string, value: unknown) => {
+          filtered = filtered.filter((row) => row[column] !== value);
           return builder;
         },
         in: (column: string, values: unknown[]) => {
@@ -121,8 +125,24 @@ function baseRows() {
       },
     ],
     restaurant_tables: [
-      { id: "table-1", seats: 2, status: "available", active: true },
-      { id: "table-2", seats: 4, status: "available", active: true },
+      {
+        id: "table-1",
+        tenant_id: tenantId,
+        property_id: propertyId,
+        location_id: locationId,
+        seats: 2,
+        status: "available",
+        active: true,
+      },
+      {
+        id: "table-2",
+        tenant_id: tenantId,
+        property_id: propertyId,
+        location_id: locationId,
+        seats: 4,
+        status: "available",
+        active: true,
+      },
     ],
     restaurant_table_reservations: [],
   };
