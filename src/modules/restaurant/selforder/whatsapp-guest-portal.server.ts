@@ -66,6 +66,7 @@ export async function getGuestCommercePage(admin: Db, token: string) {
   const catalog = await fetchSellableCatalog(admin, session.tenantId, {
     propertyId: session.propertyId,
     locationId: session.locationId,
+    orderType: session.orderType,
   });
 
   return {
