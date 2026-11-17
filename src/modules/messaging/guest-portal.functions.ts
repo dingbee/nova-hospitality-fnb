@@ -97,6 +97,7 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
           categoryId: item.category_id,
           available: item.available !== false,
           availabilityReasons: item.availability_reasons ?? [],
+          availableQuantity: item.available_quantity ?? null,
           modifierGroupIds: item.modifier_group_ids,
           variants: (item.variants ?? []).map((variant: any) => ({
             id: variant.id,
@@ -161,6 +162,11 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
     if (rejected.length || !valid.length) {
       throw new Error("One or more items are no longer available. Refresh the menu and try again.");
     }
+    const stockExceeded = valid.some((line) => {
+      const item = catalog.items.find((candidate: any) => candidate.id === line.menuItemId);
+      return item?.available_quantity != null && line.quantity > Number(item.available_quantity);
+    });
+    if (stockExceeded) throw new Error("The requested quantity exceeds current available stock. Update your cart and try again.");
 
     const lines = valid.map((line) => ({
       menuItemId: line.menuItemId,

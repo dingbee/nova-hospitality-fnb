@@ -379,6 +379,7 @@ export async function fetchSellableCatalog(
         sellable: Boolean(stock?.available) && resolved !== null,
         availability_reasons: stock?.reasons ?? [],
         inventory_ready: stock?.inventoryReady ?? null,
+        available_quantity: stock?.availableQuantity ?? null,
         product_id: product?.id ?? null,
         station_id: product?.station_id ?? null,
         variants:
