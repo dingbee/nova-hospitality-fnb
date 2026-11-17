@@ -34,13 +34,6 @@ ALTER TABLE public.restaurant_guest_commerce_sessions
         AND conversation_id IS NULL
         AND created_by_event_id IS NULL)
     ),
-  ADD CONSTRAINT restaurant_guest_commerce_sessions_table_channel_check
-    CHECK (
-      (source_channel = 'qr' AND table_id IS NOT NULL AND order_type = 'dine_in')
-      OR (source_channel <> 'qr' AND table_id IS NULL)
-    ),
-  ADD CONSTRAINT restaurant_guest_commerce_sessions_metadata_object_check
-    CHECK (jsonb_typeof(metadata) = 'object'),
   ADD CONSTRAINT restaurant_guest_commerce_sessions_binding_scope_fkey
     FOREIGN KEY (tenant_id, property_id, location_id, binding_id)
     REFERENCES public.wa_phone_number_bindings(tenant_id, property_id, location_id, id)
@@ -51,6 +44,15 @@ ALTER TABLE public.restaurant_guest_commerce_sessions
   ADD COLUMN table_id uuid,
   ADD COLUMN order_type public.restaurant_order_type NOT NULL DEFAULT 'takeaway',
   ADD COLUMN metadata jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE public.restaurant_guest_commerce_sessions
+  ADD CONSTRAINT restaurant_guest_commerce_sessions_table_channel_check
+    CHECK (
+      (source_channel = 'qr' AND table_id IS NOT NULL AND order_type = 'dine_in')
+      OR (source_channel <> 'qr' AND table_id IS NULL)
+    ),
+  ADD CONSTRAINT restaurant_guest_commerce_sessions_metadata_object_check
+    CHECK (jsonb_typeof(metadata) = 'object');
 
 CREATE UNIQUE INDEX IF NOT EXISTS restaurant_tables_guest_scope_id_uq
   ON public.restaurant_tables (tenant_id, property_id, location_id, id);
