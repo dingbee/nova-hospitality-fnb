@@ -141,6 +141,7 @@ describe("upsertInventoryItem — opening balance goes through the ledger", () =
       currentQuantity: 25,
       averageCost: 800,
       currency: "TZS",
+      unitId: "unit-ml",
       trackBatches: false,
       allowNegative: false,
       packSize: 1,
