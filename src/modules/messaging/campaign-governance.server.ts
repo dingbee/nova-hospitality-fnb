@@ -77,7 +77,13 @@ export async function assertWhatsAppCampaignReady(
  */
 export async function prepareWhatsAppCampaignRecipient(
   admin: Db,
-  input: { tenantId: string; propertyId: string; campaignId: string; guestCustomerId: string; eventKey?: string | null },
+  input: {
+    tenantId: string;
+    propertyId: string;
+    campaignId: string;
+    guestCustomerId: string;
+    eventKey?: string | null;
+  },
 ) {
   const { campaign } = await assertWhatsAppCampaignReady(
     admin,
