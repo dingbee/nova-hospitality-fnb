@@ -301,6 +301,17 @@ export async function cancelGuestTableReservation(
   if (new Date(reservation.starts_at).getTime() <= Date.now()) {
     throw new Error("Reservations that have already started must be changed by the restaurant.");
   }
+  const { data: linkedOrders, error: linkedOrderError } = await admin
+    .from("restaurant_orders")
+    .select("id")
+    .eq("tenant_id", context.session.tenantId)
+    .eq("guest_reservation_id", input.reservationId)
+    .in("status", ["open", "sent", "served"])
+    .limit(1);
+  if (linkedOrderError) throw new Error("The reservation's order status could not be verified.");
+  if (linkedOrders?.length) {
+    throw new Error("An order is already linked to this reservation. Contact the outlet to change it.");
+  }
   const { error: updateError } = await admin
     .from("restaurant_table_reservations")
     .update({ status: "cancelled", updated_at: new Date().toISOString() })
