@@ -83,7 +83,7 @@ export async function createGuestCommerceSession(
 
   const { data: property, error: propertyError } = await admin
     .from("restaurant_properties")
-    .select("currency, status")
+    .select("currency, status, settings")
     .eq("id", input.propertyId)
     .eq("tenant_id", input.tenantId)
     .maybeSingle();
@@ -180,7 +180,8 @@ export async function createGuestCommerceSession(
     throw new Error("A table QR session requires a valid table.");
   }
 
-  const service = resolveServiceConfiguration(tenant.settings);
+  const effectiveSettings = mergePropertyServiceSettings(tenant.settings, property.settings);
+  const service = resolveServiceConfiguration(effectiveSettings);
   const orderType = orderTypeFor(service.serviceMode, tableId);
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
