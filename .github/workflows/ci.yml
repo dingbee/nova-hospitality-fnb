@@ -228,7 +228,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base_sha="$(git merge-base origin/main HEAD)"
+          base_sha="$(git merge-base origin/wce/wce-03-portal-handoff HEAD)"
           files="$(git diff --name-only "$base_sha" "$GITHUB_SHA" -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
           if [ -n "$files" ]; then
             printf '%s\n' "$files"
