@@ -113,6 +113,12 @@ async function processOneOutboundJob(db: Db, job: ClaimedOutboundJob, workerId: 
     return "failed" as const;
   }
 
+  const wabaId = typeof integration.config?.wabaId === "string" ? integration.config.wabaId : "";
+  if (!/^\\d{3,32}$/.test(wabaId)) {
+    await markFailed(db, job, workerId, "whatsapp_waba_configuration_unavailable");
+    return "failed" as const;
+  }
+
   if (job.portal_session_id) {
     const { data: portalSession, error: portalSessionError } = await db
       .from("wa_guest_portal_sessions")
@@ -176,7 +182,7 @@ async function processOneOutboundJob(db: Db, job: ClaimedOutboundJob, workerId: 
 
   try {
     const response = await sendTextMessage(
-      { accessToken, phoneNumberId: binding.phone_number_id },
+      { accessToken, wabaId, phoneNumberId: binding.phone_number_id },
       job.recipient_phone,
       body,
       { graphApiVersion: integration.config?.graphApiVersion },
@@ -268,7 +274,7 @@ export async function processPendingMetaOutboundJobs(
     try {
       const result = await processOneOutboundJob(db, job, workerId);
       if (result === "sent") sent += 1;
-      else if (result === "retried" || result === "retry") retried += 1;
+      else if (result === "retried") retried += 1;
       else if (result === "failed") failed += 1;
       else uncertain += 1;
     } catch {
