@@ -125,6 +125,15 @@ export async function processPendingWhatsAppOutboundMessages(
         .eq("status", "queued")
         .eq("locked_by", workerId);
       if (updateError) throw new Error("whatsapp_outbox_sent_state_failed");
+      const campaignRecipientId = message.payload?.campaign_recipient_id;
+      if (typeof campaignRecipientId === "string") {
+        const { error: campaignUpdateError } = await admin
+          .from("wa_campaign_recipients")
+          .update({ state: "sent", dispatched_at: new Date().toISOString() })
+          .eq("id", campaignRecipientId)
+          .eq("tenant_id", message.tenant_id);
+        if (campaignUpdateError) throw new Error("whatsapp_campaign_recipient_sent_state_failed");
+      }
       const notificationEventId = message.payload?.order_notification_event_id;
       if (typeof notificationEventId === "string") {
         await admin
@@ -156,6 +165,17 @@ export async function processPendingWhatsAppOutboundMessages(
         .eq("status", "queued")
         .eq("locked_by", workerId);
       if (stateError) throw new Error("whatsapp_outbox_failure_state_failed");
+      const campaignRecipientId = message.payload?.campaign_recipient_id;
+      if (
+        typeof campaignRecipientId === "string" &&
+        !(retryable && message.delivery_attempts < 8)
+      ) {
+        await admin
+          .from("wa_campaign_recipients")
+          .update({ state: "failed" })
+          .eq("id", campaignRecipientId)
+          .eq("tenant_id", message.tenant_id);
+      }
       const notificationEventId = message.payload?.order_notification_event_id;
       if (
         typeof notificationEventId === "string" &&
