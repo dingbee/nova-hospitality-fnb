@@ -2,6 +2,8 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createGuestCommerceSessionForPublicStore,
+  createGuestCommerceSessionForTable,
   createWhatsAppGuestPortalSession,
   resolveWhatsAppGuestPortalSession,
   revokeWhatsAppGuestPortalSession,
@@ -19,7 +21,7 @@ const scope = {
 function makeAdmin(overrides: Record<string, unknown> = {}) {
   const inserted: Array<{ table: string; row: Record<string, unknown> }> = [];
   const rows: Record<string, unknown> = {
-    restaurant_tenants: { id: scope.tenantId, status: "active", settings: { operations: { serviceMode: "takeaway" } } },
+    restaurant_tenants: { id: scope.tenantId, slug: "demo-restaurant", status: "active", settings: { operations: { serviceMode: "takeaway" } } },
     wa_phone_number_bindings: {
       id: scope.bindingId,
       tenant_id: scope.tenantId,
@@ -49,11 +51,13 @@ function makeAdmin(overrides: Record<string, unknown> = {}) {
       id: scope.locationId,
       tenant_id: scope.tenantId,
       property_id: scope.propertyId,
+      slug: "city-centre",
       location_type: "restaurant",
       is_storage: false,
       status: "active",
     },
     restaurant_properties: { currency: "TZS", status: "active" },
+    restaurant_tables: { id: "88888888-8888-4888-8888-888888888888", tenant_id: scope.tenantId, property_id: scope.propertyId, location_id: scope.locationId, active: true },
     ...overrides,
   };
   const from = vi.fn((table: string) => {
@@ -109,6 +113,47 @@ describe("WhatsApp Guest Portal session security", () => {
     expect(row).not.toHaveProperty("token");
     expect(result.portalUrl).not.toContain(scope.tenantId);
     expect(result.portalUrl).not.toContain(scope.propertyId);
+  });
+
+  it("issues the same session model for a public website storefront without WhatsApp identity", async () => {
+    vi.stubEnv("LEXIBITE_GUEST_PORTAL_BASE_URL", "https://guest.example.test");
+    const { admin, inserted } = makeAdmin();
+
+    const result = await createGuestCommerceSessionForPublicStore(admin, {
+      tenantSlug: "demo-restaurant",
+      locationSlug: "city-centre",
+      sourceChannel: "website",
+    });
+
+    expect(result.sourceChannel).toBe("website");
+    expect(result.orderType).toBe("takeaway");
+    expect(result.scope).toBe("guest_commerce");
+    expect(inserted.find((entry) => entry.table === "restaurant_guest_commerce_sessions")?.row).toMatchObject({
+      source_channel: "website",
+      binding_id: null,
+      conversation_id: null,
+      created_by_event_id: null,
+      order_type: "takeaway",
+    });
+  });
+
+  it("issues a table-bound QR session with dine-in order context", async () => {
+    vi.stubEnv("LEXIBITE_GUEST_PORTAL_BASE_URL", "https://guest.example.test");
+    const { admin, inserted } = makeAdmin();
+
+    const result = await createGuestCommerceSessionForTable(
+      admin,
+      "88888888-8888-4888-8888-888888888888",
+    );
+
+    expect(result.sourceChannel).toBe("qr");
+    expect(result.orderType).toBe("dine_in");
+    expect(inserted.find((entry) => entry.table === "restaurant_guest_commerce_sessions")?.row).toMatchObject({
+      source_channel: "qr",
+      table_id: "88888888-8888-4888-8888-888888888888",
+      binding_id: null,
+      order_type: "dine_in",
+    });
   });
 
   it("does not create a session for an inactive receiving-number binding", async () => {
