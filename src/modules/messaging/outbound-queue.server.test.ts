@@ -84,8 +84,11 @@ describe("WhatsApp outbound queue", () => {
     process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED = "true";
   });
   afterEach(() => {
-    if (previousProviderDispatch === undefined) delete process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED;
-    else process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED = previousProviderDispatch;
+    if (previousProviderDispatch === undefined) {
+      delete process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED;
+    } else {
+      process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED = previousProviderDispatch;
+    }
   });
   it("dispatches an approved template message through the same tenant-scoped outbox", async () => {
     const templateMessage = {
