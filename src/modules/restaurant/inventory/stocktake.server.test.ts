@@ -28,14 +28,18 @@ function makeFakeSupabase(opts: {
   currentQuantity: number;
   countedQuantity: number;
   expectedQuantity: number;
+  createdBy?: string;
+  countedBy?: string;
 }) {
   const head = {
     id: STOCKTAKE,
     tenant_id: TENANT,
     stocktake_number: "STK-TEST-1",
     status: "review",
-    property_id: null,
+    property_id: "77777777-7777-7777-7777-777777777777",
     location_id: LOCATION,
+    created_by: opts.createdBy ?? "88888888-8888-8888-8888-888888888888",
+    counted_by: opts.countedBy ?? "99999999-9999-9999-9999-999999999999",
     currency: "TZS",
   };
   const line = {
@@ -117,6 +121,16 @@ function makeFakeSupabase(opts: {
       if (table === "restaurant_inventory_items" && op === "select") {
         return { data: mode === "list" ? [item] : item, error: null };
       }
+      if (table === "restaurant_locations" && op === "select") {
+        const location = {
+          id: LOCATION,
+          tenant_id: TENANT,
+          property_id: "77777777-7777-7777-7777-777777777777",
+          scope: "property",
+          status: "active",
+        };
+        return { data: mode === "list" ? [location] : location, error: null };
+      }
       if (table === "restaurant_members") {
         return {
           data: [{ tenant_id: TENANT, user_id: USER, role: "inventory_manager" }],
@@ -179,6 +193,24 @@ describe("postStocktake — re-diffs against the current balance, not the stale 
     expect(result.posted).toBe(0);
     expect(fake.movements).toHaveLength(0);
     expect(fake.item.current_quantity).toBe(90); // unchanged — already correct
+  });
+
+  it("denies a stocktake creator from approving their own count", async () => {
+    const fake = makeFakeSupabase({
+      currentQuantity: 90,
+      countedQuantity: 85,
+      expectedQuantity: 90,
+      createdBy: USER,
+    });
+    await expect(
+      postStocktake(fake.supabase as any, USER, {
+        tenantId: TENANT,
+        stocktakeId: STOCKTAKE,
+        approve: true,
+      }),
+    ).rejects.toThrow(/Separation of duties/);
+    expect(fake.movements).toHaveLength(0);
+    expect(fake.head.status).toBe("review");
   });
 
   it("posts exactly the gap between the current balance and the physical count when they genuinely differ", async () => {
