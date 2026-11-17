@@ -220,8 +220,6 @@ jobs:
         run: bun run typecheck
 
       - name: Lint changed source
-        id: lint
-        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -233,10 +231,6 @@ jobs:
           else
             echo "No changed source files require linting."
           fi
-
-      - name: Report lint baseline
-        if: steps.lint.outcome == 'failure'
-        run: echo "::warning::Changed-source lint has existing formatting debt; scoped functional test and build gates remain blocking."
 
       - name: Verify service-recovery quantity migration in isolated PostgreSQL
         env:
@@ -295,6 +289,7 @@ jobs:
             src/modules/messaging/handoff.server.test.ts \
             src/modules/messaging/outbound-queue.server.test.ts \
             src/modules/restaurant/selforder/whatsapp-guest-portal.server.test.ts \
+            src/modules/restaurant/guest-commerce/orders.server.test.ts \
             src/modules/api-platform/adapters/meta-whatsapp.server.test.ts \
             src/modules/api-platform/adapters/channel-adapter.test.ts \
             src/modules/restaurant/payments/mobilemoney/mobilemoney.server.test.ts \
@@ -307,14 +302,8 @@ jobs:
             src/modules/restaurant/ui/useRestaurantWorkspace.test.ts \
             src/modules/restaurant/inventory/locations.server.test.ts
 
-      - name: Full test suite (repository baseline)
-        id: full_tests
-        continue-on-error: true
+      - name: Full test suite (repository blocking gate)
         run: bun run test
-
-      - name: Report full test baseline
-        if: steps.full_tests.outcome == 'failure'
-        run: echo "::warning::Full repository test suite remains non-clean outside the scoped functional gate; scoped changed-path tests remain blocking."
 
       - name: Verify Phase 1 operational consumables ledger capture and RLS
         env:
