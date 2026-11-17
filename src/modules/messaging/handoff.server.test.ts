@@ -115,6 +115,17 @@ describe("WhatsApp Guest Portal handoff enqueue", () => {
     );
   });
 
+  it("handles a duplicate safe-fallback job when no portal session was created", async () => {
+    mocks.createWhatsAppGuestPortalSession.mockRejectedValueOnce(new Error("portal unavailable"));
+    mocks.encryptSecret.mockReturnValue({ ciphertext: "fallback-cipher", iv: "fallback-iv", tag: "fallback-tag" });
+    const { admin, rpc } = makeDb({ insertError: { code: "23505" } });
+
+    const result = await enqueueWhatsAppGuestPortalHandoff(admin, event, "conversation-1", "255700000000");
+
+    expect(result).toMatchObject({ queued: false, reason: "duplicate_handoff_job" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("does not create a second link while a conversation already has a pending job", async () => {
     const { admin, inserts } = makeDb({
       latestJob: { id: "job-existing", status: "pending", portal_session_id: "session-existing" },
