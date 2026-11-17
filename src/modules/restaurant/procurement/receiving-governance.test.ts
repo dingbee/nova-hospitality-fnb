@@ -13,7 +13,6 @@ const movements: any[] = [];
 const events: any[] = [];
 const poBridgeMocks = vi.hoisted(() => ({
   createPurchaseOrder: vi.fn(),
-  transitionPurchaseOrder: vi.fn(),
 }));
 
 vi.mock("../core/access.server", () => ({
@@ -35,10 +34,14 @@ vi.mock("../inventory/movements.server", () => ({
 vi.mock("../prepare/resolve.server", () => ({
   resolveTenantCurrency: vi.fn(async () => "TZS"),
 }));
-vi.mock("../purchasing/purchasing.server", () => ({
-  createPurchaseOrder: (...args: any[]) => poBridgeMocks.createPurchaseOrder(...args),
-  transitionPurchaseOrder: (...args: any[]) => poBridgeMocks.transitionPurchaseOrder(...args),
-}));
+vi.mock("../purchasing/purchasing.server", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../purchasing/purchasing.server")>();
+  return {
+    ...actual,
+    createPurchaseOrder: (...args: any[]) => poBridgeMocks.createPurchaseOrder(...args),
+  };
+});
 vi.mock("../events/emit.server", () => ({
   emitRestaurantEvent: vi.fn(async (_sb: unknown, _u: string, e: any) => {
     if (events.some((x) => x.dedupeKey === e.dedupeKey)) return null;
@@ -226,7 +229,6 @@ beforeEach(() => {
   movements.length = 0;
   events.length = 0;
   poBridgeMocks.createPurchaseOrder.mockReset();
-  poBridgeMocks.transitionPurchaseOrder.mockReset();
   for (const k of Object.keys(db)) delete db[k];
 });
 
@@ -410,25 +412,6 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
       },
     );
 
-    poBridgeMocks.transitionPurchaseOrder.mockImplementation(
-      async (_sb: any, _user: string, input: any) => {
-        const po = db["restaurant_purchase_orders"]!.find((row) => row.id === input.id);
-        if (!po) throw new Error("Purchase order not found.");
-        if (po.status !== "draft" || input.status !== "approved") {
-          throw new Error("Invalid purchase-order approval transition.");
-        }
-        po.status = input.status;
-        return {
-          id: po.id,
-          reference: po.reference,
-          status: po.status,
-          total: po.total,
-          location_id: po.location_id,
-          property_id: po.property_id,
-        };
-      },
-    );
-
     const request = {
       tenantId: TENANT,
       inventoryItemIds: [],
@@ -445,18 +428,21 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
 
     const persistedPo = db["restaurant_purchase_orders"]![0]!;
     const persistedLine = db["restaurant_purchase_order_items"]![0]!;
+    const submission = await transitionAskLexiBitePurchaseOrder(sb, USER, {
+      tenantId: TENANT,
+      purchaseOrderId,
+      status: "submitted",
+    });
+    expect(submission.status).toBe("submitted");
     const approval = await transitionAskLexiBitePurchaseOrder(sb, USER, {
       tenantId: TENANT,
       purchaseOrderId,
       status: "approved",
     });
     expect(approval.status).toBe("approved");
-    expect(poBridgeMocks.transitionPurchaseOrder).toHaveBeenCalledWith(
-      sb,
-      USER,
-      expect.objectContaining({ tenantId: TENANT, id: purchaseOrderId, status: "approved" }),
-    );
     expect(persistedPo.status).toBe("approved");
+    expect(persistedPo.approved_by).toBe(USER);
+    expect(persistedPo.approved_at).toBeTruthy();
     const receipt = await createGoodsReceipt(sb, USER, {
       tenantId: TENANT,
       purchaseOrderId,
