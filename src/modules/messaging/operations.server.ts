@@ -220,7 +220,6 @@ export async function getWhatsAppCampaignWorkspace(
     .eq("tenant_id", input.tenantId)
     .eq("status", "active");
   bindingsQuery = applyPropertyScope(bindingsQuery, propertyIds);
-  if (input.locationId) bindingsQuery = bindingsQuery.eq("location_id", input.locationId);
   const [
     { data: templates, error: templateError },
     { data: campaigns, error: campaignError },
