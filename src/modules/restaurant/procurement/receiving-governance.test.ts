@@ -435,6 +435,7 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
             0,
           ),
           currency: input.currency,
+          metadata: input.metadata,
           correlation_id: "corr-bridge",
           expected_at: null,
         };
