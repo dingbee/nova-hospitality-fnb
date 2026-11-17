@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS public.wa_message_templates (
     FOREIGN KEY (tenant_id, property_id)
     REFERENCES public.restaurant_properties(tenant_id, id) ON DELETE CASCADE,
   CONSTRAINT wa_message_templates_name_language_uq
-    UNIQUE (tenant_id, property_id, template_name, language)
+    UNIQUE (tenant_id, property_id, template_name, language),
+  CONSTRAINT wa_message_templates_tenant_id_uq UNIQUE (tenant_id, id)
 );
 CREATE INDEX IF NOT EXISTS wa_message_templates_scope_status_idx
   ON public.wa_message_templates (tenant_id, property_id, status, category);
