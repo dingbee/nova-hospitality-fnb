@@ -55,11 +55,13 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
         })),
       })),
       items: catalog.items
-        .filter((item: any) => item.available !== false && item.priceConfigured !== false && item.price !== null)
+        .filter((item: any) => item.priceConfigured !== false && item.price !== null)
         .map((item: any) => ({
           id: item.id, name: item.name, description: item.description,
           price: item.price, currency: session.currency, imageUrl: item.image_url,
           categoryId: item.category_id,
+          available: item.available !== false,
+          availabilityReasons: item.availability_reasons ?? [],
           modifierGroupIds: item.modifier_group_ids,
           variants: (item.variants ?? []).map((variant: any) => ({
             id: variant.id, name: variant.name, price: variant.price, priceIsDelta: variant.price_is_delta,
