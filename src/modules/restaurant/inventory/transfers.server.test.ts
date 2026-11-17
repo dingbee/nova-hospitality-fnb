@@ -122,7 +122,8 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
       if (table === "restaurant_locations" && op === "select") {
         let rows = locations;
         if (filters.id) rows = rows.filter((location) => location.id === filters.id);
-        if (filters.tenant_id) rows = rows.filter((location) => location.tenant_id === filters.tenant_id);
+        if (filters.tenant_id)
+          rows = rows.filter((location) => location.tenant_id === filters.tenant_id);
         if (inFilters.id) rows = rows.filter((location) => inFilters.id!.includes(location.id));
         return { data: single ? (rows[0] ?? null) : rows, error: null };
       }
@@ -188,7 +189,8 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
 
       if (table === "restaurant_stock_movements" && op === "select") {
         if (filters.dedupe_key) {
-          const row = movements.find((movement) => movement.dedupe_key === filters.dedupe_key) ?? null;
+          const row =
+            movements.find((movement) => movement.dedupe_key === filters.dedupe_key) ?? null;
           return { data: row, error: null };
         }
         return { data: single ? null : movements, error: null };

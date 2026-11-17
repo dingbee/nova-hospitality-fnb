@@ -128,8 +128,7 @@ function makeFakeSupabase(opts: {
   ];
   const items: Record<string, any>[] = (opts.existingItems ?? []).map((i) => ({ ...i }));
   const decisionFacts = (opts.decision?.context as any)?.finding?.facts as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const inventoryItem = opts.inventoryItem ?? {
     id: INVENTORY_ITEM_ID,
     tenant_id: TENANT_A,
@@ -210,7 +209,8 @@ function makeFakeSupabase(opts: {
           return { data: rows, error: null };
         }
         if (table === "restaurant_inventory_items") {
-          const match = inventoryItem && matchesFilters(inventoryItem, filters) ? inventoryItem : null;
+          const match =
+            inventoryItem && matchesFilters(inventoryItem, filters) ? inventoryItem : null;
           return { data: match, error: match ? null : { message: "not found" } };
         }
         if (table === "restaurant_purchase_requests") {

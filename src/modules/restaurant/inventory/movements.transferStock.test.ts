@@ -35,8 +35,24 @@ function makeFakeSupabase(opts: { itemQuantity: number; failInboundOnce?: boolea
     current_quantity: opts.itemQuantity,
   };
   const locations = [
-    { id: SOURCE, tenant_id: TENANT, name: "Dry store", scope: "tenant", property_id: null, is_storage: true, status: "active" },
-    { id: DEST, tenant_id: TENANT, name: "Kitchen", scope: "tenant", property_id: null, is_storage: true, status: "active" },
+    {
+      id: SOURCE,
+      tenant_id: TENANT,
+      name: "Dry store",
+      scope: "tenant",
+      property_id: null,
+      is_storage: true,
+      status: "active",
+    },
+    {
+      id: DEST,
+      tenant_id: TENANT,
+      name: "Kitchen",
+      scope: "tenant",
+      property_id: null,
+      is_storage: true,
+      status: "active",
+    },
   ];
   const movements: any[] = [];
   let seq = 0;
@@ -90,7 +106,8 @@ function makeFakeSupabase(opts: { itemQuantity: number; failInboundOnce?: boolea
       if (table === "restaurant_locations" && op === "select") {
         let rows = locations;
         if (filters.id) rows = rows.filter((location) => location.id === filters.id);
-        if (filters.tenant_id) rows = rows.filter((location) => location.tenant_id === filters.tenant_id);
+        if (filters.tenant_id)
+          rows = rows.filter((location) => location.tenant_id === filters.tenant_id);
         if (inFilters.id) rows = rows.filter((location) => inFilters.id!.includes(location.id));
         return { data: single ? (rows[0] ?? null) : rows, error: null };
       }
