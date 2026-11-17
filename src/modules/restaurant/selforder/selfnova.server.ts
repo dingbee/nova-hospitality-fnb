@@ -130,6 +130,8 @@ export async function askNova(
     tableId?: string;
     /** WCE-05 — server-issued WhatsApp Guest Portal bearer token; never a client-supplied tenant/property/outlet id. */
     guestPortalToken?: string;
+    /** WCE-05 — verified server-side webhook scope; never accepted from a browser or URL. */
+    guestPortalScope?: { tenantId: string; propertyId: string; locationId: string };
     message: string;
     history?: AiTurn[];
     interactionMode?: "basket" | "discovery";
@@ -141,22 +143,51 @@ export async function askNova(
   // The one and only source of what NOVA is allowed to know — the same
   // guest-authorization boundary and the same sellable catalogue every
   // other guest surface in this module reads.
-  if (Boolean(input.tableId) === Boolean(input.guestPortalToken)) {
-    throw new Error("Ask NOVA requires exactly one authorized guest context.");
-  }
+  const contextCount = Number(Boolean(input.tableId)) + Number(Boolean(input.guestPortalToken)) + Number(Boolean(input.guestPortalScope));
+  if (contextCount !== 1) throw new Error("Ask NOVA requires exactly one authorized guest context.");
   const menu = input.tableId
     ? await guestMenu(sb, input.tableId)
     : await (async () => {
-        const { resolveWhatsAppGuestPortalSession } = await import("@/modules/messaging/guest-portal-sessions.server");
-        const session = await resolveWhatsAppGuestPortalSession(sb, input.guestPortalToken!);
-        if (!session || session.scope !== "guest_commerce") throw new Error("Guest Portal session is unavailable.");
-        const catalog = await fetchSellableCatalog(sb, session.tenantId, {
-          propertyId: session.propertyId,
-          locationId: session.locationId,
+        let tenantId: string;
+        let propertyId: string;
+        let locationId: string;
+        if (input.guestPortalToken) {
+          const { resolveWhatsAppGuestPortalSession } = await import("@/modules/messaging/guest-portal-sessions.server");
+          const session = await resolveWhatsAppGuestPortalSession(sb, input.guestPortalToken);
+          if (!session || session.scope !== "guest_commerce") throw new Error("Guest Portal session is unavailable.");
+          tenantId = session.tenantId;
+          propertyId = session.propertyId;
+          locationId = session.locationId;
+        } else {
+          tenantId = input.guestPortalScope!.tenantId;
+          propertyId = input.guestPortalScope!.propertyId;
+          locationId = input.guestPortalScope!.locationId;
+          const { data: binding, error: bindingError } = await sb.from("wa_phone_number_bindings")
+            .select("id, integration_id, status")
+            .eq("tenant_id", tenantId).eq("property_id", propertyId).eq("location_id", locationId)
+            .eq("status", "active").maybeSingle();
+          if (bindingError || !binding) throw new Error("Verified WhatsApp outlet scope is unavailable.");
+          const { data: integration, error: integrationError } = await sb.from("api_integrations")
+            .select("id, status, provider, channel_key")
+            .eq("id", binding.integration_id).eq("tenant_id", tenantId).eq("property_id", propertyId)
+            .maybeSingle();
+          if (integrationError || !integration || integration.status !== "active" || integration.provider !== "meta-whatsapp" || integration.channel_key !== "whatsapp") {
+            throw new Error("Verified WhatsApp integration is unavailable.");
+          }
+          const { data: location, error: locationError } = await sb.from("restaurant_locations")
+            .select("id, status, location_type, is_storage")
+            .eq("id", locationId).eq("tenant_id", tenantId).eq("property_id", propertyId).maybeSingle();
+          if (locationError || !location || location.status !== "active" || location.is_storage || !["outlet", "restaurant", "bar"].includes(location.location_type)) {
+            throw new Error("Verified WhatsApp outlet is unavailable.");
+          }
+        }
+        const catalog = await fetchSellableCatalog(sb, tenantId, {
+          propertyId,
+          locationId,
           orderType: "takeaway",
         });
         return {
-          table: { tenantId: session.tenantId, propertyId: session.propertyId },
+          table: { tenantId, propertyId },
           categories: catalog.categories,
           modifierGroups: catalog.modifierGroups,
           items: catalog.items.filter((item: any) => item.available !== false && item.priceConfigured !== false),
@@ -214,7 +245,7 @@ export async function askNova(
 
     const context = buildNovaCatalogContext({ items: novaItems, categories });
     const discoveryInstructions = input.interactionMode === "discovery"
-      ? "\n\nWHATSAPP DISCOVERY MODE: Answer questions and recommend only. Do not claim to add, remove, prepare, or change basket items. Always return an empty operations array. Direct the guest to the secure Guest Portal to select items and submit an order."
+      ? "\n\nWHATSAPP DISCOVERY MODE: Answer menu questions and recommend only. Do not claim to add, remove, prepare, or change basket items. Always return an empty operations array. Tell the guest to reply MENU or ORDER to open the secure Guest Portal and submit an order."
       : "";
     const result = await aiCaller({
       system:
