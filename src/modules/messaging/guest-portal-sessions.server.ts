@@ -238,7 +238,7 @@ export async function createGuestCommerceSession(
 /** Resolve a public store slug into a scoped session without accepting tenant/property IDs from the browser. */
 export async function createGuestCommerceSessionForPublicStore(
   admin: Db,
-  input: { tenantSlug: string; locationSlug: string; sourceChannel: "website" | "social" | "direct" },
+  input: { tenantSlug: string; propertySlug: string; locationSlug: string; sourceChannel: "website" | "social" | "direct" },
 ) {
   const { data: tenant, error: tenantError } = await admin
     .from("restaurant_tenants")
@@ -248,18 +248,28 @@ export async function createGuestCommerceSessionForPublicStore(
   if (tenantError || !tenant || tenant.status !== "active") {
     throw new Error("This restaurant storefront is not available.");
   }
+  const { data: property, error: propertyError } = await admin
+    .from("restaurant_properties")
+    .select("id, status")
+    .eq("tenant_id", tenant.id)
+    .eq("slug", input.propertySlug)
+    .maybeSingle();
+  if (propertyError || !property || property.status !== "active") {
+    throw new Error("This restaurant storefront is not available.");
+  }
   const { data: location, error: locationError } = await admin
     .from("restaurant_locations")
-    .select("id, property_id")
+    .select("id")
     .eq("tenant_id", tenant.id)
+    .eq("property_id", property.id)
     .eq("slug", input.locationSlug)
     .maybeSingle();
-  if (locationError || !location?.property_id) {
+  if (locationError || !location) {
     throw new Error("This restaurant storefront is not available.");
   }
   return createGuestCommerceSession(admin, {
     tenantId: tenant.id,
-    propertyId: location.property_id,
+    propertyId: property.id,
     locationId: location.id,
     sourceChannel: input.sourceChannel,
   });
