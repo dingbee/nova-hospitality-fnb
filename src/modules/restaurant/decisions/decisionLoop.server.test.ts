@@ -36,6 +36,10 @@ import "@/modules/restaurant/intelligence/provider";
 const TENANT_A = "11111111-1111-1111-1111-111111111111";
 const MANAGER = "22222222-2222-2222-2222-222222222222";
 const ITEM_ID = "33333333-3333-3333-3333-333333333333";
+const PROPERTY_ID = "66666666-6666-4666-8666-666666666666";
+const LOCATION_ID = "77777777-7777-4777-8777-777777777777";
+const UNIT_ID = "88888888-8888-4888-8888-888888888888";
+const PRODUCT_ID = "99999999-9999-4999-8999-999999999999";
 const SUPPLIER_ID = "44444444-4444-4444-4444-444444444444";
 
 function makeFakeSupabase() {
@@ -43,7 +47,12 @@ function makeFakeSupabase() {
     {
       id: ITEM_ID,
       name: "UAT reorder ingredient",
-      unit_id: "55555555-5555-4555-8555-555555555555",
+      property_id: PROPERTY_ID,
+      location_id: LOCATION_ID,
+      unit_id: UNIT_ID,
+      purchase_unit_id: UNIT_ID,
+      pack_size: 1,
+      metadata: { safety_stock_quantity: 2 },
       current_quantity: 10,
       reorder_point: null,
       average_cost: 1200,
@@ -51,36 +60,26 @@ function makeFakeSupabase() {
       status: "active",
     },
   ];
-  const stockMovements = [
-    {
-      inventory_item_id: ITEM_ID,
-      movement_type: "consumption",
-      quantity: 30,
-      total_cost: 36000,
-      occurred_at: new Date(Date.now() - 2 * 864e5).toISOString(),
-    },
-    {
-      inventory_item_id: ITEM_ID,
-      movement_type: "consumption",
-      quantity: 30,
-      total_cost: 36000,
-      occurred_at: new Date(Date.now() - 10 * 864e5).toISOString(),
-    },
-    {
-      inventory_item_id: ITEM_ID,
-      movement_type: "consumption",
-      quantity: 30,
-      total_cost: 36000,
-      occurred_at: new Date(Date.now() - 20 * 864e5).toISOString(),
-    },
-  ];
+  const stockMovements = Array.from({ length: 7 }, (_, index) => ({
+    inventory_item_id: ITEM_ID,
+    movement_type: "consumption",
+    quantity: 30,
+    total_cost: 36000,
+    occurred_at: new Date(Date.now() - (index + 1) * 864e5).toISOString(),
+  }));
   const supplierProducts = [
     {
+      id: PRODUCT_ID,
       supplier_id: SUPPLIER_ID,
       inventory_item_id: ITEM_ID,
-      unit_id: "55555555-5555-4555-8555-555555555555",
+      unit_id: UNIT_ID,
+      pack_size: 1,
       name: "UAT reorder ingredient",
       unit_price: 1300,
+      currency: "TZS",
+      min_order_quantity: 1,
+      order_multiple: 1,
+      last_price_at: new Date().toISOString(),
       lead_time_days: 3,
       active: true,
     },
@@ -109,6 +108,8 @@ function makeFakeSupabase() {
 
     const api: any = {
       select: () => api,
+      or: () => api,
+      is: () => api,
       eq: (col: string, val: unknown) => {
         filters[col] = val;
         return api;
@@ -139,6 +140,21 @@ function makeFakeSupabase() {
 
       if (op === "select") {
         if (table === "restaurant_inventory_items") return { data: inventoryItems, error: null };
+        if (table === "restaurant_locations") {
+          const row = { id: LOCATION_ID, tenant_id: TENANT_A, property_id: PROPERTY_ID, scope: "property", is_storage: true, status: "active", name: "UAT store" };
+          return { data: single ? row : [row], error: null };
+        }
+        if (table === "restaurant_stock_positions_v") return { data: [{ inventory_item_id: ITEM_ID, location_id: LOCATION_ID, on_hand: 10, last_movement_at: null, movement_count: 0 }], error: null };
+        if (table === "restaurant_stock_reservations") return { data: [], error: null };
+        if (table === "restaurant_stock_transfers") return { data: [], error: null };
+        if (table === "restaurant_inventory_units") return { data: [{ id: UNIT_ID, dimension: "count", base_unit_id: UNIT_ID, factor: 1 }], error: null };
+        if (table === "restaurant_properties") return { data: { currency: "TZS" }, error: null };
+        if (table === "restaurant_tenants") return { data: { settings: { business: { defaultCurrency: "TZS" } } }, error: null };
+        if (table === "restaurant_supplier_price_history") return { data: [], error: null };
+        if (table === "restaurant_purchase_order_items") return { data: [], error: null };
+        if (table === "restaurant_supplier_confirmations") return { data: [], error: null };
+        if (table === "restaurant_supplier_confirmation_items") return { data: [], error: null };
+        if (table === "restaurant_stock_transfer_lines") return { data: [], error: null };
         if (table === "restaurant_stock_movements") return { data: stockMovements, error: null };
         if (table === "restaurant_supplier_products")
           return { data: supplierProducts, error: null };
@@ -147,7 +163,7 @@ function makeFakeSupabase() {
         if (table === "restaurant_members") {
           const rows =
             filters.tenant_id === TENANT_A && filters.user_id === MANAGER
-              ? [{ tenant_id: TENANT_A, user_id: MANAGER, role: "restaurant_manager" }]
+              ? [{ tenant_id: TENANT_A, user_id: MANAGER, role: "restaurant_manager", property_id: null }]
               : [];
           return { data: rows, error: null };
         }
@@ -211,6 +227,8 @@ describe("real finding → decision → persistence loop (purchasing intelligenc
 
     const result = await runRestaurantDecisionPass(fake.supabase, MANAGER, {
       tenantId: TENANT_A,
+      propertyId: PROPERTY_ID,
+      locationId: LOCATION_ID,
       windowDays: 30,
       persist: true,
     });
