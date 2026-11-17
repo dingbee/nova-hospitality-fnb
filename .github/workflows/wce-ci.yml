@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: lexibite-wce-ci-${{ github.event.pull_request.head.ref || github.ref_name }}
@@ -45,24 +45,6 @@ jobs:
           bun-version: latest
       - name: Install
         run: bun install
-      - name: Format changed WCE sources and commit formatting
-        env:
-          TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin wce/wce-02-messaging-sessions
-          files="$(git diff --name-only origin/wce/wce-02-messaging-sessions...HEAD -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
-          if [ -n "$files" ]; then
-            bunx eslint $files --fix
-            if ! git diff --quiet; then
-              git add $files
-              git commit -m "style(wce): format changed source [skip ci]"
-              git push origin HEAD:"$TARGET_BRANCH"
-            fi
-          fi
       - name: Changed-source lint
         shell: bash
         run: |
@@ -80,14 +62,17 @@ jobs:
           src/modules/messaging/bindings.server.test.ts
           src/modules/messaging/webhook-queue.server.test.ts
           src/modules/messaging/guest-portal-sessions.server.test.ts
-          src/modules/messaging/guest-commerce.server.test.ts src/modules/messaging/outbound-queue.server.test.ts src/modules/restaurant/menu/availability.server.test.ts
+          src/modules/messaging/guest-commerce.server.test.ts
+          src/modules/messaging/guest-crm.server.test.ts
+          src/modules/messaging/outbound-queue.server.test.ts
+          src/modules/restaurant/menu/availability.server.test.ts
           src/modules/api-platform/adapters/meta-whatsapp.server.test.ts
       - name: Full repository tests
         run: bun run test
-      - name: Generate route tree and production build
-        run: bun run build
       - name: Strict typecheck
         run: bun run typecheck
+      - name: Production build and route generation
+        run: bun run build
       - name: PostgreSQL 17 clean migration replay
         env:
           NOVA_DB_HOST: 127.0.0.1
