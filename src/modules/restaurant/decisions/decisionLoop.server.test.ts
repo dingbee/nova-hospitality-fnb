@@ -142,7 +142,7 @@ function makeFakeSupabase() {
         if (table === "restaurant_inventory_items") return { data: inventoryItems, error: null };
         if (table === "restaurant_locations") {
           const row = { id: LOCATION_ID, tenant_id: TENANT_A, property_id: PROPERTY_ID, scope: "property", is_storage: true, status: "active", name: "UAT store" };
-          return { data: single ? row : [row], error: null };
+          return { data: filters.id ? row : [row], error: null };
         }
         if (table === "restaurant_stock_positions_v") return { data: [{ inventory_item_id: ITEM_ID, location_id: LOCATION_ID, on_hand: 10, last_movement_at: null, movement_count: 0 }], error: null };
         if (table === "restaurant_stock_reservations") return { data: [], error: null };
