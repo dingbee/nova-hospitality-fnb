@@ -55,7 +55,7 @@ function WhatsAppGuestPortal() {
               {item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" className="size-20 shrink-0 rounded-lg object-cover" /> : null}
               <div className="min-w-0 flex-1"><h3 className="font-medium">{item.name}</h3>{item.description ? <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.description}</p> : null}
                 <p className="mt-2 text-sm font-semibold">{formatMoney(Number(item.price), data.currency)}</p>
-                {item.variants.length ? <p className="mt-1 text-xs text-muted-foreground">{item.variants.map(v => v.name).join(" · ")}</p> : null}
+                {item.variants.length ? <p className="mt-1 text-xs text-muted-foreground">{item.variants.map((v: { id: string; name: string }) => v.name).join(" · ")}</p> : null}
               </div>
             </article>)}
           </div>
