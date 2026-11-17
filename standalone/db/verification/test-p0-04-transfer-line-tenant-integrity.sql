@@ -17,6 +17,21 @@ VALUES
   ('a1000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'p0-04-a', 'P0-04 Property A'),
   ('b1000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'p0-04-b', 'P0-04 Property B');
 
+-- Isolated test properties are explicitly classified as included/non-chargeable
+-- before activation, matching the production commercial activation guard.
+INSERT INTO public.commercial_property_classifications
+  (tenant_id, property_id, classification, chargeable, property_sequence)
+VALUES
+  ('a0000000-0000-4000-8000-000000000001', 'a1000000-0000-4000-8000-000000000001', 'included', false, 1),
+  ('b0000000-0000-4000-8000-000000000001', 'b1000000-0000-4000-8000-000000000001', 'included', false, 1);
+
+UPDATE public.restaurant_properties
+SET status = 'active'
+WHERE id IN (
+  'a1000000-0000-4000-8000-000000000001',
+  'b1000000-0000-4000-8000-000000000001'
+);
+
 INSERT INTO public.restaurant_locations
   (id, tenant_id, property_id, scope, slug, name, location_type, is_storage, status)
 VALUES
