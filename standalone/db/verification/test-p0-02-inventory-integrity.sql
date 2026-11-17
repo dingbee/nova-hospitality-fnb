@@ -6,13 +6,14 @@ BEGIN;
 INSERT INTO public.restaurant_tenants (id, slug, name)
 VALUES ('f2000000-0000-4000-8000-000000000001', 'p0-02-tenant', 'P0-02 Inventory Tenant');
 
-INSERT INTO public.restaurant_properties (id, tenant_id, slug, name, currency)
+INSERT INTO public.restaurant_properties (id, tenant_id, slug, name, currency, status)
 VALUES (
   'f2000000-0000-4000-8000-000000000002',
   'f2000000-0000-4000-8000-000000000001',
   'p0-02-property',
   'P0-02 Property',
-  'TZS'
+  'TZS',
+  'active'
 );
 
 INSERT INTO public.restaurant_members (tenant_id, property_id, user_id, role)
