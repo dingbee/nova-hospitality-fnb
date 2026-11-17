@@ -143,19 +143,19 @@ export function WhatsAppOperationsCentre() {
     mutationFn: () => createCampaignFn({
       data: {
           tenantId: tenantId!,
-        propertyId: propertyId!,
+          propertyId: propertyId!,
           locationId: campaignLocationId,
         bindingId: campaignBindingId,
           marketCode: campaignMarketCode.toUpperCase(),
         templateId: campaignTemplateId,
           name: campaignName,
-        triggerType: campaignTriggerType,
+          triggerType: campaignTriggerType,
           scheduledAt:
             campaignTriggerType === "scheduled"
               ? new Date(campaignScheduledAt).toISOString()
               : undefined,
         eventKey: campaignTriggerType === "event" ? campaignEventKey : undefined,
-        preferredLanguage: campaignLanguage || undefined,
+          preferredLanguage: campaignLanguage || undefined,
           dailyCap: campaignDailyCap ? Number(campaignDailyCap) : null,
         totalCap: campaignTotalCap ? Number(campaignTotalCap) : null,
       },
