@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { assertCapability } from "@/modules/restaurant/core/access.server";
 import { writeCommercialAudit } from "@/modules/commercial/audit.server";
 import { handleWhatsAppGuestCommerceMessage } from "./guest-commerce.server";
+import { upsertWhatsAppGuestCustomer } from "./guest-crm.server";
 
 type Db = any;
 type ClaimedEvent = {
@@ -93,6 +94,16 @@ async function getOrCreateConversation(db: Db, event: ClaimedEvent, waUserId: st
 }
 
 async function processMessages(db: Db, event: ClaimedEvent, value: Record<string, any>) {
+  if (!event.binding_id || !event.tenant_id || !event.property_id || !event.location_id) {
+    throw new Error("webhook_event_scope_missing");
+  }
+  const commerceEvent = {
+    id: event.id,
+    tenant_id: event.tenant_id,
+    property_id: event.property_id,
+    location_id: event.location_id,
+    binding_id: event.binding_id,
+  };
   const messages = Array.isArray(value.messages) ? value.messages : [];
   for (const message of messages) {
     const waUserId = typeof message.from === "string" ? message.from : "";
@@ -158,13 +169,6 @@ async function processEvent(db: Db, event: ClaimedEvent) {
   if (!event.binding_id || !event.tenant_id || !event.property_id || !event.location_id) {
     throw new Error("webhook_event_scope_missing");
   }
-  const commerceEvent = {
-    id: event.id,
-    tenant_id: event.tenant_id,
-    property_id: event.property_id,
-    location_id: event.location_id,
-    binding_id: event.binding_id,
-  };
   const value =
     typeof event.payload?.value === "object" && event.payload.value !== null
       ? event.payload.value
