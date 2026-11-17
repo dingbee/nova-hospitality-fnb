@@ -1036,6 +1036,17 @@ export async function transitionOrder(
         payload: { order_number: order.order_number, reason: input.reason ?? null },
       });
     }
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const { queueWhatsAppOrderStatusNotification } = await import("@/modules/messaging/guest-crm.server");
+      await queueWhatsAppOrderStatusNotification(supabaseAdmin, {
+        tenantId: input.tenantId,
+        orderId: input.orderId,
+        status: input.status,
+      });
+    } catch (error) {
+      console.warn("[whatsapp] order status notification deferred", (error as Error).message);
+    }
     return updated;
   }
 
@@ -1189,6 +1200,18 @@ export async function transitionOrder(
       );
     } catch (err) {
       console.warn("[restaurant-os] receipt not issued", (err as Error).message);
+    }
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const { awardGuestLoyaltyForCompletedOrder, queueWhatsAppOrderStatusNotification } = await import("@/modules/messaging/guest-crm.server");
+      await awardGuestLoyaltyForCompletedOrder(supabaseAdmin, input.tenantId, input.orderId);
+      await queueWhatsAppOrderStatusNotification(supabaseAdmin, {
+        tenantId: input.tenantId,
+        orderId: input.orderId,
+        status: input.status,
+      });
+    } catch (error) {
+      console.warn("[whatsapp] guest CRM completion hook deferred", (error as Error).message);
     }
     return { ...updated, cost_total: Number(actualCost.toFixed(4)) };
   }
