@@ -30,6 +30,38 @@ function formatMoney(amount: number, currency: string) {
 
 type ModifierSelection = Record<string, Record<string, string[]>>;
 
+type GuestPortalMenuData = {
+  businessName: string;
+  logoUrl: string | null;
+  outletName: string;
+  guestName: string | null;
+  loyaltyPointsBalance: number;
+  currency: string;
+  categories: Array<{ id: string; name: string; sortOrder: number }>;
+  modifierGroups: Array<{
+    id: string;
+    name: string;
+    minSelect: number;
+    maxSelect: number;
+    required: boolean;
+    modifiers: Array<{ id: string; name: string; priceDelta: number }>;
+  }>;
+  items: Array<{
+    id: string;
+    name: string;
+    description: string | null;
+    price: number;
+    currency: string;
+    imageUrl: string | null;
+    categoryId: string | null;
+    available: boolean;
+    availabilityReasons: string[];
+    availableQuantity: number | null;
+    modifierGroupIds: string[];
+    variants: Array<{ id: string; name: string; price: number; priceIsDelta: boolean }>;
+  }>;
+};
+
 function WhatsAppGuestPortal() {
   const { token } = Route.useParams();
   const loadMenu = useServerFn(guestPortalMenuFn);
@@ -81,7 +113,7 @@ function WhatsAppGuestPortal() {
       </main>
     );
 
-  const data = menu.data;
+  const data = menu.data as GuestPortalMenuData;
   const categories = [...data.categories].sort((a, b) => a.sortOrder - b.sortOrder);
   const cartItems = data.items.filter((item) => (quantities[item.id] ?? 0) > 0);
   const lines = cartItems.map((item) => {
