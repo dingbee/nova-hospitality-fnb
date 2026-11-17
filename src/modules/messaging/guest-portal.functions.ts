@@ -166,7 +166,10 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
       const item = catalog.items.find((candidate: any) => candidate.id === line.menuItemId);
       return item?.available_quantity != null && line.quantity > Number(item.available_quantity);
     });
-    if (stockExceeded) throw new Error("The requested quantity exceeds current available stock. Update your cart and try again.");
+    if (stockExceeded)
+      throw new Error(
+        "The requested quantity exceeds current available stock. Update your cart and try again.",
+      );
 
     const lines = valid.map((line) => ({
       menuItemId: line.menuItemId,
