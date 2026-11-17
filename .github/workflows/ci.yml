@@ -81,9 +81,8 @@ jobs:
             echo "No changed source files require linting."
           fi
 
-      - name: Full repository lint
+      - name: Full repository lint (blocking P0-02 acceptance gate)
         id: full_repo_lint
-        continue-on-error: true
         run: bun run lint
 
       - name: Upload P0-02 formatting patch
@@ -263,9 +262,10 @@ jobs:
           LINT_OUTCOME: ${{ steps.lint.outcome }}
           SCOPED_TESTS_OUTCOME: ${{ steps.scoped_tests.outcome }}
           FULL_TESTS_OUTCOME: ${{ steps.full_tests.outcome }}
+          FULL_REPO_LINT_OUTCOME: ${{ steps.full_repo_lint.outcome }}
         run: |
           failed=0
-          for gate in TYPECHECK LINT SCOPED_TESTS FULL_TESTS; do
+          for gate in TYPECHECK LINT FULL_REPO_LINT SCOPED_TESTS FULL_TESTS; do
             var="${gate}_OUTCOME"
             outcome="${!var}"
             if [ "$outcome" != "success" ]; then
