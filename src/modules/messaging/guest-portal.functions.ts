@@ -5,6 +5,7 @@ import { guestLineSchema } from "@/modules/restaurant/selforder/selforder.contra
 
 const guestPortalMenuSchema = z.object({
   token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  orderType: z.enum(["takeaway", "dine_in"]).default("takeaway"),
 });
 
 /** Browse-only WhatsApp landing page. Scope is derived exclusively from the one-time bearer session. */
@@ -45,7 +46,7 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
       fetchSellableCatalog(supabaseAdmin, session.tenantId, {
         propertyId: session.propertyId,
         locationId: session.locationId,
-        orderType: "takeaway",
+        orderType: data.orderType,
       }),
       supabaseAdmin
         .from("wa_conversations")
@@ -158,6 +159,8 @@ const submitGuestCommerceOrderSchema = z.object({
   token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   guestName: z.string().trim().max(160).optional(),
   clientRequestId: z.string().min(8).max(80),
+  fulfilmentMethod: z.enum(["pickup", "dine_in"]).default("pickup"),
+  reservationId: z.string().uuid().optional(),
   lines: z.array(guestLineSchema).min(1).max(50),
 });
 
@@ -192,7 +195,7 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
       fetchSellableCatalog(supabaseAdmin, session.tenantId, {
         propertyId: session.propertyId,
         locationId: session.locationId,
-        orderType: "takeaway",
+        orderType: data.fulfilmentMethod === "dine_in" ? "dine_in" : "takeaway",
       }),
     ]);
     if (tenantError || !tenant || tenant.status !== "active")
@@ -247,13 +250,45 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
         .eq("tenant_id", session.tenantId);
       if (profileError) throw new Error("The guest profile could not be updated.");
     }
+    let tableId: string | null = null;
+    let guestCount = 1;
+    const orderType = data.fulfilmentMethod === "dine_in" ? "dine_in" : "takeaway";
+    if (data.fulfilmentMethod === "dine_in") {
+      if (!data.reservationId || !guestCustomerId) {
+        throw new Error("A confirmed Guest Portal reservation is required for dine-in orders.");
+      }
+      const { data: reservation, error: reservationError } = await supabaseAdmin
+        .from("restaurant_table_reservations")
+        .select("id, table_id, party_size, starts_at, ends_at, status")
+        .eq("id", data.reservationId)
+        .eq("tenant_id", session.tenantId)
+        .eq("property_id", session.propertyId)
+        .eq("location_id", session.locationId)
+        .eq("guest_customer_id", guestCustomerId)
+        .eq("status", "confirmed")
+        .maybeSingle();
+      if (reservationError || !reservation?.table_id) {
+        throw new Error("The dine-in reservation could not be verified.");
+      }
+      const now = Date.now();
+      if (
+        now < new Date(reservation.starts_at).getTime() - 30 * 60_000 ||
+        now > new Date(reservation.ends_at).getTime()
+      ) {
+        throw new Error("Dine-in ordering is available from 30 minutes before your reservation until its end time.");
+      }
+      tableId = reservation.table_id;
+      guestCount = Number(reservation.party_size);
+    }
+
     const requestKey = "wa-guest:" + session.sessionId + ":" + data.clientRequestId;
     const order = await createGuestOrder(supabaseAdmin, {
       tenantId: session.tenantId,
       propertyId: session.propertyId,
       locationId: session.locationId,
-      tableId: null,
-      orderType: "takeaway",
+      tableId,
+      orderType,
+      guestCount,
       guestName: data.guestName || null,
       currency: session.currency,
       lines,
@@ -272,6 +307,7 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
       total: Number(order.total ?? 0),
       currency: session.currency,
       paymentTiming,
+      fulfilmentMethod: data.fulfilmentMethod,
       status: order.status,
       idempotent: Boolean(order.idempotent),
     };
