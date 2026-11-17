@@ -420,16 +420,6 @@ describe("upsertInventoryItem — pack size is real conversion configuration, ne
       trackBatches: false,
       allowNegative: false,
       packSize: 5,
-    } as any
-      tenantId: TENANT,
-      name: "Cooking oil",
-      itemType: "ingredient",
-      currentQuantity: 0,
-      averageCost: 0,
-      currency: "TZS",
-      trackBatches: false,
-      allowNegative: false,
-      packSize: 5,
     } as any);
     expect(fake.items[created.id].pack_size).toBe(5);
 
