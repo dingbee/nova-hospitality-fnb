@@ -503,7 +503,7 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
         idempotencyKey: IDEMPOTENCY,
         lineOverrides: [{ inventoryItemId: ITEM, quantity: 8 }],
       }),
-    ).rejects.toThrow(/persisted lines differ/i);
+    ).rejects.toThrow(/persisted evidence differs/i);
     expect(mocks.createPurchaseOrder).not.toHaveBeenCalled();
   });
 
@@ -551,7 +551,25 @@ describe("IA-BRIDGE-01 intelligent PO quantity binding", () => {
       location_id: LOCATION,
       total: 120000,
       currency: "TZS",
-      metadata: { intelligent_replenishment: { engine: "p0-02-stock-position-v1" } },
+      metadata: {
+        intelligent_replenishment: {
+          engine: "p0-02-stock-position-v1",
+          idempotency_key: IDEMPOTENCY,
+          lines: [{
+            inventory_item_id: ITEM,
+            supplier_product_id: PRODUCT,
+            recommended_purchase_quantity: 10,
+            final_purchase_quantity: 10,
+            override_applied: false,
+            unit_id: UNIT,
+            stock_unit_id: UNIT,
+            stock_units_per_purchase_unit: 1,
+            minimum_order_quantity: 0,
+            order_multiple: 1,
+            unit_price: 12000,
+          }],
+        },
+      },
     };
     const sb = sbWithExisting(existing);
 
