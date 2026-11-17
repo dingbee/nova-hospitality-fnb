@@ -8,6 +8,7 @@ import {
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { assertPurchaseOrderTransition } from "./state-machine";
+import { assertMayApprove } from "../procurement/approvals.server";
 import {
   insertWithUniqueDocumentNumber,
   recordProcurementAudit,
@@ -193,14 +194,19 @@ export async function transitionPurchaseOrder(
   if (input.status === "cancelled" && !input.reason) {
     throw new Error("A reason is required to cancel a purchase order.");
   }
-  if (
-    input.status === "approved" &&
-    (current.created_by === userId || current.buyer_id === userId)
-  ) {
-    // No implicit platform-admin exception: an emergency override must be a
-    // separately authorized, justified and immutably audited workflow. Until
-    // that workflow exists, maker-checker applies to every identity.
-    throw new Error("Separation of duties — the buyer who raised this order cannot approve it.");
+  if (input.status === "approved") {
+    const requesterId =
+      current.created_by === userId || current.buyer_id === userId
+        ? userId
+        : current.buyer_id ?? current.created_by ?? null;
+    await assertMayApprove(sb, userId, {
+      tenantId: input.tenantId,
+      documentType: "purchase_order",
+      amount: Number(current.total ?? 0),
+      requesterId,
+      propertyId: current.property_id ?? null,
+      locationId: current.location_id ?? null,
+    });
   }
 
   const patch: Record<string, unknown> = {
