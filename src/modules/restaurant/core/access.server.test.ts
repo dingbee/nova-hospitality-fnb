@@ -207,14 +207,18 @@ describe("P0 property isolation — assertCapability with scope", () => {
   it("a property-scoped manager cannot use a tenant-level capability to access the central store", async () => {
     const sb = makeFakeSupabase();
     await expect(
-      assertCapability(sb, USER_SCOPED_A1, TENANT_A, "sales.manage", { locationId: LOCATION_CENTRAL_A }),
+      assertCapability(sb, USER_SCOPED_A1, TENANT_A, "sales.manage", {
+        locationId: LOCATION_CENTRAL_A,
+      }),
     ).rejects.toThrow(/tenant central store/);
   });
 
   it("a tenant-wide owner can use the matching capability at the central store", async () => {
     const sb = makeFakeSupabase();
     await expect(
-      assertCapability(sb, USER_TENANT_WIDE, TENANT_A, "sales.manage", { locationId: LOCATION_CENTRAL_A }),
+      assertCapability(sb, USER_TENANT_WIDE, TENANT_A, "sales.manage", {
+        locationId: LOCATION_CENTRAL_A,
+      }),
     ).resolves.toBeUndefined();
   });
 

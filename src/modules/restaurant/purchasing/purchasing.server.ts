@@ -198,7 +198,7 @@ export async function transitionPurchaseOrder(
     const requesterId =
       current.created_by === userId || current.buyer_id === userId
         ? userId
-        : current.buyer_id ?? current.created_by ?? null;
+        : (current.buyer_id ?? current.created_by ?? null);
     await assertMayApprove(sb, userId, {
       tenantId: input.tenantId,
       documentType: "purchase_order",

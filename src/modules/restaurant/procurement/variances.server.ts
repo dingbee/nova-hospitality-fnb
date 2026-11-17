@@ -92,7 +92,11 @@ export async function raiseVariance(sb: Sb, userId: string, draft: VarianceDraft
   return data;
 }
 
-export async function listVariances(sb: Sb, userId: string, input: z.infer<typeof listVariancesSchema>) {
+export async function listVariances(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listVariancesSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_procurement_variances")
@@ -112,10 +116,17 @@ export async function listVariances(sb: Sb, userId: string, input: z.infer<typeo
     .select("id, name")
     .eq("tenant_id", input.tenantId);
   const names = new Map(((suppliers ?? []) as any[]).map((s) => [s.id, s.name]));
-  return ((data ?? []) as any[]).map((v) => ({ ...v, supplier_name: names.get(v.supplier_id) ?? null }));
+  return ((data ?? []) as any[]).map((v) => ({
+    ...v,
+    supplier_name: names.get(v.supplier_id) ?? null,
+  }));
 }
 
-export async function resolveVariance(sb: Sb, userId: string, input: z.infer<typeof resolveVarianceSchema>) {
+export async function resolveVariance(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof resolveVarianceSchema>,
+) {
   const { data: before } = await sb
     .from("restaurant_procurement_variances")
     .select("id, status, label, created_by, property_id, location_id")

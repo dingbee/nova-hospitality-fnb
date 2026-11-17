@@ -48,8 +48,22 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
     current_quantity: opts.itemQuantity,
   };
   const locations = [
-    { id: SOURCE, tenant_id: TENANT, property_id: "property-1", scope: "property", status: "active", name: "Dry store" },
-    { id: DEST, tenant_id: TENANT, property_id: "property-1", scope: "property", status: "active", name: "Kitchen" },
+    {
+      id: SOURCE,
+      tenant_id: TENANT,
+      property_id: "property-1",
+      scope: "property",
+      status: "active",
+      name: "Dry store",
+    },
+    {
+      id: DEST,
+      tenant_id: TENANT,
+      property_id: "property-1",
+      scope: "property",
+      status: "active",
+      name: "Kitchen",
+    },
   ];
   const transfers: Record<string, any> = {};
   const transferLines: Record<string, any> = {};
@@ -481,10 +495,34 @@ describe("P1 property scope — stock transfers dual-location AND/OR matrix", ()
       { tenant_id: TENANT_B, user_id: USER_B1_OWNER, role: "owner", property_id: null },
     ];
     const locations = [
-      { id: LOC_A1_STORE, tenant_id: TENANT_A, property_id: PROPERTY_A1, scope: "property", status: "active" },
-      { id: LOC_A1_KITCHEN, tenant_id: TENANT_A, property_id: PROPERTY_A1, scope: "property", status: "active" },
-      { id: LOC_A2_STORE, tenant_id: TENANT_A, property_id: PROPERTY_A2, scope: "property", status: "active" },
-      { id: LOC_B1_STORE, tenant_id: TENANT_B, property_id: PROPERTY_B1, scope: "property", status: "active" },
+      {
+        id: LOC_A1_STORE,
+        tenant_id: TENANT_A,
+        property_id: PROPERTY_A1,
+        scope: "property",
+        status: "active",
+      },
+      {
+        id: LOC_A1_KITCHEN,
+        tenant_id: TENANT_A,
+        property_id: PROPERTY_A1,
+        scope: "property",
+        status: "active",
+      },
+      {
+        id: LOC_A2_STORE,
+        tenant_id: TENANT_A,
+        property_id: PROPERTY_A2,
+        scope: "property",
+        status: "active",
+      },
+      {
+        id: LOC_B1_STORE,
+        tenant_id: TENANT_B,
+        property_id: PROPERTY_B1,
+        scope: "property",
+        status: "active",
+      },
     ];
     const item = {
       id: ITEM,

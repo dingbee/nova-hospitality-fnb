@@ -11,11 +11,17 @@ import type { listLocationsSchema, UpsertLocationInput } from "./contracts";
 
 type Sb = any;
 
-export async function listLocations(sb: Sb, userId: string, input: z.infer<typeof listLocationsSchema>) {
+export async function listLocations(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listLocationsSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_locations")
-    .select("id, tenant_id, property_id, scope, parent_id, slug, code, name, location_type, is_storage, status, notes")
+    .select(
+      "id, tenant_id, property_id, scope, parent_id, slug, code, name, location_type, is_storage, status, notes",
+    )
     .eq("tenant_id", input.tenantId)
     .order("name");
   // Property views include the tenant-level central store plus locations for the selected property.
@@ -39,9 +45,9 @@ export async function listLocations(sb: Sb, userId: string, input: z.infer<typeo
   }
 
   return rows.map((l) => {
-    const propertyName = l.property_id ? propertyNames.get(l.property_id) ?? "Property" : null;
+    const propertyName = l.property_id ? (propertyNames.get(l.property_id) ?? "Property") : null;
     const domainLabel = l.is_storage ? "Storage location" : "Service outlet";
-    const scopeLabel = l.scope === "tenant" ? "Tenant central store" : propertyName ?? "Property";
+    const scopeLabel = l.scope === "tenant" ? "Tenant central store" : (propertyName ?? "Property");
     return {
       ...l,
       property_name: propertyName,
@@ -59,7 +65,8 @@ export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocati
     "location.manage",
     input.scope === "tenant" ? { tenantWide: true } : { propertyId: input.propertyId },
   );
-  if (input.parentId && input.parentId === input.id) throw new Error("A location cannot be its own parent.");
+  if (input.parentId && input.parentId === input.id)
+    throw new Error("A location cannot be its own parent.");
 
   // Scope is an identity boundary: editing cannot silently change tenant/property ownership.
   if (input.id) {
@@ -72,7 +79,10 @@ export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocati
     if (existingError) throw new Error(existingError.message);
     if (!existing) throw new Error("Location not found in this tenant.");
     const existingScope = existing.scope ?? "property";
-    if (existingScope !== input.scope || (existingScope === "property" && existing.property_id !== input.propertyId)) {
+    if (
+      existingScope !== input.scope ||
+      (existingScope === "property" && existing.property_id !== input.propertyId)
+    ) {
       throw new Error("Location scope and property assignment cannot be changed after creation.");
     }
   }
@@ -81,10 +91,13 @@ export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocati
   let property: any = null;
   if (input.scope === "tenant") {
     if (input.propertyId || !input.isStorage || input.parentId) {
-      throw new Error("A tenant central store must be storage-only, tenant-scoped, and have no parent.");
+      throw new Error(
+        "A tenant central store must be storage-only, tenant-scoped, and have no parent.",
+      );
     }
   } else {
-    if (!input.propertyId) throw new Error("A property is required for a property-scoped location.");
+    if (!input.propertyId)
+      throw new Error("A property is required for a property-scoped location.");
     const { data, error: propertyError } = await sb
       .from("restaurant_properties")
       .select("id, status")
@@ -135,7 +148,9 @@ export async function upsertLocation(sb: Sb, userId: string, input: UpsertLocati
   const q = input.id
     ? sb.from("restaurant_locations").update(row).eq("id", input.id).eq("tenant_id", input.tenantId)
     : sb.from("restaurant_locations").insert(row);
-  const { data, error } = await q.select("id, name, code, location_type, is_storage, status").single();
+  const { data, error } = await q
+    .select("id, name, code, location_type, is_storage, status")
+    .single();
   if (error) throw new Error(error.message);
 
   if (!input.id) {
@@ -172,11 +187,16 @@ export async function locationNameMap(sb: Sb, tenantId: string): Promise<Map<str
     if (propertyError) throw new Error(propertyError.message);
     for (const p of (properties ?? []) as any[]) propertyNames.set(p.id, p.name);
   }
-  return new Map(rows.map((l) => {
-    const owner = l.scope === "tenant" ? "Tenant central store" : propertyNames.get(l.property_id) ?? "Property";
-    const domain = l.is_storage ? "Storage" : "Service outlet";
-    return [l.id as string, `${l.name} · ${owner} · ${domain}`];
-  }));
+  return new Map(
+    rows.map((l) => {
+      const owner =
+        l.scope === "tenant"
+          ? "Tenant central store"
+          : (propertyNames.get(l.property_id) ?? "Property");
+      const domain = l.is_storage ? "Storage" : "Service outlet";
+      return [l.id as string, `${l.name} · ${owner} · ${domain}`];
+    }),
+  );
 }
 
 /** Fail fast when a caller names a foreign-tenant or inactive location. */

@@ -66,17 +66,14 @@ function makeSupabase() {
 describe("supplier invoice three-way reconciliation maker-checker", () => {
   it("denies the invoice recorder from performing the reconciliation", async () => {
     const sb = makeSupabase();
-    await expect(
-      matchSupplierInvoice(sb, MAKER, TENANT, INVOICE),
-    ).rejects.toThrow(/Separation of duties/);
-
-    expect(mocks.assertCapability).toHaveBeenCalledWith(
-      sb,
-      MAKER,
-      TENANT,
-      "invoice.manage",
-      { propertyId: PROPERTY, locationId: LOCATION },
+    await expect(matchSupplierInvoice(sb, MAKER, TENANT, INVOICE)).rejects.toThrow(
+      /Separation of duties/,
     );
+
+    expect(mocks.assertCapability).toHaveBeenCalledWith(sb, MAKER, TENANT, "invoice.manage", {
+      propertyId: PROPERTY,
+      locationId: LOCATION,
+    });
     expect(mocks.recordProcurementAudit).not.toHaveBeenCalled();
   });
 });

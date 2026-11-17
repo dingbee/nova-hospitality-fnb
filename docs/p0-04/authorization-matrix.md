@@ -11,6 +11,7 @@ The repository does not define separate `tenant_administrator`, `group_procureme
 `owner`, `general_manager`, `restaurant_manager`, `chef`, `kitchen_manager`, `bartender`, `inventory_manager`, `purchasing_officer`, `accountant`, `viewer`, `api_service`.
 
 Role labels do not determine scope. Scope comes from the member grant's `property_id`:
+
 - `property_id IS NULL`: tenant-wide membership.
 - `property_id = X`: property-scoped membership for property X only.
 
@@ -20,36 +21,36 @@ A property-scoped general manager is not a tenant-wide administrator. A group pr
 
 The following is the canonical application capability map. It is not a statement that a role has tenant-wide authority; every grant remains constrained by its property scope.
 
-| Capability | Roles allowed by the canonical map |
-|---|---|
-| `inventory.manage` | owner, general_manager, restaurant_manager, inventory_manager, kitchen_manager, chef, bartender |
-| `location.manage` | owner, general_manager, restaurant_manager |
-| `purchasing.manage` | owner, general_manager, restaurant_manager, purchasing_officer, inventory_manager, accountant |
-| `purchasing.approve` | owner, general_manager, restaurant_manager |
-| `receiving.manage` | owner, general_manager, restaurant_manager, inventory_manager, purchasing_officer, kitchen_manager, chef |
-| `invoice.manage` | owner, general_manager, restaurant_manager, accountant, purchasing_officer |
-| `variance.manage` | owner, general_manager, restaurant_manager, accountant, purchasing_officer |
-| `transfer.manage` | owner, general_manager, restaurant_manager, inventory_manager, kitchen_manager, chef, bartender |
-| `transfer.approve` | owner, general_manager, restaurant_manager, inventory_manager |
-| `stocktake.manage` | owner, general_manager, restaurant_manager, inventory_manager, kitchen_manager, chef, bartender |
-| `stocktake.approve` | owner, general_manager, restaurant_manager, inventory_manager, accountant |
-| `intelligence.read` | owner, general_manager, restaurant_manager, chef, kitchen_manager, inventory_manager, purchasing_officer, accountant, bartender |
+| Capability           | Roles allowed by the canonical map                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `inventory.manage`   | owner, general_manager, restaurant_manager, inventory_manager, kitchen_manager, chef, bartender                                 |
+| `location.manage`    | owner, general_manager, restaurant_manager                                                                                      |
+| `purchasing.manage`  | owner, general_manager, restaurant_manager, purchasing_officer, inventory_manager, accountant                                   |
+| `purchasing.approve` | owner, general_manager, restaurant_manager                                                                                      |
+| `receiving.manage`   | owner, general_manager, restaurant_manager, inventory_manager, purchasing_officer, kitchen_manager, chef                        |
+| `invoice.manage`     | owner, general_manager, restaurant_manager, accountant, purchasing_officer                                                      |
+| `variance.manage`    | owner, general_manager, restaurant_manager, accountant, purchasing_officer                                                      |
+| `transfer.manage`    | owner, general_manager, restaurant_manager, inventory_manager, kitchen_manager, chef, bartender                                 |
+| `transfer.approve`   | owner, general_manager, restaurant_manager, inventory_manager                                                                   |
+| `stocktake.manage`   | owner, general_manager, restaurant_manager, inventory_manager, kitchen_manager, chef, bartender                                 |
+| `stocktake.approve`  | owner, general_manager, restaurant_manager, inventory_manager, accountant                                                       |
+| `intelligence.read`  | owner, general_manager, restaurant_manager, chef, kitchen_manager, inventory_manager, purchasing_officer, accountant, bartender |
 
 ## Scope invariants
 
-| Operation | Required effective scope |
-|---|---|
-| Property inventory read/write | Matching capability plus membership grant covering the item's property |
-| Property storage location management | `location.manage` grant covering that property |
-| Tenant central-store read | Matching capability plus explicit tenant-wide membership |
-| Tenant central-store write/manage | Matching capability plus explicit tenant-wide membership; database RLS independently restricts central-store writes to tenant-wide owner/general_manager |
-| Central-to-property transfer | Transfer capability at both endpoints; central endpoint requires tenant-wide grant |
-| Property-to-central transfer | Transfer capability at both endpoints; central endpoint requires tenant-wide grant |
-| Property-to-property transfer | Transfer capability at both endpoints; a property-only member must hold scope at both properties |
-| Transfer approval | `transfer.approve`, both endpoint scopes, and maker-checker when approval is required |
-| Stocktake approval/posting | `stocktake.approve`, the stocktake's property/location scope, and an independent approver |
-| Procurement variance resolution | `variance.manage`, variance property/location scope, and an actor independent of the recorded variance creator |
-| Supplier invoice three-way reconciliation | `invoice.manage`, invoice property/location scope, and an actor independent of the invoice recorder |
+| Operation                                 | Required effective scope                                                                                                                                 |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Property inventory read/write             | Matching capability plus membership grant covering the item's property                                                                                   |
+| Property storage location management      | `location.manage` grant covering that property                                                                                                           |
+| Tenant central-store read                 | Matching capability plus explicit tenant-wide membership                                                                                                 |
+| Tenant central-store write/manage         | Matching capability plus explicit tenant-wide membership; database RLS independently restricts central-store writes to tenant-wide owner/general_manager |
+| Central-to-property transfer              | Transfer capability at both endpoints; central endpoint requires tenant-wide grant                                                                       |
+| Property-to-central transfer              | Transfer capability at both endpoints; central endpoint requires tenant-wide grant                                                                       |
+| Property-to-property transfer             | Transfer capability at both endpoints; a property-only member must hold scope at both properties                                                         |
+| Transfer approval                         | `transfer.approve`, both endpoint scopes, and maker-checker when approval is required                                                                    |
+| Stocktake approval/posting                | `stocktake.approve`, the stocktake's property/location scope, and an independent approver                                                                |
+| Procurement variance resolution           | `variance.manage`, variance property/location scope, and an actor independent of the recorded variance creator                                           |
+| Supplier invoice three-way reconciliation | `invoice.manage`, invoice property/location scope, and an actor independent of the invoice recorder                                                      |
 
 ## Special identities and entitlements
 

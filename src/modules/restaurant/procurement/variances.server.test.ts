@@ -75,13 +75,10 @@ describe("procurement variance maker-checker", () => {
       } as Parameters<typeof resolveVariance>[2]),
     ).rejects.toThrow(/Separation of duties/);
 
-    expect(mocks.assertCapability).toHaveBeenCalledWith(
-      fake.sb,
-      MAKER,
-      TENANT,
-      "variance.manage",
-      { propertyId: PROPERTY, locationId: LOCATION },
-    );
+    expect(mocks.assertCapability).toHaveBeenCalledWith(fake.sb, MAKER, TENANT, "variance.manage", {
+      propertyId: PROPERTY,
+      locationId: LOCATION,
+    });
     expect(fake.writes).toHaveLength(0);
   });
 

@@ -249,11 +249,10 @@ export async function postStocktake(
     propertyId: head.property_id ?? null,
     locationId: head.location_id ?? null,
   });
-  if (
-    input.approve &&
-    (head.created_by === userId || head.counted_by === userId)
-  ) {
-    throw new Error("Separation of duties — the stocktake creator or counter cannot approve their own stocktake.");
+  if (input.approve && (head.created_by === userId || head.counted_by === userId)) {
+    throw new Error(
+      "Separation of duties — the stocktake creator or counter cannot approve their own stocktake.",
+    );
   }
   if (!input.approve) {
     await sb

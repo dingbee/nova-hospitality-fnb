@@ -323,7 +323,9 @@ export async function approveRequisition(sb: Sb, userId: string, input: ApproveR
     });
   }
   if (requisition.created_by === userId) {
-    throw new Error("Separation of duties — a requisition creator cannot approve or reject their own request.");
+    throw new Error(
+      "Separation of duties — a requisition creator cannot approve or reject their own request.",
+    );
   }
   if (!["submitted"].includes(requisition.status)) {
     throw new Error(`Requisition cannot be approved from status "${requisition.status}".`);

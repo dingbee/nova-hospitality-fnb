@@ -4,7 +4,11 @@ import type { Sb } from "../core/access.server";
 const mocks = vi.hoisted(() => ({
   assertCapability: vi.fn().mockResolvedValue(undefined),
   isPlatformAdmin: vi.fn().mockResolvedValue(true),
-  assertMayApprove: vi.fn().mockRejectedValue(new Error("Separation of duties — a requester cannot approve their own request.")),
+  assertMayApprove: vi
+    .fn()
+    .mockRejectedValue(
+      new Error("Separation of duties — a requester cannot approve their own request."),
+    ),
   emitRestaurantEvent: vi.fn().mockResolvedValue(undefined),
   recordProcurementAudit: vi.fn().mockResolvedValue(undefined),
 }));
@@ -83,13 +87,9 @@ describe("purchase-order maker-checker", () => {
       } as Parameters<typeof transitionPurchaseOrder>[2]),
     ).rejects.toThrow(/Separation of duties/);
 
-    expect(mocks.assertCapability).toHaveBeenCalledWith(
-      sb,
-      USER,
-      TENANT,
-      "purchasing.approve",
-      { propertyId: PROPERTY },
-    );
+    expect(mocks.assertCapability).toHaveBeenCalledWith(sb, USER, TENANT, "purchasing.approve", {
+      propertyId: PROPERTY,
+    });
     expect(mocks.assertMayApprove).toHaveBeenCalledWith(sb, USER, {
       tenantId: TENANT,
       documentType: "purchase_order",

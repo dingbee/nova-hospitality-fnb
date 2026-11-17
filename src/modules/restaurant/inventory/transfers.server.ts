@@ -279,7 +279,9 @@ export async function approveTransfer(
     transfer.requires_approval &&
     (transfer.requested_by === userId || transfer.created_by === userId)
   ) {
-    throw new Error("Separation of duties — the transfer requester cannot approve their own transfer.");
+    throw new Error(
+      "Separation of duties — the transfer requester cannot approve their own transfer.",
+    );
   }
   if (!["draft", "requested"].includes(transfer.status)) {
     throw new Error(`Transfer cannot be approved from status "${transfer.status}".`);
@@ -324,7 +326,12 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
     transfer.source_location_id,
     transfer.destination_location_id,
   );
-  await assertLocationInTenant(sb, input.tenantId, transfer.source_location_id, transfer.destination_location_id);
+  await assertLocationInTenant(
+    sb,
+    input.tenantId,
+    transfer.source_location_id,
+    transfer.destination_location_id,
+  );
   if (!["approved", "requested"].includes(transfer.status)) {
     throw new Error(`Transfer cannot be dispatched from status "${transfer.status}".`);
   }
@@ -354,8 +361,13 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
         throw new Error("A dispatched transfer line cannot be retried with a different quantity.");
       }
       const existingMovement = await findMovementByDedupeKey(sb, input.tenantId, dedupeKey);
-      if (!existingMovement || Math.abs(Number(existingMovement.quantity) + l.dispatchedQuantity) > 1e-9) {
-        throw new Error("Transfer dispatch ledger and line quantity are inconsistent; reconciliation is required.");
+      if (
+        !existingMovement ||
+        Math.abs(Number(existingMovement.quantity) + l.dispatchedQuantity) > 1e-9
+      ) {
+        throw new Error(
+          "Transfer dispatch ledger and line quantity are inconsistent; reconciliation is required.",
+        );
       }
       dispatchedValue += l.dispatchedQuantity * Number(line.unit_cost ?? 0);
       continue;
@@ -385,7 +397,9 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
     const movement =
       movementAttempt ?? (await findMovementByDedupeKey(sb, input.tenantId, dedupeKey));
     if (!movement || Math.abs(Number(movement.quantity) + l.dispatchedQuantity) > 1e-9) {
-      throw new Error("A prior dispatch attempt used a different quantity; ledger reconciliation is required.");
+      throw new Error(
+        "A prior dispatch attempt used a different quantity; ledger reconciliation is required.",
+      );
     }
 
     const { data: updatedLine, error: lineError } = await sb
@@ -406,7 +420,9 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
         .single();
       if (latestError) throw new Error(latestError.message);
       if (Math.abs(Number(latestLine?.dispatched_quantity ?? 0) - l.dispatchedQuantity) > 1e-9) {
-        throw new Error("Concurrent dispatch changed this line quantity; reconciliation is required.");
+        throw new Error(
+          "Concurrent dispatch changed this line quantity; reconciliation is required.",
+        );
       }
     }
     dispatchedValue += l.dispatchedQuantity * Number(line.unit_cost ?? 0);
@@ -453,7 +469,12 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
     transfer.source_location_id,
     transfer.destination_location_id,
   );
-  await assertLocationInTenant(sb, input.tenantId, transfer.source_location_id, transfer.destination_location_id);
+  await assertLocationInTenant(
+    sb,
+    input.tenantId,
+    transfer.source_location_id,
+    transfer.destination_location_id,
+  );
   if (!["dispatched", "partially_received"].includes(transfer.status)) {
     throw new Error(`Transfer cannot be received from status "${transfer.status}".`);
   }
