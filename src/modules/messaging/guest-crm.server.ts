@@ -347,22 +347,17 @@ export async function queueWhatsAppOrderStatusNotification(
   if (sessionError || !session?.conversation_id)
     return { queued: false as const, reason: "conversation_unavailable" };
 
-  const { data: customer } = order.guest_customer_id
+  const { data: customer, error: customerError } = order.guest_customer_id
     ? await admin
         .from("restaurant_guest_customers")
         .select("preferred_language, status")
         .eq("id", order.guest_customer_id)
         .eq("tenant_id", order.tenant_id)
         .maybeSingle()
-    : { data: null };
-  if (customer?.status === "blocked") {
-    await admin
-      .from("wa_order_notification_events")
-      .update({ notification_state: "suppressed" })
-      .eq("id", notificationId)
-      .eq("tenant_id", order.tenant_id);
-    return { queued: false as const, reason: "guest_blocked" };
-  }
+    : { data: null, error: null };
+  if (customerError) throw new Error("WhatsApp guest identity could not be verified.");
+  if (!customer) return { queued: false as const, reason: "guest_identity_unavailable" };
+  const guestBlocked = customer.status === "blocked";
   const language = customer?.preferred_language === "sw" ? "sw" : "en";
   const content = orderStatusMessage(input.status, order.order_number, language);
   if (!content) return { queued: false as const, reason: "status_not_customer_visible" };
@@ -377,7 +372,7 @@ export async function queueWhatsAppOrderStatusNotification(
       guest_customer_id: order.guest_customer_id,
       conversation_id: session.conversation_id,
       order_status: input.status,
-      notification_state: "pending",
+      notification_state: guestBlocked ? "suppressed" : "pending",
     })
     .select("id, notification_state")
     .single();
@@ -394,13 +389,23 @@ export async function queueWhatsAppOrderStatusNotification(
       throw new Error("Existing WhatsApp order notification could not be resolved.");
     if (existing.notification_state !== "pending") {
       return {
-        queued: existing.notification_state === ("queued" as boolean),
-        reason: "duplicate_status_event",
+        queued: existing.notification_state === "queued",
+        reason: guestBlocked ? "guest_blocked" : "duplicate_status_event",
       };
     }
     notificationId = existing.id;
   } else if (notificationError || !notificationId) {
     throw new Error("WhatsApp order notification event could not be persisted.");
+  }
+
+  if (guestBlocked) {
+    const { error: suppressionError } = await admin
+      .from("wa_order_notification_events")
+      .update({ notification_state: "suppressed" })
+      .eq("id", notificationId)
+      .eq("tenant_id", order.tenant_id);
+    if (suppressionError) throw new Error("Blocked guest notification could not be suppressed.");
+    return { queued: false as const, reason: "guest_blocked" };
   }
 
   const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -450,7 +455,7 @@ export async function queueWhatsAppOrderStatusNotification(
     await admin
       .from("wa_order_notification_events")
       .update({ notification_state: "queued" })
-      .eq("id", notification.id)
+      .eq("id", notificationId)
       .eq("tenant_id", order.tenant_id);
     return { queued: true as const, duplicate: true as const };
   }
@@ -462,7 +467,7 @@ export async function queueWhatsAppOrderStatusNotification(
       notification_state: "queued",
       message_id: message.id,
     })
-    .eq("id", notification.id)
+    .eq("id", notificationId)
     .eq("tenant_id", order.tenant_id);
   if (updateError) throw new Error("WhatsApp order notification state could not be updated.");
   return { queued: true as const, duplicate: false as const, messageId: message.id };
