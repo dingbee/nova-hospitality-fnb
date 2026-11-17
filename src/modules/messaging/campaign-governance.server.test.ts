@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- mocked Supabase builder is intentionally untyped. */
 import { describe, expect, it, vi } from "vitest";
-import { recordWhatsAppCampaignUsage } from "./campaign-governance.server";
+import { recordWhatsAppCampaignUsage, resolveEffectiveMetaMessageRate } from "./campaign-governance.server";
 
 function usageDb(result: { data?: unknown; error?: { code?: string } | null }) {
   const inserted: Record<string, unknown>[] = [];
@@ -82,5 +82,44 @@ describe("WCE-06 campaign usage evidence", () => {
       }),
     ).rejects.toThrow("usage_input_invalid");
     expect(inserted).toHaveLength(0);
+  });
+});
+
+describe("WCE-06 effective Meta rate resolution", () => {
+  it("selects the latest effective market/category rate", async () => {
+    const builder: any = {
+      select: () => builder,
+      eq: () => builder,
+      lte: () => builder,
+      or: () => builder,
+      order: () => builder,
+      limit: () => builder,
+      maybeSingle: async () => ({
+        data: {
+          id: "rate-1",
+          market_code: "TZ",
+          category: "marketing",
+          currency: "USD",
+          unit_price: "0.025",
+          effective_from: "2026-11-01T00:00:00.000Z",
+          effective_until: null,
+        },
+        error: null,
+      }),
+    };
+    const admin = { from: vi.fn(() => builder) };
+    const rate = await resolveEffectiveMetaMessageRate(
+      admin,
+      "TZ",
+      "marketing",
+      new Date("2026-11-17T00:00:00.000Z"),
+    );
+    expect(rate).toMatchObject({
+      id: "rate-1",
+      marketCode: "TZ",
+      category: "marketing",
+      currency: "USD",
+      unitPrice: 0.025,
+    });
   });
 });
