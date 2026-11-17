@@ -46,7 +46,9 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
         locationId: session.locationId,
         orderType: "takeaway",
       }),
-      supabaseAdmin.from("wa_conversations").select("guest_customer_id")
+      supabaseAdmin
+        .from("wa_conversations")
+        .select("guest_customer_id")
         .eq("id", session.conversationId)
         .eq("tenant_id", session.tenantId)
         .eq("property_id", session.propertyId)
@@ -70,15 +72,20 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
     const guestCustomerId = conversation?.guest_customer_id as string | null;
     const [{ data: guestCustomer }, loyaltyPointsBalance] = guestCustomerId
       ? await Promise.all([
-          supabaseAdmin.from("restaurant_guest_customers").select("display_name, status")
-            .eq("id", guestCustomerId).eq("tenant_id", session.tenantId).maybeSingle(),
+          supabaseAdmin
+            .from("restaurant_guest_customers")
+            .select("display_name, status")
+            .eq("id", guestCustomerId)
+            .eq("tenant_id", session.tenantId)
+            .maybeSingle(),
           supabaseAdmin.rpc("restaurant_guest_loyalty_balance", {
             _tenant_id: session.tenantId,
             _guest_customer_id: guestCustomerId,
           }),
         ])
       : [{ data: null }, 0];
-    if (guestCustomer?.status === "blocked") throw new Error("This guest account is not permitted to place orders.");
+    if (guestCustomer?.status === "blocked")
+      throw new Error("This guest account is not permitted to place orders.");
     const settings = tenant.settings as {
       business?: { tradingName?: string; logoUrl?: string | null };
     } | null;

@@ -100,7 +100,8 @@ export async function recordWhatsAppGuestConsent(
     state: "granted" | "revoked";
   },
 ) {
-  const dedupeKey = "wa:" + input.sourceEventId + ":" + input.guestCustomerId + ":marketing:" + input.state;
+  const dedupeKey =
+    "wa:" + input.sourceEventId + ":" + input.guestCustomerId + ":marketing:" + input.state;
   const { data, error } = await admin
     .from("restaurant_guest_customer_consents")
     .insert({
@@ -151,24 +152,21 @@ export async function getWhatsAppGuestCustomerHistory(
   tenantId: string,
   guestCustomerId: string,
 ) {
-  const [
-    { data: orders, error: orderError },
-    marketingConsent,
-    loyaltyPointsBalance,
-  ] = await Promise.all([
-    admin
-      .from("restaurant_orders")
-      .select("id, order_number, order_type, status, total, currency, opened_at, closed_at")
-      .eq("tenant_id", tenantId)
-      .eq("guest_customer_id", guestCustomerId)
-      .order("opened_at", { ascending: false })
-      .limit(10),
-    hasWhatsAppGuestMarketingConsent(admin, tenantId, guestCustomerId),
-    admin.rpc("restaurant_guest_loyalty_balance", {
-      _tenant_id: tenantId,
-      _guest_customer_id: guestCustomerId,
-    }),
-  ]);
+  const [{ data: orders, error: orderError }, marketingConsent, loyaltyPointsBalance] =
+    await Promise.all([
+      admin
+        .from("restaurant_orders")
+        .select("id, order_number, order_type, status, total, currency, opened_at, closed_at")
+        .eq("tenant_id", tenantId)
+        .eq("guest_customer_id", guestCustomerId)
+        .order("opened_at", { ascending: false })
+        .limit(10),
+      hasWhatsAppGuestMarketingConsent(admin, tenantId, guestCustomerId),
+      admin.rpc("restaurant_guest_loyalty_balance", {
+        _tenant_id: tenantId,
+        _guest_customer_id: guestCustomerId,
+      }),
+    ]);
   if (orderError) throw new Error("Guest CRM order history could not be loaded.");
   const orderIds = (orders ?? []).map((order: any) => order.id);
   const { data: lines, error: linesError } = orderIds.length
@@ -293,7 +291,10 @@ function orderStatusMessage(
   language: "en" | "sw",
 ): string | null {
   const messages: Record<string, { en: string; sw: string }> = {
-    accepted: { en: "Your order has been accepted and will be prepared soon.", sw: "Oda yako imekubaliwa na itaandaliwa hivi karibuni." },
+    accepted: {
+      en: "Your order has been accepted and will be prepared soon.",
+      sw: "Oda yako imekubaliwa na itaandaliwa hivi karibuni.",
+    },
     confirmed: { en: "Your order has been confirmed.", sw: "Oda yako imethibitishwa." },
     in_progress: { en: "Your order is being prepared.", sw: "Oda yako inaandaliwa." },
     preparing: { en: "Your order is being prepared.", sw: "Oda yako inaandaliwa." },
@@ -355,7 +356,8 @@ export async function queueWhatsAppOrderStatusNotification(
         .maybeSingle()
     : { data: null };
   if (customer?.status === "blocked") {
-    await admin.from("wa_order_notification_events")
+    await admin
+      .from("wa_order_notification_events")
       .update({ notification_state: "suppressed" })
       .eq("id", notificationId)
       .eq("tenant_id", order.tenant_id);

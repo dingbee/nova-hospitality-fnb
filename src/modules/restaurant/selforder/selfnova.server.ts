@@ -285,7 +285,8 @@ export async function askNova(
     // matter.
     await assertAiCapability(sb, menu.table.tenantId, "ai_concierge", menu.table.propertyId);
 
-    const { data: approvedFaqs, error: faqError } = await sb.from("restaurant_guest_faqs")
+    const { data: approvedFaqs, error: faqError } = await sb
+      .from("restaurant_guest_faqs")
       .select("locale, question, answer")
       .eq("tenant_id", menu.table.tenantId)
       .eq("property_id", menu.table.propertyId)
