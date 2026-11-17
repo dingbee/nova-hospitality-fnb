@@ -17,7 +17,7 @@ import {
   getTenantScope,
 } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
-import { insertMovement } from "./movements.server";
+import { findMovementByDedupeKey, insertMovement } from "./movements.server";
 import { assertLocationInTenant, locationNameMap } from "./locations.server";
 import type {
   CreateTransferInput,
@@ -347,7 +347,21 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
     if (l.dispatchedQuantity > Number(line.requested_quantity)) {
       throw new Error("Dispatched quantity cannot exceed the requested quantity.");
     }
-    await insertMovement(sb, userId, {
+    const dedupeKey = `transfer:out:${line.id}`;
+    const existingDispatched = Number(line.dispatched_quantity ?? 0);
+    if (existingDispatched > 0) {
+      if (Math.abs(existingDispatched - l.dispatchedQuantity) > 1e-9) {
+        throw new Error("A dispatched transfer line cannot be retried with a different quantity.");
+      }
+      const existingMovement = await findMovementByDedupeKey(sb, input.tenantId, dedupeKey);
+      if (!existingMovement || Math.abs(Number(existingMovement.quantity) + l.dispatchedQuantity) > 1e-9) {
+        throw new Error("Transfer dispatch ledger and line quantity are inconsistent; reconciliation is required.");
+      }
+      dispatchedValue += l.dispatchedQuantity * Number(line.unit_cost ?? 0);
+      continue;
+    }
+
+    const movementAttempt = await insertMovement(sb, userId, {
       tenantId: input.tenantId,
       propertyId: transfer.property_id,
       locationId: transfer.source_location_id,
@@ -366,14 +380,36 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
       correlationId: transfer.id,
       batchId: line.batch_id,
       occurredAt: stamp,
-      dedupeKey: `transfer:out:${line.id}`,
+      dedupeKey,
     });
-    dispatchedValue += l.dispatchedQuantity * Number(line.unit_cost ?? 0);
-    await sb
+    const movement =
+      movementAttempt ?? (await findMovementByDedupeKey(sb, input.tenantId, dedupeKey));
+    if (!movement || Math.abs(Number(movement.quantity) + l.dispatchedQuantity) > 1e-9) {
+      throw new Error("A prior dispatch attempt used a different quantity; ledger reconciliation is required.");
+    }
+
+    const { data: updatedLine, error: lineError } = await sb
       .from("restaurant_stock_transfer_lines")
       .update({ dispatched_quantity: l.dispatchedQuantity })
       .eq("id", line.id)
-      .eq("tenant_id", input.tenantId);
+      .eq("tenant_id", input.tenantId)
+      .eq("dispatched_quantity", existingDispatched)
+      .select("id")
+      .maybeSingle();
+    if (lineError) throw new Error(lineError.message);
+    if (!updatedLine) {
+      const { data: latestLine, error: latestError } = await sb
+        .from("restaurant_stock_transfer_lines")
+        .select("dispatched_quantity")
+        .eq("id", line.id)
+        .eq("tenant_id", input.tenantId)
+        .single();
+      if (latestError) throw new Error(latestError.message);
+      if (Math.abs(Number(latestLine?.dispatched_quantity ?? 0) - l.dispatchedQuantity) > 1e-9) {
+        throw new Error("Concurrent dispatch changed this line quantity; reconciliation is required.");
+      }
+    }
+    dispatchedValue += l.dispatchedQuantity * Number(line.unit_cost ?? 0);
   }
 
   const { error } = await sb
