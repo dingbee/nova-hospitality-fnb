@@ -184,6 +184,7 @@ describe("WhatsApp outbound queue", () => {
         campaignReconciliationRequired: 0,
         campaignDispatchDeferred: 1,
         campaignDispatchSuppressed: 0,
+        providerDispatchDeferred: 0,
       });
       expect(sendTemplateMessage).not.toHaveBeenCalled();
       expect(updates[0]).toMatchObject({
