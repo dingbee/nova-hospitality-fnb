@@ -155,6 +155,8 @@ export interface PurchaseSuggestion {
   /** Stock-unit quantities and source evidence used to reproduce this result. */
   purchaseQuantity?: number;
   purchaseUnitId?: string;
+  stockUnitId?: string;
+  targetCoverageDays?: number;
   supplierProductId?: string;
   purchaseUnitPrice?: number;
   purchaseCurrency?: string;
