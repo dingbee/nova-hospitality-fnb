@@ -346,7 +346,43 @@ export function WhatsAppOperationsCentre() {
                 </ul>
               )}
             </SectionCard>
-            <SectionCard title="Campaigns" description="Scheduled/event state, audience scope and delivery controls.">
+            <SectionCard title="Campaigns" description="Create governed drafts, activate schedules and pause campaigns. Dispatch remains default-off in UAT.">
+              <form
+                className="mb-4 grid gap-2 rounded-lg border p-3 sm:grid-cols-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  createCampaign.mutate();
+                }}
+              >
+                <input className="h-9 rounded-md border bg-background px-3 text-sm" placeholder="Campaign name" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} required minLength={2} />
+                <select className="h-9 rounded-md border bg-background px-2 text-sm" value={campaignTemplateId} onChange={(event) => setCampaignTemplateId(event.target.value)} required>
+                  <option value="">Select approved template</option>
+                  {templates.filter((template) => template.status === "approved").map((template) => <option key={template.id} value={template.id}>{template.template_name} · {template.language}</option>)}
+                </select>
+                <select className="h-9 rounded-md border bg-background px-2 text-sm" value={campaignLocationId} onChange={(event) => setCampaignLocationId(event.target.value)} required>
+                  <option value="">Select outlet</option>
+                  {(ws.data?.locations ?? []).filter((location) => !propertyId || location.property_id === propertyId).map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
+                </select>
+                <select className="h-9 rounded-md border bg-background px-2 text-sm" value={campaignBindingId} onChange={(event) => setCampaignBindingId(event.target.value)} required>
+                  <option value="">Select active phone binding</option>
+                  {(campaigns.data?.bindings ?? []).map((binding: any) => <option key={binding.id} value={binding.id}>{binding.display_phone_number ?? binding.phone_number_id}</option>)}
+                </select>
+                <input className="h-9 rounded-md border bg-background px-3 text-sm uppercase" placeholder="Market code (e.g. TZ)" value={campaignMarketCode} onChange={(event) => setCampaignMarketCode(event.target.value.toUpperCase())} required minLength={2} maxLength={3} />
+                <select className="h-9 rounded-md border bg-background px-2 text-sm" value={campaignTriggerType} onChange={(event) => setCampaignTriggerType(event.target.value as typeof campaignTriggerType)}>
+                  <option value="scheduled">Scheduled</option><option value="event">Event triggered</option>
+                </select>
+                {campaignTriggerType === "scheduled" ? (
+                  <input type="datetime-local" className="h-9 rounded-md border bg-background px-3 text-sm" value={campaignScheduledAt} onChange={(event) => setCampaignScheduledAt(event.target.value)} required />
+                ) : (
+                  <input className="h-9 rounded-md border bg-background px-3 text-sm" placeholder="Event key, e.g. order.status.paid" value={campaignEventKey} onChange={(event) => setCampaignEventKey(event.target.value)} required />
+                )}
+                <select className="h-9 rounded-md border bg-background px-2 text-sm" value={campaignLanguage} onChange={(event) => setCampaignLanguage(event.target.value as typeof campaignLanguage)}>
+                  <option value="">All guest languages</option><option value="en">English guests</option><option value="sw">Swahili guests</option>
+                </select>
+                <input type="number" min="0" className="h-9 rounded-md border bg-background px-3 text-sm" placeholder="Daily cap" value={campaignDailyCap} onChange={(event) => setCampaignDailyCap(event.target.value)} />
+                <input type="number" min="0" className="h-9 rounded-md border bg-background px-3 text-sm" placeholder="Total cap" value={campaignTotalCap} onChange={(event) => setCampaignTotalCap(event.target.value)} />
+                <button className="h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50 sm:col-span-2" disabled={createCampaign.isPending || !propertyId}>Create campaign draft</button>
+              </form>
               {campaignRows.length === 0 ? (
                 <EmptyState title="No campaigns" description="Governed WhatsApp campaigns will appear here once configured." icon={Megaphone} />
               ) : (
