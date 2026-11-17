@@ -195,6 +195,7 @@ export async function handleWhatsAppGuestCommerceMessage(
             status: order.status,
             items: order.items,
           })),
+          loyaltyPointsBalance: crmHistory.loyaltyPointsBalance,
         };
       }
       const result = await askNova(admin, {
