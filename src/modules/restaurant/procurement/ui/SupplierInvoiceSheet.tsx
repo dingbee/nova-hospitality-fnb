@@ -98,11 +98,22 @@ export function SupplierInvoiceSheet({
     }
   }, [open, purchaseOrderId]);
 
+  type PurchaseOrderLine = {
+    id: string;
+    description: string;
+    accepted_quantity?: number | null;
+    quantity: number;
+    confirmed_unit_price?: number | null;
+    unit_price: number;
+  };
+  const order = d?.order;
+  const orderItems = d?.items as PurchaseOrderLine[] | undefined;
+
   React.useEffect(() => {
-    if (!open || !purchaseOrderId || !d?.order) return;
-    setSupplierId(d.order.supplier_id ?? null);
+    if (!open || !purchaseOrderId || !order) return;
+    setSupplierId(order.supplier_id ?? null);
     setLines(
-      (d.items as any[]).map((i) => {
+      (orderItems ?? []).map((i) => {
         const accepted = Number(i.accepted_quantity ?? 0);
         return {
           key: nextKey(),
@@ -117,7 +128,7 @@ export function SupplierInvoiceSheet({
         };
       }),
     );
-  }, [open, purchaseOrderId, d?.order?.id]);
+  }, [open, purchaseOrderId, order, orderItems]);
 
   const setLine = (key: string, patch: Partial<LineState>) =>
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
