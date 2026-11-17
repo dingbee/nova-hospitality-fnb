@@ -43,7 +43,9 @@ export async function assertWhatsAppCampaignReady(
   await assertEntitled(admin, tenantId, "whatsapp_campaigns", { propertyId });
   const { data: campaign, error: campaignError } = await admin
     .from("wa_campaigns")
-    .select("id, tenant_id, property_id, template_id, status, trigger_type, scheduled_at, daily_cap, total_cap")
+    .select(
+      "id, tenant_id, property_id, template_id, status, trigger_type, scheduled_at, daily_cap, total_cap",
+    )
     .eq("id", campaignId)
     .eq("tenant_id", tenantId)
     .eq("property_id", propertyId)
@@ -79,7 +81,10 @@ export async function prepareWhatsAppCampaignRecipient(
   input: { tenantId: string; propertyId: string; campaignId: string; guestCustomerId: string },
 ) {
   const { campaign, template } = await assertWhatsAppCampaignReady(
-    admin, input.tenantId, input.propertyId, input.campaignId,
+    admin,
+    input.tenantId,
+    input.propertyId,
+    input.campaignId,
   );
   const { data: guest, error: guestError } = await admin
     .from("restaurant_guest_customers")
@@ -90,7 +95,11 @@ export async function prepareWhatsAppCampaignRecipient(
   if (guestError || !guest) throw new WhatsAppCampaignGovernanceError("guest_not_found");
   let suppressionReason: string | null = guest.status === "blocked" ? "guest_blocked" : null;
   if (!suppressionReason && template.category === "marketing") {
-    const consent = await hasWhatsAppGuestMarketingConsent(admin, input.tenantId, input.guestCustomerId);
+    const consent = await hasWhatsAppGuestMarketingConsent(
+      admin,
+      input.tenantId,
+      input.guestCustomerId,
+    );
     if (!consent) suppressionReason = "marketing_consent_missing";
   }
   const state = suppressionReason ? "suppressed" : "eligible";
@@ -134,9 +143,14 @@ export async function recordWhatsAppCampaignUsage(
     metadata?: Record<string, unknown>;
   },
 ) {
-  if (!Number.isFinite(input.quantity) || input.quantity <= 0 ||
-      !Number.isFinite(input.unitPrice) || input.unitPrice < 0 ||
-      !/^[A-Z]{3}$/.test(input.currency) || input.idempotencyKey.length < 6)
+  if (
+    !Number.isFinite(input.quantity) ||
+    input.quantity <= 0 ||
+    !Number.isFinite(input.unitPrice) ||
+    input.unitPrice < 0 ||
+    !/^[A-Z]{3}$/.test(input.currency) ||
+    input.idempotencyKey.length < 6
+  )
     throw new WhatsAppCampaignGovernanceError("usage_input_invalid");
   const amount = Number((input.quantity * input.unitPrice).toFixed(6));
   const rateSnapshot = {
