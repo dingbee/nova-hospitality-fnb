@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
@@ -96,6 +96,17 @@ import type { SalesLineModifier } from "@/modules/restaurant/sales/sales.server"
 import { searchMenuItems } from "@/modules/restaurant/selforder/selforder-search";
 
 export const Route = createFileRoute("/order/$tableId")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    legacy: search.legacy === "1" || search.legacy === true,
+  }),
+  beforeLoad: ({ params, search }) => {
+    if (!search.legacy) {
+      throw redirect({
+        to: "/qr/$tableId",
+        params: { tableId: params.tableId },
+      });
+    }
+  },
   head: () => ({
     meta: [
       { title: `Order — ${PRODUCT.guestFacingName}` },
