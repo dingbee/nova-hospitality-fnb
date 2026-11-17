@@ -48,8 +48,8 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
     current_quantity: opts.itemQuantity,
   };
   const locations = [
-    { id: SOURCE, name: "Dry store" },
-    { id: DEST, name: "Kitchen" },
+    { id: SOURCE, tenant_id: TENANT, property_id: "property-1", scope: "property", status: "active", name: "Dry store" },
+    { id: DEST, tenant_id: TENANT, property_id: "property-1", scope: "property", status: "active", name: "Kitchen" },
   ];
   const transfers: Record<string, any> = {};
   const transferLines: Record<string, any> = {};
@@ -106,9 +106,10 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
         return { data: mode === "list" ? [item] : item, error: null };
       }
       if (table === "restaurant_locations" && op === "select") {
-        if (inFilters.id)
-          return { data: locations.filter((l) => inFilters.id!.includes(l.id)), error: null };
-        return { data: locations, error: null };
+        const rows = inFilters.id
+          ? locations.filter((l) => inFilters.id!.includes(l.id))
+          : locations;
+        return { data: single ? (rows[0] ?? null) : rows, error: null };
       }
       if (table === "restaurant_members")
         return {
@@ -200,6 +201,7 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
     movements,
     transfers,
     transferLines,
+    locations,
     onHandAt,
   };
 }
@@ -375,6 +377,29 @@ describe("stock transfer lifecycle — the exact reported P0 scenario", () => {
     ).rejects.toThrow(/cannot be dispatched from status "dispatched"/i);
     expect(fake.item.current_quantity).toBe(1); // unchanged — no double move
     expect(fake.movements).toHaveLength(1);
+  });
+
+  it("rejects transfer creation and dispatch when a referenced location is inactive", async () => {
+    const fake = makeFakeSupabase({ itemQuantity: 16 });
+    const created = await createTransfer(fake.supabase, USER, {
+      tenantId: TENANT,
+      sourceLocationId: SOURCE,
+      destinationLocationId: DEST,
+      requiresApproval: false,
+      submit: true,
+      lines: [{ inventoryItemId: ITEM, requestedQuantity: 5 }],
+    } as any);
+    const lineId = Object.keys(fake.transferLines)[0];
+    fake.locations.find((location) => location.id === SOURCE)!.status = "inactive";
+
+    await expect(
+      dispatchTransfer(fake.supabase, USER, {
+        tenantId: TENANT,
+        transferId: created.id,
+        lines: [{ lineId, dispatchedQuantity: 5 }],
+      } as any),
+    ).rejects.toThrow(/inactive and cannot accept new inventory transactions/i);
+    expect(fake.movements).toHaveLength(0);
   });
 
   it("refuses an insufficient-stock dispatch unless the item allows negative stock", async () => {
