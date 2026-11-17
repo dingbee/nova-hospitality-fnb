@@ -6,6 +6,7 @@ import { UtensilsCrossed, Plus, Minus, ShoppingBag, CheckCircle2 } from "lucide-
 import {
   guestPortalMenuFn,
   submitGuestCommerceOrderFn,
+  initiateGuestCommercePaymentFn,
 } from "@/modules/messaging/guest-portal.functions";
 import type { GuestLineInput } from "@/modules/restaurant/selforder/selforder.contracts";
 
@@ -66,6 +67,7 @@ function WhatsAppGuestPortal() {
   const { token } = Route.useParams();
   const loadMenu = useServerFn(guestPortalMenuFn);
   const submitOrder = useServerFn(submitGuestCommerceOrderFn);
+  const initiatePayment = useServerFn(initiateGuestCommercePaymentFn);
   const menu = useQuery({
     queryKey: ["whatsapp-guest-portal", token],
     queryFn: () => loadMenu({ data: { token } }),
@@ -77,11 +79,29 @@ function WhatsAppGuestPortal() {
   const [variantSelection, setVariantSelection] = useState<Record<string, string>>({});
   const [guestName, setGuestName] = useState("");
   const [clientRequestId, setClientRequestId] = useState("");
+  const [paymentError, setPaymentError] = useState("");
   const order = useMutation({
     mutationFn: (lines: GuestLineInput[]) =>
       submitOrder({
         data: { token, guestName, clientRequestId, lines },
       }),
+  });
+  const payment = useMutation({
+    mutationFn: () =>
+      initiatePayment({ data: { token, orderId: order.data!.orderId } }),
+    onSuccess: (result) => {
+      if (result.ok && result.status === "redirect") {
+        window.location.assign(result.redirectUrl);
+        return;
+      }
+      setPaymentError(
+        result.reason === "provider_not_configured"
+          ? "Online payment is not yet enabled for this restaurant. Contact the outlet to complete your order."
+          : result.reason === "not_ready_for_payment"
+            ? "This order is not ready for payment yet."
+            : "A secure payment session could not be started. Please retry.",
+      );
+    },
   });
 
   useEffect(() => {
@@ -206,6 +226,29 @@ function WhatsAppGuestPortal() {
                 ? "Your order is awaiting payment confirmation before production begins."
                 : "Your order has been sent to the restaurant for preparation."}
             </p>
+            {order.data.paymentTiming === "pay_first" && order.data.status !== "paid" ? (
+              <div className="mt-4">
+                {paymentError ? <p className="mb-2 text-sm text-destructive">{paymentError}</p> : null}
+                {payment.isError ? (
+                  <p className="mb-2 text-sm text-destructive">
+                    {payment.error instanceof Error
+                      ? payment.error.message
+                      : "Secure payment could not be started."}
+                  </p>
+                ) : null}
+                <button
+                  type="button"
+                  className="w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+                  disabled={payment.isPending}
+                  onClick={() => {
+                    setPaymentError("");
+                    payment.mutate();
+                  }}
+                >
+                  {payment.isPending ? "Preparing secure checkout…" : "Continue to secure payment"}
+                </button>
+              </div>
+            ) : null}
           </section>
         ) : null}
         <div className="mb-6">
