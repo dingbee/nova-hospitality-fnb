@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - "wce/wce-06-campaign-commercial-controls"
+      - "wce/wce-07-operations-analytics"
   pull_request:
     branches:
       - "wce/wce-02-messaging-sessions"
       - "wce/wce-03-08-stack"
+      - "wce/wce-06-campaign-commercial-controls"
   workflow_dispatch:
 
 permissions:
@@ -67,6 +69,7 @@ jobs:
           src/modules/messaging/guest-crm.server.test.ts
           src/modules/messaging/campaign-governance.server.test.ts
           src/modules/messaging/outbound-queue.server.test.ts
+          src/modules/messaging/operations.server.test.ts
           src/modules/messaging/guest-reservations.server.test.ts
           src/modules/restaurant/selforder/providers/pesapal.server.test.ts
           src/modules/restaurant/selforder/selfpay.server.test.ts
