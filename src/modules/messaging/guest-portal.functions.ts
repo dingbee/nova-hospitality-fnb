@@ -186,20 +186,48 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
       );
     }
 
-    const [{ data: tenant, error: tenantError }, catalog] = await Promise.all([
-      supabaseAdmin
-        .from("restaurant_tenants")
-        .select("id, settings, status")
-        .eq("id", session.tenantId)
-        .maybeSingle(),
-      fetchSellableCatalog(supabaseAdmin, session.tenantId, {
-        propertyId: session.propertyId,
-        locationId: session.locationId,
-        orderType: data.fulfilmentMethod === "dine_in" ? "dine_in" : "takeaway",
-      }),
-    ]);
+    const { data: tenant, error: tenantError } = await supabaseAdmin
+      .from("restaurant_tenants")
+      .select("id, settings, status")
+      .eq("id", session.tenantId)
+      .maybeSingle();
     if (tenantError || !tenant || tenant.status !== "active")
       throw new Error("The restaurant is not currently accepting orders.");
+
+    const requestKey = "wa-guest:" + session.sessionId + ":" + data.clientRequestId;
+    const { data: existingOrder, error: existingOrderError } = await supabaseAdmin
+      .from("restaurant_orders")
+      .select("id, order_number, total, currency, status, order_type")
+      .eq("tenant_id", session.tenantId)
+      .eq("guest_portal_session_id", session.sessionId)
+      .eq("client_request_id", requestKey)
+      .maybeSingle();
+    if (existingOrderError) throw new Error("The previous order request could not be checked.");
+    const paymentTiming = resolveGuestPaymentTiming(tenant.settings);
+    if (existingOrder) {
+      if (paymentTiming === "pay_after_service" && existingOrder.status === "open") {
+        await fireGuestOrder(supabaseAdmin, {
+          tenantId: session.tenantId,
+          orderId: existingOrder.id,
+        });
+      }
+      return {
+        orderId: existingOrder.id,
+        orderNumber: existingOrder.order_number,
+        total: Number(existingOrder.total ?? 0),
+        currency: existingOrder.currency ?? session.currency,
+        paymentTiming,
+        fulfilmentMethod: existingOrder.order_type === "dine_in" ? "dine_in" : "pickup",
+        status: existingOrder.status,
+        idempotent: true,
+      };
+    }
+
+    const catalog = await fetchSellableCatalog(supabaseAdmin, session.tenantId, {
+      propertyId: session.propertyId,
+      locationId: session.locationId,
+      orderType: data.fulfilmentMethod === "dine_in" ? "dine_in" : "takeaway",
+    });
 
     const sellableIds = new Set(
       catalog.items
@@ -281,7 +309,6 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
       guestCount = Number(reservation.party_size);
     }
 
-    const requestKey = "wa-guest:" + session.sessionId + ":" + data.clientRequestId;
     const order = await createGuestOrder(supabaseAdmin, {
       tenantId: session.tenantId,
       propertyId: session.propertyId,
@@ -298,7 +325,6 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
       guestReservationId: data.fulfilmentMethod === "dine_in" ? data.reservationId : null,
     });
 
-    const paymentTiming = resolveGuestPaymentTiming(tenant.settings);
     if (!order.idempotent && paymentTiming === "pay_after_service") {
       await fireGuestOrder(supabaseAdmin, { tenantId: session.tenantId, orderId: order.id });
     }
