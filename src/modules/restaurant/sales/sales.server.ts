@@ -577,7 +577,7 @@ export async function recalcOrder(sb: Sb, tenantId: string, orderId: string) {
   // Complimentary lines remain real production/stock costs, but are not
   // payable guest revenue. Keep them in cost_total while excluding them from
   // every commercial amount shown on the bill.
-  const chargeable = live.filter((i) => !Boolean(i.is_comp));
+  const chargeable = live.filter((i) => !i.is_comp);
   const subtotal = chargeable.reduce(
     (s, i) => s + Number(i.quantity ?? 0) * Number(i.unit_price ?? 0),
     0,
