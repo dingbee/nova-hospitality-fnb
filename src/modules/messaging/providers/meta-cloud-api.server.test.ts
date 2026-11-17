@@ -11,6 +11,7 @@ import {
   listWabaMessageTemplates,
   registerVerifiedPhoneNumber,
   sendTextMessage,
+  sendTemplateMessage,
   subscribeWabaToApp,
   verifyWebhookChallenge,
   verifyWebhookSignature,
@@ -143,6 +144,25 @@ describe("Meta WhatsApp Cloud API foundation", () => {
     const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
     expect(String(url)).toContain("/phone-456/messages");
     expect(JSON.parse(String(init.body))).toMatchObject({ messaging_product: "whatsapp", to: "255700000000" });
+  });
+
+  it("sends an approved WhatsApp template using the tenant phone-number ID", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      messaging_product: "whatsapp",
+      messages: [{ id: "wamid.template.1" }],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(sendTemplateMessage(credentials, "+255 700 000 000", {
+      name: "weekly_special",
+      language: "en",
+      components: [{ type: "body", parameters: [{ type: "text", text: "Friday" }] }],
+    })).resolves.toMatchObject({ messages: [{ id: "wamid.template.1" }] });
+    const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(String(url)).toContain("/phone-456/messages");
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      type: "template",
+      template: { name: "weekly_special", language: { code: "en" } },
+    });
   });
 
   it("rejects malformed recipients and empty message bodies", async () => {
