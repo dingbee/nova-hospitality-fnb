@@ -32,6 +32,7 @@ export async function processPendingWhatsAppOutboundMessages(
   let sent = 0;
   let retried = 0;
   let failed = 0;
+  let campaignReconciliationRequired = 0;
 
   for (const message of messages) {
     try {
@@ -132,7 +133,7 @@ export async function processPendingWhatsAppOutboundMessages(
           .update({ state: "sent", dispatched_at: new Date().toISOString() })
           .eq("id", campaignRecipientId)
           .eq("tenant_id", message.tenant_id);
-        if (campaignUpdateError) throw new Error("whatsapp_campaign_recipient_sent_state_failed");
+        if (campaignUpdateError) campaignReconciliationRequired++;
       }
       const notificationEventId = message.payload?.order_notification_event_id;
       if (typeof notificationEventId === "string") {
@@ -193,5 +194,5 @@ export async function processPendingWhatsAppOutboundMessages(
       else failed++;
     }
   }
-  return { claimed: messages.length, sent, retried, failed };
+  return { claimed: messages.length, sent, retried, failed, campaignReconciliationRequired };
 }
