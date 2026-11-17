@@ -42,6 +42,21 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'Guest Commerce channel, table and order-type columns are incomplete';
   END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.restaurant_guest_commerce_sessions'::regclass
+      AND conname = 'restaurant_guest_commerce_sessions_source_channel_check'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.restaurant_guest_commerce_sessions'::regclass
+      AND conname = 'restaurant_guest_commerce_sessions_channel_binding_check'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.restaurant_guest_commerce_sessions'::regclass
+      AND conname = 'restaurant_guest_commerce_sessions_table_channel_check'
+  ) THEN
+    RAISE EXCEPTION 'Guest Commerce channel and binding invariants are missing';
+  END IF;
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public'
