@@ -365,6 +365,13 @@ export const NAV_GROUPS: NavGroup[] = [
         hint: "Operational preferences",
       },
       {
+        to: "/admin/restaurant/whatsapp",
+        label: "WhatsApp operations",
+        icon: MessageSquare,
+        permission: "SETTINGS:READ",
+        hint: "Guest conversations, CRM, campaigns and conversion analytics",
+      },
+      {
         to: "/admin/restaurant/integrations",
         label: "Channel integrations",
         icon: Link2,
