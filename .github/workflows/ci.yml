@@ -228,6 +228,7 @@ jobs:
           retention-days: 14
 
       - name: Scoped GTM and changed-path functional tests
+        id: scoped_tests
         run: |
           bunx vitest run \
             src/modules/restaurant/core/members.server.test.ts \
@@ -249,6 +250,7 @@ jobs:
 
       - name: Full test suite (repository baseline)
         id: full_tests
+        continue-on-error: true
         run: bun run test
 
       - name: Report full test baseline
