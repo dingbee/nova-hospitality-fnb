@@ -23,7 +23,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t files < <(git diff --name-only origin/main...HEAD | grep -E '\\.(ts|tsx|js|jsx|json|md|yml|yaml)$' || true)
+          mapfile -t files < <(git diff --name-only origin/main...HEAD | grep -E '\.(ts|tsx|js|jsx|json|md|yml|yaml)$' || true)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No formattable files changed."
             exit 0
