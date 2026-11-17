@@ -98,6 +98,10 @@ function query(table: string) {
       filters.push(["__gte:" + col, value]);
       return api;
     },
+    lte(col: string, value: any) {
+      filters.push(["__lte:" + col, value]);
+      return api;
+    },
     order() {
       return api;
     },
@@ -108,6 +112,7 @@ function query(table: string) {
       return rows.filter((r) =>
         filters.every(([c, v]) => {
           if (c.startsWith("__gte:")) return String(r[c.slice(6)] ?? "") >= String(v);
+          if (c.startsWith("__lte:")) return String(r[c.slice(6)] ?? "") <= String(v);
           return v && v.__in ? v.__in.includes(r[c]) : r[c] === v;
         }),
       );
