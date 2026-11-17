@@ -6,14 +6,6 @@ BEGIN;
 INSERT INTO public.restaurant_tenants (id, slug, name)
 VALUES ('f2000000-0000-4000-8000-000000000001', 'p0-02-tenant', 'P0-02 Inventory Tenant');
 
-INSERT INTO public.restaurant_members (tenant_id, property_id, user_id, role)
-VALUES (
-  'f2000000-0000-4000-8000-000000000001',
-  'f2000000-0000-4000-8000-000000000002',
-  'f2000000-0000-4000-8000-000000000010',
-  'owner'
-);
-
 INSERT INTO public.restaurant_properties (id, tenant_id, slug, name, currency)
 VALUES (
   'f2000000-0000-4000-8000-000000000002',
@@ -21,6 +13,14 @@ VALUES (
   'p0-02-property',
   'P0-02 Property',
   'TZS'
+);
+
+INSERT INTO public.restaurant_members (tenant_id, property_id, user_id, role)
+VALUES (
+  'f2000000-0000-4000-8000-000000000001',
+  'f2000000-0000-4000-8000-000000000002',
+  'f2000000-0000-4000-8000-000000000010',
+  'owner'
 );
 
 INSERT INTO public.restaurant_locations (id, tenant_id, property_id, slug, name, location_type)
