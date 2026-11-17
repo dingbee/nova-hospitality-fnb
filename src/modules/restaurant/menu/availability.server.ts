@@ -26,7 +26,9 @@ export async function resolveMenuAvailability(
       sb.from("restaurant_recipes").select("id, status").eq("tenant_id", tenantId),
       sb
         .from("restaurant_recipe_lines")
-        .select("recipe_id, inventory_item_id, sub_recipe_id, component_kind, is_optional, quantity")
+        .select(
+          "recipe_id, inventory_item_id, sub_recipe_id, component_kind, is_optional, quantity",
+        )
         .eq("tenant_id", tenantId),
       (() => {
         let query = sb
@@ -119,9 +121,7 @@ export async function resolveMenuAvailability(
       if (line.component_kind === "sub_recipe" && line.sub_recipe_id) {
         const nestedStatus = recipeStatus.get(line.sub_recipe_id);
         if (nestedStatus !== "active") {
-          issues.push(
-            nestedStatus ? "Sub-recipe is " + nestedStatus : "Sub-recipe is unavailable",
-          );
+          issues.push(nestedStatus ? "Sub-recipe is " + nestedStatus : "Sub-recipe is unavailable");
           continue;
         }
         const nested = requiredStock(line.sub_recipe_id, quantity, depth + 1, nextSeen);
@@ -186,11 +186,7 @@ export async function resolveMenuAvailability(
         }
         // A recipe with no inventory-linked components has no inventory cap.
         availableQuantity =
-          requirements.size === 0
-            ? null
-            : Number.isFinite(orderable)
-              ? Math.max(0, orderable)
-              : 0;
+          requirements.size === 0 ? null : Number.isFinite(orderable) ? Math.max(0, orderable) : 0;
         reasons.push(...issues);
         inventoryReady = issues.length === 0;
       }
