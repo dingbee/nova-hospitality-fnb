@@ -25,9 +25,22 @@ ALTER TABLE public.restaurant_guest_commerce_sessions
     CHECK (source_channel IN ('whatsapp', 'website', 'qr', 'social', 'direct', 'concierge')),
   ADD CONSTRAINT restaurant_guest_commerce_sessions_channel_binding_check
     CHECK (
-      (source_channel = 'whatsapp' AND binding_id IS NOT NULL AND conversation_id IS NOT NULL)
-      OR (source_channel <> 'whatsapp' AND binding_id IS NULL)
+      (source_channel = 'whatsapp'
+        AND binding_id IS NOT NULL
+        AND conversation_id IS NOT NULL
+        AND created_by_event_id IS NOT NULL)
+      OR (source_channel <> 'whatsapp'
+        AND binding_id IS NULL
+        AND conversation_id IS NULL
+        AND created_by_event_id IS NULL)
     ),
+  ADD CONSTRAINT restaurant_guest_commerce_sessions_table_channel_check
+    CHECK (
+      (source_channel = 'qr' AND table_id IS NOT NULL AND order_type = 'dine_in')
+      OR (source_channel <> 'qr' AND table_id IS NULL)
+    ),
+  ADD CONSTRAINT restaurant_guest_commerce_sessions_metadata_object_check
+    CHECK (jsonb_typeof(metadata) = 'object'),
   ADD CONSTRAINT restaurant_guest_commerce_sessions_binding_scope_fkey
     FOREIGN KEY (tenant_id, property_id, location_id, binding_id)
     REFERENCES public.wa_phone_number_bindings(tenant_id, property_id, location_id, id)
