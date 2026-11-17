@@ -111,9 +111,9 @@ export function resolveServiceConfiguration(settings: unknown): ResolvedServiceC
   return { serviceMode, collectionMethod, readyAlert };
 }
 
-function asSettingsRecord(value: unknown): Record<string, any> {
+function asSettingsRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, any>
+    ? value as Record<string, unknown>
     : {};
 }
 
@@ -121,7 +121,7 @@ function asSettingsRecord(value: unknown): Record<string, any> {
 export function mergePropertyServiceSettings(
   tenantSettings: unknown,
   propertySettings: unknown,
-): Record<string, any> {
+): Record<string, unknown> {
   const tenant = asSettingsRecord(tenantSettings);
   const property = asSettingsRecord(propertySettings);
   return {
@@ -134,6 +134,10 @@ export function mergePropertyServiceSettings(
     operatingModel: {
       ...asSettingsRecord(tenant.operatingModel),
       ...asSettingsRecord(property.operatingModel),
+    },
+    onboarding: {
+      ...asSettingsRecord(tenant.onboarding),
+      ...asSettingsRecord(property.onboarding),
     },
   };
 }
