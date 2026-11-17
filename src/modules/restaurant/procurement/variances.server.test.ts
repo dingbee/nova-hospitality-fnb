@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Sb } from "../core/access.server";
 
 const mocks = vi.hoisted(() => ({
   assertCapability: vi.fn().mockResolvedValue(undefined),
@@ -38,8 +39,14 @@ function makeSupabase() {
   };
   const writes: any[] = [];
   let operation = "select";
-  let patch: any = null;
-  const builder: any = {
+  let patch: { status: string } | null = null;
+  type Query = {
+    select: (...args: unknown[]) => Query;
+    eq: (...args: unknown[]) => Query;
+    update: (value: { status: string }) => Query;
+    single: () => Promise<{ data: typeof before | { id: string; status: string }; error: null }>;
+  };
+  const builder: Query = {
     select: () => builder,
     eq: () => builder,
     update: (value: any) => {
@@ -49,11 +56,11 @@ function makeSupabase() {
       return builder;
     },
     single: async () => ({
-      data: operation === "select" ? before : { id: VARIANCE, status: patch.status },
+      data: operation === "select" ? before : { id: VARIANCE, status: patch?.status ?? "open" },
       error: null,
     }),
   };
-  return { sb: { from: () => builder }, writes };
+  return { sb: { from: () => builder } as unknown as Sb, writes };
 }
 
 describe("procurement variance maker-checker", () => {
@@ -65,7 +72,7 @@ describe("procurement variance maker-checker", () => {
         id: VARIANCE,
         status: "resolved",
         notes: "Reviewed",
-      } as any),
+      } as Parameters<typeof resolveVariance>[2]),
     ).rejects.toThrow(/Separation of duties/);
 
     expect(mocks.assertCapability).toHaveBeenCalledWith(
