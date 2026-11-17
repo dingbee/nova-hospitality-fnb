@@ -1774,7 +1774,7 @@ async function verifyProcurementDraft(
     .select("id, inventory_item_id, quantity, source_action_id, preferred_supplier_id, supplier_product_id, unit_id, stock_unit_id, stock_units_per_purchase_unit, minimum_order_quantity, order_multiple, estimated_unit_cost")
     .eq("purchase_request_id", request.id);
   if (itemsErr) throw new Error(itemsErr.message);
-  const rows = (items ?? []) as Array<{ inventory_item_id: string | null; quantity: number }>;
+  const rows = (items ?? []) as Array<{ id: string; inventory_item_id: string | null; quantity: number; source_action_id: string | null; preferred_supplier_id: string | null; supplier_product_id: string | null; unit_id: string | null; stock_unit_id: string | null; stock_units_per_purchase_unit: number | null; minimum_order_quantity: number | null; order_multiple: number | null; estimated_unit_cost: number | null }>;
   const matchingItem = expectedItemId
     ? rows.find((r) => r.inventory_item_id === expectedItemId)
     : rows[0];
