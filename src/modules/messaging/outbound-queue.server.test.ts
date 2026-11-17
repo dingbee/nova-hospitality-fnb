@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- the mocked Supabase query builder mirrors the untyped server client boundary. */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/modules/api-platform/integrations.server", () => ({
   getIntegrationSecret: vi.fn().mockResolvedValue("tenant-token"),
 }));
@@ -77,7 +77,16 @@ function fakeAdmin(outbound = queued) {
   return { admin: { rpc, from }, updates };
 }
 
+const previousProviderDispatch = process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED;
+
 describe("WhatsApp outbound queue", () => {
+  beforeEach(() => {
+    process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED = "true";
+  });
+  afterEach(() => {
+    if (previousProviderDispatch === undefined) delete process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED;
+    else process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED = previousProviderDispatch;
+  });
   it("dispatches an approved template message through the same tenant-scoped outbox", async () => {
     const templateMessage = {
       ...queued,
@@ -105,6 +114,7 @@ describe("WhatsApp outbound queue", () => {
       campaignReconciliationRequired: 0,
       campaignDispatchDeferred: 0,
       campaignDispatchSuppressed: 0,
+      providerDispatchDeferred: 0,
     });
     expect(sendTemplateMessage).toHaveBeenCalledWith(
       { accessToken: "tenant-token", wabaId: "987654321", phoneNumberId: "123456789" },
@@ -182,4 +192,29 @@ describe("WhatsApp outbound queue", () => {
       else process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED = previous;
     }
   });
+  it("defers every provider message while the global dispatch gate is disabled", async () => {
+    delete process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED;
+    vi.clearAllMocks();
+    const { admin, updates } = fakeAdmin();
+    const result = await processPendingWhatsAppOutboundMessages(admin, {
+      workerId: "worker-provider-disabled",
+    });
+    expect(result).toEqual({
+      claimed: 1,
+      sent: 0,
+      retried: 0,
+      failed: 0,
+      campaignReconciliationRequired: 0,
+      campaignDispatchDeferred: 0,
+      campaignDispatchSuppressed: 0,
+      providerDispatchDeferred: 1,
+    });
+    expect(sendTextMessage).not.toHaveBeenCalled();
+    expect(updates[0]).toMatchObject({
+      locked_at: null,
+      locked_by: null,
+      last_error: "provider_dispatch_disabled",
+    });
+  });
+
 });
