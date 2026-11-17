@@ -17,7 +17,7 @@
 | WCE-03 — WhatsApp-to-Guest-Portal handoff | VERIFIED — CI #151 PASS | PR #199: `guest-commerce.server.ts`, `outbound-queue.server.ts`, migration `0139_wce03_outbound_message_outbox.sql`, dispatcher integration | WCE CI #151 passed on head `56231b7258ba7e7eed09f678afdb51a2583947d5`; scoped tests, full suite, typecheck, build and clean replay green | CI, multi-tenant/outbox idempotency and delivery/retry acceptance |
 | WCE-04 — Unified Guest Commerce and checkout | VERIFIED — CI #151 PASS | PR #199: Guest Portal route/functions, canonical catalogue/pricing/modifier resolution, cart and takeaway checkout; migration `0140_wce04_guest_commerce_checkout.sql` | Dedicated WCE CI not yet evidenced on continuation head; acceptance run required | CI, stock/recipe availability, checkout idempotency, pricing/currency and property/outlet isolation |
 | WCE-05 — Orders, CRM and AI Concierge | VERIFIED — CI #151 PASS | PR #199: tenant-scoped guest CRM/consent, order lifecycle notifications, handover, loyalty, FAQ grounding; migrations `0141`–`0143` | Dedicated WCE CI not yet evidenced on continuation head; acceptance run required | CI, consent enforcement, blocked-guest suppression, notification reconciliation, loyalty immutability and AI scope tests |
-| WCE-06 — Payments, reservations and fulfilment | NOT STARTED | No implementation evidence in active WCE continuation | — | Tenant/property-configured Pesapal and authoritative restaurant reservation contract; no inferred PMS booking reuse |
+| WCE-06 — Payments, reservations and fulfilment | IMPLEMENTATION IN PROGRESS — ACCEPTANCE PENDING | PR #200 dependent continuation: property-scoped encrypted Pesapal adapter, Guest Portal hosted payment initiation/verification, native table reservation migration/RPC and property-timezone reservation services/UI | Dedicated WCE-06 tests and PostgreSQL 17 replay pending | Complete checkout/payment lifecycle, reservation management/notifications, fulfilment mode handling, tenant/property isolation and acceptance certification |
 | WCE-07 — Commercial controls, campaigns and analytics | NOT STARTED | No implementation evidence in active WCE continuation | — | Reuse commercial entitlements/quotas, Meta template governance, campaign consent and attribution/cost analytics |
 | WCE-08 — Integrated acceptance and certification | NOT STARTED | No integrated certification evidence | — | WCE-00 through WCE-07 acceptance, live Meta test assets, multi-tenant E2E and operational runbook |
 
@@ -52,6 +52,15 @@
 
 The WCE workflow is now present on both the WCE-02 base branch and continuation branch. It is read-only with respect to repository contents and runs changed-source lint, scoped WCE tests, full repository tests, strict typecheck, production build/route generation and PostgreSQL 17 clean migration replay. WCE-03 through WCE-05 are acceptance-verified on head `56231b7258ba7e7eed09f678afdb51a2583947d5` by GitHub Actions run #151. WCE-06 may now proceed on a dependent continuation branch; no merge or production release is implied.
 
+## WCE-06 implementation scope
+
+- Pesapal is resolved from the exact active `api_integrations` record for tenant + property + provider + payment integration type. Credentials are decrypted server-side from the encrypted integration registry; no global `PESAPAL_*` environment fallback is permitted.
+- Pesapal environment is property-configured (`sandbox` or `production`). IPN registration is persisted back to the same integration config.
+- Guest Portal payment initiation and browser-return confirmation are scoped to the exact Guest Portal session and its own order; the provider response is re-queried server-side before the order can become paid.
+- Native table reservations use the restaurant's existing `restaurant_tables` inventory, property timezone, a service-role-only atomic reservation RPC, per-outlet serialization and idempotent request IDs.
+- Reservation availability is a preview only; final table allocation is repeated transactionally in PostgreSQL to prevent double-booking.
+- Fulfilment modes and operational handoff remain outstanding within WCE-06.
+
 ## External dependency register
 
 1. Meta App ID and App Secret, Meta Business verification, Embedded Signup v4 configuration, Advanced Access/App Review and a verified test WABA/phone.
@@ -60,6 +69,9 @@ The WCE workflow is now present on both the WCE-02 base branch and continuation 
 4. Existing `CRON_SECRET` must match the Supabase Vault secret `lexibite_cron_secret` used by the dispatcher schedule.
 5. Tenant/property Pesapal integration credentials and a defined restaurant reservation authority are required before WCE-06 live acceptance.
 6. Live Meta delivery and callback verification remain unclaimed until the above assets are supplied and tested.
+7. Each property using online payments must register its own `pesapal` / `payment` integration with an encrypted JSON secret containing `consumerKey` and `consumerSecret`, plus `config.environment`. No tenant-wide/global fallback is used.
+8. `NOVA_API_PLATFORM_ENCRYPTION_KEY` and an HTTPS `APP_BASE_URL` are required for encrypted Pesapal credentials and IPN registration.
+9. Reservation tables, property timezone and customer-facing outlet status must be configured before guest reservations can be offered.
 
 ## Operating rule
 
