@@ -22,6 +22,7 @@ interface FakeItem {
   name: string;
   current_quantity: number;
   allow_negative: boolean;
+  unit_id: string;
 }
 
 function makeLedger(items: FakeItem[]) {
@@ -152,7 +153,7 @@ describe("negative stock policy", () => {
 
 describe("ledger reversal", () => {
   it("restores stock and value at the cost the sale booked", async () => {
-    const led = makeLedger([{ id: "item1", name: "Gin", current_quantity: 8, allow_negative: false }]);
+    const led = makeLedger([{ id: "item1", name: "Gin", current_quantity: 8, allow_negative: false, unit_id: "u1" }]);
     led.movements.push(consumption());
 
     const result = await reverseMovementsForOrderItem(led.sb, "user-1", {
@@ -190,7 +191,7 @@ describe("ledger reversal", () => {
   it("reverses every ingredient a composed sale consumed", async () => {
     const led = makeLedger([
       { id: "item1", name: "Gin", current_quantity: 8, allow_negative: false },
-      { id: "item2", name: "Tonic", current_quantity: 20, allow_negative: false },
+      { id: "item2", name: "Tonic", current_quantity: 20, allow_negative: false, unit_id: "u1" },
     ]);
     led.movements.push(consumption());
     led.movements.push(
