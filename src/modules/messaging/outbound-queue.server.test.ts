@@ -89,8 +89,8 @@ describe("WhatsApp outbound queue", () => {
           name: "weekly_special",
           language: "en",
           components: [{ type: "body", parameters: [] }],
-        campaign_recipient_id: "recipient-1",
         },
+        campaign_recipient_id: "recipient-1",
       },
     };
     const { admin, updates } = fakeAdmin(templateMessage);
