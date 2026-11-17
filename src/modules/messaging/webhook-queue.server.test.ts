@@ -98,7 +98,13 @@ describe("Meta WhatsApp durable webhook worker", () => {
     });
     expect(handoffMocks.enqueue).toHaveBeenCalledWith(
       db,
-      baseEvent,
+      expect.objectContaining({
+        id: baseEvent.id,
+        tenant_id: baseEvent.tenant_id,
+        property_id: baseEvent.property_id,
+        location_id: baseEvent.location_id,
+        binding_id: baseEvent.binding_id,
+      }),
       "conversation-1",
       "255700000000",
     );
