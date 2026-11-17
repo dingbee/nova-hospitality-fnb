@@ -76,7 +76,7 @@ export async function createGuestCommerceSession(
     !location ||
     location.status !== "active" ||
     location.is_storage ||
-    !["restaurant", "bar", "cafe", "store", "room_service"].includes(location.location_type)
+    !["outlet", "restaurant", "bar", "cafe", "store", "room_service"].includes(location.location_type)
   ) {
     throw new Error("The selected location is not an active customer-facing outlet.");
   }
