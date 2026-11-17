@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase rows are validated at this boundary. */
 import { randomUUID } from "node:crypto";
 import { getIntegrationSecret } from "@/modules/api-platform/integrations.server";
+import { assertEntitled } from "@/modules/commercial/resolver.server";
+import { hasWhatsAppGuestMarketingConsent } from "./guest-crm.server";
 import { recordWhatsAppCampaignUsage } from "./campaign-governance.server";
 import {
   MetaGraphError,
@@ -9,6 +11,13 @@ import {
 } from "./providers/meta-cloud-api.server";
 
 type Db = any;
+
+class CampaignDispatchBlockedError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = "CampaignDispatchBlockedError";
+  }
+}
 type Outbound = {
   id: string;
   tenant_id: string;
@@ -38,9 +47,72 @@ export async function processPendingWhatsAppOutboundMessages(
   let retried = 0;
   let failed = 0;
   let campaignReconciliationRequired = 0;
+  let campaignDispatchDeferred = 0;
+  let campaignDispatchSuppressed = 0;
 
   for (const message of messages) {
+    const campaignId = message.payload?.campaign_id;
+    const campaignRecipientId = message.payload?.campaign_recipient_id;
+    if (
+      typeof campaignId === "string" &&
+      process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED !== "true"
+    ) {
+      const { error: releaseError } = await admin
+        .from("wa_messages")
+        .update({
+          locked_at: null,
+          locked_by: null,
+          next_attempt_at: new Date(Date.now() + 60_000).toISOString(),
+          last_error: "campaign_dispatch_disabled",
+        })
+        .eq("id", message.id)
+        .eq("status", "queued")
+        .eq("locked_by", workerId);
+      if (releaseError) throw new Error("whatsapp_campaign_dispatch_release_failed");
+      campaignDispatchDeferred++;
+      continue;
+    }
     try {
+      if (typeof campaignId === "string") {
+        try {
+          await assertEntitled(admin, message.tenant_id, "whatsapp_campaigns", {
+            propertyId: message.property_id,
+          });
+        } catch {
+          throw new CampaignDispatchBlockedError("campaign_entitlement_unavailable");
+        }
+        const { data: campaign, error: campaignError } = await admin
+          .from("wa_campaigns")
+          .select("id, status, template_id")
+          .eq("id", campaignId)
+          .eq("tenant_id", message.tenant_id)
+          .eq("property_id", message.property_id)
+          .maybeSingle();
+        if (
+          campaignError ||
+          !campaign ||
+          ["paused", "cancelled", "suspended"].includes(String(campaign.status))
+        ) {
+          throw new CampaignDispatchBlockedError("campaign_not_dispatchable");
+        }
+        const { data: template, error: templateError } = await admin
+          .from("wa_message_templates")
+          .select("status, category")
+          .eq("id", campaign.template_id)
+          .eq("tenant_id", message.tenant_id)
+          .maybeSingle();
+        if (templateError || !template || template.status !== "approved") {
+          throw new CampaignDispatchBlockedError("campaign_template_not_approved");
+        }
+        const guestCustomerId = message.payload?.guest_customer_id;
+        if (
+          template.category === "marketing" &&
+          (typeof guestCustomerId !== "string" ||
+            !(await hasWhatsAppGuestMarketingConsent(admin, message.tenant_id, guestCustomerId)))
+        ) {
+          throw new CampaignDispatchBlockedError("marketing_consent_revoked");
+        }
+      }
       const { data: conversation, error: conversationError } = await admin
         .from("wa_conversations")
         .select("binding_id, wa_user_id, status")
@@ -173,7 +245,6 @@ export async function processPendingWhatsAppOutboundMessages(
           campaignReconciliationRequired++;
         }
       }
-      const campaignRecipientId = message.payload?.campaign_recipient_id;
       if (typeof campaignRecipientId === "string") {
         const { error: campaignUpdateError } = await admin
           .from("wa_campaign_recipients")
@@ -192,6 +263,28 @@ export async function processPendingWhatsAppOutboundMessages(
       }
       sent++;
     } catch (error) {
+      if (error instanceof CampaignDispatchBlockedError) {
+        await admin
+          .from("wa_messages")
+          .update({
+            status: "failed",
+            locked_at: null,
+            locked_by: null,
+            last_error: error.reason,
+          })
+          .eq("id", message.id)
+          .eq("status", "queued")
+          .eq("locked_by", workerId);
+        if (typeof campaignRecipientId === "string") {
+          await admin
+            .from("wa_campaign_recipients")
+            .update({ state: "suppressed", suppression_reason: error.reason })
+            .eq("id", campaignRecipientId)
+            .eq("tenant_id", message.tenant_id);
+        }
+        campaignDispatchSuppressed++;
+        continue;
+      }
       // Only an explicit Meta rate-limit response is automatically retried.
       // Network/5xx outcomes are ambiguous: mark failed for operator review
       // rather than risk sending a duplicate message after provider acceptance.
@@ -241,5 +334,5 @@ export async function processPendingWhatsAppOutboundMessages(
       else failed++;
     }
   }
-  return { claimed: messages.length, sent, retried, failed, campaignReconciliationRequired };
+  return { claimed: messages.length, sent, retried, failed, campaignReconciliationRequired, campaignDispatchDeferred, campaignDispatchSuppressed };
 }
