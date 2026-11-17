@@ -18,6 +18,8 @@ type Campaign = {
   template_id: string;
   status: string;
   trigger_type: "scheduled" | "event";
+  event_key: string | null;
+  audience_filter: Record<string, unknown>;
   scheduled_at: string | null;
   daily_cap: number | null;
   total_cap: number | null;
@@ -52,7 +54,7 @@ export async function assertWhatsAppCampaignReady(
   const { data: campaign, error: campaignError } = await admin
     .from("wa_campaigns")
     .select(
-      "id, tenant_id, property_id, location_id, binding_id, template_id, status, trigger_type, scheduled_at, daily_cap, total_cap, message_components",
+      "id, tenant_id, property_id, location_id, binding_id, template_id, status, trigger_type, event_key, audience_filter, scheduled_at, daily_cap, total_cap, message_components",
     )
     .eq("id", campaignId)
     .eq("tenant_id", tenantId)
@@ -408,7 +410,7 @@ export async function evaluateWhatsAppCampaignAudience(
     input.propertyId,
     input.campaignId,
   );
-  const filter = (campaign as Campaign & { audience_filter?: Record<string, unknown> }).audience_filter ?? {};
+  const filter = campaign.audience_filter ?? {};
   let query = admin
     .from("restaurant_guest_customers")
     .select("id")
@@ -523,6 +525,8 @@ export async function queueWhatsAppCampaignRecipient(
     input.propertyId,
     input.campaignId,
   );
+  if (campaign.trigger_type === "event" && campaign.event_key !== input.eventKey)
+    throw new WhatsAppCampaignGovernanceError("campaign_event_key_mismatch");
   const { data: recipient, error: recipientError } = await admin
     .from("wa_campaign_recipients")
     .select("id, guest_customer_id, state")
