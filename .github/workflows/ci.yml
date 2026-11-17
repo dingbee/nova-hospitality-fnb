@@ -213,6 +213,11 @@ jobs:
           WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p');
           SQL
 
+      - name: Verify WCE-04 session and RPC isolation in clean PostgreSQL replay
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d lexibite_migration_replay -v ON_ERROR_STOP=1 -f standalone/db/verification/test-wce04-unified-guest-commerce.sql
+
       - name: Generate production artifacts
         run: bun run build
 
@@ -252,7 +257,8 @@ jobs:
             'src/routes/guest.$token.tsx' \
             'src/routes/qr.$tableId.tsx' \
             'src/routes/social.$tenantSlug.$propertySlug.$locationSlug.tsx' \
-            'src/routes/store.$tenantSlug.$propertySlug.$locationSlug.tsx'
+            'src/routes/store.$tenantSlug.$propertySlug.$locationSlug.tsx' \
+            'src/routes/order.$tableId.tsx'
 
       - name: Report inherited lint baseline
         if: steps.lint.outcome == 'failure'
