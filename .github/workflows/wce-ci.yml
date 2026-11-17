@@ -41,8 +41,6 @@ jobs:
           bun-version: latest
       - name: Install
         run: bun install
-      - name: Strict typecheck
-        run: bun run typecheck
       - name: Changed-source lint
         shell: bash
         run: |
@@ -64,8 +62,10 @@ jobs:
           src/modules/api-platform/adapters/meta-whatsapp.server.test.ts
       - name: Full repository tests
         run: bun run test
-      - name: Production build
+      - name: Generate route tree and production build
         run: bun run build
+      - name: Strict typecheck
+        run: bun run typecheck
       - name: PostgreSQL 17 clean migration replay
         env:
           NOVA_DB_HOST: 127.0.0.1
