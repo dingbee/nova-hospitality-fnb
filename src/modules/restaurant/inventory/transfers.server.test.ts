@@ -175,7 +175,7 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
           transferLines[id] = { ...current, ...payload };
           return { data: single ? transferLines[id] : [transferLines[id]], error: null };
         }
-        let rows = Object.values(transferLines).filter((line: any) => {
+        const rows = Object.values(transferLines).filter((line: any) => {
           if (filters.transfer_id && line.transfer_id !== filters.transfer_id) return false;
           if (filters.id && line.id !== filters.id) return false;
           if (filters.tenant_id && line.tenant_id !== filters.tenant_id) return false;
