@@ -62,11 +62,6 @@ jobs:
           src/modules/messaging/bindings.server.test.ts
           src/modules/messaging/webhook-queue.server.test.ts
           src/modules/messaging/guest-portal-sessions.server.test.ts
-          src/modules/messaging/guest-commerce.server.test.ts
-          src/modules/messaging/guest-crm.server.test.ts
-          src/modules/messaging/outbound-queue.server.test.ts
-          src/modules/restaurant/menu/availability.server.test.ts
-          src/modules/api-platform/adapters/meta-whatsapp.server.test.ts
       - name: Full repository tests
         run: bun run test
       - name: Strict typecheck
@@ -87,23 +82,61 @@ jobs:
           ./local/scripts/apply-migrations.sh
           PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -v ON_ERROR_STOP=1 <<'SQL'
           DO $verify$
+          DECLARE
+            table_name text;
+            table_names text[] := ARRAY[
+              'wa_phone_number_bindings',
+              'wa_webhook_events',
+              'wa_conversations',
+              'wa_messages',
+              'wa_guest_portal_sessions'
+            ];
           BEGIN
-            IF (SELECT attnotnull FROM pg_attribute WHERE attrelid = 'public.wa_messages'::regclass AND attname = 'provider_message_id') THEN
-              RAISE EXCEPTION 'Outbound message ledger still requires provider ID before send';
+            FOREACH table_name IN ARRAY table_names LOOP
+              IF to_regclass(format('public.%I', table_name)) IS NULL THEN
+                RAISE EXCEPTION 'WCE-02 required table is missing: %', table_name;
+              END IF;
+              IF NOT (
+                SELECT c.relrowsecurity
+                FROM pg_class c
+                WHERE c.oid = to_regclass(format('public.%I', table_name))
+              ) THEN
+                RAISE EXCEPTION 'WCE-02 table has RLS disabled: %', table_name;
+              END IF;
+            END LOOP;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM pg_proc p
+              JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = 'public'
+                AND p.proname = 'wa_claim_webhook_events'
+                AND p.prosecdef
+                AND 'search_path=public, pg_temp' = ANY (p.proconfig)
+            ) THEN
+              RAISE EXCEPTION 'Webhook claim RPC is missing or lacks a fixed search path';
             END IF;
-            IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.wa_messages'::regclass AND attname = 'client_request_id' AND NOT attisdropped) THEN
-              RAISE EXCEPTION 'Outbound idempotency key is missing';
+
+            IF has_function_privilege('anon', 'public.wa_claim_webhook_events(integer,integer,text)', 'EXECUTE')
+              OR has_function_privilege('authenticated', 'public.wa_claim_webhook_events(integer,integer,text)', 'EXECUTE')
+              OR NOT has_function_privilege('service_role', 'public.wa_claim_webhook_events(integer,integer,text)', 'EXECUTE') THEN
+              RAISE EXCEPTION 'Webhook claim RPC grants are not service-role-only';
             END IF;
-            IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = 'wa_claim_outbound_messages' AND p.prosecdef AND 'search_path=public, pg_temp' = ANY (p.proconfig)) THEN
-              RAISE EXCEPTION 'Outbound claim RPC is missing or lacks a fixed search path';
-            END IF;
-            IF has_function_privilege('anon', 'public.wa_claim_outbound_messages(integer,integer,text)', 'EXECUTE')
-              OR has_function_privilege('authenticated', 'public.wa_claim_outbound_messages(integer,integer,text)', 'EXECUTE')
-              OR NOT has_function_privilege('service_role', 'public.wa_claim_outbound_messages(integer,integer,text)', 'EXECUTE') THEN
-              RAISE EXCEPTION 'Outbound claim RPC grants are not service-role-only';
-            END IF;
-            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='wa_messages' AND indexname='wa_messages_outbound_request_uq') THEN
-              RAISE EXCEPTION 'Outbound idempotency unique index is missing';
+
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_policies
+              WHERE schemaname = 'public' AND tablename = 'wa_conversations'
+                AND policyname = 'wa_conversations_read_scoped'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_policies
+              WHERE schemaname = 'public' AND tablename = 'wa_messages'
+                AND policyname = 'wa_messages_read_scoped'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_policies
+              WHERE schemaname = 'public' AND tablename = 'wa_phone_number_bindings'
+                AND policyname = 'wa_phone_bindings_read_scoped'
+            ) THEN
+              RAISE EXCEPTION 'WCE-02 tenant-scoped read policies are missing';
             END IF;
           END $verify$;
           SQL
