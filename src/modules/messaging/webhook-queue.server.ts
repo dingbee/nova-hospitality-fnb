@@ -215,7 +215,7 @@ async function processTemplateStatusUpdate(db: Db, event: ClaimedEvent, value: R
       updated_at: new Date().toISOString(),
     })
     .eq("tenant_id", event.tenant_id)
-    .eq("property_id", event.property_id)
+    .or("property_id.eq." + event.property_id + ",property_id.is.null")
     .eq("meta_template_id", update.message_template_id)
     .select("id")
     .maybeSingle();
