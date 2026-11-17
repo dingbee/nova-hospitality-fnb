@@ -23,6 +23,7 @@ import { resolveGuestTableContext } from "./selforder.server";
 import { fireGuestOrder } from "../kitchen/kitchen.server";
 import { resolveGuestPaymentTiming, type GuestPaymentTiming } from "../payments/payment-timing";
 import { createPesapalAdapter } from "./providers/pesapal.server";
+import { getIntegrationSecret } from "@/modules/api-platform/integrations.server";
 import type { InitiateGuestPaymentInput } from "./selfpay.contracts";
 
 type Sb = any;
@@ -42,7 +43,7 @@ export const PAYABLE_ORDER_STATUSES = new Set(["open", "sent", "served"]);
 async function loadGuestOrder(sb: Sb, tenantId: string, tableId: string, orderId: string) {
   const { data: order } = await sb
     .from("restaurant_orders")
-    .select("id, order_number, status, payment_state, total, paid_total, currency, table_id, bill_requested_at")
+    .select("id, tenant_id, property_id, order_number, status, payment_state, total, paid_total, currency, table_id, bill_requested_at")
     .eq("tenant_id", tenantId)
     .eq("id", orderId)
     .eq("table_id", tableId)
@@ -61,7 +62,7 @@ async function loadOrderByPesapalMerchantReference(sb: Sb, orderId: string) {
   const { data: order } = await sb
     .from("restaurant_orders")
     .select(
-      "id, tenant_id, order_number, status, payment_state, total, paid_total, currency, table_id",
+      "id, tenant_id, property_id, order_number, status, payment_state, total, paid_total, currency, table_id",
     )
     .eq("id", orderId)
     .maybeSingle();
@@ -171,13 +172,79 @@ export type PaymentProviderAdapter = {
 };
 
 /**
- * No payment provider is configured in this deployment unless the required
- * PESAPAL_* environment variables are present (see providers/pesapal.server
- * for the exact names). This returns null until they exist; nothing here
- * fabricates a provider.
+ * Resolves the active Pesapal integration for one exact tenant/property.
+ * Credentials are AES-256-GCM encrypted in api_integrations and decrypted
+ * only inside this server module. There is deliberately no tenant-wide or
+ * environment-variable fallback.
  */
-export function getConfiguredProvider(): PaymentProviderAdapter | null {
-  return createPesapalAdapter();
+export async function getConfiguredProvider(
+  sb: Sb,
+  tenantId: string,
+  propertyId: string | null,
+): Promise<PaymentProviderAdapter | null> {
+  if (!propertyId) return null;
+  const { data: integration, error } = await sb
+    .from("api_integrations")
+    .select("id, tenant_id, property_id, provider, integration_type, status, config")
+    .eq("tenant_id", tenantId)
+    .eq("property_id", propertyId)
+    .eq("provider", "pesapal")
+    .eq("integration_type", "payment")
+    .eq("status", "active")
+    .maybeSingle();
+  if (error) throw new Error("The property payment integration could not be resolved.");
+  if (!integration) return null;
+
+  const secretValue = await getIntegrationSecret(sb, tenantId, integration.id);
+  if (!secretValue) return null;
+  let credentials: { consumerKey?: string; consumerSecret?: string };
+  try {
+    credentials = JSON.parse(secretValue);
+  } catch {
+    throw new Error("The property Pesapal credential record is invalid.");
+  }
+  if (
+    typeof credentials.consumerKey !== "string" ||
+    typeof credentials.consumerSecret !== "string" ||
+    !credentials.consumerKey.trim() ||
+    !credentials.consumerSecret.trim()
+  ) {
+    throw new Error("The property Pesapal credential record is incomplete.");
+  }
+
+  const config = (integration.config ?? {}) as Record<string, unknown>;
+  const environment = config.environment === "production" ? "production" : "sandbox";
+  const ipnId = typeof config.ipnId === "string" ? config.ipnId : undefined;
+  let ipnUrl: string | undefined;
+  if (!ipnId) {
+    const base = process.env.APP_BASE_URL;
+    if (!base) throw new Error("APP_BASE_URL is required to register the property Pesapal IPN.");
+    const parsed = new URL(base);
+    if (parsed.protocol !== "https:") {
+      throw new Error("The property Pesapal IPN callback must use HTTPS.");
+    }
+    ipnUrl = new URL("/api/pesapal-ipn", parsed).toString();
+  }
+
+  return createPesapalAdapter({
+    consumerKey: credentials.consumerKey,
+    consumerSecret: credentials.consumerSecret,
+    environment,
+    ipnId,
+    ipnUrl,
+    onIpnRegistered: async (registeredIpnId) => {
+      const { error: persistError } = await sb
+        .from("api_integrations")
+        .update({ config: { ...config, ipnId: registeredIpnId } })
+        .eq("id", integration.id)
+        .eq("tenant_id", tenantId)
+        .eq("property_id", propertyId)
+        .eq("status", "active");
+      if (persistError) {
+        throw new Error("The property Pesapal IPN registration could not be saved.");
+      }
+    },
+  });
 }
 
 export type InitiateGuestPaymentResult =
@@ -272,7 +339,7 @@ export async function initiateGuestPayment(
   sb: Sb,
   input: InitiateGuestPaymentInput,
   returnUrl: string,
-  provider: PaymentProviderAdapter | null = getConfiguredProvider(),
+  provider?: PaymentProviderAdapter | null,
 ): Promise<InitiateGuestPaymentResult> {
   const table = await resolveGuestTableContext(sb, input.tableId);
   const order = await loadGuestOrder(sb, table.tenantId, input.tableId, input.orderId);
@@ -299,7 +366,11 @@ export async function initiateGuestPayment(
   ) {
     return { ok: false, reason: "not_ready_for_payment" };
   }
-  if (!provider) {
+  const configuredProvider =
+    provider === undefined
+      ? await getConfiguredProvider(sb, table.tenantId, order.property_id ?? null)
+      : provider;
+  if (!configuredProvider) {
     return { ok: false, reason: "provider_not_configured" };
   }
 
@@ -356,7 +427,7 @@ export async function initiateGuestPayment(
   // Server-derived amount/currency/reference only — input carries nothing but tableId/orderId/method.
   let initiated: { providerReference: string; redirectUrl: string };
   try {
-    initiated = await provider.initiate({
+    initiated = await configuredProvider.initiate({
       amount: amountDue,
       currency: order.currency,
       merchantReference: order.id,
@@ -433,19 +504,30 @@ const AMOUNT_TOLERANCE = 0.01;
  */
 export async function confirmGuestPayment(
   sb: Sb,
-  order: { id: string; tenantId: string; currency: string; total: number; paidTotal: number },
+  order: {
+    id: string;
+    tenantId: string;
+    propertyId: string | null;
+    currency: string;
+    total: number;
+    paidTotal: number;
+  },
   providerReference: string,
-  provider: PaymentProviderAdapter | null = getConfiguredProvider(),
+  provider?: PaymentProviderAdapter | null,
 ): Promise<ConfirmGuestPaymentResult> {
   const amountDue = Math.max(0, Number(order.total) - Number(order.paidTotal));
   if (amountDue <= 0) {
     return { ok: false, reason: "already_paid" };
   }
-  if (!provider) {
+  const configuredProvider =
+    provider === undefined
+      ? await getConfiguredProvider(sb, order.tenantId, order.propertyId)
+      : provider;
+  if (!configuredProvider) {
     return { ok: false, reason: "provider_not_configured" };
   }
 
-  const result = await provider.verify({ providerReference });
+  const result = await configuredProvider.verify({ providerReference });
   if (result.status === "pending") {
     return { ok: true, status: "pending" };
   }
@@ -506,7 +588,7 @@ export async function confirmGuestPayment(
 export async function confirmGuestPaymentFromBrowser(
   sb: Sb,
   input: { tableId: string; orderId: string; orderTrackingId: string },
-  provider: PaymentProviderAdapter | null = getConfiguredProvider(),
+  provider?: PaymentProviderAdapter | null,
 ): Promise<ConfirmGuestPaymentResult> {
   const table = await resolveGuestTableContext(sb, input.tableId);
   const order = await loadGuestOrder(sb, table.tenantId, input.tableId, input.orderId);
@@ -515,6 +597,7 @@ export async function confirmGuestPaymentFromBrowser(
     {
       id: order.id,
       tenantId: table.tenantId,
+      propertyId: order.property_id ?? table.propertyId ?? null,
       currency: order.currency,
       total: Number(order.total),
       paidTotal: Number(order.paid_total),
@@ -533,7 +616,7 @@ export async function confirmGuestPaymentFromBrowser(
 export async function confirmPesapalCallback(
   sb: Sb,
   input: { orderId: string; providerReference: string },
-  provider: PaymentProviderAdapter | null = getConfiguredProvider(),
+  provider?: PaymentProviderAdapter | null,
 ): Promise<ConfirmGuestPaymentResult | { ok: false; reason: "order_not_found" }> {
   const order = await loadOrderByPesapalMerchantReference(sb, input.orderId);
   if (!order) return { ok: false, reason: "order_not_found" };
@@ -542,6 +625,7 @@ export async function confirmPesapalCallback(
     {
       id: order.id,
       tenantId: order.tenant_id,
+      propertyId: order.property_id ?? null,
       currency: order.currency,
       total: Number(order.total),
       paidTotal: Number(order.paid_total),
