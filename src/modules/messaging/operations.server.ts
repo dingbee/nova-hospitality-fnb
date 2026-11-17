@@ -18,7 +18,12 @@ type TenantFilter = {
   limit?: number;
 };
 
-async function tenantQueryScope(sb: Db, userId: string, input: TenantFilter, capability = "guest.context.read") {
+async function tenantQueryScope(
+  sb: Db,
+  userId: string,
+  input: TenantFilter,
+  capability = "guest.context.read",
+) {
   const scope = await getTenantScope(sb, userId, input.tenantId);
   await assertTenantRead(
     sb,
@@ -27,11 +32,21 @@ async function tenantQueryScope(sb: Db, userId: string, input: TenantFilter, cap
     { propertyId: input.propertyId, locationId: input.locationId },
     scope,
   );
-  await assertCapability(sb, userId, input.tenantId, capability as any, {
+  await assertCapability(
+    sb,
+    userId,
+    input.tenantId,
+    capability as any,
+    {
     propertyId: input.propertyId,
     locationId: input.locationId,
-  }, scope);
-  return { scope, propertyIds: input.propertyId ? [input.propertyId] : accessiblePropertyIds(scope) };
+    },
+    scope,
+  );
+  return {
+    scope,
+    propertyIds: input.propertyId ? [input.propertyId] : accessiblePropertyIds(scope),
+  };
 }
 
 function applyPropertyScope(query: any, propertyIds: string[] | null, column = "property_id") {
@@ -46,15 +61,13 @@ function applyDateRange(query: any, input: TenantFilter, column = "created_at") 
   return query;
 }
 
-export async function listWhatsAppInbox(
-  sb: Db,
-  userId: string,
-  input: TenantFilter,
-) {
+export async function listWhatsAppInbox(sb: Db, userId: string, input: TenantFilter) {
   const { propertyIds } = await tenantQueryScope(sb, userId, input);
   let query = sb
     .from("wa_conversations")
-    .select("id, tenant_id, property_id, location_id, guest_customer_id, wa_user_id, status, last_message_at, created_at")
+    .select(
+      "id, tenant_id, property_id, location_id, guest_customer_id, wa_user_id, status, last_message_at, created_at",
+    )
     .eq("tenant_id", input.tenantId)
     .order("last_message_at", { ascending: false })
     .limit(Math.min(Math.max(input.limit ?? 50, 1), 100));
@@ -71,7 +84,9 @@ export async function listWhatsAppInbox(
       ids.length
         ? sb
             .from("wa_messages")
-            .select("id, conversation_id, direction, message_type, status, content, created_at, sent_at, delivered_at, read_at, last_error")
+            .select(
+              "id, conversation_id, direction, message_type, status, content, created_at, sent_at, delivered_at, read_at, last_error",
+            )
             .eq("tenant_id", input.tenantId)
             .in("conversation_id", ids)
             .order("created_at", { ascending: false })
@@ -107,7 +122,9 @@ export async function getWhatsAppConversation(
   await tenantQueryScope(sb, userId, input);
   const { data: conversation, error } = await sb
     .from("wa_conversations")
-    .select("id, tenant_id, property_id, location_id, guest_customer_id, wa_user_id, status, last_message_at, created_at")
+    .select(
+      "id, tenant_id, property_id, location_id, guest_customer_id, wa_user_id, status, last_message_at, created_at",
+    )
     .eq("id", input.conversationId)
     .eq("tenant_id", input.tenantId)
     .maybeSingle();
@@ -121,7 +138,9 @@ export async function getWhatsAppConversation(
     await Promise.all([
       sb
         .from("wa_messages")
-        .select("id, direction, message_type, status, content, payload, created_at, sent_at, delivered_at, read_at, last_error")
+        .select(
+          "id, direction, message_type, status, content, payload, created_at, sent_at, delivered_at, read_at, last_error",
+        )
         .eq("tenant_id", input.tenantId)
         .eq("property_id", conversation.property_id)
         .eq("location_id", conversation.location_id)
@@ -141,24 +160,28 @@ export async function getWhatsAppConversation(
   return { conversation, guest, messages: messages ?? [] };
 }
 
-export async function listWhatsAppGuestCRM(
-  sb: Db,
-  userId: string,
-  input: TenantFilter,
-) {
+export async function listWhatsAppGuestCRM(sb: Db, userId: string, input: TenantFilter) {
   const { propertyIds } = await tenantQueryScope(sb, userId, input);
   let query = sb
     .from("restaurant_guest_customers")
-    .select("id, tenant_id, first_property_id, last_property_id, phone_e164, whatsapp_user_id, display_name, preferred_language, status, first_seen_at, last_seen_at")
+    .select(
+      "id, tenant_id, first_property_id, last_property_id, phone_e164, whatsapp_user_id, display_name, preferred_language, status, first_seen_at, last_seen_at",
+    )
     .eq("tenant_id", input.tenantId)
     .order("last_seen_at", { ascending: false })
     .limit(Math.min(Math.max(input.limit ?? 100, 1), 250));
   if (input.propertyId) {
-    query = query.or("first_property_id.eq." + input.propertyId + ",last_property_id.eq." + input.propertyId);
+    query = query.or(
+      "first_property_id.eq." + input.propertyId + ",last_property_id.eq." + input.propertyId,
+    );
   } else if (propertyIds !== null) {
     if (propertyIds.length === 0) return [];
     query = query.or(
-      "first_property_id.in.(" + propertyIds.join(",") + "),last_property_id.in.(" + propertyIds.join(",") + ")",
+      "first_property_id.in.(" +
+        propertyIds.join(",") +
+        "),last_property_id.in.(" +
+        propertyIds.join(",") +
+        ")",
     );
   }
   const { data: guests, error } = await query;
@@ -167,7 +190,9 @@ export async function listWhatsAppGuestCRM(
   const { data: consents, error: consentError } = ids.length
     ? await sb
         .from("restaurant_guest_customer_consents")
-        .select("id, guest_customer_id, property_id, channel, purpose, state, evidence_source, recorded_at")
+        .select(
+          "id, guest_customer_id, property_id, channel, purpose, state, evidence_source, recorded_at",
+        )
         .eq("tenant_id", input.tenantId)
         .in("guest_customer_id", ids)
         .order("recorded_at", { ascending: false })
@@ -185,21 +210,21 @@ export async function listWhatsAppGuestCRM(
   }));
 }
 
-export async function getWhatsAppCampaignWorkspace(
-  sb: Db,
-  userId: string,
-  input: TenantFilter,
-) {
+export async function getWhatsAppCampaignWorkspace(sb: Db, userId: string, input: TenantFilter) {
   const { propertyIds } = await tenantQueryScope(sb, userId, input);
   let templatesQuery = sb
     .from("wa_message_templates")
-    .select("id, tenant_id, property_id, template_name, language, category, status, meta_template_id, rejection_reason, submitted_at, reviewed_at, synced_at, created_at, updated_at")
+    .select(
+      "id, tenant_id, property_id, template_name, language, category, status, meta_template_id, rejection_reason, submitted_at, reviewed_at, synced_at, created_at, updated_at",
+    )
     .eq("tenant_id", input.tenantId)
     .order("updated_at", { ascending: false })
     .limit(100);
   let campaignsQuery = sb
     .from("wa_campaigns")
-    .select("id, tenant_id, property_id, location_id, name, market_code, template_id, trigger_type, event_key, audience_filter, status, scheduled_at, started_at, completed_at, daily_cap, total_cap, last_error, created_at")
+    .select(
+      "id, tenant_id, property_id, location_id, name, market_code, template_id, trigger_type, event_key, audience_filter, status, scheduled_at, started_at, completed_at, daily_cap, total_cap, last_error, created_at",
+    )
     .eq("tenant_id", input.tenantId)
     .order("created_at", { ascending: false })
     .limit(100);
@@ -216,7 +241,9 @@ export async function getWhatsAppCampaignWorkspace(
   if (input.locationId) campaignsQuery = campaignsQuery.eq("location_id", input.locationId);
   let bindingsQuery = sb
     .from("wa_phone_number_bindings")
-    .select("id, tenant_id, property_id, location_id, display_phone_number, waba_id, phone_number_id, status, quality_rating")
+    .select(
+      "id, tenant_id, property_id, location_id, display_phone_number, waba_id, phone_number_id, status, quality_rating",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("status", "active");
   bindingsQuery = applyPropertyScope(bindingsQuery, propertyIds);
@@ -231,15 +258,13 @@ export async function getWhatsAppCampaignWorkspace(
   return { templates: templates ?? [], campaigns: campaigns ?? [], bindings: bindings ?? [] };
 }
 
-export async function getWhatsAppUsageReport(
-  sb: Db,
-  userId: string,
-  input: TenantFilter,
-) {
+export async function getWhatsAppUsageReport(sb: Db, userId: string, input: TenantFilter) {
   const { propertyIds } = await tenantQueryScope(sb, userId, input, "profitability.manage");
   let query = sb
     .from("wa_campaign_usage_ledger")
-    .select("id, tenant_id, property_id, campaign_id, usage_component, usage_event, quantity, unit_price, amount, currency, market_code, template_category, rate_snapshot, recorded_at")
+    .select(
+      "id, tenant_id, property_id, campaign_id, usage_component, usage_event, quantity, unit_price, amount, currency, market_code, template_category, rate_snapshot, recorded_at",
+    )
     .eq("tenant_id", input.tenantId)
     .order("recorded_at", { ascending: false })
     .limit(2000);
@@ -247,7 +272,10 @@ export async function getWhatsAppUsageReport(
   query = applyDateRange(query, input, "recorded_at");
   const { data, error } = await query;
   if (error) throw new Error("whatsapp_usage_report_unavailable");
-  const totals = new Map<string, { component: string; currency: string; amount: number; quantity: number; entries: number }>();
+  const totals = new Map<
+    string,
+    { component: string; currency: string; amount: number; quantity: number; entries: number }
+  >();
   for (const row of data ?? []) {
     const key = row.usage_component + ":" + row.currency;
     const current = totals.get(key) ?? {
@@ -265,22 +293,22 @@ export async function getWhatsAppUsageReport(
   return { entries: data ?? [], totals: [...totals.values()] };
 }
 
-export async function getWhatsAppConversionReport(
-  sb: Db,
-  userId: string,
-  input: TenantFilter,
-) {
+export async function getWhatsAppConversionReport(sb: Db, userId: string, input: TenantFilter) {
   const { propertyIds } = await tenantQueryScope(sb, userId, input);
   let sessionsQuery = sb
     .from("wa_guest_portal_sessions")
-    .select("id, tenant_id, property_id, location_id, conversation_id, acquisition_channel, open_count, opened_at, created_at, expires_at, revoked_at")
+    .select(
+      "id, tenant_id, property_id, location_id, conversation_id, acquisition_channel, open_count, opened_at, created_at, expires_at, revoked_at",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("acquisition_channel", "whatsapp")
     .order("created_at", { ascending: false })
     .limit(2000);
   let ordersQuery = sb
     .from("restaurant_orders")
-    .select("id, tenant_id, property_id, location_id, guest_portal_session_id, status, payment_state, total, currency, opened_at, closed_at")
+    .select(
+      "id, tenant_id, property_id, location_id, guest_portal_session_id, status, payment_state, total, currency, opened_at, closed_at",
+    )
     .eq("tenant_id", input.tenantId)
     .not("guest_portal_session_id", "is", null)
     .order("opened_at", { ascending: false })
@@ -298,7 +326,9 @@ export async function getWhatsAppConversionReport(
   if (sessionError || orderError) throw new Error("whatsapp_conversion_report_unavailable");
   const openedSessions = (sessions ?? []).filter((session: any) => Boolean(session.opened_at));
   const sessionIds = new Set(openedSessions.map((session: any) => session.id));
-  const linkedOrders = (orders ?? []).filter((order: any) => sessionIds.has(order.guest_portal_session_id));
+  const linkedOrders = (orders ?? []).filter((order: any) =>
+    sessionIds.has(order.guest_portal_session_id),
+  );
   const paidOrders = linkedOrders.filter((order: any) => order.payment_state === "paid");
   const revenue = new Map<string, number>();
   for (const order of paidOrders) {
@@ -311,7 +341,10 @@ export async function getWhatsAppConversionReport(
     ordersPaid: paidOrders.length,
     sessionToOrderRate: openedSessions.length ? linkedOrders.length / openedSessions.length : 0,
     orderToPaidRate: linkedOrders.length ? paidOrders.length / linkedOrders.length : 0,
-    paidRevenueByCurrency: [...revenue.entries()].map(([currency, amount]) => ({ currency, amount })),
+    paidRevenueByCurrency: [...revenue.entries()].map(([currency, amount]) => ({
+      currency,
+      amount,
+    })),
   };
 }
 
@@ -327,18 +360,24 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
   ] = await Promise.all([
     admin
       .from("wa_phone_number_bindings")
-      .select("id, tenant_id, property_id, location_id, integration_id, waba_id, phone_number_id, display_phone_number, verified_name, quality_rating, status, updated_at")
+      .select(
+        "id, tenant_id, property_id, location_id, integration_id, waba_id, phone_number_id, display_phone_number, verified_name, quality_rating, status, updated_at",
+      )
       .order("updated_at", { ascending: false })
       .limit(500),
     admin
       .from("api_integrations")
-      .select("id, tenant_id, property_id, provider, channel_key, integration_type, status, updated_at")
+      .select(
+        "id, tenant_id, property_id, provider, channel_key, integration_type, status, updated_at",
+      )
       .eq("provider", "meta-whatsapp")
       .order("updated_at", { ascending: false })
       .limit(500),
     admin
       .from("wa_webhook_events")
-      .select("id, tenant_id, property_id, status, received_at, processed_at, attempt_count, last_error")
+      .select(
+        "id, tenant_id, property_id, status, received_at, processed_at, attempt_count, last_error",
+      )
       .order("received_at", { ascending: false })
       .limit(1000),
     admin
@@ -355,7 +394,12 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
   if (bindingError || integrationError || webhookError || messageError || usageError) {
     throw new Error("founder_whatsapp_overview_unavailable");
   }
-  const tenantIds = [...new Set([...(bindings ?? []).map((row: any) => row.tenant_id), ...(integrations ?? []).map((row: any) => row.tenant_id)])];
+  const tenantIds = [
+    ...new Set([
+      ...(bindings ?? []).map((row: any) => row.tenant_id),
+      ...(integrations ?? []).map((row: any) => row.tenant_id),
+    ]),
+  ];
   const { data: tenants, error: tenantError } = tenantIds.length
     ? await admin.from("restaurant_tenants").select("id, name, slug").in("id", tenantIds)
     : { data: [], error: null };
@@ -367,8 +411,13 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
       counts[value] = (counts[value] ?? 0) + 1;
       return counts;
     }, {});
-  const invoices = await (await import("@/modules/commercial/billing.server")).listInvoices(admin, {});
-  const invoiceTotals = new Map<string, { currency: string; issuedAmount: number; outstandingBalance: number; count: number }>();
+  const invoices = await (
+    await import("@/modules/commercial/billing.server")
+  ).listInvoices(admin, {});
+  const invoiceTotals = new Map<
+    string,
+    { currency: string; issuedAmount: number; outstandingBalance: number; count: number }
+  >();
   for (const invoice of invoices) {
     const currency = String(invoice.currency ?? "UNKNOWN");
     const current = invoiceTotals.get(currency) ?? {
@@ -517,4 +566,3 @@ export async function pauseWhatsAppCampaignForTenant(
   if (error || !data) throw new Error("whatsapp_campaign_pause_failed");
   return data;
 }
-
