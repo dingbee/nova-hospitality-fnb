@@ -122,6 +122,11 @@ async function processMessages(db: Db, event: ClaimedEvent, value: Record<string
         .eq("property_id", event.property_id);
       if (updateError) throw new Error("conversation_activity_update_failed");
     }
+
+    // The first inbound message in a conversation initiates the portal-first
+    // handoff. The handoff service owns event-level idempotency and suppresses
+    // duplicate/replayed messages while a valid link is already active.
+    await enqueueWhatsAppGuestPortalHandoff(db, event, conversation.id, waUserId);
   }
 }
 
