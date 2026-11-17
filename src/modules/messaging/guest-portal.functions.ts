@@ -68,15 +68,16 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
 
     if (conversationError) throw new Error("Guest CRM context could not be resolved.");
     const guestCustomerId = conversation?.guest_customer_id as string | null;
-    const [{ data: guestCustomer }, { data: loyaltyEntries, error: loyaltyError }] = guestCustomerId
+    const [{ data: guestCustomer }, loyaltyPointsBalance] = guestCustomerId
       ? await Promise.all([
           supabaseAdmin.from("restaurant_guest_customers").select("display_name, status")
             .eq("id", guestCustomerId).eq("tenant_id", session.tenantId).maybeSingle(),
-          supabaseAdmin.from("restaurant_guest_loyalty_ledger").select("points_delta")
-            .eq("tenant_id", session.tenantId).eq("guest_customer_id", guestCustomerId),
+          supabaseAdmin.rpc("restaurant_guest_loyalty_balance", {
+            _tenant_id: session.tenantId,
+            _guest_customer_id: guestCustomerId,
+          }),
         ])
-      : [{ data: null }, { data: [], error: null }];
-    if (loyaltyError) throw new Error("Guest loyalty balance could not be loaded.");
+      : [{ data: null }, 0];
     if (guestCustomer?.status === "blocked") throw new Error("This guest account is not permitted to place orders.");
     const settings = tenant.settings as {
       business?: { tradingName?: string; logoUrl?: string | null };
@@ -87,7 +88,7 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
       logoUrl: settings?.business?.logoUrl?.trim() || null,
       outletName: location.name,
       guestName: guestCustomer?.display_name ?? null,
-      loyaltyPointsBalance: (loyaltyEntries ?? []).reduce((sum: number, entry: any) => sum + Number(entry.points_delta ?? 0), 0),
+      loyaltyPointsBalance: Number(loyaltyPointsBalance ?? 0),
       currency: session.currency,
       categories: catalog.categories.map((category: any) => ({
         id: category.id,
