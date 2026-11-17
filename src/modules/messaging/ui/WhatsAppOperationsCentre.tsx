@@ -125,7 +125,7 @@ export function WhatsAppOperationsCentre() {
   };
   const createTemplate = useAdminMutation({
     mutationFn: () => createTemplateFn({
-      data: {
+        data: {
           tenantId: tenantId!,
         propertyId,
           templateName,
@@ -148,7 +148,7 @@ export function WhatsAppOperationsCentre() {
         bindingId: campaignBindingId,
           marketCode: campaignMarketCode.toUpperCase(),
         templateId: campaignTemplateId,
-        name: campaignName,
+          name: campaignName,
         triggerType: campaignTriggerType,
           scheduledAt:
             campaignTriggerType === "scheduled"
@@ -175,7 +175,7 @@ export function WhatsAppOperationsCentre() {
   });
   const pauseCampaign = useAdminMutation({
     mutationFn: (campaignId: string) => pauseCampaignFn({
-      data: { tenantId: tenantId!, propertyId: propertyId!, campaignId },
+        data: { tenantId: tenantId!, propertyId: propertyId!, campaignId },
     }),
     successMessage: "Campaign paused",
     onSuccess: invalidateWorkspace,
