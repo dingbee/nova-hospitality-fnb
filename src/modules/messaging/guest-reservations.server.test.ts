@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   checkGuestReservationAvailability,
   createGuestTableReservation,
+  cancelGuestTableReservation,
   localDateTimeToUtc,
 } from "./guest-reservations.server";
 
@@ -280,9 +281,10 @@ describe("guest reservation cancellation", () => {
       ],
     };
     const db = reservationDb(rows);
-    const result = await (
-      await import("./guest-reservations.server")
-    ).cancelGuestTableReservation(db as any, { token, reservationId: "reservation-1" });
+    const result = await cancelGuestTableReservation(db as any, {
+      token,
+      reservationId: "reservation-1",
+    });
     expect(result.cancelled).toBe(true);
     expect(rows.restaurant_table_reservations[0].status).toBe("cancelled");
   });
