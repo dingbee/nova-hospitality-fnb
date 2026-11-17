@@ -348,13 +348,14 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
     const recent = new Date(Date.now() - 86400000).toISOString();
 
     db["restaurant_properties"] = [{ id: "property-bridge", tenant_id: TENANT, currency: "TZS" }];
+    db["restaurant_locations"] = [{ id: "location-bridge", tenant_id: TENANT, property_id: "property-bridge", scope: "property", is_storage: true, status: "active" }];
     db["restaurant_inventory_units"] = [{ id: stockUnitId, tenant_id: TENANT, dimension: "count", base_unit_id: null, factor: 1 }];
     db["restaurant_inventory_items"] = [
       {
         id: inventoryId,
         tenant_id: TENANT,
         property_id: "property-bridge",
-        location_id: null,
+        location_id: "location-bridge",
         name: "Tomatoes",
         current_quantity: 0,
         metadata: { safety_stock_quantity: 0 },
@@ -366,10 +367,11 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
         track_batches: false,
       },
     ];
+    db["restaurant_stock_positions_v"] = [{ tenant_id: TENANT, inventory_item_id: inventoryId, location_id: "location-bridge", on_hand: 0, movement_count: 7, last_movement_at: recent }];
     db["restaurant_stock_movements"] = Array.from({ length: 7 }, (_, index) => ({
       tenant_id: TENANT,
       property_id: "property-bridge",
-      location_id: null,
+      location_id: "location-bridge",
       inventory_item_id: inventoryId,
       movement_type: "consumption",
       quantity: 300 / 7,
@@ -463,6 +465,7 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
       tenantId: TENANT,
       inventoryItemIds: [],
       propertyId: "property-bridge",
+      locationId: "location-bridge",
       supplierId: supplierId,
       idempotencyKey,
       lineOverrides: [],
