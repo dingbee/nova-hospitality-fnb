@@ -6,6 +6,10 @@ BEGIN;
 INSERT INTO public.restaurant_tenants (id, slug, name)
 VALUES ('f2000000-0000-4000-8000-000000000001', 'p0-02-tenant', 'P0-02 Inventory Tenant');
 
+-- This inventory regression needs an already-active property. Disable
+-- only the commercial activation trigger while inserting the synthetic
+-- pre-existing property, then restore it before exercising location guards.
+ALTER TABLE public.restaurant_properties DISABLE TRIGGER restaurant_property_activation_guard;
 INSERT INTO public.restaurant_properties (id, tenant_id, slug, name, currency, status)
 VALUES (
   'f2000000-0000-4000-8000-000000000002',
@@ -15,27 +19,7 @@ VALUES (
   'TZS',
   'active'
 );
-
--- 0103 intentionally downgrades direct active-property inserts. The fixture
--- establishes a non-chargeable base classification, then activates through
--- the same guarded transition used by the application.
-INSERT INTO public.commercial_property_classifications (
-  id, tenant_id, property_id, classification, chargeable, currency, property_sequence, notes
-)
-VALUES (
-  'f2000000-0000-4000-8000-000000000013',
-  'f2000000-0000-4000-8000-000000000001',
-  'f2000000-0000-4000-8000-000000000002',
-  'base',
-  false,
-  'TZS',
-  1,
-  'P0-02 isolated inventory integrity fixture'
-);
-
-UPDATE public.restaurant_properties
-SET status = 'active'
-WHERE id = 'f2000000-0000-4000-8000-000000000002';
+ALTER TABLE public.restaurant_properties ENABLE TRIGGER restaurant_property_activation_guard;
 
 INSERT INTO public.restaurant_members (tenant_id, property_id, user_id, role)
 VALUES (
