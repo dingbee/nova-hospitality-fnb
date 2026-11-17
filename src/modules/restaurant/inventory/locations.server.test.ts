@@ -112,6 +112,18 @@ describe("upsertLocation property and parent scope", () => {
     expect(fake.writes).toEqual([]);
   });
 
+  it("scopes property-location management to the requested property", async () => {
+    const fake = fakeSupabase();
+    await upsertLocation(fake.sb, USER, input as any);
+    expect(assertCapability).toHaveBeenCalledWith(
+      fake.sb,
+      USER,
+      TENANT,
+      "location.manage",
+      { propertyId: PROPERTY },
+    );
+  });
+
   it("rejects a parent from another property before writing", async () => {
     const fake = fakeSupabase({ parentProperty: OTHER_PROPERTY });
     await expect(upsertLocation(fake.sb, USER, input as any)).rejects.toThrow(
@@ -141,6 +153,13 @@ describe("upsertLocation property and parent scope", () => {
       slug: "group-central-store",
     } as any);
     expect(result.id).toBe("new-location");
+    expect(assertCapability).toHaveBeenCalledWith(
+      fake.sb,
+      USER,
+      TENANT,
+      "location.manage",
+      { tenantWide: true },
+    );
     expect(fake.writes).toHaveLength(1);
     expect(fake.writes[0].payload).toMatchObject({
       tenant_id: TENANT,
