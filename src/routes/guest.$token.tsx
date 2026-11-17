@@ -238,7 +238,9 @@ function GuestCommercePage() {
       setCartOpen(false);
       setRequestId(null);
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : "We could not place the order. Please try again.");
+      setSubmitError(
+        error instanceof Error ? error.message : "We could not place the order. Please try again.",
+      );
     } finally {
       setSubmitting(false);
     }
