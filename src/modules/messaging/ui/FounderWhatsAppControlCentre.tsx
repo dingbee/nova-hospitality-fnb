@@ -204,7 +204,7 @@ export function FounderWhatsAppControlCentre() {
                   <li key={key} className="flex items-center justify-between gap-3 py-3">
                     <span className="text-sm capitalize">
                       {component.replaceAll("_", " ")}{" "}
-                      <span className="text-xs text-muted-foreground">  {currency}</span>
+                      <span className="text-xs text-muted-foreground"> {currency}</span>
                     </span>
                     <strong className="text-sm">{amount(value, currency)}</strong>
                   </li>
