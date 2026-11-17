@@ -58,6 +58,11 @@ VALUES
 -- transfer. The test role is reset before the composite-FK probes below.
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-000000000001', true);
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', 'a9000000-0000-4000-8000-000000000001', 'role', 'authenticated')::text,
+  true
+);
 
 DO $rls$
 DECLARE
@@ -92,6 +97,11 @@ END;
 $rls$;
 
 SELECT set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-000000000002', true);
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', 'a9000000-0000-4000-8000-000000000002', 'role', 'authenticated')::text,
+  true
+);
 
 DO $owner_rls$
 DECLARE
