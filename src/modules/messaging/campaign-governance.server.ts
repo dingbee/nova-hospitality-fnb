@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase rows are validated at this boundary. */
 import { assertEntitled } from "@/modules/commercial/resolver.server";
 import { incrementUsage } from "@/modules/commercial/quota.server";
+import { getIntegrationSecret } from "@/modules/api-platform/integrations.server";
+import {
+  createWabaMessageTemplate,
+  listWabaMessageTemplates,
+} from "./providers/meta-cloud-api.server";
 
 type Db = any;
 type Campaign = {
@@ -108,6 +113,137 @@ export async function prepareWhatsAppCampaignRecipient(
     state: String(row.state),
     suppressionReason: row.suppression_reason ? String(row.suppression_reason) : null,
   };
+}
+
+function toMetaTemplateCategory(category: Template["category"]) {
+  return category.toUpperCase() as "MARKETING" | "UTILITY" | "AUTHENTICATION";
+}
+
+async function resolveWhatsAppPropertyCredentials(
+  admin: Db,
+  tenantId: string,
+  propertyId: string,
+) {
+  const { data: binding, error: bindingError } = await admin
+    .from("wa_phone_number_bindings")
+    .select("id, phone_number_id, integration_id, waba_id, status")
+    .eq("tenant_id", tenantId)
+    .eq("property_id", propertyId)
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle();
+  if (bindingError || !binding)
+    throw new WhatsAppCampaignGovernanceError("whatsapp_property_binding_unavailable");
+
+  const { data: integration, error: integrationError } = await admin
+    .from("api_integrations")
+    .select("id, status, config, provider, channel_key, integration_type")
+    .eq("id", binding.integration_id)
+    .eq("tenant_id", tenantId)
+    .eq("property_id", propertyId)
+    .maybeSingle();
+  if (
+    integrationError ||
+    !integration ||
+    integration.status !== "active" ||
+    integration.provider !== "meta-whatsapp" ||
+    integration.channel_key !== "whatsapp" ||
+    integration.integration_type !== "channel"
+  ) throw new WhatsAppCampaignGovernanceError("whatsapp_property_integration_unavailable");
+
+  const accessToken = await getIntegrationSecret(admin, tenantId, integration.id);
+  if (!accessToken) throw new WhatsAppCampaignGovernanceError("whatsapp_property_credential_unavailable");
+  return {
+    accessToken,
+    wabaId: String(integration.config?.wabaId ?? binding.waba_id),
+    phoneNumberId: String(binding.phone_number_id),
+    graphApiVersion: integration.config?.graphApiVersion,
+  };
+}
+
+/** Submits one approved-by-tenant draft to Meta. The provider approval remains asynchronous. */
+export async function submitWhatsAppMessageTemplateToMeta(
+  admin: Db,
+  input: { tenantId: string; propertyId: string; templateId: string },
+) {
+  const { data: template, error: templateError } = await admin
+    .from("wa_message_templates")
+    .select("id, tenant_id, property_id, template_name, language, category, status, components")
+    .eq("id", input.templateId)
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+  if (templateError || !template || (template.property_id && template.property_id !== input.propertyId))
+    throw new WhatsAppCampaignGovernanceError("template_not_found");
+  if (!["draft", "rejected"].includes(template.status))
+    throw new WhatsAppCampaignGovernanceError("template_not_submittable");
+
+  const credentials = await resolveWhatsAppPropertyCredentials(admin, input.tenantId, input.propertyId);
+  const result = await createWabaMessageTemplate(
+    credentials,
+    {
+      name: String(template.template_name),
+      language: String(template.language),
+      category: toMetaTemplateCategory(template.category as Template["category"]),
+      components: Array.isArray(template.components) ? template.components : [],
+    },
+    { graphApiVersion: credentials.graphApiVersion },
+  );
+  const metaTemplateId = result.message_template_id ?? result.id;
+  if (!metaTemplateId) throw new WhatsAppCampaignGovernanceError("meta_template_id_missing");
+  const providerStatus = String(result.status ?? "PENDING").toUpperCase();
+  const nextStatus = providerStatus === "APPROVED" ? "approved" : "submitted";
+  const { error: updateError } = await admin
+    .from("wa_message_templates")
+    .update({
+      meta_template_id: metaTemplateId,
+      status: nextStatus,
+      submitted_at: new Date().toISOString(),
+      synced_at: new Date().toISOString(),
+      rejection_reason: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.templateId)
+    .eq("tenant_id", input.tenantId);
+  if (updateError) throw new WhatsAppCampaignGovernanceError("template_submission_state_failed");
+  return { metaTemplateId, status: nextStatus };
+}
+
+/** Reconciles provider approval state into the local template registry without changing template content. */
+export async function syncWhatsAppMessageTemplateStatuses(
+  admin: Db,
+  input: { tenantId: string; propertyId: string },
+) {
+  const credentials = await resolveWhatsAppPropertyCredentials(admin, input.tenantId, input.propertyId);
+  const providerTemplates = await listWabaMessageTemplates(
+    credentials,
+    { graphApiVersion: credentials.graphApiVersion },
+  );
+  let updated = 0;
+  for (const providerTemplate of providerTemplates) {
+    if (!providerTemplate.id) continue;
+    const providerStatus = providerTemplate.status.toUpperCase();
+    const status =
+      providerStatus === "APPROVED" ? "approved" :
+      providerStatus === "REJECTED" ? "rejected" :
+      providerStatus === "PAUSED" || providerStatus === "DISABLED" ? "paused" :
+      providerStatus === "PENDING" ? "submitted" : null;
+    if (!status) continue;
+    const { error } = await admin
+      .from("wa_message_templates")
+      .update({
+        status,
+        rejection_reason: status === "rejected" ? "Meta rejected this template; review provider feedback." : null,
+        reviewed_at: new Date().toISOString(),
+        synced_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("tenant_id", input.tenantId)
+      .eq("property_id", input.propertyId)
+      .eq("meta_template_id", providerTemplate.id);
+    if (error) throw new WhatsAppCampaignGovernanceError("template_status_sync_failed");
+    updated++;
+  }
+  return { providerTemplates: providerTemplates.length, updated };
 }
 
 /** Resolves the current effective Meta market/category rate without caching or rewriting historical rates. */
