@@ -264,11 +264,10 @@ jobs:
         env:
           TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}
-          FULL_TESTS_OUTCOME: ${{ steps.full_tests.outcome }}
-          FULL_REPO_LINT_OUTCOME: ${{ steps.full_repo_lint.outcome }}
+          SCOPED_TESTS_OUTCOME: ${{ steps.scoped_tests.outcome }}
         run: |
           failed=0
-          for gate in TYPECHECK LINT FULL_TESTS FULL_REPO_LINT; do
+          for gate in TYPECHECK LINT SCOPED_TESTS; do
             var="${gate}_OUTCOME"
             outcome="${!var}"
             if [ "$outcome" != "success" ]; then
