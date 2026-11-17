@@ -139,7 +139,7 @@ export async function handleWhatsAppGuestCommerceMessage(
 
   let portalUrl: string | undefined;
   let content: string;
-  if (intent === "menu" || intent === "order" || intent === "unknown") {
+  if (intent === "menu" || intent === "order") {
     const session = await createWhatsAppGuestPortalSession(admin, {
       tenantId: event.tenant_id,
       propertyId: event.property_id,
@@ -150,38 +150,39 @@ export async function handleWhatsAppGuestCommerceMessage(
       menuContext: { source: "whatsapp", intent },
     });
     portalUrl = session.portalUrl;
-
-    if (intent === "unknown") {
-      const { data: historyRows, error: historyError } = await admin
-        .from("wa_messages")
-        .select("direction, content")
-        .eq("conversation_id", conversationId)
-        .neq("provider_message_id", inbound.id)
-        .not("content", "is", null)
-        .order("created_at", { ascending: false })
-        .limit(6);
-      if (historyError) throw new Error("whatsapp_concierge_history_unavailable");
-      const history = (historyRows ?? []).reverse().map((row: any) => ({
-        role: row.direction === "inbound" ? "user" as const : "assistant" as const,
-        content: String(row.content ?? ""),
-      }));
-      let conciergeReply = "I can help with menu questions and recommendations. Browse the menu and choose items in the secure Guest Portal.";
-      try {
-        const result = await askNova(admin, {
-          guestPortalToken: session.token,
-          message: messageText,
-          history,
-          interactionMode: "discovery",
-        });
-        if (result.ok) conciergeReply = result.reply;
-      } catch {
-        // AI entitlement, quota, provider or validation failure degrades to
-        // a safe menu handoff; no ungrounded model response is sent.
-      }
-      content = conciergeReply + "\n\nBrowse the menu and place your order securely: " + portalUrl;
-    } else {
-      content = replyText(intent, portalUrl);
+    content = replyText(intent, portalUrl);
+  } else if (intent === "unknown") {
+    const { data: historyRows, error: historyError } = await admin
+      .from("wa_messages")
+      .select("direction, content")
+      .eq("conversation_id", conversationId)
+      .neq("provider_message_id", inbound.id)
+      .not("content", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(6);
+    if (historyError) throw new Error("whatsapp_concierge_history_unavailable");
+    const history = (historyRows ?? []).reverse().map((row: any) => ({
+      role: row.direction === "inbound" ? "user" as const : "assistant" as const,
+      content: String(row.content ?? ""),
+    }));
+    let conciergeReply = "I can help with menu questions and recommendations. Reply MENU or ORDER to open the secure Guest Portal.";
+    try {
+      const result = await askNova(admin, {
+        guestPortalScope: {
+          tenantId: event.tenant_id,
+          propertyId: event.property_id,
+          locationId: event.location_id,
+        },
+        message: messageText,
+        history,
+        interactionMode: "discovery",
+      });
+      if (result.ok) conciergeReply = result.reply;
+    } catch {
+      // Entitlement, quota, provider or grounding failures degrade to a
+      // safe, non-AI menu handoff. No ungrounded response is sent.
     }
+    content = conciergeReply + "\n\nReply MENU or ORDER to browse and submit your order securely.";
   } else {
     content = replyText(intent);
   }
