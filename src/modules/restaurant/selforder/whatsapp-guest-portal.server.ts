@@ -4,7 +4,7 @@ import { fetchSellableCatalog } from "../sales/pos.server";
 
 type Db = any;
 
-export async function getWhatsAppGuestPortalPage(admin: Db, token: string) {
+export async function getGuestCommercePage(admin: Db, token: string) {
   const session = await resolveWhatsAppGuestPortalSession(admin, token);
   if (!session) {
     throw new Error("This Guest Portal link has expired or is no longer valid. Request a new link on WhatsApp.");
@@ -53,8 +53,7 @@ export async function getWhatsAppGuestPortalPage(admin: Db, token: string) {
     location.status !== "active" ||
     location.is_storage ||
     !["outlet", "restaurant", "bar"].includes(location.location_type) ||
-    !binding ||
-    binding.status !== "active"
+    (session.sourceChannel === "whatsapp" && (!binding || binding.status !== "active"))
   ) {
     throw new Error("This restaurant ordering link is no longer available. Request a fresh link on WhatsApp.");
   }
@@ -77,8 +76,11 @@ export async function getWhatsAppGuestPortalPage(admin: Db, token: string) {
     outletName: location.name,
     outletType: location.location_type,
     currency: session.currency,
-    supportPhone: binding.display_phone_number ?? null,
-    supportVerifiedName: binding.verified_name ?? null,
+    supportPhone: binding?.display_phone_number ?? null,
+    supportVerifiedName: binding?.verified_name ?? null,
+    sourceChannel: session.sourceChannel,
+    orderType: session.orderType,
+    canCheckout: session.orderType === "takeaway" || (session.orderType === "dine_in" && Boolean(session.tableId)),
     expiresAt: session.expiresAt,
     categories: catalog.categories,
     items: catalog.items.filter(
@@ -89,3 +91,6 @@ export async function getWhatsAppGuestPortalPage(admin: Db, token: string) {
     ),
   };
 }
+
+/** WCE-03 compatibility export; the underlying session is now channel-neutral. */
+export const getWhatsAppGuestPortalPage = getGuestCommercePage;
