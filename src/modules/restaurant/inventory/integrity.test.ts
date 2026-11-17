@@ -175,7 +175,7 @@ describe("ledger reversal", () => {
   });
 
   it("is idempotent: reversing twice corrects stock once", async () => {
-    const led = makeLedger([{ id: "item1", name: "Gin", current_quantity: 8, allow_negative: false }]);
+    const led = makeLedger([{ id: "item1", name: "Gin", current_quantity: 8, allow_negative: false, unit_id: "u1" }]);
     led.movements.push(consumption());
     const args = { tenantId: "t1", orderItemId: "line1", reason: "double tap" };
 
@@ -190,7 +190,7 @@ describe("ledger reversal", () => {
 
   it("reverses every ingredient a composed sale consumed", async () => {
     const led = makeLedger([
-      { id: "item1", name: "Gin", current_quantity: 8, allow_negative: false },
+      { id: "item1", name: "Gin", current_quantity: 8, allow_negative: false, unit_id: "u1" },
       { id: "item2", name: "Tonic", current_quantity: 20, allow_negative: false, unit_id: "u1" },
     ]);
     led.movements.push(consumption());
@@ -207,7 +207,7 @@ describe("ledger reversal", () => {
   });
 
   it("does nothing when the sale never consumed stock", async () => {
-    const led = makeLedger([{ id: "item1", name: "Gin", current_quantity: 8, allow_negative: false }]);
+    const led = makeLedger([{ id: "item1", name: "Gin", current_quantity: 8, allow_negative: false, unit_id: "u1" }]);
     const result = await reverseMovementsForOrderItem(led.sb, "user-1", { tenantId: "t1", orderItemId: "line1", reason: "void" });
     expect(result).toMatchObject({ reversed: 0, alreadyReversed: 0, costRestored: 0 });
     expect(led.movements).toHaveLength(0);
