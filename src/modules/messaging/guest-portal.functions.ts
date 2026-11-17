@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Supabase catalog rows are validated and projected before leaving the server boundary. */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { guestLineSchema } from "@/modules/restaurant/selforder/selforder.contracts";

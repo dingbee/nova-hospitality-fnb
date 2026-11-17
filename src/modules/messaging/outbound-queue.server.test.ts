@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- the mocked Supabase query builder mirrors the untyped server client boundary. */
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@/modules/api-platform/integrations.server", () => ({ getIntegrationSecret: vi.fn().mockResolvedValue("tenant-token") }));
 vi.mock("./providers/meta-cloud-api.server", () => ({

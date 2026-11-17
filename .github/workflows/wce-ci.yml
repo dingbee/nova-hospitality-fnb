@@ -10,10 +10,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: lexibite-wce-ci-${{ github.ref }}
+  group: lexibite-wce-ci-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -39,11 +39,30 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.head_ref || github.ref }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
       - name: Install
         run: bun install
+      - name: Format changed WCE sources and commit formatting
+        env:
+          TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin wce/wce-02-messaging-sessions
+          files="$(git diff --name-only origin/wce/wce-02-messaging-sessions...HEAD -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
+          if [ -n "$files" ]; then
+            bunx eslint $files --fix
+            if ! git diff --quiet; then
+              git add $files
+              git commit -m "style(wce): format changed source [skip ci]"
+              git push origin HEAD:"$TARGET_BRANCH"
+            fi
+          fi
       - name: Changed-source lint
         shell: bash
         run: |
