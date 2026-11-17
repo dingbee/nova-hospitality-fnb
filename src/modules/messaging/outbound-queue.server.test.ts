@@ -182,5 +182,4 @@ describe("WhatsApp outbound queue", () => {
       else process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED = previous;
     }
   });
-
 });
