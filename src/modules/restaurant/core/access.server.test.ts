@@ -28,6 +28,7 @@ const PROPERTY_B1 = "property-b1";
 const LOCATION_A1 = "location-a1";
 const LOCATION_A2 = "location-a2";
 const LOCATION_B1 = "location-b1";
+const LOCATION_CENTRAL_A = "location-central-a";
 
 const USER_SCOPED_A1 = "user-scoped-a1"; // restaurant_manager at A1 only
 const USER_SCOPED_A2 = "user-scoped-a2"; // restaurant_manager at A2 only
@@ -67,9 +68,10 @@ function makeFakeSupabase() {
     { tenant_id: TENANT_B, user_id: USER_TENANT_B_OWNER, role: "owner", property_id: null },
   ];
   const locations = [
-    { id: LOCATION_A1, property_id: PROPERTY_A1 },
-    { id: LOCATION_A2, property_id: PROPERTY_A2 },
-    { id: LOCATION_B1, property_id: PROPERTY_B1 },
+    { id: LOCATION_A1, tenant_id: TENANT_A, property_id: PROPERTY_A1, scope: "property" },
+    { id: LOCATION_A2, tenant_id: TENANT_A, property_id: PROPERTY_A2, scope: "property" },
+    { id: LOCATION_B1, tenant_id: TENANT_B, property_id: PROPERTY_B1, scope: "property" },
+    { id: LOCATION_CENTRAL_A, tenant_id: TENANT_A, property_id: null, scope: "tenant" },
   ];
   return {
     rpc: async (_fn: string, _args: any) => ({ data: false, error: null }), // never a platform admin here
@@ -200,6 +202,37 @@ describe("P0 property isolation — assertCapability with scope", () => {
     await expect(
       assertCapability(sb, USER_SCOPED_A1, TENANT_A, "sales.manage"),
     ).resolves.toBeUndefined();
+  });
+
+  it("a property-scoped manager cannot use a tenant-level capability to access the central store", async () => {
+    const sb = makeFakeSupabase();
+    await expect(
+      assertCapability(sb, USER_SCOPED_A1, TENANT_A, "sales.manage", { locationId: LOCATION_CENTRAL_A }),
+    ).rejects.toThrow(/tenant central store/);
+  });
+
+  it("a tenant-wide owner can use the matching capability at the central store", async () => {
+    const sb = makeFakeSupabase();
+    await expect(
+      assertCapability(sb, USER_TENANT_WIDE, TENANT_A, "sales.manage", { locationId: LOCATION_CENTRAL_A }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("tenant-level location creation requires the capability grant itself to be tenant-wide", async () => {
+    const sb = makeFakeSupabase();
+    await expect(
+      assertCapability(sb, USER_SCOPED_A1, TENANT_A, "location.manage", { tenantWide: true }),
+    ).rejects.toThrow(/requires a tenant-wide grant/);
+    await expect(
+      assertCapability(sb, USER_TENANT_WIDE, TENANT_A, "location.manage", { tenantWide: true }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("a location id from another tenant is rejected before capability scope can pass", async () => {
+    const sb = makeFakeSupabase();
+    await expect(
+      assertCapability(sb, USER_TENANT_WIDE, TENANT_A, "sales.manage", { locationId: LOCATION_B1 }),
+    ).rejects.toThrow(/location is not in this tenant/);
   });
 });
 
