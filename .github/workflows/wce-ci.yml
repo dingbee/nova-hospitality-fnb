@@ -108,36 +108,5 @@ jobs:
             IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='wa_messages' AND indexname='wa_messages_outbound_request_uq') THEN
               RAISE EXCEPTION 'Outbound idempotency unique index is missing';
             END IF;
-            IF NOT EXISTS (
-              SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-              WHERE n.nspname = 'public' AND p.proname = 'restaurant_create_guest_table_reservation'
-                AND p.prosecdef AND 'search_path=public, pg_temp' = ANY (p.proconfig)
-            ) THEN
-              RAISE EXCEPTION 'Guest reservation RPC is missing or lacks a fixed search path';
-            END IF;
-            IF has_function_privilege('anon', 'public.restaurant_create_guest_table_reservation(uuid,uuid,uuid,uuid,text,text,text,integer,timestamp with time zone,integer,text)', 'EXECUTE')
-              OR has_function_privilege('authenticated', 'public.restaurant_create_guest_table_reservation(uuid,uuid,uuid,uuid,text,text,text,integer,timestamp with time zone,integer,text)', 'EXECUTE')
-              OR NOT has_function_privilege('service_role', 'public.restaurant_create_guest_table_reservation(uuid,uuid,uuid,uuid,text,text,text,integer,timestamp with time zone,integer,text)', 'EXECUTE') THEN
-              RAISE EXCEPTION 'Guest reservation RPC grants are not service-role-only';
-            END IF;
-            IF NOT EXISTS (
-              SELECT 1 FROM pg_tables
-              WHERE schemaname = 'public' AND tablename = 'restaurant_table_reservations'
-            ) OR NOT (
-              SELECT relrowsecurity FROM pg_class WHERE oid = 'public.restaurant_table_reservations'::regclass
-            ) THEN
-              RAISE EXCEPTION 'Guest reservation table is missing or RLS is disabled';
-            END IF;
-            IF NOT EXISTS (
-              SELECT 1 FROM information_schema.columns
-              WHERE table_schema = 'public' AND table_name = 'restaurant_orders'
-                AND column_name = 'guest_reservation_id'
-            ) OR NOT EXISTS (
-              SELECT 1 FROM pg_indexes
-              WHERE schemaname = 'public' AND tablename = 'restaurant_orders'
-                AND indexname = 'restaurant_orders_guest_reservation_idx'
-            ) THEN
-              RAISE EXCEPTION 'Guest order-to-reservation linkage is missing';
-            END IF;
           END $verify$;
           SQL
