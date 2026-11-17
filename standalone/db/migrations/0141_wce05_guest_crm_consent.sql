@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS public.restaurant_guest_customer_consents (
   created_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT restaurant_guest_customer_consents_customer_scope_fkey
     FOREIGN KEY (tenant_id, guest_customer_id)
-    REFERENCES public.restaurant_guest_customers(tenant_id, id) ON DELETE CASCADE,
+    REFERENCES public.restaurant_guest_customers(tenant_id, id) ON DELETE RESTRICT,
   CONSTRAINT restaurant_guest_customer_consents_property_scope_fkey
     FOREIGN KEY (tenant_id, property_id)
     REFERENCES public.restaurant_properties(tenant_id, id) ON DELETE SET NULL (property_id),

@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS public.wa_conversation_handoffs (
 CREATE INDEX IF NOT EXISTS wa_conversation_handoffs_open_idx
   ON public.wa_conversation_handoffs (tenant_id, property_id, location_id, status, requested_at DESC);
 
+CREATE UNIQUE INDEX IF NOT EXISTS restaurant_orders_scope_id_uq
+  ON public.restaurant_orders (tenant_id, property_id, location_id, id);
+
 CREATE TABLE IF NOT EXISTS public.wa_order_notification_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE CASCADE,
