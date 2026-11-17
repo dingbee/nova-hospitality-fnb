@@ -272,6 +272,15 @@ export async function approveTransfer(
     transfer.source_location_id,
     transfer.destination_location_id,
   );
+  // Maker-checker: an approval-required transfer must be approved by a
+  // different authenticated member, including when the creator holds
+  // multiple roles or the action is invoked through an agent workflow.
+  if (
+    transfer.requires_approval &&
+    (transfer.requested_by === userId || transfer.created_by === userId)
+  ) {
+    throw new Error("Separation of duties — the transfer requester cannot approve their own transfer.");
+  }
   if (!["draft", "requested"].includes(transfer.status)) {
     throw new Error(`Transfer cannot be approved from status "${transfer.status}".`);
   }
