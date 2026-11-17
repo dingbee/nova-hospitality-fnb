@@ -120,9 +120,10 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
         return { data: mode === "list" ? [item] : item, error: null };
       }
       if (table === "restaurant_locations" && op === "select") {
-        const rows = inFilters.id
-          ? locations.filter((l) => inFilters.id!.includes(l.id))
-          : locations;
+        let rows = locations;
+        if (filters.id) rows = rows.filter((location) => location.id === filters.id);
+        if (filters.tenant_id) rows = rows.filter((location) => location.tenant_id === filters.tenant_id);
+        if (inFilters.id) rows = rows.filter((location) => inFilters.id!.includes(location.id));
         return { data: single ? (rows[0] ?? null) : rows, error: null };
       }
       if (table === "restaurant_members")
@@ -163,14 +164,34 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
         }
         if (op === "update") {
           const id = filters.id as string;
-          transferLines[id] = { ...transferLines[id], ...payload };
-          return { data: null, error: null };
+          const current = transferLines[id];
+          if (
+            filters.dispatched_quantity !== undefined &&
+            Number(current?.dispatched_quantity ?? 0) !== Number(filters.dispatched_quantity)
+          ) {
+            return { data: null, error: null };
+          }
+          transferLines[id] = { ...current, ...payload };
+          return { data: single ? transferLines[id] : [transferLines[id]], error: null };
         }
-        const transferId = filters.transfer_id as string;
+        let rows = Object.values(transferLines).filter((line: any) => {
+          if (filters.transfer_id && line.transfer_id !== filters.transfer_id) return false;
+          if (filters.id && line.id !== filters.id) return false;
+          if (filters.tenant_id && line.tenant_id !== filters.tenant_id) return false;
+          return true;
+        });
         return {
-          data: Object.values(transferLines).filter((l: any) => l.transfer_id === transferId),
+          data: single ? (rows[0] ?? null) : rows,
           error: null,
         };
+      }
+
+      if (table === "restaurant_stock_movements" && op === "select") {
+        if (filters.dedupe_key) {
+          const row = movements.find((movement) => movement.dedupe_key === filters.dedupe_key) ?? null;
+          return { data: row, error: null };
+        }
+        return { data: single ? null : movements, error: null };
       }
 
       if (table === "restaurant_stock_movements" && op === "insert") {
