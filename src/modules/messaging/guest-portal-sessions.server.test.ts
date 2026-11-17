@@ -81,7 +81,7 @@ function makeAdmin(overrides: Record<string, unknown> = {}) {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("WhatsApp Guest Portal session security", () => {
-  it("creates a 256-bit browse-only session and stores only its SHA-256 hash", async () => {
+  it("creates a 256-bit commerce session and stores only its SHA-256 hash", async () => {
     vi.stubEnv("LEXIBITE_GUEST_PORTAL_BASE_URL", "https://guest.example.test");
     const { admin, inserted } = makeAdmin();
 
@@ -141,10 +141,13 @@ describe("WhatsApp Guest Portal session security", () => {
         location_id: scope.locationId,
         binding_id: scope.bindingId,
         conversation_id: scope.conversationId,
+        table_id: null,
+        source_channel: "whatsapp",
+        order_type: "takeaway",
         currency: "TZS",
         menu_context: {},
         expires_at: "2026-11-16T21:00:00.000Z",
-        scope: "menu_browse",
+        scope: "guest_commerce",
       }],
       error: null,
     });
