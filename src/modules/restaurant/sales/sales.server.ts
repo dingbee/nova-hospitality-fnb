@@ -14,6 +14,7 @@ import type {
   OrderLineInput,
   RecordPaymentInput,
   TransitionOrderInput,
+  RestaurantOrderType,
   listOrdersSchema,
   listServicePeriodsSchema,
   listTablesSchema,
@@ -625,6 +626,8 @@ export async function createOrder(
   const scope = await resolveOrderScope(sb, input.tenantId, input);
   await assertCapability(sb, userId, input.tenantId, "sales.manage", scope, tenantScope);
 
+  const orderType = input.orderType ?? "dine_in";
+  const tableId = input.tableId ?? null;
   const { data: order, error } = await sb
     .from("restaurant_orders")
     .insert({
@@ -739,7 +742,11 @@ export async function createGuestOrder(
     tenantId: string;
     propertyId: string | null;
     locationId: string | null;
-    tableId: string;
+    tableId?: string | null;
+    orderType?: RestaurantOrderType;
+    source?: string;
+    guestCommerceSessionId?: string | null;
+    guestCommerceChannel?: string | null;
     guestName?: string | null;
     currency: string;
     lines: SalesLineInput[];
@@ -774,18 +781,20 @@ export async function createGuestOrder(
       tenant_id: input.tenantId,
       property_id: input.propertyId,
       location_id: input.locationId,
-      table_id: input.tableId,
+      table_id: tableId,
       order_number: reference("ORD"),
-      order_type: "dine_in",
+      order_type: orderType,
       status: "open",
       guest_count: 1,
       guest_name: input.guestName ?? null,
       currency: input.currency,
-      source: "self_order",
+      source: input.source ?? (input.guestCommerceSessionId ? "guest_commerce" : "self_order"),
       server_user_id: null,
       created_by: null,
       client_request_id: input.clientRequestId ?? null,
       guest_session_id: input.guestSessionId ?? null,
+      guest_commerce_session_id: input.guestCommerceSessionId ?? null,
+      guest_commerce_channel: input.guestCommerceChannel ?? null,
     })
     .select("id, order_number, currency")
     .single();
@@ -831,7 +840,7 @@ export async function createGuestOrder(
       currency: input.currency,
       propertyId: input.propertyId,
       locationId: input.locationId,
-      orderType: "dine_in",
+      orderType,
       exchangeRate,
       // This is the guest ordering path: no staff principal authorized these
       // lines, so their discount and modifier price fields are never
@@ -853,11 +862,13 @@ export async function createGuestOrder(
     throw err;
   }
 
-  await sb
-    .from("restaurant_tables")
-    .update({ status: "occupied" })
-    .eq("id", input.tableId)
-    .eq("tenant_id", input.tenantId);
+  if (tableId) {
+    await sb
+      .from("restaurant_tables")
+      .update({ status: "occupied" })
+      .eq("id", tableId)
+      .eq("tenant_id", input.tenantId);
+  }
 
   // Not routed through emitRestaurantEvent/recordEvent: that path requires a
   // real staff principal (assertIntelRead(supabase, userId)) and there is
