@@ -52,6 +52,7 @@ function makeDb(
     const builder: Record<string, any> = {
       select: vi.fn(() => builder),
       eq: vi.fn(() => builder),
+      or: vi.fn(() => builder),
       in: vi.fn(() => builder),
       order: vi.fn(() => builder),
       limit: vi.fn(() => builder),
