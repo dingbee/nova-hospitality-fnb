@@ -282,11 +282,13 @@ function makeFakeSupabase(opts: {
         let rows = movements.filter(
           (m) => filters.tenant_id === undefined || m.tenant_id === filters.tenant_id,
         );
+        if (filters.dedupe_key !== undefined)
+          rows = rows.filter((m) => m.dedupe_key === filters.dedupe_key);
         if (filters.reference_type !== undefined)
           rows = rows.filter((m) => m.reference_type === filters.reference_type);
         if (filters.reference_id !== undefined)
           rows = rows.filter((m) => m.reference_id === filters.reference_id);
-        return { data: rows, error: null };
+        return { data: single ? (rows[0] ?? null) : rows, error: null };
       }
 
       return { data: single ? null : [], error: null };
