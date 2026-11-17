@@ -151,7 +151,7 @@ export async function getWhatsAppGuestCustomerHistory(
   tenantId: string,
   guestCustomerId: string,
 ) {
-  const [{ data: orders, error: orderError }, marketingConsent] = await Promise.all([
+  const [{ data: orders, error: orderError }, marketingConsent, { data: loyaltyEntries, error: loyaltyError }] = await Promise.all([
     admin
       .from("restaurant_orders")
       .select("id, order_number, order_type, status, total, currency, opened_at, closed_at")
@@ -160,8 +160,11 @@ export async function getWhatsAppGuestCustomerHistory(
       .order("opened_at", { ascending: false })
       .limit(10),
     hasWhatsAppGuestMarketingConsent(admin, tenantId, guestCustomerId),
+    admin.from("restaurant_guest_loyalty_ledger").select("points_delta")
+      .eq("tenant_id", tenantId).eq("guest_customer_id", guestCustomerId),
   ]);
   if (orderError) throw new Error("Guest CRM order history could not be loaded.");
+  if (loyaltyError) throw new Error("Guest loyalty balance could not be loaded.");
   const orderIds = (orders ?? []).map((order: any) => order.id);
   const { data: lines, error: linesError } = orderIds.length
     ? await admin
@@ -189,6 +192,7 @@ export async function getWhatsAppGuestCustomerHistory(
       items: linesByOrder.get(order.id) ?? [],
     })),
     whatsappMarketingConsent: marketingConsent,
+    loyaltyPointsBalance: (loyaltyEntries ?? []).reduce((sum: number, entry: any) => sum + Number(entry.points_delta ?? 0), 0),
   };
 }
 
@@ -287,8 +291,9 @@ export async function queueWhatsAppOrderStatusNotification(
     .select("id, tenant_id, property_id, location_id, order_number, status, guest_customer_id, guest_portal_session_id")
     .eq("tenant_id", input.tenantId).eq("id", input.orderId).maybeSingle();
   if (orderError || !order || !order.guest_portal_session_id) return { queued: false as const, reason: "not_a_guest_portal_order" };
-  const messageStatus = orderStatusMessage(input.status, order.order_number, "en");
-  if (!messageStatus) return { queued: false as const, reason: "status_not_customer_visible" };
+  if (!orderStatusMessage(input.status, order.order_number, "en")) {
+    return { queued: false as const, reason: "status_not_customer_visible" };
+  }
 
   const { data: session, error: sessionError } = await admin.from("wa_guest_portal_sessions")
     .select("conversation_id")
@@ -318,10 +323,22 @@ export async function queueWhatsAppOrderStatusNotification(
       order_status: input.status,
       notification_state: "pending",
     })
-    .select("id")
+    .select("id, notification_state")
     .single();
-  if (notificationError?.code === "23505") return { queued: false as const, reason: "duplicate_status_event" };
-  if (notificationError || !notification) throw new Error("WhatsApp order notification event could not be persisted.");
+  let notificationId = notification?.id as string | undefined;
+  if (notificationError?.code === "23505") {
+    const { data: existing, error: existingError } = await admin.from("wa_order_notification_events")
+      .select("id, notification_state")
+      .eq("tenant_id", order.tenant_id).eq("order_id", order.id).eq("order_status", input.status)
+      .maybeSingle();
+    if (existingError || !existing) throw new Error("Existing WhatsApp order notification could not be resolved.");
+    if (existing.notification_state !== "pending") {
+      return { queued: existing.notification_state === "queued" as boolean, reason: "duplicate_status_event" };
+    }
+    notificationId = existing.id;
+  } else if (notificationError || !notificationId) {
+    throw new Error("WhatsApp order notification event could not be persisted.");
+  }
 
   const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { data: lastInbound, error: inboundError } = await admin.from("wa_messages")
@@ -334,7 +351,7 @@ export async function queueWhatsAppOrderStatusNotification(
   if (inboundError) throw new Error("WhatsApp customer service window could not be verified.");
   if (!lastInbound || lastInbound.created_at < windowStart) {
     await admin.from("wa_order_notification_events").update({ notification_state: "deferred_template" })
-      .eq("id", notification.id).eq("tenant_id", order.tenant_id);
+      .eq("id", notificationId).eq("tenant_id", order.tenant_id);
     return { queued: false as const, reason: "outside_customer_service_window" };
   }
 
@@ -352,7 +369,7 @@ export async function queueWhatsAppOrderStatusNotification(
     content,
     payload: {
       notification_type: "order_status",
-      order_notification_event_id: notification.id,
+      order_notification_event_id: notificationId,
       order_id: order.id,
       order_status: input.status,
     },
