@@ -81,6 +81,9 @@ jobs:
             echo "No changed source files require linting."
           fi
 
+      - name: Full repository lint
+        run: bun run lint
+
       - name: Upload P0-02 formatting patch
         if: always()
         uses: actions/upload-artifact@v4
