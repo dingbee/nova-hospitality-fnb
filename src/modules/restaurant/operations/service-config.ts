@@ -110,3 +110,30 @@ export function resolveServiceConfiguration(settings: unknown): ResolvedServiceC
 
   return { serviceMode, collectionMethod, readyAlert };
 }
+
+function asSettingsRecord(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, any>
+    : {};
+}
+
+/** Property-level operating settings override tenant defaults without losing unspecified tenant configuration. */
+export function mergePropertyServiceSettings(
+  tenantSettings: unknown,
+  propertySettings: unknown,
+): Record<string, any> {
+  const tenant = asSettingsRecord(tenantSettings);
+  const property = asSettingsRecord(propertySettings);
+  return {
+    ...tenant,
+    ...property,
+    operations: {
+      ...asSettingsRecord(tenant.operations),
+      ...asSettingsRecord(property.operations),
+    },
+    operatingModel: {
+      ...asSettingsRecord(tenant.operatingModel),
+      ...asSettingsRecord(property.operatingModel),
+    },
+  };
+}
