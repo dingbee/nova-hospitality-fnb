@@ -101,6 +101,16 @@ CREATE TRIGGER p0_04_active_locations_stocktakes
   BEFORE INSERT OR UPDATE OF location_id ON public.restaurant_stocktakes
   FOR EACH ROW EXECUTE FUNCTION public.restaurant_guard_active_inventory_locations();
 
+DROP TRIGGER IF EXISTS p0_04_active_locations_stocktake_lines ON public.restaurant_stocktake_lines;
+CREATE TRIGGER p0_04_active_locations_stocktake_lines
+  BEFORE INSERT OR UPDATE OF location_id ON public.restaurant_stocktake_lines
+  FOR EACH ROW EXECUTE FUNCTION public.restaurant_guard_active_inventory_locations();
+
+DROP TRIGGER IF EXISTS p0_04_active_locations_requisitions ON public.restaurant_requisitions;
+CREATE TRIGGER p0_04_active_locations_requisitions
+  BEFORE INSERT OR UPDATE OF source_location_id, destination_location_id ON public.restaurant_requisitions
+  FOR EACH ROW EXECUTE FUNCTION public.restaurant_guard_active_inventory_locations();
+
 DROP TRIGGER IF EXISTS p0_04_active_locations_goods_receipts ON public.restaurant_goods_receipts;
 CREATE TRIGGER p0_04_active_locations_goods_receipts
   BEFORE INSERT OR UPDATE OF location_id ON public.restaurant_goods_receipts
