@@ -81,6 +81,7 @@ function reservationDb(rows: Record<string, any[]>, rpcResult: unknown = null) {
           filtered = filtered.filter((row) => String(row[column]) > value);
           return builder;
         },
+        limit: () => builder,
         maybeSingle: async () => ({ data: filtered[0] ?? null, error: null }),
         then: (resolve: (value: unknown) => unknown) => {
           if (patch) for (const row of filtered) Object.assign(row, patch);
@@ -153,6 +154,7 @@ function baseRows() {
       },
     ],
     restaurant_table_reservations: [],
+    restaurant_orders: [],
   };
 }
 
