@@ -28,7 +28,8 @@ VALUES
 INSERT INTO public.restaurant_locations
   (id, tenant_id, property_id, scope, slug, name, location_type, is_storage, status, parent_id)
 VALUES
-  ('a2000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000001', NULL, 'tenant', 'p0-04-a-central', 'P0-04 A Central Store', 'store', true, 'active', NULL);
+  ('a2000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000001', NULL, 'tenant', 'p0-04-a-central', 'P0-04 A Central Store', 'store', true, 'active', NULL),
+  ('a2000000-0000-4000-8000-000000000004', 'a0000000-0000-4000-8000-000000000001', 'a1000000-0000-4000-8000-000000000001', 'property', 'p0-04-a-inactive', 'P0-04 A Inactive Store', 'store', true, 'inactive', NULL);
 
 INSERT INTO public.restaurant_members (tenant_id, property_id, user_id, role)
 VALUES
@@ -92,6 +93,16 @@ BEGIN
     (tenant_id, transfer_number, source_location_id, destination_location_id)
   VALUES
     ('a0000000-0000-4000-8000-000000000001', 'P0-04-OWNER-CENTRAL', 'a2000000-0000-4000-8000-000000000003', 'a2000000-0000-4000-8000-000000000001');
+
+  BEGIN
+    INSERT INTO public.restaurant_stock_transfers
+      (tenant_id, transfer_number, source_location_id, destination_location_id)
+    VALUES
+      ('a0000000-0000-4000-8000-000000000001', 'P0-04-INACTIVE-DENIED', 'a2000000-0000-4000-8000-000000000004', 'a2000000-0000-4000-8000-000000000001');
+    RAISE EXCEPTION 'P0-04 FAIL: tenant owner created a transfer against an inactive location';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'P0-04 PASS: database trigger rejects inactive-location transfer';
+  END;
 END;
 $owner_rls$;
 
