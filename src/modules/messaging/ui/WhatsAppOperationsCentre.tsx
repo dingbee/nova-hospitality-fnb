@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- server function rows are untyped at this UI boundary. */
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import {
   MessageSquare,
   Users,
@@ -26,6 +27,10 @@ import {
   getWhatsAppUsageReportFn,
   listWhatsAppGuestCRMFn,
   listWhatsAppInboxFn,
+  createWhatsAppTemplateDraftFn,
+  createWhatsAppCampaignDraftFn,
+  activateWhatsAppCampaignFn,
+  pauseWhatsAppCampaignFn,
 } from "../operations.functions";
 
 function formatDate(value?: string | null) {
@@ -48,6 +53,21 @@ export function WhatsAppOperationsCentre() {
   const propertyId = ws.data?.activePropertyId ?? undefined;
   const [locationId, setLocationId] = useState<string | undefined>();
   const [conversationId, setConversationId] = useState<string | undefined>();
+  const [templateName, setTemplateName] = useState("");
+  const [templateLanguage, setTemplateLanguage] = useState("en");
+  const [templateCategory, setTemplateCategory] = useState<"marketing" | "utility" | "authentication">("utility");
+  const [campaignName, setCampaignName] = useState("");
+  const [campaignTemplateId, setCampaignTemplateId] = useState("");
+  const [campaignLocationId, setCampaignLocationId] = useState("");
+  const [campaignBindingId, setCampaignBindingId] = useState("");
+  const [campaignMarketCode, setCampaignMarketCode] = useState("");
+  const [campaignTriggerType, setCampaignTriggerType] = useState<"scheduled" | "event">("scheduled");
+  const [campaignScheduledAt, setCampaignScheduledAt] = useState("");
+  const [campaignEventKey, setCampaignEventKey] = useState("");
+  const [campaignLanguage, setCampaignLanguage] = useState<"en" | "sw" | "">("");
+  const [campaignDailyCap, setCampaignDailyCap] = useState("100");
+  const [campaignTotalCap, setCampaignTotalCap] = useState("1000");
+  const qc = useQueryClient();
   const filters = { tenantId: tenantId!, propertyId, locationId };
 
   const inboxFn = useServerFn(listWhatsAppInboxFn);
@@ -56,6 +76,10 @@ export function WhatsAppOperationsCentre() {
   const campaignsFn = useServerFn(getWhatsAppCampaignWorkspaceFn);
   const usageFn = useServerFn(getWhatsAppUsageReportFn);
   const conversionFn = useServerFn(getWhatsAppConversionReportFn);
+  const createTemplateFn = useServerFn(createWhatsAppTemplateDraftFn);
+  const createCampaignFn = useServerFn(createWhatsAppCampaignDraftFn);
+  const activateCampaignFn = useServerFn(activateWhatsAppCampaignFn);
+  const pauseCampaignFn = useServerFn(pauseWhatsAppCampaignFn);
 
   const inbox = useQuery({
     queryKey: ["whatsapp", "inbox", tenantId, propertyId, locationId],
@@ -88,6 +112,66 @@ export function WhatsAppOperationsCentre() {
     queryKey: ["whatsapp", "conversion", tenantId, propertyId, locationId],
     queryFn: () => conversionFn({ data: { ...filters } }),
     enabled: Boolean(tenantId),
+  });
+
+  const invalidateWorkspace = () => {
+    void qc.invalidateQueries({ queryKey: ["whatsapp", "campaigns"] });
+    void qc.invalidateQueries({ queryKey: ["whatsapp", "crm"] });
+    void qc.invalidateQueries({ queryKey: ["whatsapp", "usage"] });
+  };
+  const createTemplate = useAdminMutation({
+    mutationFn: () => createTemplateFn({
+      data: {
+        tenantId: tenantId!,
+        propertyId,
+        templateName,
+        language: templateLanguage,
+        category: templateCategory,
+      },
+    }),
+    successMessage: "Draft template created",
+    onSuccess: () => {
+      setTemplateName("");
+      invalidateWorkspace();
+    },
+  });
+  const createCampaign = useAdminMutation({
+    mutationFn: () => createCampaignFn({
+      data: {
+        tenantId: tenantId!,
+        propertyId: propertyId!,
+        locationId: campaignLocationId,
+        bindingId: campaignBindingId,
+        marketCode: campaignMarketCode.toUpperCase(),
+        templateId: campaignTemplateId,
+        name: campaignName,
+        triggerType: campaignTriggerType,
+        scheduledAt: campaignTriggerType === "scheduled" ? new Date(campaignScheduledAt).toISOString() : undefined,
+        eventKey: campaignTriggerType === "event" ? campaignEventKey : undefined,
+        preferredLanguage: campaignLanguage || undefined,
+        dailyCap: campaignDailyCap ? Number(campaignDailyCap) : null,
+        totalCap: campaignTotalCap ? Number(campaignTotalCap) : null,
+      },
+    }),
+    successMessage: "Campaign draft created",
+    onSuccess: () => {
+      setCampaignName("");
+      invalidateWorkspace();
+    },
+  });
+  const activateCampaign = useAdminMutation({
+    mutationFn: (campaignId: string) => activateCampaignFn({
+      data: { tenantId: tenantId!, propertyId: propertyId!, campaignId },
+    }),
+    successMessage: "Campaign activated",
+    onSuccess: invalidateWorkspace,
+  });
+  const pauseCampaign = useAdminMutation({
+    mutationFn: (campaignId: string) => pauseCampaignFn({
+      data: { tenantId: tenantId!, propertyId: propertyId!, campaignId },
+    }),
+    successMessage: "Campaign paused",
+    onSuccess: invalidateWorkspace,
   });
 
   if (!ws.isLoading && !ws.data?.tenant) {
