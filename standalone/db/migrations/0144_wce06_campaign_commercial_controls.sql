@@ -224,6 +224,10 @@ BEGIN
   FROM public.restaurant_guest_customers g
   WHERE g.id = _guest_customer_id AND g.tenant_id = _tenant_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'guest identity not found'; END IF;
+  IF _guest.first_property_id IS DISTINCT FROM _property_id
+     AND _guest.last_property_id IS DISTINCT FROM _property_id THEN
+    RAISE EXCEPTION 'guest is outside the campaign property audience';
+  END IF;
   IF _guest.status = 'blocked' THEN
     _next_state := 'suppressed';
     _reason := 'guest_blocked';
