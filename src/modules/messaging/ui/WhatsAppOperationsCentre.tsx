@@ -392,6 +392,14 @@ export function WhatsAppOperationsCentre() {
                       <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{campaign.name}</span><StatusChip>{campaign.status}</StatusChip></div>
                       <p className="text-xs text-muted-foreground">{campaign.trigger_type === "scheduled" ? `Scheduled · ${formatDate(campaign.scheduled_at)}` : `Event · ${campaign.event_key}`} · {campaign.market_code}</p>
                       <p className="text-xs text-muted-foreground">Daily cap: {campaign.daily_cap ?? "—"} · Total cap: {campaign.total_cap ?? "—"}</p>
+                      <div className="flex gap-2 pt-1">
+                        {["draft", "paused"].includes(campaign.status) ? (
+                          <button type="button" className="text-xs font-medium text-primary disabled:opacity-50" disabled={activateCampaign.isPending || !propertyId} onClick={() => activateCampaign.mutate(campaign.id)}>Activate</button>
+                        ) : null}
+                        {["ready", "scheduled", "running"].includes(campaign.status) ? (
+                          <button type="button" className="text-xs font-medium text-destructive disabled:opacity-50" disabled={pauseCampaign.isPending || !propertyId} onClick={() => pauseCampaign.mutate(campaign.id)}>Pause</button>
+                        ) : null}
+                      </div>
                     </li>
                   ))}
                 </ul>
