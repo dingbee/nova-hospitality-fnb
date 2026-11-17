@@ -12,8 +12,10 @@ export const Route = createFileRoute("/qr/$tableId")({
       { "http-equiv": "Cache-Control", content: "no-store, private, max-age=0" },
     ],
   }),
-  component: () => {
-    const data = Route.useLoaderData();
-    return <GuestCommerceEntry portalUrl={data.portalUrl} />;
-  },
+  component: QrGuestCommerceEntry,
 });
+
+function QrGuestCommerceEntry() {
+  const data = Route.useLoaderData();
+  return <GuestCommerceEntry portalUrl={data.portalUrl} />;
+}
