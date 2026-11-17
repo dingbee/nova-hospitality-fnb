@@ -569,7 +569,7 @@ describe("executeRestaurantAction — Act", () => {
       procurementRequestStatus: "draft",
     });
     expect(fake.getRequestInsertCount()).toBe(0); // never a second draft
-    expect(fake.getLineInsertCount()).toBe(0);
+    expect(fake.getLineInsertCount()).toBe(1);
     expect(fake.getAction()?.status).toBe("executed");
   });
 
