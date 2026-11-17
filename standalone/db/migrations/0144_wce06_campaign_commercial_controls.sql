@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS public.wa_campaigns (
     CHECK (trigger_type IN ('scheduled', 'event')),
   event_key text,
   audience_filter jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(audience_filter) = 'object'),
+  message_components jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(message_components) = 'array'),
   status text NOT NULL DEFAULT 'draft'
     CHECK (status IN ('draft', 'scheduled', 'ready', 'running', 'paused', 'completed', 'cancelled', 'suspended')),
   scheduled_at timestamptz,
