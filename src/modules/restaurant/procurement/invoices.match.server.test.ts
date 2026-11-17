@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Sb } from "../core/access.server";
 
 const mocks = vi.hoisted(() => ({
   assertCapability: vi.fn().mockResolvedValue(undefined),
@@ -60,7 +59,7 @@ function makeSupabase() {
     },
     single: async () => ({ data: operation === "select" ? invoice : invoice, error: null }),
   };
-  return { from: () => builder } as unknown as Sb;
+  return { from: () => builder } as unknown as Parameters<typeof matchSupplierInvoice>[0];
 }
 
 describe("supplier invoice three-way reconciliation maker-checker", () => {
