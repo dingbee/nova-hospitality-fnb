@@ -12,7 +12,7 @@ export type ChannelDefinition = {
   category: ChannelType;
 };
 
-export const CHANNEL_TYPES = ["marketplace", "ordering_platform", "delivery", "aggregator"] as const;
+export const CHANNEL_TYPES = ["marketplace", "ordering_platform", "delivery", "aggregator", "messaging"] as const;
 export type ChannelType = (typeof CHANNEL_TYPES)[number];
 
 export const CHANNEL_STATUSES = ["active", "disabled", "error"] as const;

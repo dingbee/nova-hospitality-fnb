@@ -46,6 +46,9 @@ export async function createChannelConnection(sb: any, userId: string, input: Cr
 
   const channel = await getChannelDefinition(sb, input.channelKey);
   if (!channel) throw new Error(`Unsupported channel: ${input.channelKey}`);
+  if (channel.providerKey === 'meta-whatsapp') {
+    throw new Error('WhatsApp must be connected through Meta Embedded Signup.');
+  }
   const provider = assertChannelProvider(channel.providerKey);
   const adapter = getChannelAdapter(provider.key);
   const config = adapter.validateConfig(input.config);
@@ -79,6 +82,9 @@ export async function updateChannelConnection(sb: any, userId: string, input: Up
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!existing) throw new Error("Channel connection not found.");
+  if (existing.provider === 'meta-whatsapp') {
+    throw new Error('WhatsApp credentials and phone assets must be changed through Meta Embedded Signup.');
+  }
 
   if (existing.channel_key) {
     const channel = await getChannelDefinition(sb, existing.channel_key);
