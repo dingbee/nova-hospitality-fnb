@@ -85,7 +85,7 @@ export async function getPurchasingIntelligence(
     sb
       .from("restaurant_supplier_products")
       .select(
-        "id, supplier_id, inventory_item_id, unit_id, pack_size, unit_price, currency, min_order_quantity, lead_time_days, last_price_at, active",
+        "id, supplier_id, inventory_item_id, unit_id, pack_size, unit_price, currency, min_order_quantity, order_multiple, lead_time_days, last_price_at, active",
       )
       .eq("tenant_id", tenantId),
     sb
