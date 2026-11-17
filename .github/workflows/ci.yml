@@ -147,8 +147,8 @@ jobs:
             END IF;
             IF has_function_privilege('anon', 'public.wa_claim_webhook_events(integer,integer,text)', 'EXECUTE')
               OR has_function_privilege('authenticated', 'public.wa_claim_webhook_events(integer,integer,text)', 'EXECUTE')
-              OR has_function_privilege('anon', 'public.wa_resolve_guest_portal_session(text)', 'EXECUTE')
-              OR has_function_privilege('authenticated', 'public.wa_resolve_guest_portal_session(text)', 'EXECUTE')
+              OR has_function_privilege('anon', 'public.restaurant_resolve_guest_commerce_session(text)', 'EXECUTE')
+              OR has_function_privilege('authenticated', 'public.restaurant_resolve_guest_commerce_session(text)', 'EXECUTE')
               OR has_function_privilege('anon', 'public.wa_apply_message_delivery_status(text,text,timestamptz,text)', 'EXECUTE')
               OR has_function_privilege('authenticated', 'public.wa_apply_message_delivery_status(text,text,timestamptz,text)', 'EXECUTE') THEN
               RAISE EXCEPTION 'WhatsApp service-only RPC privilege boundary is incorrect';
@@ -156,16 +156,35 @@ jobs:
             IF EXISTS (
               SELECT 1 FROM pg_policies
               WHERE schemaname = 'public'
-                AND tablename IN ('wa_webhook_events', 'wa_guest_portal_sessions')
+                AND tablename IN ('wa_webhook_events', 'restaurant_guest_commerce_sessions')
             ) THEN
               RAISE EXCEPTION 'Private WhatsApp inbox/session tables must not have authenticated policies';
             END IF;
-            IF to_regclass('public.wa_outbound_jobs') IS NULL
+            IF to_regclass('public.wa_guest_portal_sessions') IS NOT NULL
+              OR to_regclass('public.restaurant_guest_commerce_sessions') IS NULL
+              OR NOT EXISTS (
+                SELECT 1 FROM pg_class
+                WHERE oid = 'public.restaurant_guest_commerce_sessions'::regclass AND relrowsecurity
+              )
+              OR to_regclass('public.wa_outbound_jobs') IS NULL
               OR NOT EXISTS (
                 SELECT 1 FROM pg_class
                 WHERE oid = 'public.wa_outbound_jobs'::regclass AND relrowsecurity
               ) THEN
-              RAISE EXCEPTION 'Encrypted WhatsApp outbound queue is missing or RLS-disabled';
+              RAISE EXCEPTION 'Unified guest commerce sessions or encrypted WhatsApp outbound queue are missing or RLS-disabled';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'restaurant_orders'
+                AND column_name = 'guest_commerce_session_id'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'restaurant_orders'
+                AND column_name = 'guest_commerce_channel'
+            ) THEN
+              RAISE EXCEPTION 'Restaurant orders are not linked to the unified guest commerce session';
             END IF;
             IF has_function_privilege('anon', 'public.wa_claim_outbound_jobs(integer,integer,text)', 'EXECUTE')
               OR has_function_privilege('authenticated', 'public.wa_claim_outbound_jobs(integer,integer,text)', 'EXECUTE')
