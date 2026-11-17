@@ -113,9 +113,7 @@ async function processMessages(db: Db, event: ClaimedEvent, value: Record<string
       throw new Error("inbound_message_persistence_failed");
     }
     // A repeated Meta delivery must not trigger a second customer-facing action.
-    if (!insertError) {
-      await handleWhatsAppGuestCommerceMessage(db, event, conversation.id, message);
-    }
+    await handleWhatsAppGuestCommerceMessage(db, event, conversation.id, message);
 
     if (!conversation.last_message_at || new Date(at) > new Date(conversation.last_message_at)) {
       const { error: updateError } = await db
