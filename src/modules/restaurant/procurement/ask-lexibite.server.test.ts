@@ -131,6 +131,7 @@ function sbWithExisting(
             ? [
                 {
                   id: "line-1",
+                  purchase_order_id: "po-existing",
                   inventory_item_id: ITEM,
                   supplier_product_id: PRODUCT,
                   unit_id: productUnitId,
