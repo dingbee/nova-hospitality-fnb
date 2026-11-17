@@ -214,10 +214,22 @@ export async function getWhatsAppCampaignWorkspace(
     campaignsQuery = campaignsQuery.in("property_id", propertyIds);
   }
   if (input.locationId) campaignsQuery = campaignsQuery.eq("location_id", input.locationId);
-  const [{ data: templates, error: templateError }, { data: campaigns, error: campaignError }] =
-    await Promise.all([templatesQuery, campaignsQuery]);
-  if (templateError || campaignError) throw new Error("whatsapp_campaign_workspace_unavailable");
-  return { templates: templates ?? [], campaigns: campaigns ?? [] };
+  let bindingsQuery = sb
+    .from("wa_phone_number_bindings")
+    .select("id, tenant_id, property_id, location_id, display_phone_number, waba_id, phone_number_id, status, quality_rating")
+    .eq("tenant_id", input.tenantId)
+    .eq("status", "active");
+  bindingsQuery = applyPropertyScope(bindingsQuery, propertyIds);
+  if (input.locationId) bindingsQuery = bindingsQuery.eq("location_id", input.locationId);
+  const [
+    { data: templates, error: templateError },
+    { data: campaigns, error: campaignError },
+    { data: bindings, error: bindingError },
+  ] = await Promise.all([templatesQuery, campaignsQuery, bindingsQuery]);
+  if (templateError || campaignError || bindingError) {
+    throw new Error("whatsapp_campaign_workspace_unavailable");
+  }
+  return { templates: templates ?? [], campaigns: campaigns ?? [], bindings: bindings ?? [] };
 }
 
 export async function getWhatsAppUsageReport(
@@ -403,3 +415,107 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
     invoiceSummary,
   };
 }
+
+async function serviceAdmin() {
+  return (await import("@/integrations/supabase/client.server")).supabaseAdmin;
+}
+
+export async function createWhatsAppTemplateDraft(
+  sb: Db,
+  userId: string,
+  input: TenantFilter & {
+    templateName: string;
+    language: string;
+    category: "marketing" | "utility" | "authentication";
+    components?: Array<Record<string, unknown>>;
+  },
+) {
+  await tenantQueryScope(sb, userId, input, "guest.context.manage");
+  const admin = await serviceAdmin();
+  const { data, error } = await admin
+    .from("wa_message_templates")
+    .insert({
+      tenant_id: input.tenantId,
+      property_id: input.propertyId ?? null,
+      template_name: input.templateName.trim(),
+      language: input.language,
+      category: input.category,
+      components: input.components ?? [],
+      status: "draft",
+      created_by: userId,
+    })
+    .select("id, template_name, language, category, status")
+    .single();
+  if (error || !data) throw new Error("whatsapp_template_draft_create_failed");
+  return data;
+}
+
+export async function createWhatsAppCampaignDraft(
+  sb: Db,
+  userId: string,
+  input: TenantFilter & {
+    propertyId: string;
+    locationId: string;
+    bindingId: string;
+    marketCode: string;
+    templateId: string;
+    name: string;
+    triggerType: "scheduled" | "event";
+    eventKey?: string | null;
+    scheduledAt?: string | null;
+    dailyCap?: number | null;
+    totalCap?: number | null;
+    preferredLanguage?: "en" | "sw";
+  },
+) {
+  await tenantQueryScope(sb, userId, input, "guest.context.manage");
+  const admin = await serviceAdmin();
+  const mod = await import("./campaign-governance.server");
+  return mod.createWhatsAppCampaign(admin, {
+    tenantId: input.tenantId,
+    propertyId: input.propertyId,
+    locationId: input.locationId,
+    bindingId: input.bindingId,
+    marketCode: input.marketCode,
+    templateId: input.templateId,
+    name: input.name,
+    triggerType: input.triggerType,
+    eventKey: input.eventKey,
+    scheduledAt: input.scheduledAt,
+    dailyCap: input.dailyCap,
+    totalCap: input.totalCap,
+    audienceFilter: input.preferredLanguage ? { preferredLanguage: input.preferredLanguage } : {},
+    createdBy: userId,
+  });
+}
+
+export async function activateWhatsAppCampaignForTenant(
+  sb: Db,
+  userId: string,
+  input: TenantFilter & { propertyId: string; campaignId: string },
+) {
+  await tenantQueryScope(sb, userId, input, "guest.context.manage");
+  const admin = await serviceAdmin();
+  return (await import("./campaign-governance.server")).activateWhatsAppCampaign(admin, input);
+}
+
+export async function pauseWhatsAppCampaignForTenant(
+  sb: Db,
+  userId: string,
+  input: TenantFilter & { propertyId: string; campaignId: string },
+) {
+  await tenantQueryScope(sb, userId, input, "guest.context.manage");
+  const admin = await serviceAdmin();
+  const { data, error } = await admin
+    .from("wa_campaigns")
+    .update({ status: "paused", updated_at: new Date().toISOString() })
+    .eq("id", input.campaignId)
+    .eq("tenant_id", input.tenantId)
+    .eq("property_id", input.propertyId)
+    .in("status", ["ready", "scheduled", "running"])
+    .select("id, status")
+    .maybeSingle();
+  if (error || !data) throw new Error("whatsapp_campaign_pause_failed");
+  return data;
+}
+
