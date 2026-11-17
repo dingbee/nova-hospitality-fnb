@@ -295,6 +295,7 @@ describe("Purchasing Intelligence procurement integrity", () => {
       { id: STOCK_UNIT, dimension: "mass", base_unit_id: null, factor: 1 },
       { id: PURCHASE_UNIT, dimension: "mass", base_unit_id: STOCK_UNIT, factor: 1 },
     ];
+    tables.restaurant_purchase_order_items[0]!.stock_units_per_purchase_unit = 1;
     const result = await getPurchasingIntelligence(fakeSupabase(), "user-1", {
       tenantId: TENANT,
       windowDays: 30,
