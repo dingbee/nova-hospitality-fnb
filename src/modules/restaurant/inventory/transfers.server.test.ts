@@ -48,8 +48,8 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
     current_quantity: opts.itemQuantity,
   };
   const locations = [
-    { id: SOURCE, name: "Dry store" },
-    { id: DEST, name: "Kitchen" },
+    { id: SOURCE, name: "Dry store", is_storage: true, status: "active", property_id: null, scope: "tenant" },
+    { id: DEST, name: "Kitchen", is_storage: true, status: "active", property_id: null, scope: "tenant" },
   ];
   const transfers: Record<string, any> = {};
   const transferLines: Record<string, any> = {};
