@@ -354,7 +354,6 @@ describe("upsertInventoryItem — SKU generation and barcode identity", () => {
         currentQuantity: 0,
         averageCost: 0,
         currency: "TZS",
-      unitId: "unit-ml",
         trackBatches: false,
         allowNegative: false,
         packSize: 1,
