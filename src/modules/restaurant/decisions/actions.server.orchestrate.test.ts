@@ -19,9 +19,9 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../intelligence/purchasing.server", () => ({
   getPurchasingIntelligence: vi.fn(async () => ({
     currency: "TZS",
-    suggestions: ["item-1", "item-2", "item-3"].map((inventoryItemId) => ({
+    suggestions: ["item-1", "item-2", "item-3", "item-a", "item-b"].map((inventoryItemId) => ({
       inventoryItemId,
-      supplierId: "77777777-7777-4777-8777-777777777777",
+      supplierId: "77777777-7777-7777-7777-777777777777",
       supplierProductId: "88888888-8888-4888-8888-888888888888",
       purchaseUnitId: "99999999-9999-4999-8999-999999999999",
       stockUnitId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
