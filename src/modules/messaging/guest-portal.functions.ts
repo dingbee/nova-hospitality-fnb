@@ -28,6 +28,7 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
       { data: location, error: locationError },
       catalog,
       { data: conversation, error: conversationError },
+      { data: property, error: propertyError },
     ] = await Promise.all([
       supabaseAdmin
         .from("restaurant_tenants")
@@ -54,6 +55,12 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
         .eq("property_id", session.propertyId)
         .eq("location_id", session.locationId)
         .maybeSingle(),
+      supabaseAdmin
+        .from("restaurant_properties")
+        .select("timezone, settings, status")
+        .eq("id", session.propertyId)
+        .eq("tenant_id", session.tenantId)
+        .maybeSingle(),
     ]);
     if (
       tenantError ||
@@ -63,7 +70,10 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
       !location ||
       location.status !== "active" ||
       location.is_storage ||
-      !["outlet", "restaurant", "bar"].includes(location.location_type)
+      !["outlet", "restaurant", "bar"].includes(location.location_type) ||
+      propertyError ||
+      !property ||
+      property.status !== "active"
     ) {
       throw new Error("This restaurant menu is not currently available.");
     }
@@ -95,6 +105,12 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
       logoUrl: settings?.business?.logoUrl?.trim() || null,
       outletName: location.name,
       guestName: guestCustomer?.display_name ?? null,
+      timezone: property.timezone || "Africa/Dar_es_Salaam",
+      reservationDurationMinutes: Number(
+        location.settings?.reservations?.durationMinutes ??
+          property.settings?.reservations?.durationMinutes ??
+          90,
+      ),
       loyaltyPointsBalance: Number(loyaltyPointsBalance ?? 0),
       currency: session.currency,
       categories: catalog.categories.map((category: any) => ({
@@ -347,4 +363,36 @@ export const confirmGuestCommercePaymentFn = createServerFn({ method: "POST" })
       },
       data.orderTrackingId,
     );
+  });
+
+
+const guestReservationAvailabilitySchema = z.object({
+  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  localStart: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$/),
+  partySize: z.number().int().min(1).max(30),
+});
+
+/** WCE-06: availability preview; final table assignment is repeated transactionally by the database RPC. */
+export const checkGuestReservationAvailabilityFn = createServerFn({ method: "POST" })
+  .inputValidator((value: unknown) => guestReservationAvailabilitySchema.parse(value))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { checkGuestReservationAvailability } =
+      await import("@/modules/messaging/guest-reservations.server");
+    return checkGuestReservationAvailability(supabaseAdmin, data);
+  });
+
+const createGuestReservationSchema = guestReservationAvailabilitySchema.extend({
+  guestName: z.string().trim().max(160).optional(),
+  clientRequestId: z.string().min(8).max(80),
+});
+
+/** WCE-06: create a table reservation against the outlet's canonical table inventory. */
+export const createGuestReservationFn = createServerFn({ method: "POST" })
+  .inputValidator((value: unknown) => createGuestReservationSchema.parse(value))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { createGuestTableReservation } =
+      await import("@/modules/messaging/guest-reservations.server");
+    return createGuestTableReservation(supabaseAdmin, data);
   });
