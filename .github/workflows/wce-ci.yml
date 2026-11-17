@@ -127,8 +127,8 @@ jobs:
               RAISE EXCEPTION 'WCE-06 atomic recipient preparation RPC missing or unsafe';
             END IF;
             IF has_function_privilege('anon', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text,text)', 'EXECUTE')
-              OR has_function_privilege('authenticated', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text)', 'EXECUTE')
-              OR NOT has_function_privilege('service_role', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text)', 'EXECUTE') THEN
+              OR has_function_privilege('authenticated', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text,text)', 'EXECUTE')
+              OR NOT has_function_privilege('service_role', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text,text)', 'EXECUTE') THEN
               RAISE EXCEPTION 'WCE-06 recipient preparation RPC grants are not service-role-only';
             END IF;
           END $verify$;
