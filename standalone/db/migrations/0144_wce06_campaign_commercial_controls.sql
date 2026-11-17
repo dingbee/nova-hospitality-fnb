@@ -154,6 +154,129 @@ CREATE INDEX IF NOT EXISTS wa_campaign_usage_tenant_period_idx
 CREATE INDEX IF NOT EXISTS wa_campaign_usage_property_period_idx
   ON public.wa_campaign_usage_ledger (tenant_id, property_id, recorded_at DESC);
 
+-- Atomic recipient preparation: campaign row lock enforces tenant/property scope and caps.
+CREATE OR REPLACE FUNCTION public.wa_prepare_campaign_recipient(
+  _tenant_id uuid,
+  _property_id uuid,
+  _campaign_id uuid,
+  _guest_customer_id uuid,
+  _idempotency_key text
+)
+RETURNS TABLE(recipient_id uuid, state text, suppression_reason text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $wce$
+DECLARE
+  _campaign public.wa_campaigns%ROWTYPE;
+  _template public.wa_message_templates%ROWTYPE;
+  _guest public.restaurant_guest_customers%ROWTYPE;
+  _consent text;
+  _next_state text := 'eligible';
+  _reason text := NULL;
+  _existing public.wa_campaign_recipients%ROWTYPE;
+  _total_count integer;
+  _daily_count integer;
+BEGIN
+  IF _tenant_id IS NULL OR _property_id IS NULL OR _campaign_id IS NULL
+     OR _guest_customer_id IS NULL OR length(coalesce(_idempotency_key, '')) < 6 THEN
+    RAISE EXCEPTION 'invalid campaign recipient request';
+  END IF;
+
+  SELECT * INTO _campaign
+  FROM public.wa_campaigns c
+  WHERE c.id = _campaign_id AND c.tenant_id = _tenant_id AND c.property_id = _property_id
+  FOR UPDATE;
+  IF NOT FOUND OR _campaign.status NOT IN ('ready', 'scheduled', 'running') THEN
+    RAISE EXCEPTION 'campaign is not dispatchable';
+  END IF;
+  IF _campaign.trigger_type = 'scheduled'
+     AND (_campaign.scheduled_at IS NULL OR _campaign.scheduled_at > now()) THEN
+    RAISE EXCEPTION 'campaign is not due';
+  END IF;
+
+  SELECT * INTO _template
+  FROM public.wa_message_templates t
+  WHERE t.id = _campaign.template_id AND t.tenant_id = _tenant_id
+    AND (t.property_id IS NULL OR t.property_id = _property_id);
+  IF NOT FOUND OR _template.status <> 'approved' THEN
+    RAISE EXCEPTION 'approved campaign template is unavailable';
+  END IF;
+
+  SELECT * INTO _guest
+  FROM public.restaurant_guest_customers g
+  WHERE g.id = _guest_customer_id AND g.tenant_id = _tenant_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'guest identity not found'; END IF;
+  IF _guest.status = 'blocked' THEN
+    _next_state := 'suppressed';
+    _reason := 'guest_blocked';
+  ELSIF _template.category = 'marketing' THEN
+    SELECT cc.state INTO _consent
+    FROM public.restaurant_guest_customer_consents cc
+    WHERE cc.tenant_id = _tenant_id
+      AND cc.guest_customer_id = _guest_customer_id
+      AND cc.channel = 'whatsapp'
+      AND cc.purpose = 'marketing'
+    ORDER BY cc.recorded_at DESC, cc.created_at DESC
+    LIMIT 1;
+    IF _consent IS DISTINCT FROM 'granted' THEN
+      _next_state := 'suppressed';
+      _reason := 'marketing_consent_missing';
+    END IF;
+  END IF;
+
+  IF _next_state = 'eligible' THEN
+    SELECT count(*) INTO _total_count
+    FROM public.wa_campaign_recipients r
+    WHERE r.tenant_id = _tenant_id AND r.campaign_id = _campaign_id
+      AND r.state IN ('eligible', 'queued', 'sent', 'delivered', 'read');
+    IF _campaign.total_cap IS NOT NULL AND _total_count >= _campaign.total_cap THEN
+      _next_state := 'suppressed';
+      _reason := 'campaign_total_cap';
+    END IF;
+  END IF;
+
+  IF _next_state = 'eligible' AND _campaign.daily_cap IS NOT NULL THEN
+    SELECT count(*) INTO _daily_count
+    FROM public.wa_campaign_recipients r
+    WHERE r.tenant_id = _tenant_id AND r.campaign_id = _campaign_id
+      AND r.dispatched_at >= date_trunc('day', now())
+      AND r.state IN ('queued', 'sent', 'delivered', 'read');
+    IF _daily_count >= _campaign.daily_cap THEN
+      _next_state := 'suppressed';
+      _reason := 'campaign_daily_cap';
+    END IF;
+  END IF;
+
+  INSERT INTO public.wa_campaign_recipients (
+    tenant_id, campaign_id, guest_customer_id, state, suppression_reason,
+    idempotency_key, evaluated_at
+  ) VALUES (
+    _tenant_id, _campaign_id, _guest_customer_id, _next_state, _reason,
+    _idempotency_key, now()
+  )
+  ON CONFLICT (tenant_id, campaign_id, guest_customer_id) DO NOTHING
+  RETURNING id, wa_campaign_recipients.state, wa_campaign_recipients.suppression_reason
+  INTO recipient_id, state, suppression_reason;
+
+  IF recipient_id IS NOT NULL THEN RETURN NEXT; RETURN; END IF;
+
+  SELECT * INTO _existing
+  FROM public.wa_campaign_recipients r
+  WHERE r.tenant_id = _tenant_id AND r.campaign_id = _campaign_id
+    AND r.guest_customer_id = _guest_customer_id;
+  recipient_id := _existing.id;
+  state := _existing.state;
+  suppression_reason := _existing.suppression_reason;
+  RETURN NEXT;
+END;
+$wce$;
+
+REVOKE ALL ON FUNCTION public.wa_prepare_campaign_recipient(uuid, uuid, uuid, uuid, text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.wa_prepare_campaign_recipient(uuid, uuid, uuid, uuid, text)
+  TO service_role;
+
 CREATE OR REPLACE FUNCTION public.wa_campaign_usage_ledger_immutable()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $wce$
