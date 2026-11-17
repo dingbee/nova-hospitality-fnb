@@ -1,6 +1,21 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- service-role Supabase rows are projected into typed CRM records. */
 type Db = any;
 
+export type WhatsAppGuestCustomerHistory = {
+  recentOrders: Array<{
+    orderNumber: string;
+    orderType: string;
+    status: string;
+    total: number;
+    currency: string;
+    openedAt: string | null;
+    closedAt: string | null;
+    items: Array<{ name: string; quantity: number }>;
+  }>;
+  whatsappMarketingConsent: boolean;
+  loyaltyPointsBalance: number;
+};
+
 export function normalizeWhatsAppPhone(raw: string): { phoneE164: string; whatsappUserId: string } {
   const digits = raw.replace(/\D/g, "");
   if (!/^\d{8,15}$/.test(digits)) throw new Error("WhatsApp phone identity is invalid.");
@@ -151,7 +166,7 @@ export async function getWhatsAppGuestCustomerHistory(
   admin: Db,
   tenantId: string,
   guestCustomerId: string,
-) {
+): Promise<WhatsAppGuestCustomerHistory> {
   const [{ data: orders, error: orderError }, marketingConsent, loyaltyPointsBalance] =
     await Promise.all([
       admin
