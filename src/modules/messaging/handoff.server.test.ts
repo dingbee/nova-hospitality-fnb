@@ -50,7 +50,7 @@ function makeDb(options: {
             error: null,
           };
         }
-        if (table === "wa_guest_portal_sessions") return { data: options.previousSession ?? null, error: null };
+        if (table === "restaurant_guest_commerce_sessions") return { data: options.previousSession ?? null, error: null };
         if (table === "restaurant_tenants") {
           return { data: { name: "Tenant Name", status: "active", settings: { business: { tradingName: "Restaurant" } } }, error: null };
         }
