@@ -22,22 +22,38 @@ export const guestCommercePageFn = createServerFn({ method: "POST" })
 /** WCE-03 compatibility alias. */
 export const whatsappGuestPortalPageFn = guestCommercePageFn;
 
-function publicStoreSession(sourceChannel: "website" | "social" | "direct") {
-  return createServerFn({ method: "POST" })
-    .inputValidator((data: unknown) => publicStoreSchema.parse(data))
-    .handler(async ({ data }) => {
-      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-      const mod = await import("@/modules/messaging/guest-portal-sessions.server");
-      return mod.createGuestCommerceSessionForPublicStore(supabaseAdmin, {
-        ...data,
-        sourceChannel,
-      });
+export const createWebsiteGuestCommerceSessionFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => publicStoreSchema.parse(data))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const mod = await import("@/modules/messaging/guest-portal-sessions.server");
+    return mod.createGuestCommerceSessionForPublicStore(supabaseAdmin, {
+      ...data,
+      sourceChannel: "website",
     });
-}
+  });
 
-export const createWebsiteGuestCommerceSessionFn = publicStoreSession("website");
-export const createSocialGuestCommerceSessionFn = publicStoreSession("social");
-export const createDirectGuestCommerceSessionFn = publicStoreSession("direct");
+export const createSocialGuestCommerceSessionFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => publicStoreSchema.parse(data))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const mod = await import("@/modules/messaging/guest-portal-sessions.server");
+    return mod.createGuestCommerceSessionForPublicStore(supabaseAdmin, {
+      ...data,
+      sourceChannel: "social",
+    });
+  });
+
+export const createDirectGuestCommerceSessionFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => publicStoreSchema.parse(data))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const mod = await import("@/modules/messaging/guest-portal-sessions.server");
+    return mod.createGuestCommerceSessionForPublicStore(supabaseAdmin, {
+      ...data,
+      sourceChannel: "direct",
+    });
+  });
 
 export const createQrGuestCommerceSessionFn = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => tableSchema.parse(data))
