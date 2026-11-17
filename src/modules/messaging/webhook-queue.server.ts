@@ -187,9 +187,12 @@ async function processStatuses(db: Db, value: Record<string, any>) {
   }
 }
 
-async function processTemplateStatusUpdate(db: Db, event: ClaimedEvent, value: Record<string, any>) {
-  if (!event.tenant_id || !event.property_id)
-    throw new Error("template_status_scope_missing");
+async function processTemplateStatusUpdate(
+  db: Db,
+  event: ClaimedEvent,
+  value: Record<string, any>,
+) {
+  if (!event.tenant_id || !event.property_id) throw new Error("template_status_scope_missing");
   const raw = value.message_template_status_update;
   const update = Array.isArray(raw) ? raw[0] : raw;
   if (!update || typeof update.message_template_id !== "string" || typeof update.event !== "string")
@@ -197,19 +200,25 @@ async function processTemplateStatusUpdate(db: Db, event: ClaimedEvent, value: R
 
   const providerStatus = update.event.toUpperCase();
   const status =
-    providerStatus === "APPROVED" ? "approved" :
-    providerStatus === "REJECTED" ? "rejected" :
-    providerStatus === "PAUSED" || providerStatus === "DISABLED" ? "paused" :
-    providerStatus === "PENDING" ? "submitted" : null;
+    providerStatus === "APPROVED"
+      ? "approved"
+      : providerStatus === "REJECTED"
+        ? "rejected"
+        : providerStatus === "PAUSED" || providerStatus === "DISABLED"
+          ? "paused"
+          : providerStatus === "PENDING"
+            ? "submitted"
+            : null;
   if (!status) return;
 
   const { data, error } = await db
     .from("wa_message_templates")
     .update({
       status,
-      rejection_reason: status === "rejected"
-        ? String(update.reason ?? "Meta rejected this template.").slice(0, 500)
-        : null,
+      rejection_reason:
+        status === "rejected"
+          ? String(update.reason ?? "Meta rejected this template.").slice(0, 500)
+          : null,
       reviewed_at: new Date().toISOString(),
       synced_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),

@@ -126,11 +126,7 @@ function toMetaTemplateCategory(category: Template["category"]) {
   return category.toUpperCase() as "MARKETING" | "UTILITY" | "AUTHENTICATION";
 }
 
-async function resolveWhatsAppPropertyCredentials(
-  admin: Db,
-  tenantId: string,
-  propertyId: string,
-) {
+async function resolveWhatsAppPropertyCredentials(admin: Db, tenantId: string, propertyId: string) {
   const { data: binding, error: bindingError } = await admin
     .from("wa_phone_number_bindings")
     .select("id, phone_number_id, integration_id, waba_id, status")
@@ -156,10 +152,12 @@ async function resolveWhatsAppPropertyCredentials(
     integration.provider !== "meta-whatsapp" ||
     integration.channel_key !== "whatsapp" ||
     integration.integration_type !== "channel"
-  ) throw new WhatsAppCampaignGovernanceError("whatsapp_property_integration_unavailable");
+  )
+    throw new WhatsAppCampaignGovernanceError("whatsapp_property_integration_unavailable");
 
   const accessToken = await getIntegrationSecret(admin, tenantId, integration.id);
-  if (!accessToken) throw new WhatsAppCampaignGovernanceError("whatsapp_property_credential_unavailable");
+  if (!accessToken)
+    throw new WhatsAppCampaignGovernanceError("whatsapp_property_credential_unavailable");
   return {
     accessToken,
     wabaId: String(integration.config?.wabaId ?? binding.waba_id),
@@ -179,12 +177,20 @@ export async function submitWhatsAppMessageTemplateToMeta(
     .eq("id", input.templateId)
     .eq("tenant_id", input.tenantId)
     .maybeSingle();
-  if (templateError || !template || (template.property_id && template.property_id !== input.propertyId))
+  if (
+    templateError ||
+    !template ||
+    (template.property_id && template.property_id !== input.propertyId)
+  )
     throw new WhatsAppCampaignGovernanceError("template_not_found");
   if (!["draft", "rejected"].includes(template.status))
     throw new WhatsAppCampaignGovernanceError("template_not_submittable");
 
-  const credentials = await resolveWhatsAppPropertyCredentials(admin, input.tenantId, input.propertyId);
+  const credentials = await resolveWhatsAppPropertyCredentials(
+    admin,
+    input.tenantId,
+    input.propertyId,
+  );
   const result = await createWabaMessageTemplate(
     credentials,
     {
@@ -220,26 +226,35 @@ export async function syncWhatsAppMessageTemplateStatuses(
   admin: Db,
   input: { tenantId: string; propertyId: string },
 ) {
-  const credentials = await resolveWhatsAppPropertyCredentials(admin, input.tenantId, input.propertyId);
-  const providerTemplates = await listWabaMessageTemplates(
-    credentials,
-    { graphApiVersion: credentials.graphApiVersion },
+  const credentials = await resolveWhatsAppPropertyCredentials(
+    admin,
+    input.tenantId,
+    input.propertyId,
   );
+  const providerTemplates = await listWabaMessageTemplates(credentials, {
+    graphApiVersion: credentials.graphApiVersion,
+  });
   let updated = 0;
   for (const providerTemplate of providerTemplates) {
     if (!providerTemplate.id) continue;
     const providerStatus = providerTemplate.status.toUpperCase();
     const status =
-      providerStatus === "APPROVED" ? "approved" :
-      providerStatus === "REJECTED" ? "rejected" :
-      providerStatus === "PAUSED" || providerStatus === "DISABLED" ? "paused" :
-      providerStatus === "PENDING" ? "submitted" : null;
+      providerStatus === "APPROVED"
+        ? "approved"
+        : providerStatus === "REJECTED"
+          ? "rejected"
+          : providerStatus === "PAUSED" || providerStatus === "DISABLED"
+            ? "paused"
+            : providerStatus === "PENDING"
+              ? "submitted"
+              : null;
     if (!status) continue;
     const { error } = await admin
       .from("wa_message_templates")
       .update({
         status,
-        rejection_reason: status === "rejected" ? "Meta rejected this template; review provider feedback." : null,
+        rejection_reason:
+          status === "rejected" ? "Meta rejected this template; review provider feedback." : null,
         reviewed_at: new Date().toISOString(),
         synced_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -277,7 +292,9 @@ export async function createWhatsAppCampaign(
     createdBy?: string | null;
   },
 ) {
-  await assertEntitled(admin, input.tenantId, "whatsapp_campaigns", { propertyId: input.propertyId });
+  await assertEntitled(admin, input.tenantId, "whatsapp_campaigns", {
+    propertyId: input.propertyId,
+  });
   if (input.triggerType === "scheduled") {
     if (!input.scheduledAt || new Date(input.scheduledAt).getTime() <= Date.now())
       throw new WhatsAppCampaignGovernanceError("campaign_schedule_must_be_future");
@@ -318,7 +335,8 @@ export async function createWhatsAppCampaign(
   if (
     (audienceFilter.lastSeenAfter && Number.isNaN(Date.parse(audienceFilter.lastSeenAfter))) ||
     (audienceFilter.lastSeenBefore && Number.isNaN(Date.parse(audienceFilter.lastSeenBefore)))
-  ) throw new WhatsAppCampaignGovernanceError("campaign_audience_filter_invalid");
+  )
+    throw new WhatsAppCampaignGovernanceError("campaign_audience_filter_invalid");
 
   const { data, error } = await admin
     .from("wa_campaigns")
@@ -350,7 +368,9 @@ export async function activateWhatsAppCampaign(
   admin: Db,
   input: { tenantId: string; propertyId: string; campaignId: string },
 ) {
-  await assertEntitled(admin, input.tenantId, "whatsapp_campaigns", { propertyId: input.propertyId });
+  await assertEntitled(admin, input.tenantId, "whatsapp_campaigns", {
+    propertyId: input.propertyId,
+  });
   const { data: campaign, error } = await admin
     .from("wa_campaigns")
     .select("id, status, trigger_type, scheduled_at, template_id")
@@ -361,8 +381,10 @@ export async function activateWhatsAppCampaign(
   if (error || !campaign) throw new WhatsAppCampaignGovernanceError("campaign_not_found");
   if (!["draft", "paused"].includes(campaign.status))
     throw new WhatsAppCampaignGovernanceError("campaign_not_activatable");
-  if (campaign.trigger_type === "scheduled" &&
-      (!campaign.scheduled_at || new Date(campaign.scheduled_at) <= new Date()))
+  if (
+    campaign.trigger_type === "scheduled" &&
+    (!campaign.scheduled_at || new Date(campaign.scheduled_at) <= new Date())
+  )
     throw new WhatsAppCampaignGovernanceError("campaign_schedule_not_future");
   const { data: template, error: templateError } = await admin
     .from("wa_message_templates")
@@ -426,8 +448,10 @@ export async function evaluateWhatsAppCampaignAudience(
     .or("first_property_id.eq." + input.propertyId + ",last_property_id.eq." + input.propertyId);
   if (filter.preferredLanguage === "en" || filter.preferredLanguage === "sw")
     query = query.eq("preferred_language", filter.preferredLanguage);
-  if (typeof filter.lastSeenAfter === "string") query = query.gte("last_seen_at", filter.lastSeenAfter);
-  if (typeof filter.lastSeenBefore === "string") query = query.lte("last_seen_at", filter.lastSeenBefore);
+  if (typeof filter.lastSeenAfter === "string")
+    query = query.gte("last_seen_at", filter.lastSeenAfter);
+  if (typeof filter.lastSeenBefore === "string")
+    query = query.lte("last_seen_at", filter.lastSeenBefore);
   const audienceLimit = Math.min(Math.max(input.limit ?? 500, 1), 1000);
   const { data: guests, error, count } = await query.limit(audienceLimit + 1);
   if (error) throw new WhatsAppCampaignGovernanceError("campaign_audience_query_failed");
@@ -559,20 +583,28 @@ export async function queueWhatsAppCampaignRecipient(
   if (guestError || !guest || !guest.whatsapp_user_id)
     throw new WhatsAppCampaignGovernanceError("campaign_guest_unavailable");
   if (guest.status === "blocked") {
-    await admin.from("wa_campaign_recipients").update({
-      state: "suppressed",
-      suppression_reason: "guest_blocked",
-    }).eq("id", recipient.id).eq("tenant_id", input.tenantId);
+    await admin
+      .from("wa_campaign_recipients")
+      .update({
+        state: "suppressed",
+        suppression_reason: "guest_blocked",
+      })
+      .eq("id", recipient.id)
+      .eq("tenant_id", input.tenantId);
     return { queued: false as const, reason: "guest_blocked" };
   }
   if (
     template.category === "marketing" &&
     !(await hasWhatsAppGuestMarketingConsent(admin, input.tenantId, recipient.guest_customer_id))
   ) {
-    await admin.from("wa_campaign_recipients").update({
-      state: "suppressed",
-      suppression_reason: "marketing_consent_revoked",
-    }).eq("id", recipient.id).eq("tenant_id", input.tenantId);
+    await admin
+      .from("wa_campaign_recipients")
+      .update({
+        state: "suppressed",
+        suppression_reason: "marketing_consent_revoked",
+      })
+      .eq("id", recipient.id)
+      .eq("tenant_id", input.tenantId);
     return { queued: false as const, reason: "marketing_consent_revoked" };
   }
 
@@ -599,7 +631,8 @@ export async function queueWhatsAppCampaignRecipient(
     .order("last_message_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (conversationError) throw new WhatsAppCampaignGovernanceError("campaign_conversation_lookup_failed");
+  if (conversationError)
+    throw new WhatsAppCampaignGovernanceError("campaign_conversation_lookup_failed");
   let conversationId = existingConversation?.id as string | undefined;
   if (!conversationId) {
     const { data: created, error: createError } = await admin
@@ -616,7 +649,8 @@ export async function queueWhatsAppCampaignRecipient(
       })
       .select("id")
       .single();
-    if (createError || !created) throw new WhatsAppCampaignGovernanceError("campaign_conversation_create_failed");
+    if (createError || !created)
+      throw new WhatsAppCampaignGovernanceError("campaign_conversation_create_failed");
     conversationId = created.id;
   }
 
@@ -643,7 +677,11 @@ export async function queueWhatsAppCampaignRecipient(
     if (recipientUpdateError)
       throw new WhatsAppCampaignGovernanceError("campaign_recipient_queue_state_failed");
     if (terminalFailure) return { queued: false as const, reason: "existing_delivery_failed" };
-    return { queued: true as const, duplicate: true as const, messageId: String(existingMessage.id) };
+    return {
+      queued: true as const,
+      duplicate: true as const,
+      messageId: String(existingMessage.id),
+    };
   }
   const metaRate = await resolveEffectiveMetaMessageRate(
     admin,

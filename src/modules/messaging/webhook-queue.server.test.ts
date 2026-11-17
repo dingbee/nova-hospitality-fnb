@@ -56,7 +56,10 @@ function makeDb(
       order: vi.fn(() => builder),
       limit: vi.fn(() => builder),
       maybeSingle: vi.fn(async () => ({
-        data: table === "wa_message_templates" && options.templateUpdateFound ? { id: "template-row-1" } : null,
+        data:
+          table === "wa_message_templates" && options.templateUpdateFound
+            ? { id: "template-row-1" }
+            : null,
         error: null,
       })),
       single: vi.fn(async () => ({ data: { id: "conversation-1" }, error: null })),

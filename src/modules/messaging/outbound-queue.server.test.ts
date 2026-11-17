@@ -94,7 +94,9 @@ describe("WhatsApp outbound queue", () => {
       },
     };
     const { admin, updates } = fakeAdmin(templateMessage);
-    const result = await processPendingWhatsAppOutboundMessages(admin, { workerId: "worker-template" });
+    const result = await processPendingWhatsAppOutboundMessages(admin, {
+      workerId: "worker-template",
+    });
     expect(result).toEqual({
       claimed: 1,
       sent: 1,
