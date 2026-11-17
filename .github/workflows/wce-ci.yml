@@ -1,6 +1,9 @@
 name: LexiBite WCE Verification
 
 on:
+  push:
+    branches:
+      - "wce/wce-02-messaging-sessions"
   pull_request:
     branches:
       - "wce/wce-02-messaging-sessions"
