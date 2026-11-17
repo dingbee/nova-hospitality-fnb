@@ -373,6 +373,22 @@ export async function queueWhatsAppOrderStatusNotification(
   if (customerError) throw new Error("WhatsApp guest identity could not be verified.");
   if (!customer) return { queued: false as const, reason: "guest_identity_unavailable" };
   const guestBlocked = customer.status === "blocked";
+  let campaignTriggerResult:
+    | { discovered: number; processed: number; completed: number; paused: number }
+    | undefined;
+  if (order.guest_customer_id && !guestBlocked) {
+    try {
+      const { triggerEventWhatsAppCampaigns } = await import("./campaign-governance.server");
+      campaignTriggerResult = await triggerEventWhatsAppCampaigns(admin, {
+        tenantId: order.tenant_id,
+        propertyId: order.property_id,
+        eventKey: "order.status." + input.status.toLowerCase(),
+        guestCustomerId: order.guest_customer_id,
+      });
+    } catch {
+      // Campaign failures must not block canonical order lifecycle notifications.
+    }
+  }
   const language = customer?.preferred_language === "sw" ? "sw" : "en";
   const content = orderStatusMessage(input.status, order.order_number, language);
   if (!content) return { queued: false as const, reason: "status_not_customer_visible" };
@@ -485,5 +501,5 @@ export async function queueWhatsAppOrderStatusNotification(
     .eq("id", notificationId)
     .eq("tenant_id", order.tenant_id);
   if (updateError) throw new Error("WhatsApp order notification state could not be updated.");
-  return { queued: true as const, duplicate: false as const, messageId: message.id };
+  return { queued: true as const, duplicate: false as const, messageId: message.id, campaignTriggerResult };
 }
