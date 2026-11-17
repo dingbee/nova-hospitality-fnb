@@ -127,7 +127,7 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
           available: item.available !== false,
           availabilityReasons: item.availability_reasons ?? [],
           availableQuantity: item.available_quantity ?? null,
-          modifierGroupIds: item.modifier_group_ids,
+          modifierGroupIds: Array.isArray(item.modifier_group_ids) ? item.modifier_group_ids : [],
           variants: (item.variants ?? []).map((variant: any) => ({
             id: variant.id,
             name: variant.name,
