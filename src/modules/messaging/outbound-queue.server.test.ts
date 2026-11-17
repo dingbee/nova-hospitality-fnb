@@ -86,7 +86,7 @@ function makeDb(options: {
       }),
       maybeSingle: vi.fn(async () => {
         if (table === "wa_messages") return { data: options.existingMessage ?? null, error: null };
-        if (table === "wa_guest_portal_sessions") {
+        if (table === "restaurant_guest_commerce_sessions") {
           return { data: { expires_at: new Date(Date.now() + 10 * 60_000).toISOString(), revoked_at: null }, error: null };
         }
         if (table === "wa_phone_number_bindings") {
