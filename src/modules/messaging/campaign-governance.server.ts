@@ -917,7 +917,13 @@ export async function processDueWhatsAppCampaigns(
 /** Entry point for trusted domain events; the caller supplies server-derived tenant/property scope. */
 export async function triggerEventWhatsAppCampaigns(
   admin: Db,
-  input: { tenantId: string; propertyId: string; eventKey: string; guestCustomerId?: string | null; limit?: number },
+  input: {
+    tenantId: string;
+    propertyId: string;
+    eventKey: string;
+    guestCustomerId?: string | null;
+    limit?: number;
+  },
 ) {
   const campaignIds = await findEventTriggeredWhatsAppCampaigns(admin, input);
   const limit = Math.min(Math.max(input.limit ?? 10, 1), 25);
@@ -951,4 +957,3 @@ export async function triggerEventWhatsAppCampaigns(
     results,
   };
 }
-
