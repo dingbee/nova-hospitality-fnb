@@ -103,6 +103,8 @@ describe("WhatsApp outbound queue", () => {
       retried: 0,
       failed: 0,
       campaignReconciliationRequired: 0,
+      campaignDispatchDeferred: 0,
+      campaignDispatchSuppressed: 0,
     });
     expect(sendTemplateMessage).toHaveBeenCalledWith(
       { accessToken: "tenant-token", wabaId: "987654321", phoneNumberId: "123456789" },
@@ -126,6 +128,8 @@ describe("WhatsApp outbound queue", () => {
       retried: 0,
       failed: 0,
       campaignReconciliationRequired: 0,
+      campaignDispatchDeferred: 0,
+      campaignDispatchSuppressed: 0,
     });
     expect(sendTextMessage).toHaveBeenCalledWith(
       { accessToken: "tenant-token", wabaId: "987654321", phoneNumberId: "123456789" },
@@ -139,4 +143,44 @@ describe("WhatsApp outbound queue", () => {
       locked_by: null,
     });
   });
+  it("defers campaign messages without calling Meta unless the explicit dispatch gate is enabled", async () => {
+    const previous = process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED;
+    delete process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED;
+    vi.clearAllMocks();
+    const campaignMessage = {
+      ...queued,
+      id: "message-campaign-1",
+      message_type: "template",
+      payload: {
+        campaign_id: "campaign-1",
+        campaign_recipient_id: "recipient-1",
+        template: { name: "weekly_special", language: "en", components: [] },
+      },
+    };
+    const { admin, updates } = fakeAdmin(campaignMessage);
+    try {
+      const result = await processPendingWhatsAppOutboundMessages(admin, {
+        workerId: "worker-campaign",
+      });
+      expect(result).toEqual({
+        claimed: 1,
+        sent: 0,
+        retried: 0,
+        failed: 0,
+        campaignReconciliationRequired: 0,
+        campaignDispatchDeferred: 1,
+        campaignDispatchSuppressed: 0,
+      });
+      expect(sendTemplateMessage).not.toHaveBeenCalled();
+      expect(updates[0]).toMatchObject({
+        locked_at: null,
+        locked_by: null,
+        last_error: "campaign_dispatch_disabled",
+      });
+    } finally {
+      if (previous === undefined) delete process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED;
+      else process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED = previous;
+    }
+  });
+
 });
