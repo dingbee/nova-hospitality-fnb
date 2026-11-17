@@ -49,6 +49,7 @@ The following is the canonical application capability map. It is not a statement
 | Transfer approval | `transfer.approve`, both endpoint scopes, and maker-checker when approval is required |
 | Stocktake approval/posting | `stocktake.approve`, the stocktake's property/location scope, and an independent approver |
 | Procurement variance resolution | `variance.manage`, variance property/location scope, and an actor independent of the recorded variance creator |
+| Supplier invoice three-way reconciliation | `invoice.manage`, invoice property/location scope, and an actor independent of the invoice recorder |
 
 ## Special identities and entitlements
 
@@ -65,7 +66,8 @@ The following is the canonical application capability map. It is not a statement
 - Stocktake posting now checks both property/location scope and creator/counter separation.
 - Purchase-order approval now routes through the configurable approval-rule engine after the capability check.
 - Procurement variances now record immutable creator attribution; resolution checks scope and rejects self-resolution.
-- Database migrations 0137–0139 add tenant-composite transfer-line references, active-location write guards, and variance creator attribution.
+- Database migrations 0137–0140 add tenant-composite transfer-line references, active-location write guards, immutable variance creator attribution, and immutable supplier-invoice recorder attribution.
+- Invoice recording no longer auto-runs the three-way match; a separate authorized user must perform reconciliation.
 
 ## Verification still required
 
