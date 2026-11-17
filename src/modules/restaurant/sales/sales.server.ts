@@ -1002,7 +1002,7 @@ export async function transitionOrder(
   const { data: order } = await sb
     .from("restaurant_orders")
     .select(
-      "id, order_number, status, table_id, location_id, property_id, service_period_id, order_type, guest_count, currency",
+      "id, order_number, status, table_id, location_id, property_id, guest_reservation_id, service_period_id, order_type, guest_count, currency",
     )
     .eq("tenant_id", input.tenantId)
     .eq("id", input.orderId)
@@ -1028,6 +1028,21 @@ export async function transitionOrder(
     if (error) throw new Error(error.message);
 
     if (input.status === "voided" || input.status === "cancelled") {
+      if (order.guest_reservation_id) {
+        try {
+          const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+          await supabaseAdmin
+            .from("restaurant_table_reservations")
+            .update({ status: "cancelled", updated_at: new Date().toISOString() })
+            .eq("id", order.guest_reservation_id)
+            .eq("tenant_id", input.tenantId)
+            .eq("property_id", order.property_id)
+            .eq("location_id", order.location_id)
+            .in("status", ["requested", "confirmed", "seated"]);
+        } catch (reservationError) {
+          console.warn("[reservations] linked guest reservation cancellation deferred", (reservationError as Error).message);
+        }
+      }
       await emitRestaurantEvent(sb, userId, {
         type: "restaurant.order.voided",
         tenantId: input.tenantId,
@@ -1169,6 +1184,21 @@ export async function transitionOrder(
         .update({ status: "cleaning" })
         .eq("id", order.table_id)
         .eq("tenant_id", input.tenantId);
+    }
+    if (order.guest_reservation_id) {
+      try {
+        const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+        await supabaseAdmin
+          .from("restaurant_table_reservations")
+          .update({ status: "completed", updated_at: new Date().toISOString() })
+          .eq("id", order.guest_reservation_id)
+          .eq("tenant_id", input.tenantId)
+          .eq("property_id", order.property_id)
+          .eq("location_id", order.location_id)
+          .in("status", ["confirmed", "seated"]);
+      } catch (reservationError) {
+        console.warn("[reservations] linked guest reservation completion deferred", (reservationError as Error).message);
+      }
     }
 
     await emitRestaurantEvent(sb, userId, {
