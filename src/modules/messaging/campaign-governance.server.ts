@@ -419,7 +419,7 @@ export async function evaluateWhatsAppCampaignAudience(
   const filter = campaign.audience_filter ?? {};
   let query = admin
     .from("restaurant_guest_customers")
-    .select("id")
+    .select("id", { count: "exact" })
     .eq("tenant_id", input.tenantId)
     .eq("status", "active")
     .not("whatsapp_user_id", "is", null)
@@ -429,9 +429,7 @@ export async function evaluateWhatsAppCampaignAudience(
   if (typeof filter.lastSeenAfter === "string") query = query.gte("last_seen_at", filter.lastSeenAfter);
   if (typeof filter.lastSeenBefore === "string") query = query.lte("last_seen_at", filter.lastSeenBefore);
   const audienceLimit = Math.min(Math.max(input.limit ?? 500, 1), 1000);
-  const { data: guests, error, count } = await query
-    .select("id", { count: "exact" })
-    .limit(audienceLimit + 1);
+  const { data: guests, error, count } = await query.limit(audienceLimit + 1);
   if (error) throw new WhatsAppCampaignGovernanceError("campaign_audience_query_failed");
   if ((typeof count === "number" && count > audienceLimit) || (guests ?? []).length > audienceLimit)
     throw new WhatsAppCampaignGovernanceError("campaign_audience_exceeds_single_execution_limit");
