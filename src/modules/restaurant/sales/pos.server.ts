@@ -34,6 +34,7 @@ import {
   type SalesLineInput,
 } from "./sales.server";
 import { loadRuleSet, resolveDisplayPrice } from "../pricing/resolution.server";
+import type { RestaurantOrderType } from "../core/contracts";
 import { listActiveServiceRequests } from "../service-requests/service-requests.server";
 import type {
   AddPosLinesInput,
