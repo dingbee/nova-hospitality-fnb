@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase rows are validated at this boundary. */
 import { randomUUID } from "node:crypto";
 import { getIntegrationSecret } from "@/modules/api-platform/integrations.server";
+import { recordWhatsAppCampaignUsage } from "./campaign-governance.server";
 import { MetaGraphError, sendTemplateMessage, sendTextMessage } from "./providers/meta-cloud-api.server";
 
 type Db = any;
@@ -82,6 +83,11 @@ export async function processPendingWhatsAppOutboundMessages(
 
       const token = await getIntegrationSecret(admin, message.tenant_id, integration.id);
       if (!token) throw new Error("whatsapp_outbox_credential_unavailable");
+      if (
+        message.message_type === "template" &&
+        typeof message.payload?.campaign_id === "string" &&
+        !message.payload?.campaign_usage
+      ) throw new Error("whatsapp_campaign_usage_snapshot_missing");
       const providerCredentials = {
         accessToken: token,
         wabaId: String(integration.config?.wabaId ?? ""),
@@ -126,6 +132,39 @@ export async function processPendingWhatsAppOutboundMessages(
         .eq("status", "queued")
         .eq("locked_by", workerId);
       if (updateError) throw new Error("whatsapp_outbox_sent_state_failed");
+      const campaignUsage = message.payload?.campaign_usage;
+      if (
+        message.message_type === "template" &&
+        typeof message.payload?.campaign_id === "string" &&
+        campaignUsage
+      ) {
+        try {
+          await recordWhatsAppCampaignUsage(admin, {
+            tenantId: message.tenant_id,
+            propertyId: message.property_id,
+            campaignId: String(message.payload.campaign_id),
+            guestCustomerId: typeof message.payload.guest_customer_id === "string"
+              ? message.payload.guest_customer_id
+              : null,
+            rateId: typeof campaignUsage.rate_id === "string" ? campaignUsage.rate_id : null,
+            usageComponent: "meta_provider",
+            usageEvent: "whatsapp_template_message",
+            marketCode: String(campaignUsage.market_code ?? ""),
+            templateCategory: campaignUsage.template_category,
+            quantity: 1,
+            unitPrice: Number(campaignUsage.unit_price),
+            currency: String(campaignUsage.currency ?? ""),
+            idempotencyKey: "meta-provider:" + providerMessageId,
+            providerReference: providerMessageId,
+            metadata: {
+              templateName: message.payload?.template?.name ?? null,
+              messageId: message.id,
+            },
+          });
+        } catch {
+          campaignReconciliationRequired++;
+        }
+      }
       const campaignRecipientId = message.payload?.campaign_recipient_id;
       if (typeof campaignRecipientId === "string") {
         const { error: campaignUpdateError } = await admin
