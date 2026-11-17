@@ -101,7 +101,7 @@ describe("unified Guest Commerce order engine", () => {
     mocks.resolveGuestPaymentTiming.mockReturnValue("pay_first");
     mocks.resolveServiceConfiguration.mockReturnValue({ serviceMode: "takeaway" });
     mocks.fetchSellableCatalog.mockResolvedValue({
-      items: [{ id: "menu-item-1", available: true, priceConfigured: true }],
+      items: [{ id: "menu-item-1", is_available: true, priceConfigured: true }],
     });
     mocks.pickGuestOrderableLines.mockImplementation((_ids, lines) => ({ valid: lines, rejected: [] }));
     mocks.createGuestOrder.mockResolvedValue({
