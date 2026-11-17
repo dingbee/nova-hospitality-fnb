@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase test double mirrors untyped query builders. */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   resolveSession: vi.fn(),
@@ -14,6 +14,8 @@ vi.mock("../sales/pos.server", () => ({
 }));
 
 import { getWhatsAppGuestPortalPage } from "./whatsapp-guest-portal.server";
+
+beforeEach(() => vi.clearAllMocks());
 
 const session = {
   sessionId: "session-internal",
