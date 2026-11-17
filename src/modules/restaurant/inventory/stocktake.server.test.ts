@@ -53,7 +53,7 @@ function makeFakeSupabase(opts: {
     notes: null,
     posted_movement_id: null,
   };
-  const item = { id: ITEM, current_quantity: opts.currentQuantity };
+  const item = { id: ITEM, current_quantity: opts.currentQuantity, unit_id: "unit-1" };
   const movements: any[] = [];
   let seq = 0;
 
