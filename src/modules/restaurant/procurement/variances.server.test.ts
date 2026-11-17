@@ -37,7 +37,7 @@ function makeSupabase() {
     property_id: PROPERTY,
     location_id: LOCATION,
   };
-  const writes: any[] = [];
+  const writes: unknown[] = [];
   let operation = "select";
   let patch: { status: string } | null = null;
   type Query = {
@@ -49,7 +49,7 @@ function makeSupabase() {
   const builder: Query = {
     select: () => builder,
     eq: () => builder,
-    update: (value: any) => {
+    update: (value: { status: string }) => {
       operation = "update";
       patch = value;
       writes.push(value);
@@ -93,7 +93,7 @@ describe("procurement variance maker-checker", () => {
         id: VARIANCE,
         status: "resolved",
         notes: "Evidence reviewed and reconciled",
-      } as any),
+      } as Parameters<typeof resolveVariance>[2]),
     ).resolves.toMatchObject({ id: VARIANCE, status: "resolved" });
 
     expect(mocks.assertCapability).toHaveBeenCalledWith(
