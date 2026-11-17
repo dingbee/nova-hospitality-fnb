@@ -6,7 +6,6 @@
 
 CREATE OR REPLACE FUNCTION public.restaurant_has_tenant_wide_membership(
   _tenant_id uuid,
-  _user_id uuid,
   _roles public.restaurant_role[] DEFAULT NULL
 )
 RETURNS boolean
@@ -15,23 +14,23 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $p0_04$
-  SELECT _user_id IS NOT NULL
-    AND public.restaurant_member_active(_user_id, _tenant_id)
+  SELECT auth.uid() IS NOT NULL
+    AND public.restaurant_member_active(auth.uid(), _tenant_id)
     AND EXISTS (
       SELECT 1
       FROM public.restaurant_members m
       WHERE m.tenant_id = _tenant_id
-        AND m.user_id = _user_id
+        AND m.user_id = auth.uid()
         AND m.property_id IS NULL
         AND (_roles IS NULL OR m.role = ANY(_roles))
     );
 $p0_04$;
 
 REVOKE ALL ON FUNCTION public.restaurant_has_tenant_wide_membership(
-  uuid, uuid, public.restaurant_role[]
+  uuid, public.restaurant_role[]
 ) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.restaurant_has_tenant_wide_membership(
-  uuid, uuid, public.restaurant_role[]
+  uuid, public.restaurant_role[]
 ) TO authenticated, service_role;
 
 DROP POLICY IF EXISTS "locations read scoped" ON public.restaurant_locations;
@@ -55,7 +54,7 @@ CREATE POLICY "locations read scoped" ON public.restaurant_locations
     )
     OR (
       scope = 'tenant'
-      AND public.restaurant_has_tenant_wide_membership(tenant_id, auth.uid())
+      AND public.restaurant_has_tenant_wide_membership(tenant_id)
     )
   );
 
@@ -79,7 +78,6 @@ CREATE POLICY "locations write scoped (insert)" ON public.restaurant_locations
       scope = 'tenant'
       AND public.restaurant_has_tenant_wide_membership(
         tenant_id,
-        auth.uid(),
         ARRAY[
           'owner'::public.restaurant_role,
           'general_manager'::public.restaurant_role
