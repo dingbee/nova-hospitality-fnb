@@ -344,7 +344,7 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
   if (bindingError || integrationError || webhookError || messageError || usageError) {
     throw new Error("founder_whatsapp_overview_unavailable");
   }
-  const tenantIds = [...new Set((bindings ?? []).map((row: any) => row.tenant_id))];
+  const tenantIds = [...new Set([...(bindings ?? []).map((row: any) => row.tenant_id), ...(integrations ?? []).map((row: any) => row.tenant_id)])];
   const { data: tenants, error: tenantError } = tenantIds.length
     ? await admin.from("restaurant_tenants").select("id, name, slug").in("id", tenantIds)
     : { data: [], error: null };
@@ -357,12 +357,25 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
       return counts;
     }, {});
   const invoices = await (await import("@/modules/commercial/billing.server")).listInvoices(admin, {});
+  const invoiceTotals = new Map<string, { currency: string; issuedAmount: number; outstandingBalance: number; count: number }>();
+  for (const invoice of invoices) {
+    const currency = String(invoice.currency ?? "UNKNOWN");
+    const current = invoiceTotals.get(currency) ?? {
+      currency,
+      issuedAmount: 0,
+      outstandingBalance: 0,
+      count: 0,
+    };
+    if (["issued", "paid", "partially_paid"].includes(invoice.status)) {
+      current.issuedAmount += Number(invoice.total ?? 0);
+    }
+    current.outstandingBalance += Number(invoice.balance ?? 0);
+    current.count++;
+    invoiceTotals.set(currency, current);
+  }
   const invoiceSummary = {
     count: invoices.length,
-    issuedAmount: invoices
-      .filter((invoice: any) => ["issued", "paid", "partially_paid"].includes(invoice.status))
-      .reduce((sum: number, invoice: any) => sum + Number(invoice.total ?? 0), 0),
-    outstandingBalance: invoices.reduce((sum: number, invoice: any) => sum + Number(invoice.balance ?? 0), 0),
+    byCurrency: [...invoiceTotals.values()],
   };
   return {
     bindings: (bindings ?? []).map((row: any) => ({
