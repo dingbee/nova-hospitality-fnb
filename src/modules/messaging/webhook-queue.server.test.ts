@@ -96,6 +96,12 @@ describe("Meta WhatsApp durable webhook worker", () => {
       status: "received",
       content: "Hello LexiBite",
     });
+    expect(handoffMocks.enqueue).toHaveBeenCalledWith(
+      db,
+      baseEvent,
+      "conversation-1",
+      "255700000000",
+    );
     expect(updates.find((item) => item.table === "wa_webhook_events")?.patch).toMatchObject({
       status: "processed",
       locked_at: null,
