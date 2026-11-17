@@ -9,6 +9,7 @@ import {
   initiateGuestCommercePaymentFn,
   checkGuestReservationAvailabilityFn,
   createGuestReservationFn,
+  cancelGuestReservationFn,
 } from "@/modules/messaging/guest-portal.functions";
 import type { GuestLineInput } from "@/modules/restaurant/selforder/selforder.contracts";
 
@@ -92,6 +93,7 @@ function WhatsAppGuestPortal() {
   const [reservationLocalStart, setReservationLocalStart] = useState("");
   const [reservationPartySize, setReservationPartySize] = useState(2);
   const [reservationRequestId, setReservationRequestId] = useState("");
+  const [reservationNotice, setReservationNotice] = useState("");
   const reservationAvailabilityFn = useServerFn(checkGuestReservationAvailabilityFn);
   const createReservationFn = useServerFn(createGuestReservationFn);
   const order = useMutation({
@@ -143,7 +145,22 @@ function WhatsAppGuestPortal() {
       }),
     onSuccess: (result) => {
       setConfirmedReservationId(result.reservationId);
+      setReservationNotice("");
       setFulfilmentMethod("dine_in");
+    },
+  });
+  const cancelReservationFn = useServerFn(cancelGuestReservationFn);
+  const cancelReservation = useMutation({
+    mutationFn: () =>
+      cancelReservationFn({
+        data: { token, reservationId: reservation.data!.reservationId },
+      }),
+    onSuccess: () => {
+      reservation.reset();
+      reservationAvailability.reset();
+      setConfirmedReservationId(null);
+      setFulfilmentMethod("pickup");
+      setReservationNotice("Your reservation has been cancelled.");
     },
   });
 
@@ -307,6 +324,9 @@ function WhatsAppGuestPortal() {
             Choose a time at {data.outletName}. Times are interpreted in {data.timezone}.
             Standard seating duration: {data.reservationDurationMinutes} minutes.
           </p>
+          {reservationNotice ? (
+            <p className="mt-3 text-sm text-muted-foreground">{reservationNotice}</p>
+          ) : null}
           {reservation.data ? (
             <div className="mt-3 rounded-xl bg-primary/10 p-3 text-sm">
               <p className="font-semibold">Reservation confirmed</p>
@@ -318,6 +338,21 @@ function WhatsAppGuestPortal() {
                   timeZone: data.timezone,
                 }).format(new Date(reservation.data.startsAt))}
               </p>
+              {cancelReservation.isError ? (
+                <p className="mt-2 text-sm text-destructive">
+                  {cancelReservation.error instanceof Error
+                    ? cancelReservation.error.message
+                    : "Reservation could not be cancelled."}
+                </p>
+              ) : null}
+              <button
+                type="button"
+                className="mt-3 rounded-lg border border-border px-3 py-2 text-xs font-semibold disabled:opacity-50"
+                disabled={cancelReservation.isPending}
+                onClick={() => cancelReservation.mutate()}
+              >
+                {cancelReservation.isPending ? "Cancelling…" : "Cancel reservation"}
+              </button>
             </div>
           ) : (
             <>
