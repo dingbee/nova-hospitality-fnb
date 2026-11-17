@@ -278,3 +278,38 @@ export async function createGuestTableReservation(
     timezone: context.timezone,
   };
 }
+
+
+export async function cancelGuestTableReservation(
+  admin: Db,
+  input: { token: string; reservationId: string },
+) {
+  const context = await resolveReservationContext(admin, input.token);
+  const { data: reservation, error } = await admin
+    .from("restaurant_table_reservations")
+    .select("id, status, starts_at")
+    .eq("id", input.reservationId)
+    .eq("tenant_id", context.session.tenantId)
+    .eq("property_id", context.session.propertyId)
+    .eq("location_id", context.session.locationId)
+    .eq("guest_customer_id", context.guestCustomerId)
+    .maybeSingle();
+  if (error || !reservation) throw new Error("This reservation could not be found.");
+  if (!["requested", "confirmed"].includes(reservation.status)) {
+    throw new Error("This reservation can no longer be cancelled online.");
+  }
+  if (new Date(reservation.starts_at).getTime() <= Date.now()) {
+    throw new Error("Reservations that have already started must be changed by the restaurant.");
+  }
+  const { error: updateError } = await admin
+    .from("restaurant_table_reservations")
+    .update({ status: "cancelled", updated_at: new Date().toISOString() })
+    .eq("id", input.reservationId)
+    .eq("tenant_id", context.session.tenantId)
+    .eq("property_id", context.session.propertyId)
+    .eq("location_id", context.session.locationId)
+    .eq("guest_customer_id", context.guestCustomerId)
+    .in("status", ["requested", "confirmed"]);
+  if (updateError) throw new Error("The reservation could not be cancelled. Please contact the outlet.");
+  return { cancelled: true as const, reservationId: input.reservationId };
+}
