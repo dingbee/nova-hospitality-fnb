@@ -27,7 +27,7 @@ CREATE INDEX IF NOT EXISTS restaurant_guest_customers_tenant_seen_idx
 
 CREATE TABLE IF NOT EXISTS public.restaurant_guest_customer_consents (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE CASCADE,
+  tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE RESTRICT,
   property_id uuid,
   guest_customer_id uuid NOT NULL,
   channel text NOT NULL CHECK (channel IN ('whatsapp')),
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS public.restaurant_guest_customer_consents (
     REFERENCES public.restaurant_guest_customers(tenant_id, id) ON DELETE RESTRICT,
   CONSTRAINT restaurant_guest_customer_consents_property_scope_fkey
     FOREIGN KEY (tenant_id, property_id)
-    REFERENCES public.restaurant_properties(tenant_id, id) ON DELETE SET NULL (property_id),
+    REFERENCES public.restaurant_properties(tenant_id, id) ON DELETE RESTRICT,
   CONSTRAINT restaurant_guest_customer_consents_dedupe_uq UNIQUE (tenant_id, dedupe_key)
 );
 CREATE INDEX IF NOT EXISTS restaurant_guest_customer_consents_latest_idx

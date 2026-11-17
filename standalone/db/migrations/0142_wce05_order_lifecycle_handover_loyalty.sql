@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS public.restaurant_guest_loyalty_programs (
 
 CREATE TABLE IF NOT EXISTS public.restaurant_guest_loyalty_ledger (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE CASCADE,
+  tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE RESTRICT,
   property_id uuid NOT NULL,
   guest_customer_id uuid NOT NULL,
   currency text NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
