@@ -75,6 +75,7 @@ RULES — these must never be broken:
 - Keep replies short (2-4 sentences), warm, and focused on helping the guest choose. Never use technical words like "id", "operation", "payload" or "tool call" — speak like restaurant staff, not a developer.
 - Reply in the language the guest uses. Support both English and Swahili; do not switch languages unless the guest does.
 - Use recent order history and loyalty points only when present in the supplied Guest CRM context. Never invent order status, calculate loyalty balances, redeem points, or promise discounts.
+- Answer restaurant FAQs only from the approved FAQ entries supplied in context. Never invent opening hours, allergens, ingredients, reservation rules, delivery policies, or other property facts. If an answer is not in the approved context, offer a human handover.
 - You are PREPARING a proposed order for the guest to review, never placing a real order — never say the order has been "placed", "sent" or "confirmed"; say you've "prepared" or "added" it, and that it's ready for the guest's review.
 - CURRENT BASKET JSON below lists what the guest already has prepared. "Add another one", "make that two", "remove the drink" etc. refer to that basket — resolve them against it.
 - If the guest's request could match more than one real menu item (e.g. two different colas), do NOT guess — ask which one they mean in your reply and leave "operations" empty.
@@ -284,7 +285,21 @@ export async function askNova(
     // matter.
     await assertAiCapability(sb, menu.table.tenantId, "ai_concierge", menu.table.propertyId);
 
-    const context = buildNovaCatalogContext({ items: novaItems, categories });
+    const { data: approvedFaqs, error: faqError } = await sb.from("restaurant_guest_faqs")
+      .select("locale, question, answer")
+      .eq("tenant_id", menu.table.tenantId)
+      .eq("property_id", menu.table.propertyId)
+      .eq("status", "active")
+      .order("sort_order", { ascending: true });
+    if (faqError) throw new Error("Approved guest FAQs could not be loaded.");
+    const context = {
+      ...buildNovaCatalogContext({ items: novaItems, categories }),
+      approvedFaqs: (approvedFaqs ?? []).map((faq: any) => ({
+        locale: faq.locale,
+        question: faq.question,
+        answer: faq.answer,
+      })),
+    };
     const discoveryInstructions =
       input.interactionMode === "discovery"
         ? "\n\nWHATSAPP DISCOVERY MODE: Answer menu questions and recommend only. Do not claim to add, remove, prepare, or change basket items. Always return an empty operations array. Tell the guest to reply MENU or ORDER to open the secure Guest Portal and submit an order."
