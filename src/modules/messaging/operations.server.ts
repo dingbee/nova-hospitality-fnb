@@ -41,8 +41,8 @@ async function tenantQueryScope(
     input.tenantId,
     capability as any,
     {
-    propertyId: input.propertyId,
-    locationId: input.locationId,
+      propertyId: input.propertyId,
+      locationId: input.locationId,
     },
     scope,
   );
@@ -107,7 +107,8 @@ export async function listWhatsAppInbox(sb: Db, userId: string, input: TenantFil
 
   const latestMessage = new Map<string, any>();
   for (const message of messages ?? []) {
-    if (!latestMessage.has(message.conversation_id)) latestMessage.set(message.conversation_id, message);
+    if (!latestMessage.has(message.conversation_id))
+      latestMessage.set(message.conversation_id, message);
   }
   const guestMap = new Map((guests ?? []).map((guest: any) => [guest.id, guest]));
   return rows.map((conversation: any) => ({
