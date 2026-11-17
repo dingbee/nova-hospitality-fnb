@@ -91,7 +91,7 @@ jobs:
         with:
           name: p0-02-prettier-patch
           path: p0-02-prettier.patch
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 3
 
       - name: Report lint baseline
