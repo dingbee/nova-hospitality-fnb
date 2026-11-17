@@ -44,7 +44,8 @@ INSERT INTO public.restaurant_locations
   (id, tenant_id, property_id, scope, slug, name, location_type, is_storage, status, parent_id)
 VALUES
   ('a2000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000001', NULL, 'tenant', 'p0-04-a-central', 'P0-04 A Central Store', 'store', true, 'active', NULL),
-  ('a2000000-0000-4000-8000-000000000004', 'a0000000-0000-4000-8000-000000000001', 'a1000000-0000-4000-8000-000000000001', 'property', 'p0-04-a-inactive', 'P0-04 A Inactive Store', 'store', true, 'inactive', NULL);
+  ('a2000000-0000-4000-8000-000000000004', 'a0000000-0000-4000-8000-000000000001', 'a1000000-0000-4000-8000-000000000001', 'property', 'p0-04-a-inactive', 'P0-04 A Inactive Store', 'store', true, 'inactive', NULL),
+  ('b2000000-0000-4000-8000-000000000003', 'b0000000-0000-4000-8000-000000000001', NULL, 'tenant', 'p0-04-b-central', 'P0-04 B Central Store', 'store', true, 'active', NULL);
 
 INSERT INTO public.restaurant_members (tenant_id, property_id, user_id, role)
 VALUES
@@ -74,6 +75,13 @@ BEGIN
   WHERE id = 'a2000000-0000-4000-8000-000000000003';
   IF v_count <> 0 THEN
     RAISE EXCEPTION 'P0-04 FAIL: property-only user can read tenant central store';
+  END IF;
+
+  SELECT count(*) INTO v_count
+  FROM public.restaurant_locations
+  WHERE id = 'b2000000-0000-4000-8000-000000000003';
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION 'P0-04 FAIL: Tenant A property user can read Tenant B central store';
   END IF;
 
   UPDATE public.restaurant_locations
@@ -112,6 +120,21 @@ BEGIN
   WHERE id = 'a2000000-0000-4000-8000-000000000003';
   IF v_count <> 1 THEN
     RAISE EXCEPTION 'P0-04 FAIL: tenant-wide owner cannot read own central store';
+  END IF;
+
+  UPDATE public.restaurant_locations
+  SET name = 'P0-04 A Central Store Verified'
+  WHERE id = 'a2000000-0000-4000-8000-000000000003';
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'P0-04 FAIL: tenant-wide owner cannot manage own central store';
+  END IF;
+
+  SELECT count(*) INTO v_count
+  FROM public.restaurant_locations
+  WHERE id = 'b2000000-0000-4000-8000-000000000003';
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION 'P0-04 FAIL: Tenant A owner can read Tenant B central store';
   END IF;
 
   INSERT INTO public.restaurant_stock_transfers
