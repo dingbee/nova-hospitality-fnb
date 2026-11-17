@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { guestLineSchema } from "@/modules/restaurant/selforder/selforder.contracts";
 
 const guestPortalMenuSchema = z.object({
   token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
@@ -27,6 +28,7 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
       fetchSellableCatalog(supabaseAdmin, session.tenantId, {
         propertyId: session.propertyId,
         locationId: session.locationId,
+        orderType: "takeaway",
       }),
     ]);
     if (tenantError || !tenant || tenant.status !== "active" || locationError ||
@@ -45,15 +47,106 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
       categories: catalog.categories.map((category: any) => ({
         id: category.id, name: category.name, sortOrder: category.sort_order,
       })),
+      modifierGroups: catalog.modifierGroups.map((group: any) => ({
+        id: group.id, name: group.name, minSelect: group.min_select,
+        maxSelect: group.max_select, required: group.required,
+        modifiers: group.modifiers.map((modifier: any) => ({
+          id: modifier.id, name: modifier.name, priceDelta: modifier.price_delta,
+        })),
+      })),
       items: catalog.items
         .filter((item: any) => item.available !== false && item.priceConfigured !== false && item.price !== null)
         .map((item: any) => ({
           id: item.id, name: item.name, description: item.description,
           price: item.price, currency: session.currency, imageUrl: item.image_url,
           categoryId: item.category_id,
+          modifierGroupIds: item.modifier_group_ids,
           variants: (item.variants ?? []).map((variant: any) => ({
             id: variant.id, name: variant.name, price: variant.price, priceIsDelta: variant.price_is_delta,
           })),
         })),
+    };
+  });
+
+
+const submitGuestCommerceOrderSchema = z.object({
+  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  guestName: z.string().trim().max(160).optional(),
+  clientRequestId: z.string().min(8).max(80),
+  lines: z.array(guestLineSchema).min(1).max(50),
+});
+
+/** WCE-04: submit a takeaway order through the existing authoritative sales engine. */
+export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
+  .inputValidator((value: unknown) => submitGuestCommerceOrderSchema.parse(value))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { resolveWhatsAppGuestPortalSession } = await import("@/modules/messaging/guest-portal-sessions.server");
+    const { fetchSellableCatalog } = await import("@/modules/restaurant/sales/pos.server");
+    const { pickGuestOrderableLines } = await import("@/modules/restaurant/selforder/selforder.server");
+    const { createGuestOrder } = await import("@/modules/restaurant/sales/sales.server");
+    const { resolveGuestPaymentTiming } = await import("@/modules/restaurant/payments/payment-timing");
+    const { fireGuestOrder } = await import("@/modules/restaurant/kitchen/kitchen.server");
+
+    const session = await resolveWhatsAppGuestPortalSession(supabaseAdmin, data.token);
+    if (!session || session.scope !== "guest_commerce") {
+      throw new Error("This Guest Portal session cannot submit orders. Return to WhatsApp and request a new menu link.");
+    }
+
+    const [{ data: tenant, error: tenantError }, catalog] = await Promise.all([
+      supabaseAdmin.from("restaurant_tenants").select("id, settings, status")
+        .eq("id", session.tenantId).maybeSingle(),
+      fetchSellableCatalog(supabaseAdmin, session.tenantId, {
+        propertyId: session.propertyId, locationId: session.locationId, orderType: "takeaway",
+      }),
+    ]);
+    if (tenantError || !tenant || tenant.status !== "active") throw new Error("The restaurant is not currently accepting orders.");
+
+    const sellableIds = new Set(
+      catalog.items.filter((item: any) => item.available !== false && item.priceConfigured !== false).map((item: any) => item.id as string),
+    );
+    const { valid, rejected } = pickGuestOrderableLines(sellableIds, data.lines);
+    if (rejected.length || !valid.length) {
+      throw new Error("One or more items are no longer available. Refresh the menu and try again.");
+    }
+
+    const lines = valid.map((line) => ({
+      menuItemId: line.menuItemId,
+      variantId: line.variantId,
+      description: line.description,
+      quantity: line.quantity,
+      unitPrice: 0,
+      discount: 0,
+      taxAmount: 0,
+      notes: line.notes,
+      guestNotes: line.guestNotes,
+      modifiers: line.modifiers,
+    }));
+    const requestKey = "wa-guest:" + session.sessionId + ":" + data.clientRequestId;
+    const order = await createGuestOrder(supabaseAdmin, {
+      tenantId: session.tenantId,
+      propertyId: session.propertyId,
+      locationId: session.locationId,
+      tableId: null,
+      orderType: "takeaway",
+      guestName: data.guestName || null,
+      currency: session.currency,
+      lines,
+      clientRequestId: requestKey,
+      guestPortalSessionId: session.sessionId,
+    });
+
+    const paymentTiming = resolveGuestPaymentTiming(tenant.settings);
+    if (!order.idempotent && paymentTiming === "pay_after_service") {
+      await fireGuestOrder(supabaseAdmin, { tenantId: session.tenantId, orderId: order.id });
+    }
+    return {
+      orderId: order.id,
+      orderNumber: order.order_number,
+      total: Number(order.total ?? 0),
+      currency: session.currency,
+      paymentTiming,
+      status: order.status,
+      idempotent: Boolean(order.idempotent),
     };
   });
