@@ -119,26 +119,6 @@ jobs:
           export NOVA_MIGRATIONS_DIR="$replay_migrations"
           ./local/scripts/init-db.sh
 
-      - name: Initialize standard PostgreSQL migration test database
-        env:
-          NOVA_DB_HOST: 127.0.0.1
-          NOVA_DB_PORT: 5432
-          NOVA_DB_NAME: lexibite_test
-          NOVA_DB_SUPERUSER: postgres
-          NOVA_DB_SUPERUSER_PASSWORD: postgres
-          NOVA_DB_AUTHENTICATOR: nova_authenticator
-          NOVA_DB_AUTHENTICATOR_PASSWORD: p0-02-ci-only-authenticator-password
-        run: |
-          set -euo pipefail
-          export LC_ALL=C
-          replay_migrations="$(mktemp -d)"
-          trap 'rm -rf "$replay_migrations"' EXIT
-          cp standalone/db/migrations/*.sql "$replay_migrations/"
-          cp standalone/db/verification/fixtures/p0-01-uat-bar-station-replay-fixture.sql \
-            "$replay_migrations/0086zz_p0-01_uat_bar_station_fixture.sql"
-          export NOVA_MIGRATIONS_DIR="$replay_migrations"
-          ./local/scripts/init-db.sh
-
       - name: Verify service-recovery quantity migration in isolated PostgreSQL
         env:
           PGPASSWORD: postgres
