@@ -46,8 +46,12 @@ export async function listPurchaseOrders(
 export async function createPurchaseOrder(sb: Sb, userId: string, input: CreatePurchaseOrderInput) {
   // A purchase order raised outside the requisition flow is a management
   // exception: it needs ordering authority, not just purchasing access.
-  await assertCapability(sb, userId, input.tenantId, "purchasing.manage");
-  await assertCapability(sb, userId, input.tenantId, "purchasing.approve");
+  const scope = {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  };
+  await assertCapability(sb, userId, input.tenantId, "purchasing.manage", scope);
+  await assertCapability(sb, userId, input.tenantId, "purchasing.approve", scope);
 
   const subtotal = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
 
@@ -174,6 +178,7 @@ export async function transitionPurchaseOrder(
   if (readErr || !current) throw new Error("Purchase order not found.");
   await assertCapability(sb, userId, input.tenantId, capability, {
     propertyId: current.property_id ?? null,
+    locationId: current.location_id ?? null,
   });
 
   // Idempotent: repeating the same decision is not a second business effect.
