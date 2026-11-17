@@ -100,7 +100,7 @@ export async function recordWhatsAppGuestConsent(
     state: "granted" | "revoked";
   },
 ) {
-  const dedupeKey = "wa:" + input.sourceEventId + ":marketing:" + input.state;
+  const dedupeKey = "wa:" + input.sourceEventId + ":" + input.guestCustomerId + ":marketing:" + input.state;
   const { data, error } = await admin
     .from("restaurant_guest_customer_consents")
     .insert({
