@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS public.wa_campaigns (
   property_id uuid NOT NULL,
   location_id uuid NOT NULL REFERENCES public.restaurant_locations(id) ON DELETE CASCADE,
   binding_id uuid NOT NULL,
-  market_code text NOT NULL CHECK (market_code ~ '^[A-Z]{2,3}
+  market_code text NOT NULL CHECK (market_code ~ '^[A-Z]{2,3}$'),
+  template_id uuid NOT NULL,
   name text NOT NULL CHECK (length(trim(name)) BETWEEN 2 AND 160),
   trigger_type text NOT NULL DEFAULT 'scheduled'
     CHECK (trigger_type IN ('scheduled', 'event')),
