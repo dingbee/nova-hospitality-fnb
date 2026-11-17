@@ -6,6 +6,7 @@ const tokenSchema = z.object({
 });
 const publicStoreSchema = z.object({
   tenantSlug: z.string().min(1).max(120).regex(/^[a-z0-9-]+$/),
+  propertySlug: z.string().min(1).max(120).regex(/^[a-z0-9-]+$/),
   locationSlug: z.string().min(1).max(120).regex(/^[a-z0-9-]+$/),
 });
 const tableSchema = z.object({ tableId: z.string().uuid() });
