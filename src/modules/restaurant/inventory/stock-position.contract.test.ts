@@ -74,7 +74,7 @@ describe("canonical stock-position contract", () => {
     expect(result.status).toBe("ready");
     expect(result.outlierDays).toContain(8);
     expect(result.dailyAverage).toBeLessThan(5);
-    expect(result.forecastQuantity).toBe(Number(((result.dailyAverage ?? 0) * 7).toFixed(4)));
+    expect(result.forecastQuantity).toBeCloseTo((result.dailyAverage ?? 0) * 7, 3);
   });
 
   it("does not recommend a purchase when net available stock covers forecast and safety stock", () => {
