@@ -89,12 +89,10 @@ describe("getConfiguredProvider — tenant/property integration resolution", () 
 
   it("persists a newly registered Pesapal IPN id into the same property integration", async () => {
     const row = integrationRow();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
         if (url.includes("/Auth/RequestToken")) return { ok: true, status: 200, json: async () => ({ token: "token-a" }) };
         if (url.includes("/URLSetup/RegisterIPN")) {
-          const request = JSON.parse(String((vi.mocked(fetch).mock.calls.at(-1)?.[1] as RequestInit)?.body));
+          const request = JSON.parse(String(init?.body));
           expect(request.url).toBe("https://lexibite.example/api/pesapal-ipn");
           return { ok: true, status: 200, json: async () => ({ ipn_id: "ipn-property-a" }) };
         }
@@ -109,8 +107,8 @@ describe("getConfiguredProvider — tenant/property integration resolution", () 
           };
         }
         throw new Error("Unexpected Pesapal endpoint");
-      }),
-    );
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const provider = await getConfiguredProvider(integrationDb(row) as any, TENANT, PROPERTY);
     const result = await provider!.initiate({
       amount: 1000,
