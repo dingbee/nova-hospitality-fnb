@@ -312,7 +312,19 @@ export async function approveRequisition(sb: Sb, userId: string, input: ApproveR
   const { requisition, lines } = await loadRequisition(sb, input.tenantId, input.requisitionId);
   await assertCapability(sb, userId, input.tenantId, "requisition.approve", {
     propertyId: requisition.property_id ?? null,
+    locationId: requisition.source_location_id ?? null,
   });
+  if (
+    requisition.destination_location_id &&
+    requisition.destination_location_id !== requisition.source_location_id
+  ) {
+    await assertCapability(sb, userId, input.tenantId, "requisition.approve", {
+      locationId: requisition.destination_location_id,
+    });
+  }
+  if (requisition.created_by === userId) {
+    throw new Error("Separation of duties — a requisition creator cannot approve or reject their own request.");
+  }
   if (!["submitted"].includes(requisition.status)) {
     throw new Error(`Requisition cannot be approved from status "${requisition.status}".`);
   }
