@@ -82,7 +82,7 @@ function WhatsAppGuestPortal() {
   });
   const missingRequiredModifiers = cartItems.some(item => item.modifierGroupIds.some(groupId => {
     const group = data.modifierGroups.find(g => g.id === groupId);
-    return Boolean(group?.required && (modifierSelection[item.id]?.[groupId]?.length ?? 0) < Math.max(1, group.minSelect));
+    return Boolean(group && (modifierSelection[item.id]?.[groupId]?.length ?? 0) < group.minSelect);
   }));
 
   function changeQuantity(itemId: string, delta: number) {
