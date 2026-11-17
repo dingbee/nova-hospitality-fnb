@@ -25,6 +25,9 @@ async function tenantQueryScope(
   capability = "guest.context.read",
 ) {
   const scope = await getTenantScope(sb, userId, input.tenantId);
+  if (scope.platformAdmin || scope.grants.length === 0) {
+    throw new Error("tenant_membership_required");
+  }
   await assertTenantRead(
     sb,
     userId,
