@@ -306,7 +306,7 @@ export async function previewIntelligentPurchaseOrders(
       .in("id", itemIds),
     sb
       .from("restaurant_supplier_products")
-      .select("id, supplier_id, inventory_item_id, unit_id, pack_size, unit_price, active")
+      .select("id, supplier_id, inventory_item_id, unit_id, pack_size, unit_price, currency, min_order_quantity, order_multiple, active")
       .eq("tenant_id", tenantId)
       .in("inventory_item_id", itemIds),
     sb.from("restaurant_suppliers").select("id, name, status").eq("tenant_id", tenantId),
