@@ -144,6 +144,7 @@ export async function askNova(
         status: string;
         items: Array<{ name: string; quantity: number }>;
       }>;
+      loyaltyPointsBalance?: number;
     };
     /** GEP2 — the guest's current basket (menuItemId + quantity only), a hint for resolving "remove"/"another one"/"make that two" references. Never trusted for price or identity. */
     basket?: NovaBasketLine[];
