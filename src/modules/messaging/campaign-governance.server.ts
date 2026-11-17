@@ -122,6 +122,38 @@ export async function prepareWhatsAppCampaignRecipient(
   return { duplicate: false as const, recipientId: data.id, state, suppressionReason };
 }
 
+/** Resolves the current effective Meta market/category rate without caching or rewriting historical rates. */
+export async function resolveEffectiveMetaMessageRate(
+  admin: Db,
+  marketCode: string,
+  category: "marketing" | "utility" | "authentication" | "service",
+  now = new Date(),
+) {
+  const timestamp = now.toISOString();
+  const { data, error } = await admin
+    .from("wa_meta_message_rates")
+    .select("id, market_code, category, currency, unit_price, effective_from, effective_until")
+    .eq("market_code", marketCode)
+    .eq("category", category)
+    .eq("active", true)
+    .lte("effective_from", timestamp)
+    .or("effective_until.is.null,effective_until.gt." + timestamp)
+    .order("effective_from", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new WhatsAppCampaignGovernanceError("meta_rate_lookup_failed");
+  if (!data) throw new WhatsAppCampaignGovernanceError("meta_rate_not_configured");
+  return {
+    id: String(data.id),
+    marketCode: String(data.market_code),
+    category: data.category as typeof category,
+    currency: String(data.currency),
+    unitPrice: Number(data.unit_price),
+    effectiveFrom: String(data.effective_from),
+    effectiveUntil: data.effective_until ? String(data.effective_until) : null,
+  };
+}
+
 /** Records a cost component against an immutable rate snapshot; provider dispatch is deliberately separate. */
 export async function recordWhatsAppCampaignUsage(
   admin: Db,
