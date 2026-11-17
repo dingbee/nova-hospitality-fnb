@@ -373,7 +373,8 @@ export async function queueWhatsAppOrderStatusNotification(
   if (customerError) throw new Error("WhatsApp guest identity could not be verified.");
   if (!customer) return { queued: false as const, reason: "guest_identity_unavailable" };
   const guestBlocked = customer.status === "blocked";
-  let campaignTriggerResult: { discovered: number; processed: number; completed: number; paused: number } | undefined;
+  let campaignTriggerResult:
+    { discovered: number; processed: number; completed: number; paused: number } | undefined;
   if (order.guest_customer_id && !guestBlocked) {
     try {
       const { triggerEventWhatsAppCampaigns } = await import("./campaign-governance.server");
