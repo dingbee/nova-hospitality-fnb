@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase result rows are validated at this boundary. */
 import { createHash, randomBytes } from "node:crypto";
-import { resolveServiceConfiguration } from "@/modules/restaurant/operations/service-config";
+import { mergePropertyServiceSettings, resolveServiceConfiguration } from "@/modules/restaurant/operations/service-config";
 
 type Db = any;
 export type GuestCommerceChannel = "whatsapp" | "website" | "qr" | "social" | "direct" | "concierge";
