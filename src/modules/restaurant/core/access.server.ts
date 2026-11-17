@@ -33,6 +33,8 @@ export interface MemberGrant {
 export interface ResourceScope {
   propertyId?: string | null;
   locationId?: string | null;
+  /** Require the matching capability grant itself to be tenant-wide. */
+  tenantWide?: boolean;
 }
 
 export async function isPlatformAdmin(supabase: Sb, userId: string): Promise<boolean> {
@@ -495,19 +497,28 @@ export async function assertCapability(
   if (matching.length === 0) {
     throw new Error(`Forbidden — "${capability}" requires one of: ${allowed.join(", ")}.`);
   }
+  if (scope?.tenantWide && !matching.some((g) => g.propertyId === null)) {
+    throw new Error(`Forbidden — "${capability}" requires a tenant-wide grant.`);
+  }
   if (scope?.propertyId !== undefined && scope.propertyId !== null) {
     if (!matching.some((g) => grantCoversProperty(g, scope.propertyId))) {
       throw new Error(`Forbidden — "${capability}" is not granted to you at this property.`);
     }
   }
   if (scope?.locationId !== undefined && scope.locationId !== null) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("restaurant_locations")
-      .select("property_id")
+      .select("tenant_id, property_id, scope")
       .eq("id", scope.locationId)
+      .eq("tenant_id", tenantId)
       .maybeSingle();
-    const locationProperty = data?.property_id ?? null;
-    if (locationProperty && !matching.some((g) => grantCoversProperty(g, locationProperty))) {
+    if (error) throw new Error(error.message);
+    if (!data) throw new Error(`Forbidden — "${capability}" location is not in this tenant.`);
+    if (data.scope === "tenant" || data.property_id == null) {
+      if (!matching.some((g) => g.propertyId === null)) {
+        throw new Error(`Forbidden — "${capability}" is not granted for the tenant central store.`);
+      }
+    } else if (!matching.some((g) => grantCoversProperty(g, data.property_id))) {
       throw new Error(`Forbidden — "${capability}" is not granted to you at this location.`);
     }
   }
