@@ -56,7 +56,7 @@ function makeAdmin(overrides: Record<string, unknown> = {}) {
       is_storage: false,
       status: "active",
     },
-    restaurant_properties: { currency: "TZS", status: "active" },
+    restaurant_properties: { id: scope.propertyId, slug: "main-property", currency: "TZS", status: "active" },
     restaurant_tables: { id: "88888888-8888-4888-8888-888888888888", tenant_id: scope.tenantId, property_id: scope.propertyId, location_id: scope.locationId, active: true },
     ...overrides,
   };
@@ -121,6 +121,7 @@ describe("WhatsApp Guest Portal session security", () => {
 
     const result = await createGuestCommerceSessionForPublicStore(admin, {
       tenantSlug: "demo-restaurant",
+      propertySlug: "main-property",
       locationSlug: "city-centre",
       sourceChannel: "website",
     });
