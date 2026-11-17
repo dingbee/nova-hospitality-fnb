@@ -96,7 +96,7 @@ export async function prepareWhatsAppCampaignRecipient(
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.recipient_id) throw new WhatsAppCampaignGovernanceError("recipient_persistence_failed");
   return {
-    duplicate: false as const,
+    duplicate: row.duplicate === true,
     recipientId: String(row.recipient_id),
     state: String(row.state),
     suppressionReason: row.suppression_reason ? String(row.suppression_reason) : null,
