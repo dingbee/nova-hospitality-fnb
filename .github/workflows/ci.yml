@@ -248,14 +248,9 @@ jobs:
             src/modules/restaurant/procurement/receiving-governance.test.ts \
             src/modules/restaurant/procurement/receiving-units.test.ts
 
-      - name: Full test suite (repository baseline)
+      - name: Full test suite (blocking P0-02 acceptance gate)
         id: full_tests
-        continue-on-error: true
         run: bun run test
-
-      - name: Report full test baseline
-        if: steps.full_tests.outcome == 'failure'
-        run: echo "::warning::Full repository test suite remains non-clean outside the scoped functional gate; scoped changed-path tests remain blocking."
 
       - name: Verify bundle origin
         run: bun run verify:bundle -- .output
@@ -267,9 +262,10 @@ jobs:
           TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}
           SCOPED_TESTS_OUTCOME: ${{ steps.scoped_tests.outcome }}
+          FULL_TESTS_OUTCOME: ${{ steps.full_tests.outcome }}
         run: |
           failed=0
-          for gate in TYPECHECK LINT SCOPED_TESTS; do
+          for gate in TYPECHECK LINT SCOPED_TESTS FULL_TESTS; do
             var="${gate}_OUTCOME"
             outcome="${!var}"
             if [ "$outcome" != "success" ]; then
