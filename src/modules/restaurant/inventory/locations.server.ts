@@ -179,17 +179,25 @@ export async function locationNameMap(sb: Sb, tenantId: string): Promise<Map<str
   }));
 }
 
-/** Fail fast when a caller names a location outside its own tenant. */
-export async function assertLocationInTenant(sb: Sb, tenantId: string, ...locationIds: Array<string | null | undefined>) {
-  const ids = locationIds.filter(Boolean) as string[];
+/** Fail fast when a caller names a foreign-tenant or inactive location. */
+export async function assertLocationInTenant(
+  sb: Sb,
+  tenantId: string,
+  ...locationIds: Array<string | null | undefined>
+) {
+  const ids = [...new Set(locationIds.filter(Boolean))] as string[];
   if (ids.length === 0) return;
   const { data, error } = await sb
     .from("restaurant_locations")
-    .select("id")
+    .select("id, status")
     .eq("tenant_id", tenantId)
     .in("id", ids);
   if (error) throw new Error(error.message);
-  if ((data ?? []).length !== new Set(ids).size) {
+  const rows = (data ?? []) as Array<{ id: string; status?: string | null }>;
+  if (rows.length !== ids.length) {
     throw new Error("Forbidden — location does not belong to this tenant.");
+  }
+  if (rows.some((location) => location.status != null && location.status !== "active")) {
+    throw new Error("Location is inactive and cannot accept new inventory transactions.");
   }
 }
