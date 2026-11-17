@@ -11,6 +11,7 @@ type Outbound = {
   location_id: string;
   conversation_id: string;
   content: string;
+  payload: Record<string, any>;
   delivery_attempts: number;
 };
 
@@ -108,6 +109,13 @@ export async function processPendingWhatsAppOutboundMessages(
         .eq("status", "queued")
         .eq("locked_by", workerId);
       if (updateError) throw new Error("whatsapp_outbox_sent_state_failed");
+      const notificationEventId = message.payload?.order_notification_event_id;
+      if (typeof notificationEventId === "string") {
+        await admin.from("wa_order_notification_events")
+          .update({ notification_state: "sent", updated_at: new Date().toISOString() })
+          .eq("id", notificationEventId)
+          .eq("tenant_id", message.tenant_id);
+      }
       sent++;
     } catch (error) {
       // Only an explicit Meta rate-limit response is automatically retried.
@@ -131,6 +139,16 @@ export async function processPendingWhatsAppOutboundMessages(
         .eq("status", "queued")
         .eq("locked_by", workerId);
       if (stateError) throw new Error("whatsapp_outbox_failure_state_failed");
+      const notificationEventId = message.payload?.order_notification_event_id;
+      if (typeof notificationEventId === "string" && !(retryable && message.delivery_attempts < 8)) {
+        const notificationState = error instanceof MetaGraphError && error.code === 131047
+          ? "deferred_template"
+          : "failed";
+        await admin.from("wa_order_notification_events")
+          .update({ notification_state: notificationState, updated_at: new Date().toISOString() })
+          .eq("id", notificationEventId)
+          .eq("tenant_id", message.tenant_id);
+      }
       if (retryable && message.delivery_attempts < 8) retried++;
       else failed++;
     }
