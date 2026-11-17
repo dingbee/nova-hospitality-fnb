@@ -34,7 +34,7 @@ function fakeDb(rows: Record<string, any[]>) {
           return builder;
         },
         then: (resolve: (value: unknown) => unknown) =>
-          Promise.resolve({ data: filtered }).then(resolve),
+          Promise.resolve({ data: filtered, error: null }).then(resolve),
       };
       return builder;
     },
@@ -47,7 +47,7 @@ const product = { id: "product-1", menu_item_id: item.id, recipe_id: "recipe-1",
 describe("outlet-scoped menu availability", () => {
   it("blocks a menu item when required recipe stock is below the recipe quantity", async () => {
     const db = fakeDb({
-      restaurant_recipes: [{ id: "recipe-1", status: "active" }],
+      restaurant_recipes: [{ id: "recipe-1", status: "active", tenant_id: tenant }],
       restaurant_recipe_lines: [
         {
           recipe_id: "recipe-1",
@@ -55,18 +55,23 @@ describe("outlet-scoped menu availability", () => {
           component_kind: "inventory",
           is_optional: false,
           quantity: 3,
+          tenant_id: tenant,
         },
       ],
       restaurant_inventory_items: [
         {
           id: "stock-1",
           name: "Chicken",
-          current_quantity: 2,
           status: "active",
           property_id: property,
           location_id: location,
+          tenant_id: tenant,
         },
       ],
+      restaurant_stock_positions_v: [
+        { inventory_item_id: "stock-1", location_id: location, on_hand: 2, tenant_id: tenant },
+      ],
+      restaurant_stock_reservations: [],
     });
     const result = await resolveMenuAvailability(db, tenant, [item], [product], {
       propertyId: property,
@@ -77,14 +82,14 @@ describe("outlet-scoped menu availability", () => {
       inventoryReady: false,
       availableQuantity: 0,
     });
-    expect(result.get(item.id)?.reasons[0]).toContain("Chicken");
+    expect(result.get(item.id)?.reasons[0]).toContain("Insufficient stock");
   });
 
   it("resolves nested sub-recipes before declaring the item available", async () => {
     const db = fakeDb({
       restaurant_recipes: [
-        { id: "recipe-1", status: "active" },
-        { id: "recipe-2", status: "active" },
+        { id: "recipe-1", status: "active", tenant_id: tenant },
+        { id: "recipe-2", status: "active", tenant_id: tenant },
       ],
       restaurant_recipe_lines: [
         {
@@ -93,6 +98,7 @@ describe("outlet-scoped menu availability", () => {
           sub_recipe_id: "recipe-2",
           is_optional: false,
           quantity: 1,
+          tenant_id: tenant,
         },
         {
           recipe_id: "recipe-2",
@@ -100,18 +106,23 @@ describe("outlet-scoped menu availability", () => {
           inventory_item_id: "stock-1",
           is_optional: false,
           quantity: 1,
+          tenant_id: tenant,
         },
       ],
       restaurant_inventory_items: [
         {
           id: "stock-1",
           name: "Flour",
-          current_quantity: 5,
           status: "active",
           property_id: property,
           location_id: location,
+          tenant_id: tenant,
         },
       ],
+      restaurant_stock_positions_v: [
+        { inventory_item_id: "stock-1", location_id: location, on_hand: 5, tenant_id: tenant },
+      ],
+      restaurant_stock_reservations: [],
     });
     const result = await resolveMenuAvailability(db, tenant, [item], [product], {
       propertyId: property,
@@ -120,13 +131,14 @@ describe("outlet-scoped menu availability", () => {
     expect(result.get(item.id)).toMatchObject({
       available: true,
       inventoryReady: true,
+      availableQuantity: 5,
       reasons: [],
     });
   });
 
   it("fails closed when a required ingredient is outside the selected outlet scope", async () => {
     const db = fakeDb({
-      restaurant_recipes: [{ id: "recipe-1", status: "active" }],
+      restaurant_recipes: [{ id: "recipe-1", status: "active", tenant_id: tenant }],
       restaurant_recipe_lines: [
         {
           recipe_id: "recipe-1",
@@ -134,18 +146,23 @@ describe("outlet-scoped menu availability", () => {
           component_kind: "inventory",
           is_optional: false,
           quantity: 1,
+          tenant_id: tenant,
         },
       ],
       restaurant_inventory_items: [
         {
           id: "stock-1",
           name: "Milk",
-          current_quantity: 5,
           status: "active",
           property_id: property,
           location_id: "another-outlet",
+          tenant_id: tenant,
         },
       ],
+      restaurant_stock_positions_v: [
+        { inventory_item_id: "stock-1", location_id: "another-outlet", on_hand: 5, tenant_id: tenant },
+      ],
+      restaurant_stock_reservations: [],
     });
     const result = await resolveMenuAvailability(db, tenant, [item], [product], {
       propertyId: property,
@@ -157,7 +174,7 @@ describe("outlet-scoped menu availability", () => {
 
   it("subtracts active reservations before computing orderable quantity", async () => {
     const db = fakeDb({
-      restaurant_recipes: [{ id: "recipe-1", status: "active" }],
+      restaurant_recipes: [{ id: "recipe-1", status: "active", tenant_id: tenant }],
       restaurant_recipe_lines: [
         {
           recipe_id: "recipe-1",
@@ -165,23 +182,30 @@ describe("outlet-scoped menu availability", () => {
           component_kind: "inventory",
           is_optional: false,
           quantity: 1,
+          tenant_id: tenant,
         },
       ],
       restaurant_inventory_items: [
         {
           id: "stock-1",
           name: "Beans",
-          current_quantity: 8,
           status: "active",
           property_id: property,
           location_id: location,
+          tenant_id: tenant,
         },
       ],
       restaurant_stock_positions_v: [
-        { inventory_item_id: "stock-1", location_id: location, on_hand: 8 },
+        { inventory_item_id: "stock-1", location_id: location, on_hand: 8, tenant_id: tenant },
       ],
       restaurant_stock_reservations: [
-        { inventory_item_id: "stock-1", location_id: location, quantity: 6 },
+        {
+          inventory_item_id: "stock-1",
+          location_id: location,
+          quantity: 6,
+          status: "active",
+          tenant_id: tenant,
+        },
       ],
     });
     const result = await resolveMenuAvailability(db, tenant, [item], [product], {
@@ -193,9 +217,11 @@ describe("outlet-scoped menu availability", () => {
 
   it("blocks inactive menu lifecycle and inactive recipe states", async () => {
     const db = fakeDb({
-      restaurant_recipes: [{ id: "recipe-1", status: "draft" }],
+      restaurant_recipes: [{ id: "recipe-1", status: "draft", tenant_id: tenant }],
       restaurant_recipe_lines: [],
       restaurant_inventory_items: [],
+      restaurant_stock_positions_v: [],
+      restaurant_stock_reservations: [],
     });
     const result = await resolveMenuAvailability(
       db,
