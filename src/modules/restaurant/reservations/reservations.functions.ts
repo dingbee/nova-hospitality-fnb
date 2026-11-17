@@ -15,7 +15,7 @@ export const listGuestReservationsFn = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((value: unknown) => reservationScopeSchema.parse(value))
   .handler(async ({ data, context }) => {
-    await assertCapability(context.supabase, context.userId, data.tenantId, "sales.read", {
+    await assertCapability(context.supabase, context.userId, data.tenantId, "reservation.manage", {
       propertyId: data.propertyId,
     });
     const { data: reservations, error } = await context.supabase
@@ -45,7 +45,7 @@ export const updateGuestReservationStatusFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((value: unknown) => updateReservationStatusSchema.parse(value))
   .handler(async ({ data, context }) => {
-    await assertCapability(context.supabase, context.userId, data.tenantId, "sales.manage", {
+    await assertCapability(context.supabase, context.userId, data.tenantId, "reservation.manage", {
       propertyId: data.propertyId,
     });
     const { data: reservation, error } = await context.supabase
