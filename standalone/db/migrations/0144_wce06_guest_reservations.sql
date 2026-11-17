@@ -46,10 +46,10 @@ CREATE TABLE IF NOT EXISTS public.restaurant_table_reservations (
     REFERENCES public.restaurant_locations (id, tenant_id, property_id) ON DELETE CASCADE,
   CONSTRAINT restaurant_table_reservations_table_fk
     FOREIGN KEY (table_id, tenant_id, property_id, location_id)
-    REFERENCES public.restaurant_tables (id, tenant_id, property_id, location_id) ON DELETE SET NULL,
+    REFERENCES public.restaurant_tables (id, tenant_id, property_id, location_id) ON DELETE SET NULL (table_id),
   CONSTRAINT restaurant_table_reservations_guest_fk
     FOREIGN KEY (guest_customer_id, tenant_id)
-    REFERENCES public.restaurant_guest_customers (id, tenant_id) ON DELETE SET NULL
+    REFERENCES public.restaurant_guest_customers (id, tenant_id) ON DELETE SET NULL (guest_customer_id)
 );
 
 CREATE INDEX IF NOT EXISTS restaurant_table_reservations_slot_idx
