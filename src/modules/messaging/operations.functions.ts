@@ -128,4 +128,3 @@ export const pauseWhatsAppCampaignFn = createServerFn({ method: "POST" })
     const mod = await import("./operations.server");
     return mod.pauseWhatsAppCampaignForTenant(context.supabase, context.userId, data);
   });
-
