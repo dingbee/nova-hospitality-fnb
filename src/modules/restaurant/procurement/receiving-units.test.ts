@@ -155,6 +155,7 @@ beforeEach(() => {
     { id: LITRE, dimension: "volume", factor: 1000, base_unit_id: ML },
     { id: KG, dimension: "mass", factor: 1, base_unit_id: null },
   ];
+  db["restaurant_locations"] = [{ id: "location-test", tenant_id: TENANT, property_id: null, scope: "tenant", is_storage: true, status: "active" }];
   db["restaurant_inventory_batches"] = [];
   db["restaurant_goods_receipts"] = [];
   db["restaurant_goods_receipt_items"] = [];
@@ -163,6 +164,7 @@ beforeEach(() => {
 function draftReceipt(itemId: string, unitId: string, quantity: number, unitCost: number) {
   return createGoodsReceipt(sb, USER, {
     tenantId: TENANT,
+    locationId: "location-test",
     currency: "TZS",
     post: false,
     lines: [
