@@ -52,7 +52,7 @@ export async function submitGuestCommerceOrder(
   const [{ data: tenant, error: tenantError }, { data: property, error: propertyError }] =
     await Promise.all([
       admin.from("restaurant_tenants").select("id, status, settings").eq("id", session.tenantId).maybeSingle(),
-      admin.from("restaurant_properties").select("id, status, currency").eq("id", session.propertyId)
+      admin.from("restaurant_properties").select("id, status, currency, settings").eq("id", session.propertyId)
         .eq("tenant_id", session.tenantId).maybeSingle(),
     ]);
   if (tenantError || !tenant || tenant.status !== "active" ||
@@ -63,7 +63,8 @@ export async function submitGuestCommerceOrder(
     throw new Error("The property currency has changed. Reopen the restaurant menu before ordering.");
   }
 
-  const service = resolveServiceConfiguration(tenant.settings);
+  const effectiveSettings = mergePropertyServiceSettings(tenant.settings, property.settings);
+  const service = resolveServiceConfiguration(effectiveSettings);
   if (session.orderType === "room_service") {
     throw new Error("Room-service checkout requires a verified guest-room assignment.");
   }
@@ -135,7 +136,7 @@ export async function submitGuestCommerceOrder(
     modifiers: line.modifiers,
   }));
 
-  const paymentTiming = tableContext?.guestPaymentTiming ?? resolveGuestPaymentTiming(tenant.settings);
+  const paymentTiming = resolveGuestPaymentTiming(effectiveSettings);
   let order;
   try {
     order = await createGuestOrder(admin, {
