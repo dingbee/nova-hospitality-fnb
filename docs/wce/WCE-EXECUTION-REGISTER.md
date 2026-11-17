@@ -50,7 +50,7 @@
 
 ## Acceptance workflow
 
-The WCE workflow is now present on both the WCE-02 base branch and continuation branch. It is read-only with respect to repository contents and runs changed-source lint, scoped WCE tests, full repository tests, strict typecheck, production build/route generation and PostgreSQL 17 clean migration replay. Earlier WCE-03–05 implementation checks passed on an older SHA, not the current PR #199 head `042c468ec7a87413ecf605920983c9b27a9226fa`; exact-head certification remains required. WCE-06 is separately verified on its dependent branch; no merge or production release is implied.
+The WCE workflow is now present on both the WCE-02 base branch and continuation branch. It is read-only with respect to repository contents and runs changed-source lint, scoped WCE tests, full repository tests, strict typecheck, production build/route generation and PostgreSQL 17 clean migration replay. Earlier WCE-03–05 implementation checks passed on an older SHA, not the current PR #199 head `042c468ec7a87413ecf605920983c9b27a9226fa`; exact-head certification is being rerun on the current branch head. WCE-06 is separately verified on its dependent branch; no merge or production release is implied.
 
 ## External dependency register
 
