@@ -126,12 +126,12 @@ export function WhatsAppOperationsCentre() {
   const createTemplate = useAdminMutation({
     mutationFn: () => createTemplateFn({
       data: {
-        tenantId: tenantId!,
+          tenantId: tenantId!,
         propertyId,
-        templateName,
+          templateName,
           language: templateLanguage,
         category: templateCategory,
-      },
+        },
     }),
     successMessage: "Draft template created",
     onSuccess: () => {
@@ -156,7 +156,7 @@ export function WhatsAppOperationsCentre() {
               : undefined,
         eventKey: campaignTriggerType === "event" ? campaignEventKey : undefined,
         preferredLanguage: campaignLanguage || undefined,
-        dailyCap: campaignDailyCap ? Number(campaignDailyCap) : null,
+          dailyCap: campaignDailyCap ? Number(campaignDailyCap) : null,
         totalCap: campaignTotalCap ? Number(campaignTotalCap) : null,
       },
       }),
@@ -464,8 +464,7 @@ export function WhatsAppOperationsCentre() {
                       <div>
                         <p className="font-medium">{template.template_name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {template.language}   {template.category}  {" "}
-                          {formatDate(template.updated_at)}
+                          {template.language} {template.category} {formatDate(template.updated_at)}
                         </p>
                       </div>
                       <StatusChip>{template.status}</StatusChip>
@@ -504,7 +503,7 @@ export function WhatsAppOperationsCentre() {
                     .filter((template) => template.status === "approved")
                     .map((template) => (
                       <option key={template.id} value={template.id}>
-                        {template.template_name}   {template.language}
+                        {template.template_name} {template.language}
                       </option>
                     ))}
                 </select>
@@ -625,10 +624,10 @@ export function WhatsAppOperationsCentre() {
                         {campaign.trigger_type === "scheduled"
                           ? `Scheduled   ${formatDate(campaign.scheduled_at)}`
                           : `Event   ${campaign.event_key}`}{" "}
-                          {campaign.market_code}
+                        {campaign.market_code}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Daily cap: {campaign.daily_cap ?? "—"}   Total cap:{" "}
+                        Daily cap: {campaign.daily_cap ?? "—"} Total cap:{" "}
                         {campaign.total_cap ?? "—"}
                       </p>
                       <div className="flex gap-2 pt-1">
@@ -726,7 +725,7 @@ export function WhatsAppOperationsCentre() {
                       <div>
                         <p className="font-medium">{item.component.replaceAll("_", " ")}</p>
                         <p className="text-xs text-muted-foreground">
-                          {item.quantity} unit(s)   {item.entries} ledger entry(s)
+                          {item.quantity} unit(s) {item.entries} ledger entry(s)
                         </p>
                       </div>
                       <strong>{money(item.amount, item.currency)}</strong>
