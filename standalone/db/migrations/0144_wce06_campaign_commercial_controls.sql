@@ -60,6 +60,9 @@ CREATE TABLE IF NOT EXISTS public.wa_campaigns (
   status text NOT NULL DEFAULT 'draft'
     CHECK (status IN ('draft', 'scheduled', 'ready', 'running', 'paused', 'completed', 'cancelled', 'suspended')),
   scheduled_at timestamptz,
+  started_at timestamptz,
+  completed_at timestamptz,
+  last_error text,
   daily_cap integer CHECK (daily_cap IS NULL OR daily_cap >= 0),
   total_cap integer CHECK (total_cap IS NULL OR total_cap >= 0),
   created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
