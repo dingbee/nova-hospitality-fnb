@@ -65,6 +65,7 @@
  */
 import { getTenantScopeChecker } from "@/modules/intelligence/core/registry";
 import { assertCapability } from "../core/access.server";
+import { assertEntitled } from "@/modules/commercial/resolver.server";
 import { nextDocumentNumber, recordProcurementAudit } from "../procurement/audit.server";
 import { DOCUMENT_PREFIX } from "../procurement/contracts";
 import { roundTo } from "../pricing/decimal";
@@ -165,7 +166,7 @@ async function loadActionAndDecision(sb: Sb, actionId: string) {
   const { data: decision, error: decisionErr } = await sb
     .from("intelligence_decisions")
     .select(
-      "id, tenant_id, module, decision_key, property_id, location_id, context, options, recommended_option_key",
+      "id, tenant_id, module, decision_key, property_id, location_id, status, context, options, recommended_option_key",
     )
     .eq("id", action.decision_id)
     .single();
@@ -321,9 +322,20 @@ export async function executeRestaurantAction(
     decision.property_id ?? null,
     decision.location_id ?? null,
   );
+  if (action.action_type === "restaurant.inventory.replenish_review") {
+    await assertEntitled(sb, decision.tenant_id, "inventory_agent", {
+      propertyId: decision.property_id ?? null,
+    });
+  }
   const tenantId = decision.tenant_id as string;
   const module = decision.module as string;
 
+  if (
+    !ALREADY_EXECUTED_STATUSES.has(action.status) &&
+    ["rejected", "expired", "superseded"].includes(String(decision.status))
+  ) {
+    throw new Error("This intelligence recommendation is no longer executable; generate a fresh decision.");
+  }
   if (ALREADY_EXECUTED_STATUSES.has(action.status)) {
     const already = alreadyExecutedResult(action);
     if (already) return already;
@@ -478,8 +490,76 @@ async function runProcurementDraftExecution(
     requestId = existingByCorrelation.id;
     requestStatus = existingByCorrelation.status;
   } else {
+    if (action.action_type === "restaurant.inventory.replenish_review") {
+      const { data: currentItem, error: itemError } = await sb
+        .from("restaurant_inventory_items")
+        .select("id, property_id, location_id, current_quantity, status")
+        .eq("tenant_id", tenantId)
+        .eq("id", inventoryItemId)
+        .single();
+      if (itemError || !currentItem) {
+        return failAction(
+          sb,
+          userId,
+          action,
+          tenantId,
+          module,
+          itemError?.message ?? "The recommended inventory item is no longer available.",
+        );
+      }
+      if (
+        currentItem.status !== "active" ||
+        currentItem.property_id !== (decision.property_id ?? null) ||
+        currentItem.location_id !== (decision.location_id ?? null)
+      ) {
+        return failAction(
+          sb,
+          userId,
+          action,
+          tenantId,
+          module,
+          "The inventory item's active state or property/location scope changed after recommendation; generate a fresh decision.",
+        );
+      }
+      if (typeof facts.currentQuantity !== "number") {
+        return failAction(
+          sb,
+          userId,
+          action,
+          tenantId,
+          module,
+          "The recommendation has no current-stock evidence; generate a fresh decision before execution.",
+        );
+      }
+      if (Math.abs(Number(currentItem.current_quantity ?? 0) - facts.currentQuantity) > 0.0001) {
+        return failAction(
+          sb,
+          userId,
+          action,
+          tenantId,
+          module,
+          "Stock changed after this recommendation was generated; the recommendation is stale and must be recalculated.",
+        );
+      }
+      if (
+        typeof facts.reorderPoint === "number" &&
+        Number(currentItem.current_quantity ?? 0) > facts.reorderPoint
+      ) {
+        return failAction(
+          sb,
+          userId,
+          action,
+          tenantId,
+          module,
+          "Current stock is now above the recommendation's reorder point; the recommendation is stale.",
+        );
+      }
+    }
     try {
-      await assertCapability(sb, userId, tenantId, "purchase.request");
+      await assertCapability(sb, userId, tenantId, "purchase.request", {
+        propertyId: decision.property_id ?? null,
+        locationId: decision.location_id ?? null,
+      });
     } catch (err) {
       return failAction(sb, userId, action, tenantId, module, (err as Error).message);
     }
@@ -1435,6 +1515,11 @@ export async function verifyRestaurantAction(
     decision.property_id ?? null,
     decision.location_id ?? null,
   );
+  if (action.action_type === "restaurant.inventory.replenish_review") {
+    await assertEntitled(sb, decision.tenant_id, "inventory_agent", {
+      propertyId: decision.property_id ?? null,
+    });
+  }
   const tenantId = decision.tenant_id as string;
   const module = decision.module as string;
 
