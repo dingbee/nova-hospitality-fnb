@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS public.wa_campaigns (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE CASCADE,
   property_id uuid NOT NULL,
+  location_id uuid NOT NULL REFERENCES public.restaurant_locations(id) ON DELETE CASCADE,
+  binding_id uuid NOT NULL,
   template_id uuid NOT NULL,
   name text NOT NULL CHECK (length(trim(name)) BETWEEN 2 AND 160),
   trigger_type text NOT NULL DEFAULT 'scheduled'
@@ -65,6 +67,9 @@ CREATE TABLE IF NOT EXISTS public.wa_campaigns (
   CONSTRAINT wa_campaigns_property_scope_fkey
     FOREIGN KEY (tenant_id, property_id)
     REFERENCES public.restaurant_properties(tenant_id, id) ON DELETE CASCADE,
+  CONSTRAINT wa_campaigns_binding_scope_fkey
+    FOREIGN KEY (tenant_id, property_id, location_id, binding_id)
+    REFERENCES public.wa_phone_number_bindings(tenant_id, property_id, location_id, id) ON DELETE RESTRICT,
   CONSTRAINT wa_campaigns_template_scope_fkey
     FOREIGN KEY (tenant_id, template_id)
     REFERENCES public.wa_message_templates(tenant_id, id) ON DELETE RESTRICT,
