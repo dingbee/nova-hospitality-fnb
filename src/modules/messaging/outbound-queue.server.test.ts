@@ -120,7 +120,13 @@ describe("WhatsApp outbound queue", () => {
   it("sends with the scoped tenant credential and records the provider message ID", async () => {
     const { admin, updates } = fakeAdmin();
     const result = await processPendingWhatsAppOutboundMessages(admin, { workerId: "worker-1" });
-    expect(result).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0 });
+    expect(result).toEqual({
+      claimed: 1,
+      sent: 1,
+      retried: 0,
+      failed: 0,
+      campaignReconciliationRequired: 0,
+    });
     expect(sendTextMessage).toHaveBeenCalledWith(
       { accessToken: "tenant-token", wabaId: "987654321", phoneNumberId: "123456789" },
       "255700000000",
