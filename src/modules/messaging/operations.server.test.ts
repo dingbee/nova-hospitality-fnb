@@ -5,7 +5,11 @@ import {
   getTenantScope,
 } from "@/modules/restaurant/core/access.server";
 import { assertCommercialAdmin } from "@/modules/commercial/access.server";
-import { getFounderWhatsAppOverview, listWhatsAppInbox, listWhatsAppGuestCRM } from "./operations.server";
+import {
+  getFounderWhatsAppOverview,
+  listWhatsAppInbox,
+  listWhatsAppGuestCRM,
+} from "./operations.server";
 
 vi.mock("@/modules/restaurant/core/access.server", () => ({
   accessiblePropertyIds: vi.fn(() => ["property-1"]),
@@ -43,9 +47,9 @@ describe("WhatsApp operations authorization", () => {
   it("rejects tenant inbox reads before querying when tenant membership is absent", async () => {
     vi.mocked(assertTenantRead).mockRejectedValueOnce(new Error("tenant membership required"));
     const db = { from: vi.fn() };
-    await expect(
-      listWhatsAppInbox(db, "outside-user", { tenantId: "tenant-1" }),
-    ).rejects.toThrow("tenant membership required");
+    await expect(listWhatsAppInbox(db, "outside-user", { tenantId: "tenant-1" })).rejects.toThrow(
+      "tenant membership required",
+    );
     expect(db.from).not.toHaveBeenCalled();
   });
 
