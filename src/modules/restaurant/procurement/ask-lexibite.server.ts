@@ -57,7 +57,7 @@ export async function createAskLexiBitePurchaseOrder(
         .in("id", itemIds),
       sb
         .from("restaurant_supplier_products")
-        .select("id, supplier_id, inventory_item_id, unit_id, pack_size, unit_price, currency, last_price_at, active, min_order_quantity")
+        .select("id, supplier_id, inventory_item_id, unit_id, pack_size, unit_price, currency, last_price_at, active, min_order_quantity, order_multiple")
         .eq("tenant_id", tenantId)
         .eq("supplier_id", contract.supplier.resolvedId)
         .in("inventory_item_id", itemIds),
@@ -144,6 +144,23 @@ export async function createAskLexiBitePurchaseOrder(
         );
       }
       purchaseQuantity = Math.ceil(quantity / stockUnitsPerPurchaseUnit);
+    }
+
+    const orderMultiple = product.order_multiple == null ? NaN : Number(product.order_multiple);
+    const minimumOrderQuantity = Number(product.min_order_quantity ?? 0);
+    if (
+      !Number.isFinite(orderMultiple) ||
+      orderMultiple <= 0 ||
+      !Number.isFinite(minimumOrderQuantity) ||
+      minimumOrderQuantity < 0 ||
+      purchaseQuantity < minimumOrderQuantity ||
+      Math.abs(purchaseQuantity / orderMultiple - Math.round(purchaseQuantity / orderMultiple)) > 0.000001
+    ) {
+      throw new Error(
+        "The supplier order multiple or minimum order quantity is missing or incompatible for " +
+          item.name +
+          ". Reconcile the supplier product contract before creating the purchase order.",
+      );
     }
 
     lines.push({
@@ -365,7 +382,6 @@ export async function previewIntelligentPurchaseOrders(
           (units ?? []) as any[],
         )
       : null;
-    const purchaseUnit = ((units ?? []) as any[]).find((row) => row.id === unitId);
     // Supplier order-multiple evidence is mandatory for every purchasing unit.
     const currentOrderMultiple = product.order_multiple == null ? NaN : Number(product.order_multiple);
     if (!unitId || unitId !== suggestion.purchaseUnitId ||
