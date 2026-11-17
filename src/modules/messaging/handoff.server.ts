@@ -152,11 +152,15 @@ export async function enqueueWhatsAppGuestPortalHandoff(
   if (createError?.code === "23505") {
     // A concurrent worker won the unique source-event/conversation race.
     // Revoke the losing token so no unqueued bearer link remains valid.
-    await admin.rpc("wa_revoke_guest_portal_session", { _session_id: session.sessionId });
+    if (session) {
+      await admin.rpc("wa_revoke_guest_portal_session", { _session_id: session.sessionId });
+    }
     return { queued: false, reason: "duplicate_handoff_job" as const };
   }
   if (createError || !created) {
-    await admin.rpc("wa_revoke_guest_portal_session", { _session_id: session.sessionId });
+    if (session) {
+      await admin.rpc("wa_revoke_guest_portal_session", { _session_id: session.sessionId });
+    }
     throw new Error("portal_handoff_job_create_failed");
   }
 
