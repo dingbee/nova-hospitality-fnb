@@ -1,6 +1,13 @@
 -- WCE-03: durable, encrypted WhatsApp outbound handoff queue.
 -- The raw Guest Portal capability is never stored in plaintext in the outbox.
 
+-- The session table's primary key is globally unique, but the outbound
+-- foreign key also carries tenant/property/outlet scope. PostgreSQL requires
+-- an exact unique target for that composite reference.
+ALTER TABLE public.wa_guest_portal_sessions
+  ADD CONSTRAINT wa_guest_portal_sessions_scope_id_uq
+  UNIQUE (tenant_id, property_id, location_id, id);
+
 CREATE TABLE IF NOT EXISTS public.wa_outbound_jobs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE CASCADE,
