@@ -173,15 +173,15 @@ export async function locationNameMap(sb: Sb, tenantId: string): Promise<Map<str
   }));
 }
 
-/** Require inventory postings to target active, tenant-owned storage locations only. */
-export async function assertActiveStorageLocations(
+/** Require stock movements to target active, tenant-owned inventory locations. */
+export async function assertActiveInventoryLocations(
   sb: Sb,
   tenantId: string,
   ...locationIds: Array<string | null | undefined>
 ) {
   const ids = [...new Set(locationIds.filter(Boolean) as string[])];
   if (ids.length === 0) {
-    throw new Error("An active inventory storage location is required.");
+    throw new Error("An active inventory location is required.");
   }
   const { data, error } = await sb
     .from("restaurant_locations")
@@ -194,9 +194,23 @@ export async function assertActiveStorageLocations(
     throw new Error("Forbidden — location does not belong to this tenant.");
   }
   for (const id of ids) {
-    const location = byId.get(id);
-    if (location?.is_storage !== true || location?.status !== "active") {
-      throw new Error("Inventory movements require an active storage location.");
+    if (byId.get(id)?.status !== "active") {
+      throw new Error("Inventory movements require an active location.");
+    }
+  }
+  return byId;
+}
+
+/** Goods receipts must enter through active storage locations, not service outlets. */
+export async function assertActiveStorageLocations(
+  sb: Sb,
+  tenantId: string,
+  ...locationIds: Array<string | null | undefined>
+) {
+  const locations = await assertActiveInventoryLocations(sb, tenantId, ...locationIds);
+  for (const location of locations.values()) {
+    if (location?.is_storage !== true) {
+      throw new Error("Goods receipts require an active storage location.");
     }
   }
 }
