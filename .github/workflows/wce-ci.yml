@@ -62,6 +62,7 @@ jobs:
           src/modules/messaging/guest-portal-sessions.server.test.ts
           src/modules/messaging/guest-commerce.server.test.ts
           src/modules/messaging/guest-crm.server.test.ts
+          src/modules/messaging/campaign-governance.server.test.ts
           src/modules/messaging/outbound-queue.server.test.ts
           src/modules/messaging/guest-reservations.server.test.ts
           src/modules/restaurant/selforder/providers/pesapal.server.test.ts
@@ -107,6 +108,17 @@ jobs:
             END IF;
             IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='wa_messages' AND indexname='wa_messages_outbound_request_uq') THEN
               RAISE EXCEPTION 'Outbound idempotency unique index is missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='wa_campaign_usage_ledger')
+              OR NOT (SELECT relrowsecurity FROM pg_class WHERE oid='public.wa_campaign_usage_ledger'::regclass) THEN
+              RAISE EXCEPTION 'WCE-06 usage ledger missing or RLS disabled';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='wa_campaigns')
+              OR NOT (SELECT relrowsecurity FROM pg_class WHERE oid='public.wa_campaigns'::regclass) THEN
+              RAISE EXCEPTION 'WCE-06 campaign registry missing or RLS disabled';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='wa_campaign_usage_ledger_immutable' AND p.prosecdef AND 'search_path=public, pg_temp'=ANY(p.proconfig)) THEN
+              RAISE EXCEPTION 'WCE-06 immutable usage evidence trigger function missing or unsafe';
             END IF;
           END $verify$;
           SQL
