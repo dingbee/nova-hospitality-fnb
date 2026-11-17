@@ -52,8 +52,13 @@ function reservationDb(rows: Record<string, any[]>, rpcResult: unknown = null) {
     rpc,
     from(table: string) {
       let filtered = rows[table] ?? [];
+      let patch: Record<string, unknown> | null = null;
       const builder: any = {
         select: () => builder,
+        update: (value: Record<string, unknown>) => {
+          patch = value;
+          return builder;
+        },
         eq: (column: string, value: unknown) => {
           filtered = filtered.filter((row) => row[column] === value);
           return builder;
@@ -76,8 +81,10 @@ function reservationDb(rows: Record<string, any[]>, rpcResult: unknown = null) {
           return builder;
         },
         maybeSingle: async () => ({ data: filtered[0] ?? null, error: null }),
-        then: (resolve: (value: unknown) => unknown) =>
-          Promise.resolve({ data: filtered, error: null }).then(resolve),
+        then: (resolve: (value: unknown) => unknown) => {
+          if (patch) for (const row of filtered) Object.assign(row, patch);
+          return Promise.resolve({ data: filtered, error: null }).then(resolve);
+        },
       };
       return builder;
     },
@@ -251,5 +258,32 @@ describe("property-timezone reservation handling", () => {
         _client_request_id: "wa-guest-reservation:session-1:request-12345678",
       }),
     );
+  });
+});
+
+
+describe("guest reservation cancellation", () => {
+  it("cancels only the same guest's future confirmed reservation", async () => {
+    const startsAt = new Date(Date.now() + 48 * 60 * 60_000).toISOString();
+    const rows = {
+      ...baseRows(),
+      restaurant_table_reservations: [
+        {
+          id: "reservation-1",
+          tenant_id: tenantId,
+          property_id: propertyId,
+          location_id: locationId,
+          guest_customer_id: guestCustomerId,
+          status: "confirmed",
+          starts_at: startsAt,
+        },
+      ],
+    };
+    const db = reservationDb(rows);
+    const result = await (
+      await import("./guest-reservations.server")
+    ).cancelGuestTableReservation(db as any, { token, reservationId: "reservation-1" });
+    expect(result.cancelled).toBe(true);
+    expect(rows.restaurant_table_reservations[0].status).toBe("cancelled");
   });
 });
