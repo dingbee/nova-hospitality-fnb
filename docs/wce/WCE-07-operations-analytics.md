@@ -3,7 +3,7 @@
 **Programme:** LexiBite WhatsApp Commerce & Engagement  
 **Dependency:** WCE-06 campaign governance and commercial controls  
 **Implementation branch:** `wce/wce-07-operations-analytics`  
-**Status:** EXECUTION CONTRACT — implementation in progress  
+**Status:** INITIAL IMPLEMENTATION PRESENT — exact-head acceptance pending  
 **Production promotion / DB writes / credential changes:** NOT AUTHORIZED
 
 ## 1. Objective
@@ -83,11 +83,23 @@ All tenant-facing queries and mutations derive tenant, property and outlet from 
 9. Founder dashboard aggregates are reconciled against source records and existing commercial billing periods.
 10. Changed-source lint, WCE tests, full repository tests, strict typecheck, production build/route generation and PostgreSQL 17 replay pass on exact PR head.
 
-## 6. Exit criteria
+## 6. Initial implementation evidence
+
+The dependent implementation branch currently includes:
+- Tenant WhatsApp operations route with inbox/history, guest CRM and consent visibility, template/campaign workspace, usage and conversion reporting.
+- Tenant-scoped server functions with restaurant membership, property/location scope and capability checks.
+- Draft template creation and governed campaign draft/activate/pause actions; Meta template submission is not exposed in UAT.
+- Founder-only platform control route with commercial-admin authorization, integration/binding health, webhook and outbound queue status, usage attribution, invoice balances by currency and security signals.
+- Global provider dispatch is default-off unless `LEXIBITE_WHATSAPP_DISPATCH_ENABLED=true`; campaign dispatch additionally requires `LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED=true`. No live provider dispatch or billing is permitted in UAT.
+- Authorization tests for founder-only platform reads and tenant access checks.
+
+This is implementation evidence only. Exact-head lint, targeted tests, full tests, strict typecheck, build/route generation and PostgreSQL 17 replay remain required.
+
+## 7. Exit criteria
 
 WCE-07 closes only when founder/tenant surfaces are implemented, access boundaries are proven, reporting reconciles to canonical source evidence, conversion analytics are accurate, and exact-head CI is green. UI completion alone is not acceptance.
 
-## 7. Explicit non-goals
+## 8. Explicit non-goals
 
 - No parallel inbox, CRM, consent, subscription, entitlement, quota, billing or commerce system.
 - No conversational ordering system.
