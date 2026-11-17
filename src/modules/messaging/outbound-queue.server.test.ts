@@ -14,9 +14,10 @@ vi.mock("./providers/meta-cloud-api.server", () => ({
     }
   },
   sendTextMessage: vi.fn().mockResolvedValue({ messages: [{ id: "wamid.sent.1" }] }),
+  sendTemplateMessage: vi.fn().mockResolvedValue({ messages: [{ id: "wamid.template.1" }] }),
 }));
 import { processPendingWhatsAppOutboundMessages } from "./outbound-queue.server";
-import { sendTextMessage } from "./providers/meta-cloud-api.server";
+import { sendTemplateMessage, sendTextMessage } from "./providers/meta-cloud-api.server";
 
 const queued = {
   id: "message-1",
@@ -25,11 +26,13 @@ const queued = {
   location_id: "location-1",
   conversation_id: "conversation-1",
   content: "Welcome",
+  message_type: "text",
+  payload: {},
   delivery_attempts: 1,
 };
-function fakeAdmin() {
+function fakeAdmin(outbound = queued) {
   const updates: Array<Record<string, unknown>> = [];
-  const rpc = vi.fn(async () => ({ data: [queued], error: null }));
+  const rpc = vi.fn(async () => ({ data: [outbound], error: null }));
   const from = vi.fn((table: string) => {
     const builder: any = {
       select: () => builder,
@@ -75,6 +78,35 @@ function fakeAdmin() {
 }
 
 describe("WhatsApp outbound queue", () => {
+  it("dispatches an approved template message through the same tenant-scoped outbox", async () => {
+    const templateMessage = {
+      ...queued,
+      id: "message-template-1",
+      content: "",
+      message_type: "template",
+      payload: {
+        template: {
+          name: "weekly_special",
+          language: "en",
+          components: [{ type: "body", parameters: [] }],
+        },
+      },
+    };
+    const { admin, updates } = fakeAdmin(templateMessage);
+    const result = await processPendingWhatsAppOutboundMessages(admin, { workerId: "worker-template" });
+    expect(result).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0 });
+    expect(sendTemplateMessage).toHaveBeenCalledWith(
+      { accessToken: "tenant-token", wabaId: "987654321", phoneNumberId: "123456789" },
+      "255700000000",
+      { name: "weekly_special", language: "en", components: [{ type: "body", parameters: [] }] },
+      {},
+    );
+    expect(updates[0]).toMatchObject({
+      provider_message_id: "wamid.template.1",
+      status: "sent",
+    });
+  });
+
   it("sends with the scoped tenant credential and records the provider message ID", async () => {
     const { admin, updates } = fakeAdmin();
     const result = await processPendingWhatsAppOutboundMessages(admin, { workerId: "worker-1" });
