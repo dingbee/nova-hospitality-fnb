@@ -161,7 +161,7 @@ BEGIN
   -- is held through table selection and insertion, preventing overlapping
   -- guest requests from claiming the same table concurrently.
   PERFORM pg_advisory_xact_lock(
-    hashtextextended(_tenant_id::text || ':' || _location_id::text || ':' || (_starts_at::date)::text, 0)
+    hashtextextended(_tenant_id::text || ':' || _location_id::text, 0)
   );
 
   SELECT * INTO v_existing
