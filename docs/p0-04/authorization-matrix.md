@@ -68,6 +68,8 @@ The following is the canonical application capability map. It is not a statement
 - Purchase-order approval now routes through the configurable approval-rule engine after the capability check.
 - Procurement variances now record immutable creator attribution; resolution checks scope and rejects self-resolution.
 - Database migrations 0137–0140 add tenant-composite transfer-line references, active-location write guards, immutable variance creator attribution, and immutable supplier-invoice recorder attribution.
+- Migration 0141 replaces RLS-policy subqueries against `restaurant_members` with a narrowly scoped, actor-bound SECURITY DEFINER membership predicate. This closes the tenant-owner central-store visibility failure caused by membership-table RLS.
+- The isolated PostgreSQL adversarial test now checks property-user denial, tenant-owner central-store read/write, cross-tenant central-store denial, transfer authorization and inactive-location rejection.
 - Invoice recording no longer auto-runs the three-way match; a separate authorized user must perform reconciliation.
 
 ## Verification still required
