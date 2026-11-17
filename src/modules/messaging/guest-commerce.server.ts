@@ -18,13 +18,7 @@ type CommerceEvent = {
 };
 type InboundMessage = { id: string; from: string; text?: { body?: string } };
 export type GuestCommerceIntent =
-  | "menu"
-  | "order"
-  | "help"
-  | "subscribe"
-  | "unsubscribe"
-  | "handoff"
-  | "unknown";
+  | "menu" | "order" | "help" | "subscribe" | "unsubscribe" | "handoff" | "unknown";
 
 export function classifyGuestCommerceIntent(value: unknown): GuestCommerceIntent {
   if (typeof value !== "string") return "unknown";
