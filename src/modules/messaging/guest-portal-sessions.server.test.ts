@@ -19,6 +19,7 @@ const scope = {
 function makeAdmin(overrides: Record<string, unknown> = {}) {
   const inserted: Array<{ table: string; row: Record<string, unknown> }> = [];
   const rows: Record<string, unknown> = {
+    restaurant_tenants: { id: scope.tenantId, status: "active", settings: { operations: { serviceMode: "takeaway" } } },
     wa_phone_number_bindings: {
       id: scope.bindingId,
       tenant_id: scope.tenantId,
@@ -46,11 +47,13 @@ function makeAdmin(overrides: Record<string, unknown> = {}) {
     },
     restaurant_locations: {
       id: scope.locationId,
-      location_type: "outlet",
+      tenant_id: scope.tenantId,
+      property_id: scope.propertyId,
+      location_type: "restaurant",
       is_storage: false,
       status: "active",
     },
-    restaurant_properties: { currency: "TZS" },
+    restaurant_properties: { currency: "TZS", status: "active" },
     ...overrides,
   };
   const from = vi.fn((table: string) => {
@@ -86,18 +89,19 @@ describe("WhatsApp Guest Portal session security", () => {
 
     expect(result.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(result.portalUrl).toBe(`https://guest.example.test/guest/${result.token}`);
-    expect(result.scope).toBe("menu_browse");
+    expect(result.scope).toBe("guest_commerce");
     expect(result.currency).toBe("TZS");
 
-    const row = inserted.find((entry) => entry.table === "wa_guest_portal_sessions")?.row;
+    const row = inserted.find((entry) => entry.table === "restaurant_guest_commerce_sessions")?.row;
     expect(row).toMatchObject({
       tenant_id: scope.tenantId,
       property_id: scope.propertyId,
       location_id: scope.locationId,
       binding_id: scope.bindingId,
       conversation_id: scope.conversationId,
-      scope: "menu_browse",
-      acquisition_channel: "whatsapp",
+      scope: "guest_commerce",
+      source_channel: "whatsapp",
+      order_type: "takeaway",
       currency: "TZS",
       max_open_count: 20,
     });
@@ -147,7 +151,7 @@ describe("WhatsApp Guest Portal session security", () => {
 
     const result = await resolveWhatsAppGuestPortalSession(admin, token);
 
-    expect(rpc).toHaveBeenCalledWith("wa_resolve_guest_portal_session", {
+    expect(rpc).toHaveBeenCalledWith("restaurant_resolve_guest_commerce_session", {
       _token_hash: createHash("sha256").update(token).digest("hex"),
     });
     expect(result).toMatchObject({
@@ -155,7 +159,10 @@ describe("WhatsApp Guest Portal session security", () => {
       tenantId: scope.tenantId,
       propertyId: scope.propertyId,
       locationId: scope.locationId,
-      scope: "menu_browse",
+      scope: "guest_commerce",
+      sourceChannel: "whatsapp",
+      orderType: "takeaway",
+      tableId: null,
     });
   });
 
@@ -165,7 +172,7 @@ describe("WhatsApp Guest Portal session security", () => {
     expect(rpc).not.toHaveBeenCalled();
 
     expect(await revokeWhatsAppGuestPortalSession(admin, "session-1")).toBe(true);
-    expect(rpc).toHaveBeenCalledWith("wa_revoke_guest_portal_session", {
+    expect(rpc).toHaveBeenCalledWith("restaurant_revoke_guest_commerce_session", {
       _session_id: "session-1",
     });
   });
