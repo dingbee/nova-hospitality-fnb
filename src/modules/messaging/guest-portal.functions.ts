@@ -27,6 +27,7 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
       { data: tenant, error: tenantError },
       { data: location, error: locationError },
       catalog,
+      { data: conversation, error: conversationError },
     ] = await Promise.all([
       supabaseAdmin
         .from("restaurant_tenants")
@@ -45,6 +46,12 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
         locationId: session.locationId,
         orderType: "takeaway",
       }),
+      supabaseAdmin.from("wa_conversations").select("guest_customer_id")
+        .eq("id", session.conversationId)
+        .eq("tenant_id", session.tenantId)
+        .eq("property_id", session.propertyId)
+        .eq("location_id", session.locationId)
+        .maybeSingle(),
     ]);
     if (
       tenantError ||
@@ -59,6 +66,17 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
       throw new Error("This restaurant menu is not currently available.");
     }
 
+    if (conversationError) throw new Error("Guest CRM context could not be resolved.");
+    const guestCustomerId = conversation?.guest_customer_id as string | null;
+    const [{ data: guestCustomer }, { data: loyaltyEntries, error: loyaltyError }] = guestCustomerId
+      ? await Promise.all([
+          supabaseAdmin.from("restaurant_guest_customers").select("display_name")
+            .eq("id", guestCustomerId).eq("tenant_id", session.tenantId).maybeSingle(),
+          supabaseAdmin.from("restaurant_guest_loyalty_ledger").select("points_delta")
+            .eq("tenant_id", session.tenantId).eq("guest_customer_id", guestCustomerId),
+        ])
+      : [{ data: null }, { data: [], error: null }];
+    if (loyaltyError) throw new Error("Guest loyalty balance could not be loaded.");
     const settings = tenant.settings as {
       business?: { tradingName?: string; logoUrl?: string | null };
     } | null;
@@ -67,6 +85,8 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
       businessName,
       logoUrl: settings?.business?.logoUrl?.trim() || null,
       outletName: location.name,
+      guestName: guestCustomer?.display_name ?? null,
+      loyaltyPointsBalance: (loyaltyEntries ?? []).reduce((sum: number, entry: any) => sum + Number(entry.points_delta ?? 0), 0),
       currency: session.currency,
       categories: catalog.categories.map((category: any) => ({
         id: category.id,
