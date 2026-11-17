@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Sb } from "../core/access.server";
 
 const mocks = vi.hoisted(() => ({
   assertCapability: vi.fn().mockResolvedValue(undefined),
@@ -73,7 +72,7 @@ function makeSupabase() {
   return {
     from: () => builder,
     rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
-  } as unknown as Sb;
+  } as unknown as Parameters<typeof transitionPurchaseOrder>[0];
 }
 
 describe("purchase-order maker-checker", () => {
