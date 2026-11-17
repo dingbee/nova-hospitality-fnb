@@ -243,7 +243,7 @@ export async function posCatalog(
 export async function fetchSellableCatalog(
   sb: Sb,
   tenantId: string,
-  input: { propertyId?: string; locationId?: string; menuId?: string } = {},
+  input: { propertyId?: string; locationId?: string; menuId?: string; orderType?: RestaurantOrderType } = {},
 ) {
   let menuQuery = sb
     .from("restaurant_menus")
@@ -361,8 +361,8 @@ export async function fetchSellableCatalog(
         locationId: input.locationId ?? null,
         productId: product?.id ?? null,
         menuItemId: i.id,
-        orderType: "dine_in",
-        channel: "dine_in",
+        orderType: input.orderType ?? "dine_in",
+        channel: input.orderType ?? "dine_in",
         quantity: 1,
       });
       return {
