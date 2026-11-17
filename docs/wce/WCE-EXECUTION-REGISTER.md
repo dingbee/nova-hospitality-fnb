@@ -1,7 +1,7 @@
 # LexiBite WCE — Execution Completion Register
 
 **Repository:** `dingbee/nova-hospitality-fnb`  
-**Active integration PR:** #195  
+**Active integration PR:** #196 (stacked on #195)  
 **Production promotion:** NOT AUTHORIZED  
 **Production database writes/migrations:** NOT AUTHORIZED
 
@@ -13,7 +13,7 @@
 | WCE-01 — Native Meta foundation | CLOSED (software) | `src/modules/messaging/providers/meta-cloud-api.server.ts`, Embedded Signup client/contracts, onboarding service and tests | PR #195 CI run `43960937024`: typecheck, lint, build, scoped and full tests PASS | Meta app/business approval and live WABA assets |
 | Migration provenance gate | VERIFIED | `docs/wce/WCE-MIGRATION-PROVENANCE.md`; recovered applied sources and corrected historical SQL | PostgreSQL 17 clean replay PASS on PR #195; 222/222 public tables RLS-enabled | None for isolated WCE-02 migration path; production ledger remains untouched |
 | WCE-02 — Messaging and session infrastructure | CLOSED (software) | Migration `0138_wce02_messaging_sessions.sql`; `bindings.server.ts`; `webhooks.server.ts`; `webhook-queue.server.ts`; `guest-portal-sessions.server.ts`; Meta webhook and dispatcher routes | PR #195 CI run `43960937024`: scoped tests 141/141; full suite 2,627/2,627 across 244 files; clean replay, typecheck, lint, build and regression gates PASS | Runtime Meta secrets, Guest Portal base URL and scheduled dispatcher secret configuration |
-| WCE-03 — WhatsApp-to-Guest-Portal handoff | NOT STARTED | Depends on WCE-02 | — | Outbound outbox, handoff orchestration, branded guest entry |
+| WCE-03 — WhatsApp-to-Guest-Portal handoff | CLOSED (software) | `docs/wce/WCE-03-portal-handoff.md`; migration `0139_wce03_whatsapp_portal_handoff.sql`; PR #196 | CI run `44015515830`: strict typecheck, lint, build, scoped 155/155, full 2,641/2,641, clean replay and 223/223 RLS PASS | Live Meta assets/secrets and runtime dispatcher configuration |
 | WCE-04 — Unified Guest Commerce | NOT STARTED | Depends on WCE-03 | — | Session-aware menu/cart/checkout using canonical commerce services |
 | WCE-05 — Orders, CRM and AI Concierge | NOT STARTED | Depends on WCE-02 and WCE-04 | — | Tenant-isolated restaurant customer/consent domain and lifecycle integration |
 | WCE-06 — Payments, reservations and fulfilment | NOT STARTED | Depends on WCE-04 and WCE-05 | — | Tenant/property Pesapal credentials; authoritative restaurant reservation domain |
@@ -32,6 +32,17 @@
 - All five new public tables have RLS enabled. Webhook inbox and session tables have no authenticated policies; service-role only. Conversation/message/binding reads and writes use tenant/property-scoped policies.
 - No production migration, write, credential change, deployment or promotion occurred.
 
+## WCE-03 implementation evidence
+
+- Inbound webhook processing now invokes the portal-first handoff orchestrator using the verified event and receiving-number scope.
+- Active handoffs are suppressed and source-event/conversation pairs are idempotent.
+- Browse-only Guest Portal sessions are short-lived, hash-backed and tied to the verified tenant/property/outlet.
+- Outbound messages use an encrypted durable queue with lease claims, event idempotency, the Meta 24-hour service-window guard, bounded retry and explicit operator handling of uncertain delivery outcomes.
+- The portal reuses the canonical sellable catalogue and property currency. Stale currency and inactive scope fail closed.
+- The outbox and session capabilities do not create or replace checkout, payment, order, reservation or CRM authority.
+- Guest Portal token server function is explicitly listed in the RBAC test allowlist as a token-scoped public surface.
+- Acceptance run: [44015515830](https://github.com/dingbee/nova-hospitality-fnb/actions/runs/44015515830), commit `80c4ce0c8a91d41dea081341322312b3c1475cec`; 164 applied migrations, 1 isolated UAT-only policy/data repair skipped, 223/223 public tables RLS-enabled, scoped 155/155 and full 2,641/2,641 tests passed.
+
 ## External dependency register
 
 1. Meta App ID and App Secret, Meta Business verification, Embedded Signup v4 configuration, Advanced Access/App Review and a verified test WABA/phone.
@@ -42,4 +53,4 @@
 
 ## Operating rule
 
-Software phase closure does not authorize production release. Continue with WCE-03 on a separate feature branch after WCE-02 evidence is preserved. Do not merge PR #195 or apply migration 0138 to production without a separate explicit release mandate.
+Software phase closure does not authorize production release. Continue with WCE-04 on a separate feature branch after WCE-03 evidence is preserved. PR #196 is stacked on PR #195; neither PR is merged. Do not merge either PR or apply migrations 0138/0139 to production without a separate explicit release mandate.
