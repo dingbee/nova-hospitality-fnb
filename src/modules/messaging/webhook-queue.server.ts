@@ -52,7 +52,7 @@ function messageContent(message: Record<string, any>): string | null {
   return null;
 }
 
-async function getOrCreateConversation(db: Db, event: ClaimedEvent, waUserId: string, at: string) {
+async function getOrCreateConversation(db: Db, event: InboundEvent, waUserId: string, at: string) {
   const { data: existing, error: lookupError } = await db
     .from("wa_conversations")
     .select("id, status, last_message_at")
