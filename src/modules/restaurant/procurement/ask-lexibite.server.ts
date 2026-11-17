@@ -366,11 +366,8 @@ export async function previewIntelligentPurchaseOrders(
         )
       : null;
     const purchaseUnit = ((units ?? []) as any[]).find((row) => row.id === unitId);
-    // A count unit may default to indivisible units; fractional units require
-    // an explicit supplier order multiple and are rejected when unconfigured.
-    const currentOrderMultiple = product.order_multiple == null && purchaseUnit?.dimension === "count"
-      ? 1
-      : Number(product.order_multiple);
+    // Supplier order-multiple evidence is mandatory for every purchasing unit.
+    const currentOrderMultiple = product.order_multiple == null ? NaN : Number(product.order_multiple);
     if (!unitId || unitId !== suggestion.purchaseUnitId ||
         currentStockFactor == null || Math.abs(currentStockFactor - stockUnitsPerPurchaseUnit) > 0.000001 ||
         !(stockUnitsPerPurchaseUnit > 0) || !Number.isFinite(purchaseQuantity) ||
@@ -378,7 +375,7 @@ export async function previewIntelligentPurchaseOrders(
       skipped.push(suggestion.name + ": the recommendation's purchase-unit contract is incomplete or stale.");
       continue;
     }
-    if (purchaseCurrency !== item.currency || product.currency !== purchaseCurrency) {
+    if (typeof purchaseCurrency !== "string" || purchaseCurrency !== item.currency || product.currency !== purchaseCurrency) {
       skipped.push(suggestion.name + ": supplier and property currencies are no longer comparable.");
       continue;
     }
