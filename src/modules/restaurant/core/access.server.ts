@@ -513,7 +513,9 @@ export async function assertCapability(
       .eq("tenant_id", tenantId)
       .maybeSingle();
     if (error) throw new Error(error.message);
-    if (!data) throw new Error(`Forbidden — "${capability}" location is not in this tenant.`);
+    if (!data || data.tenant_id !== tenantId) {
+      throw new Error(`Forbidden — "${capability}" location is not in this tenant.`);
+    }
     if (data.scope === "tenant" || data.property_id == null) {
       if (!matching.some((g) => g.propertyId === null)) {
         throw new Error(`Forbidden — "${capability}" is not granted for the tenant central store.`);
