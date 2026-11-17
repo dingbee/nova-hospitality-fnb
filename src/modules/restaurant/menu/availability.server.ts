@@ -176,8 +176,7 @@ export async function resolveMenuAvailability(
           }
           const available = Math.max(
             0,
-            (onHandByItem.get(inventoryItemId) ?? 0) -
-              (reservedByItem.get(inventoryItemId) ?? 0),
+            (onHandByItem.get(inventoryItemId) ?? 0) - (reservedByItem.get(inventoryItemId) ?? 0),
           );
           orderable = Math.min(orderable, Math.floor(available / requiredPerOrder));
           if (available < requiredPerOrder) {
