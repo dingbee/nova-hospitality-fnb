@@ -106,7 +106,6 @@ CREATE POLICY "locations write scoped (update)" ON public.restaurant_locations
       scope = 'tenant'
       AND public.restaurant_has_tenant_wide_membership(
         tenant_id,
-        auth.uid(),
         ARRAY[
           'owner'::public.restaurant_role,
           'general_manager'::public.restaurant_role
@@ -131,7 +130,6 @@ CREATE POLICY "locations write scoped (update)" ON public.restaurant_locations
       scope = 'tenant'
       AND public.restaurant_has_tenant_wide_membership(
         tenant_id,
-        auth.uid(),
         ARRAY[
           'owner'::public.restaurant_role,
           'general_manager'::public.restaurant_role
@@ -160,7 +158,6 @@ CREATE POLICY "locations write scoped (delete)" ON public.restaurant_locations
       scope = 'tenant'
       AND public.restaurant_has_tenant_wide_membership(
         tenant_id,
-        auth.uid(),
         ARRAY[
           'owner'::public.restaurant_role,
           'general_manager'::public.restaurant_role
