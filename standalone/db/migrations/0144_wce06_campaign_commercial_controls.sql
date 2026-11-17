@@ -162,7 +162,7 @@ CREATE OR REPLACE FUNCTION public.wa_prepare_campaign_recipient(
   _guest_customer_id uuid,
   _idempotency_key text
 )
-RETURNS TABLE(recipient_id uuid, state text, suppression_reason text)
+RETURNS TABLE(recipient_id uuid, state text, suppression_reason text, duplicate boolean)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
@@ -259,7 +259,7 @@ BEGIN
   RETURNING id, wa_campaign_recipients.state, wa_campaign_recipients.suppression_reason
   INTO recipient_id, state, suppression_reason;
 
-  IF recipient_id IS NOT NULL THEN RETURN NEXT; RETURN; END IF;
+  IF recipient_id IS NOT NULL THEN duplicate := false; RETURN NEXT; RETURN; END IF;
 
   SELECT * INTO _existing
   FROM public.wa_campaign_recipients r
@@ -268,6 +268,7 @@ BEGIN
   recipient_id := _existing.id;
   state := _existing.state;
   suppression_reason := _existing.suppression_reason;
+  duplicate := true;
   RETURN NEXT;
 END;
 $wce$;
