@@ -130,7 +130,8 @@ function makeFakeSupabase(opts: { itemQuantity: number; failInboundOnce?: boolea
       if (table === "restaurant_locations" && op === "select") {
         let rows = locations;
         if (filters.id) rows = rows.filter((location) => location.id === filters.id);
-        if (filters.tenant_id) rows = rows.filter((location) => location.tenant_id === filters.tenant_id);
+        if (filters.tenant_id)
+          rows = rows.filter((location) => location.tenant_id === filters.tenant_id);
         if (inFilters.id) rows = rows.filter((location) => inFilters.id!.includes(location.id));
         return { data: single ? (rows[0] ?? null) : rows, error: null };
       }

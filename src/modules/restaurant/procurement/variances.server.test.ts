@@ -59,7 +59,10 @@ function makeSupabase() {
       error: null,
     }),
   };
-  return { sb: { from: () => builder } as unknown as Parameters<typeof resolveVariance>[0], writes };
+  return {
+    sb: { from: () => builder } as unknown as Parameters<typeof resolveVariance>[0],
+    writes,
+  };
 }
 
 describe("procurement variance maker-checker", () => {

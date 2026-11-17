@@ -334,7 +334,9 @@ export async function executeRestaurantAction(
     !ALREADY_EXECUTED_STATUSES.has(action.status) &&
     ["rejected", "expired", "superseded"].includes(String(decision.status))
   ) {
-    throw new Error("This intelligence recommendation is no longer executable; generate a fresh decision.");
+    throw new Error(
+      "This intelligence recommendation is no longer executable; generate a fresh decision.",
+    );
   }
   if (ALREADY_EXECUTED_STATUSES.has(action.status)) {
     const already = alreadyExecutedResult(action);

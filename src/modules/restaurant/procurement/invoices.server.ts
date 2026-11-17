@@ -400,7 +400,9 @@ export async function setInvoicePaymentStatus(
 ) {
   const { data: before } = await sb
     .from("restaurant_supplier_invoices")
-    .select("id, payment_status, document_number, total, match_status, property_id, location_id, recorded_by")
+    .select(
+      "id, payment_status, document_number, total, match_status, property_id, location_id, recorded_by",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("id", input.invoiceId)
     .single();

@@ -396,7 +396,9 @@ export async function rejectRequisition(
     });
   }
   if (requisition.created_by === userId) {
-    throw new Error("Separation of duties — a requisition creator cannot reject their own request.");
+    throw new Error(
+      "Separation of duties — a requisition creator cannot reject their own request.",
+    );
   }
   if (!["submitted"].includes(requisition.status)) {
     throw new Error(`Requisition cannot be rejected from status "${requisition.status}".`);
