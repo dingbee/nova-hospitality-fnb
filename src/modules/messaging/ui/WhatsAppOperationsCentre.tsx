@@ -316,7 +316,23 @@ export function WhatsAppOperationsCentre() {
 
         <TabsContent value="campaigns">
           <div className="grid gap-4 xl:grid-cols-2">
-            <SectionCard title="Message templates" description="Provider approval state, language and category from the WCE-06 registry.">
+            <SectionCard title="Message templates" description="Create tenant-scoped drafts and review provider approval state. Meta submission remains disabled in UAT.">
+              <form
+                className="mb-4 grid gap-2 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_100px_140px_auto]"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  createTemplate.mutate();
+                }}
+              >
+                <input className="h-9 rounded-md border bg-background px-3 text-sm" placeholder="template_name" value={templateName} onChange={(event) => setTemplateName(event.target.value)} required pattern="[a-z0-9_]{3,512}" />
+                <select className="h-9 rounded-md border bg-background px-2 text-sm" value={templateLanguage} onChange={(event) => setTemplateLanguage(event.target.value)}>
+                  <option value="en">English</option><option value="sw">Swahili</option>
+                </select>
+                <select className="h-9 rounded-md border bg-background px-2 text-sm" value={templateCategory} onChange={(event) => setTemplateCategory(event.target.value as typeof templateCategory)}>
+                  <option value="utility">Utility</option><option value="marketing">Marketing</option><option value="authentication">Authentication</option>
+                </select>
+                <button className="h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50" disabled={createTemplate.isPending || !propertyId}>Create draft</button>
+              </form>
               {templates.length === 0 ? (
                 <EmptyState title="No templates" description="Tenant-approved WhatsApp templates will appear here." />
               ) : (
