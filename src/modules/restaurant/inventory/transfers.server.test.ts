@@ -481,10 +481,10 @@ describe("P1 property scope — stock transfers dual-location AND/OR matrix", ()
       { tenant_id: TENANT_B, user_id: USER_B1_OWNER, role: "owner", property_id: null },
     ];
     const locations = [
-      { id: LOC_A1_STORE, property_id: PROPERTY_A1 },
-      { id: LOC_A1_KITCHEN, property_id: PROPERTY_A1 },
-      { id: LOC_A2_STORE, property_id: PROPERTY_A2 },
-      { id: LOC_B1_STORE, property_id: PROPERTY_B1 },
+      { id: LOC_A1_STORE, tenant_id: TENANT_A, property_id: PROPERTY_A1, scope: "property", status: "active" },
+      { id: LOC_A1_KITCHEN, tenant_id: TENANT_A, property_id: PROPERTY_A1, scope: "property", status: "active" },
+      { id: LOC_A2_STORE, tenant_id: TENANT_A, property_id: PROPERTY_A2, scope: "property", status: "active" },
+      { id: LOC_B1_STORE, tenant_id: TENANT_B, property_id: PROPERTY_B1, scope: "property", status: "active" },
     ];
     const item = {
       id: ITEM,
@@ -543,6 +543,7 @@ describe("P1 property scope — stock transfers dual-location AND/OR matrix", ()
           let rows = locations;
           if (inFilters.id) rows = rows.filter((l) => inFilters.id!.includes(l.id));
           if (filters.id) rows = rows.filter((l) => l.id === filters.id);
+          if (filters.tenant_id) rows = rows.filter((l) => l.tenant_id === filters.tenant_id);
           if (mode === "maybeSingle") return { data: rows[0] ?? null, error: null };
           return { data: rows, error: null };
         }
