@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Sb } from "../core/access.server";
 
 const mocks = vi.hoisted(() => ({
   assertCapability: vi.fn().mockResolvedValue(undefined),
@@ -44,7 +45,13 @@ function makeSupabase() {
     recorded_by: MAKER,
   };
   let operation = "select";
-  const builder: any = {
+  type Query = {
+    select: (...args: unknown[]) => Query;
+    eq: (...args: unknown[]) => Query;
+    update: (...args: unknown[]) => Query;
+    single: () => Promise<{ data: typeof invoice; error: null }>;
+  };
+  const builder: Query = {
     select: () => builder,
     eq: () => builder,
     update: () => {
@@ -53,7 +60,7 @@ function makeSupabase() {
     },
     single: async () => ({ data: operation === "select" ? invoice : invoice, error: null }),
   };
-  return { from: () => builder };
+  return { from: () => builder } as unknown as Sb;
 }
 
 describe("supplier invoice three-way reconciliation maker-checker", () => {
