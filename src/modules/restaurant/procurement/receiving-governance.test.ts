@@ -192,13 +192,14 @@ function seedOrder(status: string, quantity = 100) {
       currency: "TZS",
       supplier_id: "sup-1",
       property_id: null,
-      location_id: null,
+      location_id: "location-test",
       document_number: "PO-1",
       reference: "PO-1",
       correlation_id: "corr-1",
       expected_at: null,
     },
   ];
+  db["restaurant_locations"] = [{ id: "location-test", tenant_id: TENANT, property_id: null, scope: "tenant", is_storage: true, status: "active" }];
   db["restaurant_purchase_order_items"] = [
     {
       id: itemId,
