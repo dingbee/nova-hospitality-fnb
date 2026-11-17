@@ -298,6 +298,8 @@ function orderStatusMessage(
   language: "en" | "sw",
 ): string | null {
   const messages: Record<string, { en: string; sw: string }> = {
+    accepted: { en: "Your order has been accepted and will be prepared soon.", sw: "Oda yako imekubaliwa na itaandaliwa hivi karibuni." },
+    confirmed: { en: "Your order has been confirmed.", sw: "Oda yako imethibitishwa." },
     in_progress: { en: "Your order is being prepared.", sw: "Oda yako inaandaliwa." },
     preparing: { en: "Your order is being prepared.", sw: "Oda yako inaandaliwa." },
     ready: { en: "Your order is ready for collection.", sw: "Oda yako iko tayari kuchukuliwa." },

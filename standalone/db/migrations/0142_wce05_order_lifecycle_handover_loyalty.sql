@@ -136,3 +136,22 @@ GRANT ALL ON public.wa_conversation_handoffs,
   public.restaurant_guest_loyalty_ledger TO service_role;
 
 NOTIFY pgrst, 'reload schema';
+
+CREATE OR REPLACE FUNCTION public.restaurant_guest_loyalty_balance(
+  _tenant_id uuid,
+  _guest_customer_id uuid
+)
+RETURNS bigint
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $wce$
+  SELECT coalesce(sum(l.points_delta), 0)::bigint
+  FROM public.restaurant_guest_loyalty_ledger l
+  WHERE l.tenant_id = _tenant_id
+    AND l.guest_customer_id = _guest_customer_id;
+$wce$;
+REVOKE ALL ON FUNCTION public.restaurant_guest_loyalty_balance(uuid, uuid)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.restaurant_guest_loyalty_balance(uuid, uuid)
+  TO service_role;
