@@ -68,10 +68,9 @@ describe("WhatsApp operations authorization", () => {
       grants: [],
     });
     const db = { from: vi.fn() };
-    await expect(
-      listWhatsAppInbox(db, "platform-admin", { tenantId: "tenant-1" }),
-    ).rejects.toThrow("tenant_membership_required");
+    await expect(listWhatsAppInbox(db, "platform-admin", { tenantId: "tenant-1" })).rejects.toThrow(
+      "tenant_membership_required",
+    );
     expect(db.from).not.toHaveBeenCalled();
   });
-
 });
