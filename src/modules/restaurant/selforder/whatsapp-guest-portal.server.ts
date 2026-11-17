@@ -85,6 +85,7 @@ export async function getGuestCommercePage(admin: Db, token: string) {
     sourceChannel: session.sourceChannel,
     orderType: session.orderType,
     canCheckout: session.orderType === "takeaway" || (session.orderType === "dine_in" && Boolean(session.tableId)),
+    tableServiceUrl: session.tableId ? `/order/${session.tableId}?legacy=1` : null,
     expiresAt: session.expiresAt,
     categories: catalog.categories,
     modifierGroups: catalog.modifierGroups,
