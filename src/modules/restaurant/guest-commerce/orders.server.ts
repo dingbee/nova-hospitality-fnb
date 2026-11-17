@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- service-role rows are validated at this boundary. */
 import { resolveGuestCommerceSession } from "@/modules/messaging/guest-portal-sessions.server";
 import { resolveGuestPaymentTiming } from "@/modules/restaurant/payments/payment-timing";
-import { resolveServiceConfiguration } from "@/modules/restaurant/operations/service-config";
+import { mergePropertyServiceSettings, resolveServiceConfiguration } from "@/modules/restaurant/operations/service-config";
 import { fetchSellableCatalog } from "@/modules/restaurant/sales/pos.server";
 import { createGuestOrder, recalcOrder, type SalesLineInput } from "@/modules/restaurant/sales/sales.server";
 import { fireGuestOrder } from "@/modules/restaurant/kitchen/kitchen.server";
