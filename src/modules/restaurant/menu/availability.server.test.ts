@@ -72,7 +72,7 @@ describe("outlet-scoped menu availability", () => {
       propertyId: property,
       locationId: location,
     });
-    expect(result.get(item.id)).toMatchObject({ available: false, inventoryReady: false });
+    expect(result.get(item.id)).toMatchObject({ available: false, inventoryReady: false, availableQuantity: 0 });
     expect(result.get(item.id)?.reasons[0]).toContain("Chicken");
   });
 
@@ -149,6 +149,18 @@ describe("outlet-scoped menu availability", () => {
     });
     expect(result.get(item.id)?.available).toBe(false);
     expect(result.get(item.id)?.reasons.join(" ")).toContain("unavailable at this outlet");
+  });
+
+  it("subtracts active reservations before computing orderable quantity", async () => {
+    const db = fakeDb({
+      restaurant_recipes: [{ id: "recipe-1", status: "active" }],
+      restaurant_recipe_lines: [{ recipe_id: "recipe-1", inventory_item_id: "stock-1", component_kind: "inventory", is_optional: false, quantity: 1 }],
+      restaurant_inventory_items: [{ id: "stock-1", name: "Beans", current_quantity: 8, status: "active", property_id: property, location_id: location }],
+      restaurant_stock_positions_v: [{ inventory_item_id: "stock-1", location_id: location, on_hand: 8 }],
+      restaurant_stock_reservations: [{ inventory_item_id: "stock-1", location_id: location, quantity: 6 }],
+    });
+    const result = await resolveMenuAvailability(db, tenant, [item], [product], { propertyId: property, locationId: location });
+    expect(result.get(item.id)).toMatchObject({ available: true, availableQuantity: 2 });
   });
 
   it("blocks inactive menu lifecycle and inactive recipe states", async () => {
