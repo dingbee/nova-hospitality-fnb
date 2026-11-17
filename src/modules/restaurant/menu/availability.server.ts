@@ -30,17 +30,10 @@ export async function resolveMenuAvailability(
           "recipe_id, inventory_item_id, sub_recipe_id, component_kind, is_optional, quantity",
         )
         .eq("tenant_id", tenantId),
-      (() => {
-        let query = sb
-          .from("restaurant_inventory_items")
-          .select("id, name, status, property_id, location_id")
-          .eq("tenant_id", tenantId);
-        if (scope.propertyId)
-          query = query.or("property_id.is.null,property_id.eq." + scope.propertyId);
-        if (scope.locationId)
-          query = query.or("location_id.is.null,location_id.eq." + scope.locationId);
-        return query;
-      })(),
+      sb
+        .from("restaurant_inventory_items")
+        .select("id, name, status, property_id, location_id")
+        .eq("tenant_id", tenantId),
       (() => {
         let query = sb
           .from("restaurant_stock_positions_v")
@@ -49,17 +42,11 @@ export async function resolveMenuAvailability(
         if (scope.locationId) query = query.eq("location_id", scope.locationId);
         return query;
       })(),
-      (() => {
-        let query = sb
-          .from("restaurant_stock_reservations")
-          .select("inventory_item_id, location_id, quantity")
-          .eq("tenant_id", tenantId)
-          .eq("status", "active");
-        if (scope.propertyId)
-          query = query.or("property_id.is.null,property_id.eq." + scope.propertyId);
-        if (scope.locationId) query = query.eq("location_id", scope.locationId);
-        return query;
-      })(),
+      sb
+        .from("restaurant_stock_reservations")
+        .select("inventory_item_id, property_id, location_id, quantity")
+        .eq("tenant_id", tenantId)
+        .eq("status", "active"),
     ]);
 
   for (const result of [
@@ -82,7 +69,13 @@ export async function resolveMenuAvailability(
     linesByRecipe.set(line.recipe_id, list);
   }
   const inventory = new Map<string, any>(
-    ((inventoryResult.data ?? []) as any[]).map((stock) => [stock.id, stock]),
+    ((inventoryResult.data ?? []) as any[])
+      .filter(
+        (stock) =>
+          (!scope.propertyId || !stock.property_id || stock.property_id === scope.propertyId) &&
+          (!scope.locationId || !stock.location_id || stock.location_id === scope.locationId),
+      )
+      .map((stock) => [stock.id, stock]),
   );
   const onHandByItem = new Map<string, number>();
   for (const row of (positionsResult.data ?? []) as any[]) {
@@ -93,6 +86,12 @@ export async function resolveMenuAvailability(
   }
   const reservedByItem = new Map<string, number>();
   for (const row of (reservationsResult.data ?? []) as any[]) {
+    if (
+      (scope.propertyId && row.property_id && row.property_id !== scope.propertyId) ||
+      (scope.locationId && row.location_id !== scope.locationId)
+    ) {
+      continue;
+    }
     reservedByItem.set(
       row.inventory_item_id,
       (reservedByItem.get(row.inventory_item_id) ?? 0) + Number(row.quantity ?? 0),
