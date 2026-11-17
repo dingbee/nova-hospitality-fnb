@@ -37,7 +37,7 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
         .maybeSingle(),
       supabaseAdmin
         .from("restaurant_locations")
-        .select("name, status, location_type, is_storage")
+        .select("name, status, location_type, is_storage, settings")
         .eq("id", session.locationId)
         .eq("tenant_id", session.tenantId)
         .eq("property_id", session.propertyId)
