@@ -171,6 +171,9 @@ export async function submitWhatsAppMessageTemplateToMeta(
   admin: Db,
   input: { tenantId: string; propertyId: string; templateId: string },
 ) {
+  if (process.env.LEXIBITE_WHATSAPP_TEMPLATE_SUBMISSION_ENABLED !== "true") {
+    throw new WhatsAppCampaignGovernanceError("meta_template_submission_disabled");
+  }
   const { data: template, error: templateError } = await admin
     .from("wa_message_templates")
     .select("id, tenant_id, property_id, template_name, language, category, status, components")
