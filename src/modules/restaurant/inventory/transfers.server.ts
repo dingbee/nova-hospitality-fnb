@@ -18,7 +18,7 @@ import {
 } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { insertMovement } from "./movements.server";
-import { assertLocationInTenant, locationNameMap } from "./locations.server";
+import { assertActiveStorageLocations, locationNameMap } from "./locations.server";
 import type {
   CreateTransferInput,
   DispatchTransferInput,
@@ -164,7 +164,7 @@ export async function createTransfer(sb: Sb, userId: string, input: CreateTransf
   if (input.sourceLocationId === input.destinationLocationId) {
     throw new Error("Source and destination must be different locations.");
   }
-  await assertLocationInTenant(
+  await assertActiveStorageLocations(
     sb,
     input.tenantId,
     input.sourceLocationId,
@@ -327,6 +327,7 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
   if (!["approved", "requested"].includes(transfer.status)) {
     throw new Error(`Transfer cannot be dispatched from status "${transfer.status}".`);
   }
+  await assertActiveStorageLocations(sb, input.tenantId, transfer.source_location_id, transfer.destination_location_id);
   if (transfer.requires_approval && transfer.status !== "approved") {
     throw new Error("This transfer requires approval before dispatch.");
   }
@@ -419,6 +420,7 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
   if (!["dispatched", "partially_received"].includes(transfer.status)) {
     throw new Error(`Transfer cannot be received from status "${transfer.status}".`);
   }
+  await assertActiveStorageLocations(sb, input.tenantId, transfer.source_location_id, transfer.destination_location_id);
 
   if (
     input.lines.every(
