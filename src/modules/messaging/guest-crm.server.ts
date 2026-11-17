@@ -349,11 +349,18 @@ export async function queueWhatsAppOrderStatusNotification(
   const { data: customer } = order.guest_customer_id
     ? await admin
         .from("restaurant_guest_customers")
-        .select("preferred_language")
+        .select("preferred_language, status")
         .eq("id", order.guest_customer_id)
         .eq("tenant_id", order.tenant_id)
         .maybeSingle()
     : { data: null };
+  if (customer?.status === "blocked") {
+    await admin.from("wa_order_notification_events")
+      .update({ notification_state: "suppressed" })
+      .eq("id", notificationId)
+      .eq("tenant_id", order.tenant_id);
+    return { queued: false as const, reason: "guest_blocked" };
+  }
   const language = customer?.preferred_language === "sw" ? "sw" : "en";
   const content = orderStatusMessage(input.status, order.order_number, language);
   if (!content) return { queued: false as const, reason: "status_not_customer_visible" };
