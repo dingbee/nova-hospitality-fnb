@@ -5,11 +5,13 @@ on:
     branches:
       - "wce/wce-06-campaign-commercial-controls"
       - "wce/wce-07-operations-analytics"
+      - "wce/wce-08-integrated-certification"
   pull_request:
     branches:
       - "wce/wce-02-messaging-sessions"
       - "wce/wce-03-08-stack"
       - "wce/wce-06-campaign-commercial-controls"
+      - "wce/wce-07-operations-analytics"
   workflow_dispatch:
 
 permissions:
