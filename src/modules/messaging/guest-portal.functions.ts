@@ -432,3 +432,19 @@ export const createGuestReservationFn = createServerFn({ method: "POST" })
       await import("@/modules/messaging/guest-reservations.server");
     return createGuestTableReservation(supabaseAdmin, data);
   });
+
+
+const cancelGuestReservationSchema = z.object({
+  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  reservationId: z.string().uuid(),
+});
+
+/** WCE-06: guests can cancel only their own future reservation from the same portal session. */
+export const cancelGuestReservationFn = createServerFn({ method: "POST" })
+  .inputValidator((value: unknown) => cancelGuestReservationSchema.parse(value))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { cancelGuestTableReservation } =
+      await import("@/modules/messaging/guest-reservations.server");
+    return cancelGuestTableReservation(supabaseAdmin, data);
+  });
