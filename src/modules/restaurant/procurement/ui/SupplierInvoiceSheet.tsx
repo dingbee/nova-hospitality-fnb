@@ -19,7 +19,7 @@ import { EntitySheet, Field, FieldRow, QuantityField, SearchSelect } from "@/mod
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { getRestaurantPurchaseOrderDetailFn } from "@/modules/restaurant/purchasing/purchasing.functions";
 import { listRestaurantSuppliersFn } from "@/modules/restaurant/suppliers/suppliers.functions";
-import { recordRestaurantSupplierInvoiceFn, matchRestaurantSupplierInvoiceFn } from "../procurement.functions";
+import { recordRestaurantSupplierInvoiceFn } from "../procurement.functions";
 import { formatMoney } from "../lifecycle";
 
 interface Props {
@@ -51,7 +51,6 @@ export function SupplierInvoiceSheet({ open, onOpenChange, tenantId, purchaseOrd
   const detailFn = useServerFn(getRestaurantPurchaseOrderDetailFn);
   const suppliersFn = useServerFn(listRestaurantSuppliersFn);
   const recordFn = useServerFn(recordRestaurantSupplierInvoiceFn);
-  const matchFn = useServerFn(matchRestaurantSupplierInvoiceFn);
 
   const detail = useQuery({
     queryKey: ["restaurant.purchase-order.detail", tenantId, purchaseOrderId],
@@ -145,13 +144,11 @@ export function SupplierInvoiceSheet({ open, onOpenChange, tenantId, purchaseOrd
             })),
         },
       });
-      // Matching is a server decision; we only request it once the invoice exists.
-      if (purchaseOrderId && invoice?.id) {
-        await matchFn({ data: { tenantId, invoiceId: invoice.id } });
-      }
+      // Reconciliation is deliberately not run by the recorder. A separate
+      // authorized user performs the three-way match from the invoice list.
       return invoice;
     },
-    successMessage: "Supplier invoice recorded",
+    successMessage: "Supplier invoice recorded — independent reconciliation pending",
     loadingMessage: "Recording invoice…",
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["restaurant.procurement.invoices", tenantId] });
@@ -171,7 +168,7 @@ export function SupplierInvoiceSheet({ open, onOpenChange, tenantId, purchaseOrd
       onOpenChange={onOpenChange}
       wide
       title={purchaseOrderId ? `Invoice for ${d?.order?.document_number ?? d?.order?.reference ?? "order"}` : "Record supplier invoice"}
-      description="Lines prefill from what was received. Matching runs on the server after the invoice is saved."
+      description="Lines prefill from what was received. A separate authorized user must perform the three-way match after recording."
       submitLabel="Record invoice"
       pending={save.isPending}
       disabled={!canSubmit}
