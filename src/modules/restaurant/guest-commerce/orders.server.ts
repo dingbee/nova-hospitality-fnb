@@ -156,13 +156,37 @@ export async function submitGuestCommerceOrder(
     throw error;
   }
 
+  if (order.idempotent) {
+    const { data: winner, error: winnerError } = await admin
+      .from("restaurant_orders")
+      .select("guest_commerce_session_id, guest_commerce_channel")
+      .eq("id", order.id)
+      .eq("tenant_id", session.tenantId)
+      .maybeSingle();
+    if (
+      winnerError ||
+      !winner ||
+      winner.guest_commerce_session_id !== session.sessionId ||
+      winner.guest_commerce_channel !== session.sourceChannel
+    ) {
+      throw new Error("This order request has already been used. Refresh the menu and try again.");
+    }
+  }
+
   if (!order.idempotent && paymentTiming === "pay_after_service") {
     await fireGuestOrder(admin, { tenantId: session.tenantId, orderId: order.id });
   }
 
   const refreshed = await recalcOrder(admin, session.tenantId, order.id);
+  const { data: finalOrder, error: finalOrderError } = await admin
+    .from("restaurant_orders")
+    .select("id, order_number, status, payment_state, subtotal, tax_total, total, paid_total, currency")
+    .eq("id", order.id)
+    .eq("tenant_id", session.tenantId)
+    .maybeSingle();
+  if (finalOrderError || !finalOrder) throw new Error("The order was created but its confirmation is temporarily unavailable.");
   return safeOrderProjection(
-    { ...order, ...refreshed, status: order.status ?? "open", payment_state: order.payment_state ?? "unpaid" },
+    { ...finalOrder, ...refreshed, idempotent: order.idempotent },
     session.sourceChannel,
     session.orderType,
   );
@@ -187,7 +211,7 @@ export async function getGuestCommerceOrderStatus(
   if (error || !order) throw new Error("This order could not be found for this Guest Commerce session.");
   const { data: items, error: itemsError } = await admin
     .from("restaurant_order_items")
-    .select("id, description, quantity, total, status")
+    .select("id, description, quantity, line_total, status")
     .eq("tenant_id", session.tenantId)
     .eq("order_id", order.id);
   if (itemsError) throw new Error("Order progress is temporarily unavailable.");
@@ -206,7 +230,7 @@ export async function getGuestCommerceOrderStatus(
     items: (items ?? []).map((item: any) => ({
       description: item.description,
       quantity: Number(item.quantity),
-      total: Number(item.total ?? 0),
+      total: Number(item.line_total ?? 0),
       status: item.status,
     })),
   };
