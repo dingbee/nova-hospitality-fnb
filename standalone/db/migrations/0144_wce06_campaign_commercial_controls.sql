@@ -240,8 +240,8 @@ BEGIN
     SELECT count(*) INTO _daily_count
     FROM public.wa_campaign_recipients r
     WHERE r.tenant_id = _tenant_id AND r.campaign_id = _campaign_id
-      AND r.dispatched_at >= date_trunc('day', now())
-      AND r.state IN ('queued', 'sent', 'delivered', 'read');
+      AND r.created_at >= date_trunc('day', now())
+      AND r.state IN ('eligible', 'queued', 'sent', 'delivered', 'read');
     IF _daily_count >= _campaign.daily_cap THEN
       _next_state := 'suppressed';
       _reason := 'campaign_daily_cap';
