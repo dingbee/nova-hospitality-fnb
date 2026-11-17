@@ -371,6 +371,45 @@ export async function sendTextMessage(
   }, platform);
 }
 
+export async function sendTemplateMessage(
+  credentials: MetaTenantCredentials,
+  recipientE164: string,
+  template: {
+    name: string;
+    language: string;
+    components?: Array<Record<string, unknown>>;
+  },
+  platform?: Pick<MetaPlatformConfig, "graphApiVersion">,
+): Promise<MetaSendTextResult> {
+  const recipient = recipientE164.replace(/[^\d]/g, "");
+  if (!/^\d{8,15}$/.test(recipient))
+    throw new Error("WhatsApp recipient must be an E.164 phone number.");
+  if (!/^[a-z0-9_]{3,512}$/.test(template.name))
+    throw new Error("WhatsApp template name is invalid.");
+  if (!/^[a-z]{2}([_-][A-Z]{2})?$/.test(template.language))
+    throw new Error("WhatsApp template language is invalid.");
+  const id = encodeURIComponent(required(credentials.phoneNumberId, "Phone number ID"));
+  return graphRequest<MetaSendTextResult>(
+    `${id}/messages`,
+    credentials.accessToken,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: recipient,
+        type: "template",
+        template: {
+          name: template.name,
+          language: { code: template.language },
+          components: template.components ?? [],
+        },
+      }),
+    },
+    platform,
+  );
+}
+
 /** Meta's GET webhook challenge; returns the challenge only for a constant-time token match. */
 export function verifyWebhookChallenge(
   params: URLSearchParams,
