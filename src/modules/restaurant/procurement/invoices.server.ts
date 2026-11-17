@@ -56,7 +56,10 @@ export async function listSupplierInvoices(
 }
 
 export async function recordSupplierInvoice(sb: Sb, userId: string, input: RecordInvoiceInput) {
-  await assertCapability(sb, userId, input.tenantId, "invoice.manage");
+  await assertCapability(sb, userId, input.tenantId, "invoice.manage", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
 
   const subtotal = input.lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
   const taxTotal = input.taxTotal || input.lines.reduce((s, l) => s + (l.taxAmount ?? 0), 0);
@@ -395,24 +398,31 @@ export async function setInvoicePaymentStatus(
   userId: string,
   input: z.infer<typeof setInvoicePaymentStatusSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "invoice.manage");
   const { data: before } = await sb
     .from("restaurant_supplier_invoices")
-    .select("id, payment_status, document_number, total, match_status")
+    .select("id, payment_status, document_number, total, match_status, property_id, location_id, recorded_by")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.invoiceId)
     .single();
   if (!before) throw new Error("Supplier invoice not found.");
-  // Settlement is separate from matching: paying an invoice never resolves a
-  // procurement variance, and an unmatched invoice is never quietly settled.
+  const scope = {
+    propertyId: before.property_id ?? null,
+    locationId: before.location_id ?? null,
+  };
+  await assertCapability(sb, userId, input.tenantId, "invoice.manage", scope);
+
+  // Settlement is a financial decision separate from both recording and matching.
   const settling = input.paymentStatus === "paid" || input.paymentStatus === "partially_paid";
-  if (settling && before.match_status !== "matched" && !input.reason) {
+  if (settling && before.recorded_by === userId) {
+    throw new Error("Separation of duties — the invoice recorder cannot settle the same invoice.");
+  }
+  if (settling && before.match_status !== "matched" && !input.reason?.trim()) {
     throw new Error(
       `This invoice is "${before.match_status ?? "unmatched"}" — an authorised written reason is required before it can be settled.`,
     );
   }
   if (settling && before.match_status !== "matched") {
-    await assertCapability(sb, userId, input.tenantId, "variance.manage");
+    await assertCapability(sb, userId, input.tenantId, "variance.manage", scope);
   }
 
   const { data, error } = await sb
