@@ -295,6 +295,7 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
       clientRequestId: requestKey,
       guestPortalSessionId: session.sessionId,
       guestCustomerId,
+      guestReservationId: data.fulfilmentMethod === "dine_in" ? data.reservationId : null,
     });
 
     const paymentTiming = resolveGuestPaymentTiming(tenant.settings);
