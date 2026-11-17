@@ -32,6 +32,7 @@ describe("WhatsApp guest CRM identity and consent language", () => {
 function loyaltyDb(program: Record<string, unknown>, ledgerError: { code?: string } | null = null) {
   const inserts: Array<Record<string, unknown>> = [];
   const from = vi.fn((table: string) => {
+    let inserted = false;
     const builder: any = {
       select: () => builder,
       eq: () => builder,
@@ -51,13 +52,15 @@ function loyaltyDb(program: Record<string, unknown>, ledgerError: { code?: strin
             }
           : { data: program, error: null },
       insert: (payload: Record<string, unknown>) => {
+        inserted = true;
         inserts.push(payload);
         return builder;
       },
-      single: async () =>
-        ledgerError
-          ? { data: null, error: ledgerError }
-          : { data: { id: "ledger-1" }, error: null },
+      then: (resolve: (value: unknown) => unknown) =>
+        Promise.resolve({
+          data: inserted && !ledgerError ? [{ id: "ledger-1" }] : null,
+          error: inserted ? ledgerError : null,
+        }).then(resolve),
     };
     return builder;
   });
