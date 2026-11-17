@@ -84,6 +84,7 @@ export async function getGuestCommercePage(admin: Db, token: string) {
     canCheckout: session.orderType === "takeaway" || (session.orderType === "dine_in" && Boolean(session.tableId)),
     expiresAt: session.expiresAt,
     categories: catalog.categories,
+    modifierGroups: catalog.modifierGroups,
     items: catalog.items.filter(
       (item: any) => item.available !== false &&
         item.priceConfigured !== false &&
