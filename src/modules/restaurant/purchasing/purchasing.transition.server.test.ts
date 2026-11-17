@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   assertCapability: vi.fn().mockResolvedValue(undefined),
   isPlatformAdmin: vi.fn().mockResolvedValue(true),
+  assertMayApprove: vi.fn().mockRejectedValue(new Error("Separation of duties — a requester cannot approve their own request.")),
   emitRestaurantEvent: vi.fn().mockResolvedValue(undefined),
   recordProcurementAudit: vi.fn().mockResolvedValue(undefined),
 }));
@@ -10,6 +11,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../core/access.server", () => ({
   assertCapability: (...args: unknown[]) => mocks.assertCapability(...args),
   isPlatformAdmin: (...args: unknown[]) => mocks.isPlatformAdmin(...args),
+}));
+
+vi.mock("../procurement/approvals.server", () => ({
+  assertMayApprove: (...args: unknown[]) => mocks.assertMayApprove(...args),
 }));
 
 vi.mock("../events/emit.server", () => ({
@@ -78,6 +83,14 @@ describe("purchase-order maker-checker", () => {
       "purchasing.approve",
       { propertyId: PROPERTY },
     );
+    expect(mocks.assertMayApprove).toHaveBeenCalledWith(sb, USER, {
+      tenantId: TENANT,
+      documentType: "purchase_order",
+      amount: 1000,
+      requesterId: USER,
+      propertyId: PROPERTY,
+      locationId: null,
+    });
     expect(mocks.isPlatformAdmin).not.toHaveBeenCalled();
     expect(sb.rpc).not.toHaveBeenCalled();
   });
