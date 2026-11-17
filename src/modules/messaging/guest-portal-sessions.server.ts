@@ -28,7 +28,7 @@ function isValidToken(token: string): boolean {
 
 function orderTypeFor(serviceMode: string, tableId: string | null): "dine_in" | "takeaway" | "room_service" {
   if (tableId) return "dine_in";
-  if (["takeaway", "counter_service", "self_service"].includes(serviceMode)) return "takeaway";
+  if (["takeaway", "counter_service", "quick_service", "self_service"].includes(serviceMode)) return "takeaway";
   if (serviceMode === "room_service") return "room_service";
   // Browsing remains available for table-service outlets, but checkout is
   // explicitly blocked until the guest enters through a table-bound QR.
