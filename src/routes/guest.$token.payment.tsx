@@ -24,6 +24,7 @@ function GuestPaymentReturn() {
   const { token } = Route.useParams();
   const search = Route.useSearch();
   const confirmPayment = useServerFn(confirmGuestCommercePaymentFn);
+  const hasCallback = Boolean(search.orderId && search.OrderTrackingId);
   const confirmation = useQuery({
     queryKey: ["guest-payment-return", token, search.orderId, search.OrderTrackingId],
     enabled: Boolean(search.orderId && search.OrderTrackingId),
@@ -55,11 +56,13 @@ function GuestPaymentReturn() {
             ? confirmation.error instanceof Error
               ? confirmation.error.message
               : "Payment confirmation could not be completed."
-            : "Waiting for the payment provider response.";
+            : hasCallback
+              ? "Waiting for the payment provider response."
+              : "The payment provider did not return a verifiable transaction reference. The order has not been marked as paid.";
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-xl flex-col items-center justify-center gap-4 px-6 text-center">
-      {confirmation.isPending ? (
+      {hasCallback && confirmation.isPending ? (
         <LoaderCircle className="size-9 animate-spin text-primary" aria-hidden />
       ) : confirmation.data?.ok && confirmation.data.status === "paid" ? (
         <CheckCircle2 className="size-10 text-primary" aria-hidden />
