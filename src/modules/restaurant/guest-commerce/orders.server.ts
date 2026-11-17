@@ -113,7 +113,7 @@ export async function submitGuestCommerceOrder(
   });
   const sellableIds = new Set(
     (catalog.items as any[])
-      .filter((item) => item.available !== false && item.priceConfigured !== false)
+      .filter((item) => item.is_available === true && item.priceConfigured === true)
       .map((item) => item.id as string),
   );
   const { valid, rejected } = pickGuestOrderableLines(sellableIds, input.lines);
