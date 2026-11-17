@@ -135,6 +135,7 @@ export async function askNova(
     message: string;
     history?: AiTurn[];
     interactionMode?: "basket" | "discovery";
+    customerContext?: { displayName?: string | null; recentOrders?: Array<{ orderNumber: string; status: string; items: Array<{ name: string; quantity: number }> }> };
     /** GEP2 — the guest's current basket (menuItemId + quantity only), a hint for resolving "remove"/"another one"/"make that two" references. Never trusted for price or identity. */
     basket?: NovaBasketLine[];
   },
@@ -247,9 +248,12 @@ export async function askNova(
     const discoveryInstructions = input.interactionMode === "discovery"
       ? "\n\nWHATSAPP DISCOVERY MODE: Answer menu questions and recommend only. Do not claim to add, remove, prepare, or change basket items. Always return an empty operations array. Tell the guest to reply MENU or ORDER to open the secure Guest Portal and submit an order."
       : "";
+    const customerContext = input.customerContext
+      ? "\n\nGUEST CRM HISTORY JSON:\n" + JSON.stringify(input.customerContext)
+      : "";
     const result = await aiCaller({
       system:
-        NOVA_SYSTEM_PROMPT + discoveryInstructions + JSON.stringify(basket) + "\n\nMENU JSON:\n" + JSON.stringify(context),
+        NOVA_SYSTEM_PROMPT + discoveryInstructions + customerContext + JSON.stringify(basket) + "\n\nMENU JSON:\n" + JSON.stringify(context),
       user: input.message,
       history: (input.history ?? []).slice(-6),
       jsonMode: true,
