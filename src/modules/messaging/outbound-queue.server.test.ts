@@ -216,5 +216,4 @@ describe("WhatsApp outbound queue", () => {
       last_error: "provider_dispatch_disabled",
     });
   });
-
 });
