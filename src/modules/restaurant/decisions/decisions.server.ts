@@ -71,7 +71,25 @@ async function evaluate(
     getMenuIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
     getInventoryIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
     getKitchenIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
-    getPurchasingIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId }),
+    propertyId || locationId
+      ? getPurchasingIntelligence(sb, userId, { tenantId, windowDays, propertyId, locationId })
+      : Promise.resolve({
+          generatedAt: new Date().toISOString(),
+          windowDays,
+          currency: "—",
+          suggestions: [],
+          suppliers: [],
+          expectedMonthlySpend: 0,
+          previousMonthlySpend: 0,
+          spendChangePercent: null,
+          insights: [{
+            key: "purchasing.scope_required",
+            severity: "info" as const,
+            title: "Select a property or stock location for replenishment intelligence",
+            detail: "Purchasing recommendations remain property-scoped so stock, supplier commitments and currency are never pooled across properties.",
+          }],
+          reviewItems: [],
+        }),
   ]);
   const findings = gatherFindings({ menu, inventory, kitchen, purchasing });
   return { findings, candidates: buildRestaurantDecisions(findings, tenantId) };
