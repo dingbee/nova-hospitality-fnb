@@ -160,7 +160,12 @@ describe("outlet-scoped menu availability", () => {
         },
       ],
       restaurant_stock_positions_v: [
-        { inventory_item_id: "stock-1", location_id: "another-outlet", on_hand: 5, tenant_id: tenant },
+        {
+          inventory_item_id: "stock-1",
+          location_id: "another-outlet",
+          on_hand: 5,
+          tenant_id: tenant,
+        },
       ],
       restaurant_stock_reservations: [],
     });
