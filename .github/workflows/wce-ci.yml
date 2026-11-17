@@ -57,13 +57,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin main wce/wce-02-messaging-sessions
-          branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          base_ref="origin/wce/wce-02-messaging-sessions"
-          if [ "$branch" = "wce/wce-02-messaging-sessions" ]; then
-            base_ref="origin/main"
-          fi
-          files="$(git diff --name-only "$base_ref"...HEAD -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
+          git fetch origin wce/wce-02-messaging-sessions
+          files="$(git diff --name-only origin/wce/wce-02-messaging-sessions...HEAD -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
           if [ -n "$files" ]; then
             bunx eslint $files
           fi
