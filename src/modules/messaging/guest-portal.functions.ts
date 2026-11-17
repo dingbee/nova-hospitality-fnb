@@ -14,7 +14,7 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
     const { fetchSellableCatalog } = await import("@/modules/restaurant/sales/pos.server");
 
     const session = await resolveWhatsAppGuestPortalSession(supabaseAdmin, data.token);
-    if (!session || session.scope !== "menu_browse") {
+    if (!session || !["menu_browse", "guest_commerce"].includes(session.scope)) {
       throw new Error("This Guest Portal link has expired or is no longer available. Return to WhatsApp and request a new menu link.");
     }
 
