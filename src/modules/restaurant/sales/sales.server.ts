@@ -747,6 +747,7 @@ export async function createGuestOrder(
     guestName?: string | null;
     currency: string;
     orderType?: RestaurantOrderType;
+    guestCount?: number;
     lines: SalesLineInput[];
     /**
      * GEP3 — the same (tenant_id, client_request_id) partial-unique index
@@ -786,7 +787,7 @@ export async function createGuestOrder(
       order_number: reference("ORD"),
       order_type: input.orderType ?? "dine_in",
       status: "open",
-      guest_count: 1,
+      guest_count: input.guestCount ?? 1,
       guest_name: input.guestName ?? null,
       currency: input.currency,
       source: "self_order",
