@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - "wce/wce-06-campaign-commercial-controls"
+      - "wce/wce-07-operations-analytics"
   pull_request:
     branches:
       - "wce/wce-02-messaging-sessions"
       - "wce/wce-03-08-stack"
+      - "wce/wce-06-campaign-commercial-controls"
   workflow_dispatch:
 
 permissions:
