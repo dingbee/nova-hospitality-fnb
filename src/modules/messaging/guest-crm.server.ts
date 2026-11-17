@@ -146,6 +146,20 @@ export async function getWhatsAppGuestCustomerHistory(
     hasWhatsAppGuestMarketingConsent(admin, tenantId, guestCustomerId),
   ]);
   if (orderError) throw new Error("Guest CRM order history could not be loaded.");
+  const orderIds = (orders ?? []).map((order: any) => order.id);
+  const { data: lines, error: linesError } = orderIds.length
+    ? await admin.from("restaurant_order_items")
+        .select("order_id, description, quantity")
+        .eq("tenant_id", tenantId)
+        .in("order_id", orderIds)
+    : { data: [], error: null };
+  if (linesError) throw new Error("Guest CRM order items could not be loaded.");
+  const linesByOrder = new Map<string, Array<{ name: string; quantity: number }>>();
+  for (const line of (lines ?? []) as any[]) {
+    const list = linesByOrder.get(line.order_id) ?? [];
+    list.push({ name: String(line.description ?? ""), quantity: Number(line.quantity ?? 0) });
+    linesByOrder.set(line.order_id, list);
+  }
   return {
     recentOrders: (orders ?? []).map((order: any) => ({
       orderNumber: order.order_number,
@@ -155,6 +169,7 @@ export async function getWhatsAppGuestCustomerHistory(
       currency: order.currency,
       openedAt: order.opened_at,
       closedAt: order.closed_at,
+      items: linesByOrder.get(order.id) ?? [],
     })),
     whatsappMarketingConsent: marketingConsent,
   };
