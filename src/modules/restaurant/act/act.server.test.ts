@@ -51,7 +51,7 @@ function makeFakeSupabase(opts: {
   };
   const locations = [
     { id: SOURCE, tenant_id: TENANT_A, name: "Main Store", location_type: "storage", scope: "property", property_id: "property-1", is_storage: false, status: "active" },
-    { id: DEST, tenant_id: TENANT_A, name: "Kitchen", location_type: "kitchen", scope: "tenant", property_id: null, is_storage: true, status: "active" },
+    { id: DEST, tenant_id: TENANT_A, name: "Kitchen", location_type: "kitchen", scope: "property", property_id: "property-1", is_storage: false, status: "active" },
   ];
   const members: Member[] =
     opts.members ?? ([{ tenantId: TENANT_A, userId: OWNER, role: "owner" }] as Member[]);
