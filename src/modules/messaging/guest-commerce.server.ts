@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase rows are validated at this boundary. */
+import { askNova } from "@/modules/restaurant/selforder/selfnova.server";
 import { createWhatsAppGuestPortalSession } from "./guest-portal-sessions.server";
-import { parseWhatsAppConsentCommand, recordWhatsAppGuestConsent } from "./guest-crm.server";
+import {
+  parseWhatsAppConsentCommand,
+  recordWhatsAppGuestConsent,
+} from "./guest-crm.server";
 
 type Db = any;
 type CommerceEvent = {
@@ -11,26 +15,39 @@ type CommerceEvent = {
   binding_id: string;
 };
 type InboundMessage = { id: string; from: string; text?: { body?: string } };
-export type GuestCommerceIntent = "menu" | "order" | "help" | "subscribe" | "unsubscribe" | "unknown";
+export type GuestCommerceIntent =
+  | "menu"
+  | "order"
+  | "help"
+  | "subscribe"
+  | "unsubscribe"
+  | "unknown";
 
 export function classifyGuestCommerceIntent(value: unknown): GuestCommerceIntent {
   if (typeof value !== "string") return "unknown";
-  const normalised = value
-    .trim()
-    .toLocaleLowerCase()
-    .replace(/[.!?]+$/g, "");
-  if (/^(menu|menyu|browse|catalogue|catalog|start|hi|hello|habari)$/.test(normalised))
-    return "menu";
+  const normalised = value.trim().toLocaleLowerCase().replace(/[.!?]+$/g, "");
+  const consent = parseWhatsAppConsentCommand(normalised);
+  if (consent === "subscribe") return "subscribe";
+  if (consent === "unsubscribe") return "unsubscribe";
+  if (/^(menu|menyu|browse|catalogue|catalog|start|hi|hello|habari)$/.test(normalised)) return "menu";
   if (/^(order|oda|place order|buy)$/.test(normalised)) return "order";
   if (/^(help|msaada|support)$/.test(normalised)) return "help";
   return "unknown";
 }
 
 function replyText(intent: GuestCommerceIntent, url?: string): string {
-  if (intent === "help")
-    return "Karibu LexiBite. Reply MENU to browse the menu, ORDER to start an order, or STAFF for assistance.\nWelcome to LexiBite. Reply MENU to browse or ORDER to start an order.";
-  if (!url)
+  if (intent === "help") {
+    return "Karibu LexiBite. Reply MENU to browse, ORDER to start an order, JOIN to receive offers, or STOP to opt out.\nWelcome to LexiBite. Reply MENU to browse, ORDER to start, JOIN for offers, or STOP to opt out.";
+  }
+  if (intent === "subscribe") {
+    return "Asante! You are now subscribed to WhatsApp offers and marketing updates from this restaurant. Reply STOP at any time to opt out.\nThank you. You have opted in to WhatsApp offers and marketing updates. Reply STOP at any time to opt out.";
+  }
+  if (intent === "unsubscribe") {
+    return "Umeondolewa kwenye matangazo ya WhatsApp. Hutapokea tena ofa za masoko.\nYou have been unsubscribed from WhatsApp marketing messages.";
+  }
+  if (!url) {
     return "Karibu! Reply MENU to explore the menu and order securely through the restaurant's Guest Portal.\nWelcome! Reply MENU to explore the menu and order securely through the restaurant's Guest Portal.";
+  }
   return [
     "Karibu! Your restaurant menu is ready.",
     "Browse available items, select modifiers and place your order securely through the restaurant's Guest Portal:",
@@ -47,8 +64,9 @@ export async function handleWhatsAppGuestCommerceMessage(
   conversationId: string,
   inbound: InboundMessage,
 ) {
-  const intent = classifyGuestCommerceIntent(inbound.text?.body);
-  if (intent === "unknown") return { handled: false as const, reason: "unrecognised_intent" };
+  const messageText = inbound.text?.body?.trim();
+  if (!messageText) return { handled: false as const, reason: "non_text_message" };
+  const intent = classifyGuestCommerceIntent(messageText);
 
   const { data: binding, error: bindingError } = await admin
     .from("wa_phone_number_bindings")
@@ -58,8 +76,9 @@ export async function handleWhatsAppGuestCommerceMessage(
     .eq("property_id", event.property_id)
     .eq("location_id", event.location_id)
     .maybeSingle();
-  if (bindingError || !binding || binding.status !== "active")
+  if (bindingError || !binding || binding.status !== "active") {
     throw new Error("whatsapp_commerce_binding_unavailable");
+  }
 
   const { data: integration, error: integrationError } = await admin
     .from("api_integrations")
@@ -107,8 +126,20 @@ export async function handleWhatsAppGuestCommerceMessage(
   if (priorReplyError) throw new Error("whatsapp_commerce_idempotency_lookup_failed");
   if (priorReply) return { handled: true as const, duplicate: true as const };
 
+  if (intent === "subscribe" || intent === "unsubscribe") {
+    if (!conversation.guest_customer_id) throw new Error("whatsapp_guest_customer_unavailable");
+    await recordWhatsAppGuestConsent(admin, {
+      tenantId: event.tenant_id,
+      propertyId: event.property_id,
+      guestCustomerId: conversation.guest_customer_id,
+      sourceEventId: event.id,
+      state: intent === "subscribe" ? "granted" : "revoked",
+    });
+  }
+
   let portalUrl: string | undefined;
-  if (intent === "menu" || intent === "order") {
+  let content: string;
+  if (intent === "menu" || intent === "order" || intent === "unknown") {
     const session = await createWhatsAppGuestPortalSession(admin, {
       tenantId: event.tenant_id,
       propertyId: event.property_id,
@@ -119,9 +150,42 @@ export async function handleWhatsAppGuestCommerceMessage(
       menuContext: { source: "whatsapp", intent },
     });
     portalUrl = session.portalUrl;
+
+    if (intent === "unknown") {
+      const { data: historyRows, error: historyError } = await admin
+        .from("wa_messages")
+        .select("direction, content")
+        .eq("conversation_id", conversationId)
+        .neq("provider_message_id", inbound.id)
+        .not("content", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(6);
+      if (historyError) throw new Error("whatsapp_concierge_history_unavailable");
+      const history = (historyRows ?? []).reverse().map((row: any) => ({
+        role: row.direction === "inbound" ? "user" as const : "assistant" as const,
+        content: String(row.content ?? ""),
+      }));
+      let conciergeReply = "I can help with menu questions and recommendations. Browse the menu and choose items in the secure Guest Portal.";
+      try {
+        const result = await askNova(admin, {
+          guestPortalToken: session.token,
+          message: messageText,
+          history,
+          interactionMode: "discovery",
+        });
+        if (result.ok) conciergeReply = result.reply;
+      } catch {
+        // AI entitlement, quota, provider or validation failure degrades to
+        // a safe menu handoff; no ungrounded model response is sent.
+      }
+      content = conciergeReply + "\n\nBrowse the menu and place your order securely: " + portalUrl;
+    } else {
+      content = replyText(intent, portalUrl);
+    }
+  } else {
+    content = replyText(intent);
   }
 
-  const content = replyText(intent, portalUrl);
   const clientRequestId = "wa:" + inbound.id;
   const { data: queued, error: queueError } = await admin
     .from("wa_messages")
