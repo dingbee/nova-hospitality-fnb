@@ -89,6 +89,7 @@ describe("WhatsApp outbound queue", () => {
           name: "weekly_special",
           language: "en",
           components: [{ type: "body", parameters: [] }],
+        campaign_recipient_id: "recipient-1",
         },
       },
     };
@@ -105,6 +106,7 @@ describe("WhatsApp outbound queue", () => {
       provider_message_id: "wamid.template.1",
       status: "sent",
     });
+    expect(updates).toContainEqual({ state: "sent", dispatched_at: expect.any(String) });
   });
 
   it("sends with the scoped tenant credential and records the provider message ID", async () => {
