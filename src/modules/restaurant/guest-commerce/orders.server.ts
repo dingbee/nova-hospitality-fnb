@@ -55,12 +55,12 @@ export async function submitGuestCommerceOrder(
       admin.from("restaurant_properties").select("id, status, currency").eq("id", session.propertyId)
         .eq("tenant_id", session.tenantId).maybeSingle(),
     ]);
-  if (
-    tenantError || !tenant || tenant.status !== "active" ||
-    propertyError || !property || property.status !== "active" ||
-    String(property.currency ?? "").toUpperCase() !== session.currency
-  ) {
+  if (tenantError || !tenant || tenant.status !== "active" ||
+      propertyError || !property || property.status !== "active") {
     throw new Error("This restaurant ordering session is no longer available. Reopen the menu.");
+  }
+  if (String(property.currency ?? "").toUpperCase() !== session.currency) {
+    throw new Error("The property currency has changed. Reopen the restaurant menu before ordering.");
   }
 
   const service = resolveServiceConfiguration(tenant.settings);
@@ -103,7 +103,7 @@ export async function submitGuestCommerceOrder(
         existing.guest_commerce_channel !== session.sourceChannel) {
       throw new Error("This order request has already been used. Refresh the menu and try again.");
     }
-    return safeOrderProjection(existing, session.sourceChannel, existing.order_type);
+    return safeOrderProjection({ ...existing, idempotent: true }, session.sourceChannel, existing.order_type);
   }
 
   const catalog = await fetchSellableCatalog(admin, session.tenantId, {
