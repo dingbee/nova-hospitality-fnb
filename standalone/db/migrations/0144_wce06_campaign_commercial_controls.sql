@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS public.wa_message_templates (
 );
 CREATE INDEX IF NOT EXISTS wa_message_templates_scope_status_idx
   ON public.wa_message_templates (tenant_id, property_id, status, category);
+CREATE UNIQUE INDEX IF NOT EXISTS wa_message_templates_meta_id_uq
+  ON public.wa_message_templates (tenant_id, meta_template_id)
+  WHERE meta_template_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS public.wa_campaigns (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
