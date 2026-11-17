@@ -95,7 +95,10 @@ export async function getStocktake(sb: Sb, userId: string, tenantId: string, sto
 
 /** Snapshot expected quantities from the ledger at the moment counting starts. */
 export async function startStocktake(sb: Sb, userId: string, input: StartStocktakeInput) {
-  await assertCapability(sb, userId, input.tenantId, "stocktake.manage");
+  await assertCapability(sb, userId, input.tenantId, "stocktake.manage", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
 
   let itemQuery = sb
     .from("restaurant_inventory_items")
@@ -178,14 +181,17 @@ export async function startStocktake(sb: Sb, userId: string, input: StartStockta
 }
 
 export async function saveStocktakeCounts(sb: Sb, userId: string, input: SaveStocktakeCountsInput) {
-  await assertCapability(sb, userId, input.tenantId, "stocktake.manage");
   const { data: head } = await sb
     .from("restaurant_stocktakes")
-    .select("id, status")
+    .select("id, status, property_id, location_id")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.stocktakeId)
     .single();
   if (!head) throw new Error("Stocktake not found.");
+  await assertCapability(sb, userId, input.tenantId, "stocktake.manage", {
+    propertyId: head.property_id ?? null,
+    locationId: head.location_id ?? null,
+  });
   if (!["draft", "counting", "review"].includes(head.status)) {
     throw new Error(`Counts cannot be edited once the stocktake is "${head.status}".`);
   }
