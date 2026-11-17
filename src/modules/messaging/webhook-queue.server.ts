@@ -130,7 +130,28 @@ async function processMessages(db: Db, event: ClaimedEvent, value: Record<string
     if (insertError && insertError.code !== "23505") {
       throw new Error("inbound_message_persistence_failed");
     }
-    // A repeated Meta delivery must not trigger a second customer-facing action.
+    // Identity upsert is idempotent and also runs on provider retries; the
+    // consent ledger and order history remain tenant-scoped.
+    const contact = (Array.isArray(value.contacts) ? value.contacts : []).find(
+      (candidate: Record<string, any>) => candidate.wa_id === waUserId,
+    );
+    const guestCustomer = await upsertWhatsAppGuestCustomer(db, {
+      tenantId: event.tenant_id,
+      propertyId: event.property_id,
+      phone: waUserId,
+      displayName: typeof contact?.profile?.name === "string" ? contact.profile.name : null,
+      messageText: messageContent(message),
+    });
+    const { error: customerLinkError } = await db.from("wa_conversations")
+      .update({ guest_customer_id: guestCustomer.id })
+      .eq("id", conversation.id)
+      .eq("tenant_id", event.tenant_id)
+      .eq("property_id", event.property_id)
+      .eq("location_id", event.location_id);
+    if (customerLinkError) throw new Error("whatsapp_guest_customer_link_failed");
+
+    // A repeated Meta delivery may re-enter this handler, but its outbox
+    // request key is unique to the provider message ID.
     await handleWhatsAppGuestCommerceMessage(db, commerceEvent, conversation.id, message);
 
     if (!conversation.last_message_at || new Date(at) > new Date(conversation.last_message_at)) {
