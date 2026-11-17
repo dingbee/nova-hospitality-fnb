@@ -183,6 +183,23 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
       guestNotes: line.guestNotes,
       modifiers: line.modifiers,
     }));
+    const { data: conversation, error: conversationError } = await supabaseAdmin
+      .from("wa_conversations")
+      .select("guest_customer_id")
+      .eq("id", session.conversationId)
+      .eq("tenant_id", session.tenantId)
+      .eq("property_id", session.propertyId)
+      .eq("location_id", session.locationId)
+      .maybeSingle();
+    if (conversationError || !conversation) throw new Error("The WhatsApp guest identity could not be verified.");
+    const guestCustomerId = conversation.guest_customer_id as string | null;
+    if (guestCustomerId && data.guestName?.trim()) {
+      const { error: profileError } = await supabaseAdmin.from("restaurant_guest_customers")
+        .update({ display_name: data.guestName.trim().slice(0, 160) })
+        .eq("id", guestCustomerId)
+        .eq("tenant_id", session.tenantId);
+      if (profileError) throw new Error("The guest profile could not be updated.");
+    }
     const requestKey = "wa-guest:" + session.sessionId + ":" + data.clientRequestId;
     const order = await createGuestOrder(supabaseAdmin, {
       tenantId: session.tenantId,
@@ -195,6 +212,7 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
       lines,
       clientRequestId: requestKey,
       guestPortalSessionId: session.sessionId,
+      guestCustomerId,
     });
 
     const paymentTiming = resolveGuestPaymentTiming(tenant.settings);
