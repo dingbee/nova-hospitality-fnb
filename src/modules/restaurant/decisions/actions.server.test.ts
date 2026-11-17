@@ -239,6 +239,10 @@ function makeFakeSupabase(opts: {
           const rows = opts.restaurantMembers.filter((m) => matchesFilters(m, filters));
           return { data: rows, error: null };
         }
+        if (table === "restaurant_locations") {
+          const match = filters.id === LOCATION_ID;
+          return { data: mode === "many" ? (match ? [{ id: LOCATION_ID, tenant_id: TENANT_A, property_id: null, scope: "tenant" }] : []) : (match ? { id: LOCATION_ID, tenant_id: TENANT_A, property_id: null, scope: "tenant" } : null), error: null };
+        }
         if (table === "restaurant_purchase_requests") {
           const matches = requests.filter((r) => matchesFilters(r, filters));
           if (mode === "single")
