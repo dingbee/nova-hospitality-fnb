@@ -18,8 +18,8 @@
 | WCE-04 — Unified Guest Commerce and checkout | IMPLEMENTATION PRESENT — exact-head acceptance pending | PR #199: Guest Portal route/functions, canonical catalogue/pricing/modifier resolution, cart and takeaway checkout; migration `0140_wce04_guest_commerce_checkout.sql` | Dedicated WCE CI not yet evidenced on continuation head; acceptance run required | CI, stock/recipe availability, checkout idempotency, pricing/currency and property/outlet isolation |
 | WCE-05 — Orders, CRM and AI Concierge | IMPLEMENTATION PRESENT — exact-head acceptance pending | PR #199: tenant-scoped guest CRM/consent, order lifecycle notifications, handover, loyalty, FAQ grounding; migrations `0141`–`0143` | Dedicated WCE CI not yet evidenced on continuation head; acceptance run required | CI, consent enforcement, blocked-guest suppression, notification reconciliation, loyalty immutability and AI scope tests |
 | WCE-06 — Campaign governance and commercial controls | IMPLEMENTATION VERIFIED — CI #222 PASS | PR #202; migration `0144_wce06_campaign_commercial_controls.sql`; campaign governance module; scheduled/event orchestration; send-time consent/entitlement/template checks; default-off UAT dispatch gate; effective-dated rates and append-only usage evidence | Exact-head run #222 on `4a2a497910752af7f187cfbb77201a102f3385a0`: lint, WCE tests, full suite, strict typecheck, build/route generation, PostgreSQL 17 clean replay and RLS/RPC assertions all PASS | PR remains draft/unmerged; no production migrations, live Meta dispatch or provider billing; tenant/founder reporting surfaces proceed in WCE-07 |
-| WCE-07 — Founder/tenant operations and analytics | NEXT — execution to begin | Founder-only integration/onboarding/health/usage/revenue/security administration; tenant-scoped inbox, CRM, templates, campaigns, consent, usage reports and conversion analytics | Exact-head CI and role/tenant-isolation acceptance required | Reuse WCE-06 campaign and usage evidence; no parallel CRM, entitlement, billing or commerce authority |
-| WCE-08 — Integrated acceptance and certification | NOT STARTED | No integrated certification evidence | — | WCE-00 through WCE-07 acceptance, live Meta test assets, multi-tenant E2E and operational runbook |
+| WCE-07 — Founder/tenant operations and analytics | IMPLEMENTATION PRESENT — exact-head acceptance pending | PR #204; founder-only provider health/usage/revenue/security control centre; tenant inbox, CRM/consent, templates/campaigns, usage and conversion reporting | Exact-head CI, role and tenant-isolation acceptance required | WCE-06 entitlement and usage authorities; no live provider dispatch or billing in UAT |
+| WCE-08 — Integrated acceptance and certification | CERTIFICATION IN PROGRESS | PR #205; integrated platform acceptance contract and end-to-end verification plan | Exact-head integrated CI and cross-phase acceptance required | All WCE-00–07 exact-head checks, tenant/founder isolation, consent, financial reconciliation and external Meta test assets |
 
 ## WCE-03 implementation evidence
 
@@ -50,7 +50,7 @@
 
 ## Acceptance workflow
 
-The WCE workflow is now present on both the WCE-02 base branch and continuation branch. It is read-only with respect to repository contents and runs changed-source lint, scoped WCE tests, full repository tests, strict typecheck, production build/route generation and PostgreSQL 17 clean migration replay. Earlier WCE-03–05 implementation checks passed on an older SHA, not the current PR #199 head; exact-head certification remains required. WCE-06 implementation is verified on exact head `4a2a497910752af7f187cfbb77201a102f3385a0` by GitHub Actions run #222. WCE-07 proceeds as a dependent branch; no merge or production release is implied.
+The unified WCE workflow is phase-aware and runs changed-source lint from the WCE-02 baseline, phase-available WCE tests, the full repository test suite, strict typecheck, production build/route generation and PostgreSQL 17 clean migration replay with cumulative WCE-02, WCE-03–05 and WCE-06 schema/security assertions. Exact-head verification is required for every active phase PR. No merge or production release is implied.
 
 ## External dependency register
 
@@ -58,9 +58,9 @@ The WCE workflow is now present on both the WCE-02 base branch and continuation 
 2. Runtime `META_WHATSAPP_WEBHOOK_VERIFY_TOKEN`.
 3. Runtime `LEXIBITE_GUEST_PORTAL_BASE_URL` (HTTPS in production).
 4. Existing `CRON_SECRET` must match the Supabase Vault secret `lexibite_cron_secret` used by the dispatcher schedule.
-5. Tenant/property Pesapal integration credentials and a defined restaurant reservation authority remain external dependencies for the separate payments/reservations workstream; they are not a reason to bypass WCE-06 campaign controls.
+5. Tenant/property Pesapal integration credentials and a defined restaurant reservation authority are required before WCE-06 live acceptance.
 6. Live Meta delivery and callback verification remain unclaimed until the above assets are supplied and tested.
 
 ## Operating rule
 
-Software implementation and isolated CI do not authorize production release. Do not merge PR #195/#199, apply WCE migrations to production, change production credentials/data, or trigger manual Vercel deployments without explicit release authorization. WCE-06 exact-head software verification is green. WCE-02 and WCE-03–05 still require exact-head certification on their active PRs. Continue WCE-07 on a dependent branch; do not merge PR #195/#199/#202 or promote production without explicit release authorization.
+Software implementation and isolated CI do not authorize production release. Do not merge PR #195/#199, apply WCE migrations to production, change production credentials/data, or trigger manual Vercel deployments without explicit release authorization. WCE-03 through WCE-05 acceptance is green. Continue WCE-06 on a separate dependent branch; do not merge PR #195/#199 or promote production without explicit release authorization.
