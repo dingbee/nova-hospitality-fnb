@@ -1,305 +1,261 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createPesapalAdapter } from "./pesapal.server";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createPesapalAdapter, type PesapalAdapterConfig } from "./pesapal.server";
 
-const ORIGINAL_ENV = { ...process.env };
-
-function setEnv(vars: Record<string, string | undefined>) {
-  for (const [k, v] of Object.entries(vars)) {
-    if (v === undefined) delete process.env[k];
-    else process.env[k] = v;
-  }
+function config(overrides: Partial<PesapalAdapterConfig> = {}): PesapalAdapterConfig {
+  return {
+    consumerKey: "tenant-consumer-key",
+    consumerSecret: "tenant-consumer-secret",
+    environment: "sandbox",
+    ipnId: "tenant-ipn-1",
+    ...overrides,
+  };
 }
 
 function jsonResponse(body: unknown, ok = true, status = 200) {
   return { ok, status, json: async () => body } as Response;
 }
 
-describe("createPesapalAdapter", () => {
-  beforeEach(() => {
-    setEnv(ORIGINAL_ENV);
-    setEnv({
-      PESAPAL_CONSUMER_KEY: undefined,
-      PESAPAL_CONSUMER_SECRET: undefined,
-      PESAPAL_ENV: undefined,
-      PESAPAL_IPN_URL: undefined,
-      PESAPAL_IPN_ID: undefined,
-    });
-  });
+describe("createPesapalAdapter — property-configured credentials", () => {
   afterEach(() => {
-    setEnv(ORIGINAL_ENV);
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
-  it("returns null — never a fake provider — when no consumer key/secret is configured", () => {
-    expect(createPesapalAdapter()).toBeNull();
+  it("returns null when credentials or the property IPN binding are absent", () => {
+    expect(createPesapalAdapter(null)).toBeNull();
+    expect(createPesapalAdapter(undefined)).toBeNull();
+    expect(createPesapalAdapter(config({ consumerKey: "" }))).toBeNull();
+    expect(createPesapalAdapter(config({ ipnId: undefined }))).toBeNull();
   });
 
-  it("returns a real adapter once credentials exist", () => {
-    setEnv({
-      PESAPAL_CONSUMER_KEY: "key",
-      PESAPAL_CONSUMER_SECRET: "secret",
-      PESAPAL_IPN_ID: "ipn-1",
-    });
-    const adapter = createPesapalAdapter();
+  it("returns a provider only for a complete property integration", () => {
+    const adapter = createPesapalAdapter(config());
     expect(adapter).not.toBeNull();
     expect(adapter!.name).toBe("pesapal");
   });
 
-  describe("with credentials configured", () => {
-    beforeEach(() => {
-      setEnv({
-        PESAPAL_CONSUMER_KEY: "key",
-        PESAPAL_CONSUMER_SECRET: "secret",
-        PESAPAL_IPN_ID: "ipn-1",
-      });
+  it("authenticates with this integration's credentials and submits the server-derived order", async () => {
+    const calls: { url: string; body: Record<string, unknown> | null }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
+        if (url.includes("/Auth/RequestToken")) {
+          return jsonResponse({
+            token: "tenant-token",
+            expiryDate: new Date(Date.now() + 300_000).toISOString(),
+          });
+        }
+        if (url.includes("/Transactions/SubmitOrderRequest")) {
+          return jsonResponse({
+            order_tracking_id: "track-1",
+            redirect_url: "https://cybqa.pesapal.com/checkout/track-1",
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    const adapter = createPesapalAdapter(config())!;
+    const result = await adapter.initiate({
+      amount: 11000,
+      currency: "TZS",
+      merchantReference: "order-1",
+      description: "Order ORD-1",
+      returnUrl: "https://example.test/order/order-1?pay=return",
     });
 
-    it("initiate() authenticates, then submits the order with the server-derived amount/currency, never anything else", async () => {
-      const calls: { url: string; body: Record<string, unknown> | null }[] = [];
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (url: string, init?: RequestInit) => {
-          calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
-          if (url.includes("/Auth/RequestToken")) {
-            return jsonResponse({
-              token: "tok-1",
-              expiryDate: new Date(Date.now() + 300_000).toISOString(),
-            });
-          }
-          if (url.includes("/Transactions/SubmitOrderRequest")) {
-            return jsonResponse({
-              order_tracking_id: "track-1",
-              redirect_url: "https://cybqa.pesapal.com/checkout/track-1",
-              merchant_reference: calls[calls.length - 1]?.body?.id,
-              status: "200",
-            });
-          }
-          throw new Error(`unexpected fetch: ${url}`);
-        }),
-      );
+    expect(result).toEqual({
+      providerReference: "track-1",
+      redirectUrl: "https://cybqa.pesapal.com/checkout/track-1",
+    });
+    const auth = calls.find((call) => call.url.includes("/Auth/RequestToken"))!;
+    expect(auth.body).toEqual({
+      consumer_key: "tenant-consumer-key",
+      consumer_secret: "tenant-consumer-secret",
+    });
+    const submit = calls.find((call) => call.url.includes("SubmitOrderRequest"))!;
+    expect(submit.body).toMatchObject({
+      id: "order-1",
+      currency: "TZS",
+      amount: 11000,
+      callback_url: "https://example.test/order/order-1?pay=return",
+      notification_id: "tenant-ipn-1",
+    });
+  });
 
-      const adapter = createPesapalAdapter()!;
-      const result = await adapter.initiate({
-        amount: 11000,
+  it("registers the IPN once and persists its provider-issued id through the integration callback", async () => {
+    const calls: string[] = [];
+    const persist = vi.fn(async () => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        calls.push(url);
+        if (url.includes("/Auth/RequestToken")) return jsonResponse({ token: "tenant-token" });
+        if (url.includes("/URLSetup/RegisterIPN")) return jsonResponse({ ipn_id: "registered-ipn" });
+        if (url.includes("/Transactions/SubmitOrderRequest")) {
+          return jsonResponse({
+            order_tracking_id: "track-2",
+            redirect_url: "https://cybqa.pesapal.com/checkout/track-2",
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+    const adapter = createPesapalAdapter(
+      config({ ipnId: undefined, ipnUrl: "https://lexibite.example/api/pesapal-ipn", onIpnRegistered: persist }),
+    )!;
+    await adapter.initiate({
+      amount: 1000,
+      currency: "TZS",
+      merchantReference: "order-2",
+      description: "Order",
+      returnUrl: "https://lexibite.example/guest/session/payment",
+    });
+    expect(calls.filter((url) => url.includes("/URLSetup/RegisterIPN"))).toHaveLength(1);
+    expect(persist).toHaveBeenCalledWith("registered-ipn");
+  });
+
+  it("logs a rejected order-submission call server-side without changing the thrown message", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("/Auth/RequestToken")) return jsonResponse({ token: "tok-x" });
+        if (url.includes("/Transactions/SubmitOrderRequest")) {
+          return jsonResponse({ error: { message: "invalid consumer key" } }, false, 401);
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    const adapter = createPesapalAdapter(config())!;
+    await expect(
+      adapter.initiate({
+        amount: 1000,
         currency: "TZS",
-        merchantReference: "order-1",
-        description: "Order ORD-1",
-        returnUrl: "https://example.test/order/table-1?pay=return",
-      });
+        merchantReference: "order-2",
+        description: "Order",
+        returnUrl: "https://example.test/return",
+      }),
+    ).rejects.toThrow("invalid consumer key");
 
-      expect(result).toEqual({
-        providerReference: "track-1",
-        redirectUrl: "https://cybqa.pesapal.com/checkout/track-1",
-      });
-      const submit = calls.find((c) => c.url.includes("SubmitOrderRequest"))!;
-      expect(submit.body).toMatchObject({
-        id: "order-1",
+    const submissionLog = errorSpy.mock.calls.find(
+      (call) => JSON.parse(call[1] as string).status === 401,
+    );
+    expect(submissionLog).toBeDefined();
+    expect(submissionLog![0]).toBe("[integration:pesapal]");
+  });
+
+  it("logs network failures without changing the thrown error", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("/Auth/RequestToken")) return jsonResponse({ token: "tok-y" });
+        if (url.includes("/Transactions/SubmitOrderRequest")) throw new TypeError("fetch failed");
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    const adapter = createPesapalAdapter(config())!;
+    await expect(
+      adapter.initiate({
+        amount: 1000,
         currency: "TZS",
-        amount: 11000,
-        callback_url: "https://example.test/order/table-1?pay=return",
-        notification_id: "ipn-1",
-      });
-    });
+        merchantReference: "order-3",
+        description: "Order",
+        returnUrl: "https://example.test/return",
+      }),
+    ).rejects.toThrow("fetch failed");
 
-    // Both tests below mock EVERY Pesapal endpoint the adapter might call
-    // (not just the one under test), because `pesapalFetch`'s access-token
-    // cache is process-wide and may already be warm from an earlier test
-    // in this file — these must hold regardless of cache state.
-    it("ME-16 remediation: a rejected order-submission call is logged server-side without changing the thrown message", async () => {
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const networkLog = errorSpy.mock.calls.find(
+      (call) => JSON.parse(call[1] as string).reason === "network",
+    );
+    expect(networkLog).toBeDefined();
+    expect(networkLog![0]).toBe("[integration:pesapal]");
+  });
+
+  it("verify maps a completed transaction to paid with the provider-confirmed amount and currency", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("/Auth/RequestToken")) return jsonResponse({ token: "tok-1" });
+        if (url.includes("/GetTransactionStatus")) {
+          return jsonResponse({
+            status_code: 1,
+            payment_status_description: "Completed",
+            amount: 11000,
+            currency: "TZS",
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+    const result = await createPesapalAdapter(config())!.verify({ providerReference: "track-1" });
+    expect(result).toMatchObject({ status: "paid", amount: 11000, currency: "TZS" });
+  });
+
+  it("verify has a hard timeout for a hanging status request", async () => {
+    vi.useFakeTimers();
+    try {
       vi.stubGlobal(
         "fetch",
-        vi.fn(async (url: string) => {
-          if (url.includes("/Auth/RequestToken")) {
-            return jsonResponse({
-              token: "tok-x",
-              expiryDate: new Date(Date.now() + 300_000).toISOString(),
-            });
-          }
-          if (url.includes("/Transactions/SubmitOrderRequest")) {
-            return jsonResponse({ error: { message: "invalid consumer key" } }, false, 401);
-          }
-          throw new Error(`unexpected fetch: ${url}`);
+        vi.fn((url: string, init?: RequestInit) => {
+          if (url.includes("/Auth/RequestToken")) return Promise.resolve(jsonResponse({ token: "tok-1" }));
+          return new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+          });
         }),
       );
-
-      const adapter = createPesapalAdapter()!;
-      await expect(
-        adapter.initiate({
-          amount: 1000,
-          currency: "TZS",
-          merchantReference: "order-2",
-          description: "Order",
-          returnUrl: "https://example.test/return",
-        }),
-      ).rejects.toThrow("invalid consumer key");
-
-      const submissionLog = errorSpy.mock.calls.find(
-        (c) => JSON.parse(c[1] as string).status === 401,
+      const verifyPromise = createPesapalAdapter(config())!.verify({ providerReference: "track-1" });
+      let settled = false;
+      verifyPromise.catch(() => {});
+      verifyPromise.then(
+        () => (settled = true),
+        () => (settled = true),
       );
-      expect(submissionLog).toBeDefined();
-      expect(submissionLog![0]).toBe("[integration:pesapal]");
-    });
+      await vi.advanceTimersByTimeAsync(19_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-    it("ME-16 remediation: a network failure is logged server-side without changing the thrown error", async () => {
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (url: string) => {
-          if (url.includes("/Auth/RequestToken")) {
-            return jsonResponse({
-              token: "tok-y",
-              expiryDate: new Date(Date.now() + 300_000).toISOString(),
-            });
-          }
-          if (url.includes("/Transactions/SubmitOrderRequest")) {
-            throw new TypeError("fetch failed");
-          }
-          throw new Error(`unexpected fetch: ${url}`);
-        }),
-      );
+  it.each([
+    [{ status_code: 2, payment_status_description: "Failed" }, "failed"],
+    [{ status_code: 0, payment_status_description: "Expired" }, "expired"],
+    [{ status_code: 0, payment_status_description: "Pending" }, "pending"],
+  ])("maps non-paid provider states safely", async (body, expected) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("/Auth/RequestToken")) return jsonResponse({ token: "tok-1" });
+        if (url.includes("/GetTransactionStatus")) return jsonResponse(body);
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+    const result = await createPesapalAdapter(config())!.verify({ providerReference: "track-1" });
+    expect(result.status).toBe(expected);
+  });
 
-      const adapter = createPesapalAdapter()!;
-      await expect(
-        adapter.initiate({
-          amount: 1000,
-          currency: "TZS",
-          merchantReference: "order-3",
-          description: "Order",
-          returnUrl: "https://example.test/return",
-        }),
-      ).rejects.toThrow("fetch failed");
+  it("uses the integration-selected environment, never a process-wide default", async () => {
+    const hosts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        hosts.push(new URL(url).host);
+        if (url.includes("/Auth/RequestToken")) return jsonResponse({ token: "tok-1" });
+        return jsonResponse({ status_code: 0, payment_status_description: "Pending" });
+      }),
+    );
+    await createPesapalAdapter(config({ environment: "sandbox" }))!.verify({ providerReference: "track-1" });
+    expect(hosts.every((host) => host === "cybqa.pesapal.com")).toBe(true);
 
-      const networkLog = errorSpy.mock.calls.find(
-        (c) => JSON.parse(c[1] as string).reason === "network",
-      );
-      expect(networkLog).toBeDefined();
-      expect(networkLog![0]).toBe("[integration:pesapal]");
-    });
-
-    it("verify() maps a completed transaction to paid", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (url: string) => {
-          if (url.includes("/Auth/RequestToken")) return jsonResponse({ token: "tok-1" });
-          if (url.includes("/GetTransactionStatus")) {
-            return jsonResponse({
-              status_code: 1,
-              payment_status_description: "Completed",
-              amount: 11000,
-              currency: "TZS",
-            });
-          }
-          throw new Error(`unexpected fetch: ${url}`);
-        }),
-      );
-      const adapter = createPesapalAdapter()!;
-      const result = await adapter.verify({ providerReference: "track-1" });
-      expect(result.status).toBe("paid");
-      // The caller (confirmGuestPayment) reconciles these against the order
-      // it expected — a "paid" status with no amount to check would defeat that.
-      expect(result).toMatchObject({ amount: 11000, currency: "TZS" });
-    });
-
-    it("ME-13: verify() has a hard timeout — a hanging GetTransactionStatus aborts instead of blocking the caller forever", async () => {
-      vi.useFakeTimers();
-      try {
-        vi.stubGlobal(
-          "fetch",
-          vi.fn((url: string, init?: RequestInit) => {
-            if (url.includes("/Auth/RequestToken"))
-              return Promise.resolve(jsonResponse({ token: "tok-1" }));
-            // GetTransactionStatus never responds — only the timeout's own
-            // abort should ever settle this promise.
-            return new Promise((_resolve, reject) => {
-              init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
-            });
-          }),
-        );
-        const adapter = createPesapalAdapter()!;
-        const verifyPromise = adapter.verify({ providerReference: "track-1" });
-        let settled = false;
-        verifyPromise.catch(() => {});
-        verifyPromise.then(
-          () => (settled = true),
-          () => (settled = true),
-        );
-        await vi.advanceTimersByTimeAsync(19_000);
-        expect(settled).toBe(false);
-        await vi.advanceTimersByTimeAsync(2_000);
-        expect(settled).toBe(true);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it("verify() maps a failed transaction to failed, never paid", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (url: string) => {
-          if (url.includes("/Auth/RequestToken")) return jsonResponse({ token: "tok-1" });
-          if (url.includes("/GetTransactionStatus")) {
-            return jsonResponse({ status_code: 2, payment_status_description: "Failed" });
-          }
-          throw new Error(`unexpected fetch: ${url}`);
-        }),
-      );
-      const adapter = createPesapalAdapter()!;
-      const result = await adapter.verify({ providerReference: "track-1" });
-      expect(result.status).toBe("failed");
-    });
-
-    it("verify() maps an expired transaction to expired, never paid", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (url: string) => {
-          if (url.includes("/Auth/RequestToken")) return jsonResponse({ token: "tok-1" });
-          if (url.includes("/GetTransactionStatus")) {
-            return jsonResponse({ status_code: 0, payment_status_description: "Expired" });
-          }
-          throw new Error(`unexpected fetch: ${url}`);
-        }),
-      );
-      const adapter = createPesapalAdapter()!;
-      const result = await adapter.verify({ providerReference: "track-1" });
-      expect(result.status).toBe("expired");
-    });
-
-    it("verify() maps an in-progress transaction to pending, never paid", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (url: string) => {
-          if (url.includes("/Auth/RequestToken")) return jsonResponse({ token: "tok-1" });
-          if (url.includes("/GetTransactionStatus")) {
-            return jsonResponse({ status_code: 0, payment_status_description: "Pending" });
-          }
-          throw new Error(`unexpected fetch: ${url}`);
-        }),
-      );
-      const adapter = createPesapalAdapter()!;
-      const result = await adapter.verify({ providerReference: "track-1" });
-      expect(result.status).toBe("pending");
-    });
-
-    it("uses the sandbox host by default and the production host only when PESAPAL_ENV=production", async () => {
-      const hosts: string[] = [];
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (url: string) => {
-          hosts.push(new URL(url).host);
-          if (url.includes("/Auth/RequestToken")) return jsonResponse({ token: "tok-1" });
-          return jsonResponse({ status_code: 0, payment_status_description: "Pending" });
-        }),
-      );
-      const sandboxAdapter = createPesapalAdapter()!;
-      await sandboxAdapter.verify({ providerReference: "track-1" });
-      expect(hosts.every((h) => h === "cybqa.pesapal.com")).toBe(true);
-
-      hosts.length = 0;
-      setEnv({ PESAPAL_ENV: "production" });
-      const prodAdapter = createPesapalAdapter()!;
-      await prodAdapter.verify({ providerReference: "track-1" });
-      expect(hosts.every((h) => h === "pay.pesapal.com")).toBe(true);
-    });
+    hosts.length = 0;
+    await createPesapalAdapter(config({ environment: "production" }))!.verify({ providerReference: "track-2" });
+    expect(hosts.every((host) => host === "pay.pesapal.com")).toBe(true);
   });
 });
