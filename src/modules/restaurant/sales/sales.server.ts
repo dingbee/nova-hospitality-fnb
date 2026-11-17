@@ -1038,7 +1038,8 @@ export async function transitionOrder(
     }
     try {
       const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-      const { queueWhatsAppOrderStatusNotification } = await import("@/modules/messaging/guest-crm.server");
+      const { queueWhatsAppOrderStatusNotification } =
+        await import("@/modules/messaging/guest-crm.server");
       await queueWhatsAppOrderStatusNotification(supabaseAdmin, {
         tenantId: input.tenantId,
         orderId: input.orderId,
@@ -1204,7 +1205,11 @@ export async function transitionOrder(
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const guestCrm = await import("@/modules/messaging/guest-crm.server");
     try {
-      await guestCrm.awardGuestLoyaltyForCompletedOrder(supabaseAdmin, input.tenantId, input.orderId);
+      await guestCrm.awardGuestLoyaltyForCompletedOrder(
+        supabaseAdmin,
+        input.tenantId,
+        input.orderId,
+      );
     } catch (error) {
       console.warn("[whatsapp] guest loyalty accrual deferred", (error as Error).message);
     }

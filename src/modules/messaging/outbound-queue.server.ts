@@ -111,7 +111,8 @@ export async function processPendingWhatsAppOutboundMessages(
       if (updateError) throw new Error("whatsapp_outbox_sent_state_failed");
       const notificationEventId = message.payload?.order_notification_event_id;
       if (typeof notificationEventId === "string") {
-        await admin.from("wa_order_notification_events")
+        await admin
+          .from("wa_order_notification_events")
           .update({ notification_state: "sent", updated_at: new Date().toISOString() })
           .eq("id", notificationEventId)
           .eq("tenant_id", message.tenant_id);
@@ -140,11 +141,14 @@ export async function processPendingWhatsAppOutboundMessages(
         .eq("locked_by", workerId);
       if (stateError) throw new Error("whatsapp_outbox_failure_state_failed");
       const notificationEventId = message.payload?.order_notification_event_id;
-      if (typeof notificationEventId === "string" && !(retryable && message.delivery_attempts < 8)) {
-        const notificationState = error instanceof MetaGraphError && error.code === 131047
-          ? "deferred_template"
-          : "failed";
-        await admin.from("wa_order_notification_events")
+      if (
+        typeof notificationEventId === "string" &&
+        !(retryable && message.delivery_attempts < 8)
+      ) {
+        const notificationState =
+          error instanceof MetaGraphError && error.code === 131047 ? "deferred_template" : "failed";
+        await admin
+          .from("wa_order_notification_events")
           .update({ notification_state: notificationState, updated_at: new Date().toISOString() })
           .eq("id", notificationEventId)
           .eq("tenant_id", message.tenant_id);

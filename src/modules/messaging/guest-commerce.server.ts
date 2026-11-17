@@ -168,7 +168,8 @@ export async function handleWhatsAppGuestCommerceMessage(
     portalUrl = session.portalUrl;
     content = replyText(intent, portalUrl);
   } else if (intent === "unknown" && conversation.status === "human_handoff") {
-    content = "A team member is handling this conversation. Please wait for their reply.\nMjumbe wa timu yetu anashughulikia mazungumzo haya. Tafadhali subiri.";
+    content =
+      "A team member is handling this conversation. Please wait for their reply.\nMjumbe wa timu yetu anashughulikia mazungumzo haya. Tafadhali subiri.";
   } else if (intent === "unknown") {
     const { data: historyRows, error: historyError } = await admin
       .from("wa_messages")
