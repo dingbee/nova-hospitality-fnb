@@ -70,6 +70,7 @@ describe("getConfiguredProvider — tenant/property integration resolution", () 
     if (originalBase === undefined) delete process.env.APP_BASE_URL;
     else process.env.APP_BASE_URL = originalBase;
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("resolves only the active Pesapal payment integration for the exact property", async () => {
