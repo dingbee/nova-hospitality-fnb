@@ -69,6 +69,7 @@ jobs:
           src/modules/messaging/guest-crm.server.test.ts
           src/modules/messaging/campaign-governance.server.test.ts
           src/modules/messaging/outbound-queue.server.test.ts
+          src/modules/messaging/operations.server.test.ts
           src/modules/messaging/guest-reservations.server.test.ts
           src/modules/restaurant/selforder/providers/pesapal.server.test.ts
           src/modules/restaurant/selforder/selfpay.server.test.ts
