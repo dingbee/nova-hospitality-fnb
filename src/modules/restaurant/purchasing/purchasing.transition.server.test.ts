@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Sb } from "../core/access.server";
 
 const mocks = vi.hoisted(() => ({
   assertCapability: vi.fn().mockResolvedValue(undefined),
@@ -47,7 +48,13 @@ function makeSupabase() {
     buyer_id: USER,
   };
   let operation = "select";
-  const builder: any = {
+  type Query = {
+    select: (...args: unknown[]) => Query;
+    eq: (...args: unknown[]) => Query;
+    update: (...args: unknown[]) => Query;
+    single: () => Promise<{ data: typeof current; error: null }>;
+  };
+  const builder: Query = {
     select: () => builder,
     eq: () => builder,
     update: () => {
@@ -62,7 +69,7 @@ function makeSupabase() {
   return {
     from: () => builder,
     rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
-  };
+  } as unknown as Sb;
 }
 
 describe("purchase-order maker-checker", () => {
@@ -73,7 +80,7 @@ describe("purchase-order maker-checker", () => {
         tenantId: TENANT,
         id: ORDER,
         status: "approved",
-      } as any),
+      } as Parameters<typeof transitionPurchaseOrder>[2]),
     ).rejects.toThrow(/Separation of duties/);
 
     expect(mocks.assertCapability).toHaveBeenCalledWith(
