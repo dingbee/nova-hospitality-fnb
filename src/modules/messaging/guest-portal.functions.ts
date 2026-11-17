@@ -70,13 +70,14 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
     const guestCustomerId = conversation?.guest_customer_id as string | null;
     const [{ data: guestCustomer }, { data: loyaltyEntries, error: loyaltyError }] = guestCustomerId
       ? await Promise.all([
-          supabaseAdmin.from("restaurant_guest_customers").select("display_name")
+          supabaseAdmin.from("restaurant_guest_customers").select("display_name, status")
             .eq("id", guestCustomerId).eq("tenant_id", session.tenantId).maybeSingle(),
           supabaseAdmin.from("restaurant_guest_loyalty_ledger").select("points_delta")
             .eq("tenant_id", session.tenantId).eq("guest_customer_id", guestCustomerId),
         ])
       : [{ data: null }, { data: [], error: null }];
     if (loyaltyError) throw new Error("Guest loyalty balance could not be loaded.");
+    if (guestCustomer?.status === "blocked") throw new Error("This guest account is not permitted to place orders.");
     const settings = tenant.settings as {
       business?: { tradingName?: string; logoUrl?: string | null };
     } | null;
