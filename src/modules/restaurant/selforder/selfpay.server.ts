@@ -335,6 +335,18 @@ function isLiveSession(session: PendingSession): boolean {
  * most one live call to the provider exists for a given order, not merely
  * at most one DB row claiming to own one.
  */
+export type GuestPayableOrder = {
+  id: string;
+  tenantId: string;
+  propertyId: string | null;
+  orderNumber: string;
+  status: string;
+  total: number;
+  paidTotal: number;
+  currency: string;
+  billRequestedAt?: string | null;
+};
+
 export async function initiateGuestPayment(
   sb: Sb,
   input: InitiateGuestPaymentInput,
@@ -343,36 +355,53 @@ export async function initiateGuestPayment(
 ): Promise<InitiateGuestPaymentResult> {
   const table = await resolveGuestTableContext(sb, input.tableId);
   const order = await loadGuestOrder(sb, table.tenantId, input.tableId, input.orderId);
+  return initiateGuestOrderPayment(
+    sb,
+    {
+      id: order.id,
+      tenantId: table.tenantId,
+      propertyId: order.property_id ?? table.propertyId ?? null,
+      orderNumber: order.order_number,
+      status: order.status,
+      total: Number(order.total),
+      paidTotal: Number(order.paid_total),
+      currency: order.currency,
+      billRequestedAt: order.bill_requested_at,
+    },
+    returnUrl,
+    provider,
+  );
+}
 
+/** Shared payment initiation for table orders and WhatsApp Guest Commerce orders. */
+export async function initiateGuestOrderPayment(
+  sb: Sb,
+  order: GuestPayableOrder,
+  returnUrl: string,
+  provider?: PaymentProviderAdapter | null,
+): Promise<InitiateGuestPaymentResult> {
   if (!PAYABLE_ORDER_STATUSES.has(order.status)) {
     return { ok: false, reason: "not_payable", orderStatus: order.status };
   }
-  const amountDue = Math.max(0, Number(order.total) - Number(order.paid_total));
-  if (amountDue <= 0) {
-    return { ok: false, reason: "already_paid" };
-  }
+  const amountDue = Math.max(0, Number(order.total) - Number(order.paidTotal));
+  if (amountDue <= 0) return { ok: false, reason: "already_paid" };
 
   const paymentTiming = resolveGuestPaymentTiming(
     (await sb
       .from("restaurant_tenants")
       .select("settings")
-      .eq("id", table.tenantId)
+      .eq("id", order.tenantId)
       .maybeSingle()).data?.settings,
   );
-  if (
-    paymentTiming === "pay_after_service" &&
-    order.status !== "served" &&
-    !order.bill_requested_at
-  ) {
+  if (paymentTiming === "pay_after_service" && order.status !== "served" && !order.billRequestedAt) {
     return { ok: false, reason: "not_ready_for_payment" };
   }
+
   const configuredProvider =
     provider === undefined
-      ? await getConfiguredProvider(sb, table.tenantId, order.property_id ?? null)
+      ? await getConfiguredProvider(sb, order.tenantId, order.propertyId)
       : provider;
-  if (!configuredProvider) {
-    return { ok: false, reason: "provider_not_configured" };
-  }
+  if (!configuredProvider) return { ok: false, reason: "provider_not_configured" };
 
   const myClaimToken = claimTokenValue();
   const nowIso = new Date().toISOString();
@@ -385,20 +414,19 @@ export async function initiateGuestPayment(
         Date.now() + GUEST_PAYMENT_CLAIM_TTL_MS,
       ).toISOString(),
     })
-    .eq("tenant_id", table.tenantId)
+    .eq("tenant_id", order.tenantId)
     .eq("id", order.id)
     .or(`guest_payment_session_expires_at.is.null,guest_payment_session_expires_at.lt.${nowIso}`)
     .select("id")
     .maybeSingle();
 
   if (!claimed) {
-    // Lost the race: another caller already holds a live claim or session.
     const { data: existing } = await sb
       .from("restaurant_orders")
       .select(
         "guest_payment_session_reference, guest_payment_session_redirect_url, guest_payment_session_expires_at",
       )
-      .eq("tenant_id", table.tenantId)
+      .eq("tenant_id", order.tenantId)
       .eq("id", order.id)
       .maybeSingle();
     if (
@@ -415,32 +443,20 @@ export async function initiateGuestPayment(
     return { ok: false, reason: "initiation_in_progress" };
   }
 
-  // The provider call is bounded by the exact same deadline as the DB
-  // claim, via an actual cancellation signal — not merely a bookkeeping
-  // timestamp. Once this fires, this attempt's own request to the provider
-  // is dead; it cannot go on to independently produce a real session after
-  // a newer caller has already claimed the slot. Cleared on settle either
-  // way so it never fires (harmlessly) after this call has already returned.
   const claimDeadline = new AbortController();
   const claimTimer = setTimeout(() => claimDeadline.abort(), GUEST_PAYMENT_CLAIM_TTL_MS);
-
-  // Server-derived amount/currency/reference only — input carries nothing but tableId/orderId/method.
   let initiated: { providerReference: string; redirectUrl: string };
   try {
     initiated = await configuredProvider.initiate({
       amount: amountDue,
       currency: order.currency,
       merchantReference: order.id,
-      description: `Order ${order.order_number}`,
+      description: `Order ${order.orderNumber}`,
       returnUrl,
       signal: claimDeadline.signal,
     });
   } catch (err) {
     clearTimeout(claimTimer);
-    // Release the claim — but only if it's still ours. If this attempt's
-    // own claim already expired and a newer caller has since claimed (or
-    // completed) a session, that newer state must never be cleared by a
-    // late failure arriving from this one.
     await sb
       .from("restaurant_orders")
       .update({
@@ -448,19 +464,13 @@ export async function initiateGuestPayment(
         guest_payment_session_redirect_url: null,
         guest_payment_session_expires_at: null,
       })
-      .eq("tenant_id", table.tenantId)
+      .eq("tenant_id", order.tenantId)
       .eq("id", order.id)
       .eq("guest_payment_session_reference", myClaimToken);
     throw err;
   }
   clearTimeout(claimTimer);
 
-  // Finalize — again only if this attempt's claim is still the one on the
-  // row. A late success from an expired claim must never overwrite a newer
-  // claimant's already-recorded session; the real checkout session this
-  // call itself created is still returned to its own caller below (it is a
-  // genuine, usable Pesapal session), it is just not the one recorded as
-  // this order's authoritative claim going forward.
   await sb
     .from("restaurant_orders")
     .update({
@@ -470,7 +480,7 @@ export async function initiateGuestPayment(
         Date.now() + GUEST_PAYMENT_SESSION_TTL_MS,
       ).toISOString(),
     })
-    .eq("tenant_id", table.tenantId)
+    .eq("tenant_id", order.tenantId)
     .eq("id", order.id)
     .eq("guest_payment_session_reference", myClaimToken);
 
