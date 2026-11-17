@@ -260,3 +260,91 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
       idempotent: Boolean(order.idempotent),
     };
   });
+
+
+const guestPortalPaymentSchema = z.object({
+  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  orderId: z.string().uuid(),
+});
+const guestPortalPaymentConfirmationSchema = guestPortalPaymentSchema.extend({
+  orderTrackingId: z.string().min(1).max(200),
+});
+
+async function loadGuestPortalPaymentOrder(admin: any, session: any, orderId: string) {
+  const { data: order, error } = await admin
+    .from("restaurant_orders")
+    .select("id, tenant_id, property_id, location_id, guest_portal_session_id, order_number, status, payment_state, total, paid_total, currency, bill_requested_at")
+    .eq("id", orderId)
+    .eq("tenant_id", session.tenantId)
+    .eq("property_id", session.propertyId)
+    .eq("location_id", session.locationId)
+    .eq("guest_portal_session_id", session.sessionId)
+    .maybeSingle();
+  if (error || !order) throw new Error("This order is not available in the current Guest Portal session.");
+  return order;
+}
+
+/** WCE-06: start a hosted payment for the session's own order using the exact property's encrypted payment integration. */
+export const initiateGuestCommercePaymentFn = createServerFn({ method: "POST" })
+  .inputValidator((value: unknown) => guestPortalPaymentSchema.parse(value))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { resolveWhatsAppGuestPortalSession } =
+      await import("@/modules/messaging/guest-portal-sessions.server");
+    const { initiateGuestOrderPayment } = await import("@/modules/restaurant/selforder/selfpay.server");
+    const session = await resolveWhatsAppGuestPortalSession(supabaseAdmin, data.token);
+    if (!session || session.scope !== "guest_commerce") {
+      throw new Error("This Guest Portal session cannot initiate payment. Request a fresh link from WhatsApp.");
+    }
+    const order = await loadGuestPortalPaymentOrder(supabaseAdmin, session, data.orderId);
+    const base = process.env.APP_BASE_URL;
+    if (!base) throw new Error("The secure payment return URL is not configured.");
+    const parsed = new URL(base);
+    if (parsed.protocol !== "https:") throw new Error("The payment return URL must use HTTPS.");
+    const returnUrl = new URL(
+      `/guest/${data.token}/payment?orderId=${encodeURIComponent(order.id)}`,
+      parsed,
+    ).toString();
+    return initiateGuestOrderPayment(
+      supabaseAdmin,
+      {
+        id: order.id,
+        tenantId: session.tenantId,
+        propertyId: session.propertyId,
+        orderNumber: order.order_number,
+        status: order.status,
+        total: Number(order.total),
+        paidTotal: Number(order.paid_total),
+        currency: order.currency,
+        billRequestedAt: order.bill_requested_at,
+      },
+      returnUrl,
+    );
+  });
+
+/** WCE-06: verify a browser return against Pesapal again; URL status is never treated as proof of payment. */
+export const confirmGuestCommercePaymentFn = createServerFn({ method: "POST" })
+  .inputValidator((value: unknown) => guestPortalPaymentConfirmationSchema.parse(value))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { resolveWhatsAppGuestPortalSession } =
+      await import("@/modules/messaging/guest-portal-sessions.server");
+    const { confirmGuestPayment } = await import("@/modules/restaurant/selforder/selfpay.server");
+    const session = await resolveWhatsAppGuestPortalSession(supabaseAdmin, data.token);
+    if (!session || session.scope !== "guest_commerce") {
+      throw new Error("This Guest Portal session has expired. Return to WhatsApp and request a new link.");
+    }
+    const order = await loadGuestPortalPaymentOrder(supabaseAdmin, session, data.orderId);
+    return confirmGuestPayment(
+      supabaseAdmin,
+      {
+        id: order.id,
+        tenantId: session.tenantId,
+        propertyId: session.propertyId,
+        currency: order.currency,
+        total: Number(order.total),
+        paidTotal: Number(order.paid_total),
+      },
+      data.orderTrackingId,
+    );
+  });
