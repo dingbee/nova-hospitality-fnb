@@ -18,7 +18,13 @@ type CommerceEvent = {
 };
 type InboundMessage = { id: string; from: string; text?: { body?: string } };
 export type GuestCommerceIntent =
-  "menu" | "order" | "help" | "subscribe" | "unsubscribe" | "unknown";
+  | "menu"
+  | "order"
+  | "help"
+  | "subscribe"
+  | "unsubscribe"
+  | "handoff"
+  | "unknown";
 
 export function classifyGuestCommerceIntent(value: unknown): GuestCommerceIntent {
   if (typeof value !== "string") return "unknown";
@@ -195,6 +201,7 @@ export async function handleWhatsAppGuestCommerceMessage(
               status: string;
               items: Array<{ name: string; quantity: number }>;
             }>;
+            loyaltyPointsBalance?: number;
           }
         | undefined;
       if (conversation.guest_customer_id) {
