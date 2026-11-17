@@ -1,6 +1,18 @@
 -- WCE-06 — governed WhatsApp templates, campaigns, effective-dated rates and usage evidence.
 -- Additive only. All provider dispatch remains disabled in UAT; no production rollout is authorized.
 
+-- Registry entry is deliberately unentitled until founder commercial policy configures a plan entitlement.
+INSERT INTO public.commercial_capabilities (code, name, description, category, status, sort_order)
+VALUES (
+  'whatsapp_campaigns',
+  'WhatsApp Campaign Governance',
+  'Governed WhatsApp templates, consent-aware campaigns, caps and usage attribution.',
+  'guest_engagement',
+  'active',
+  90
+)
+ON CONFLICT (code) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS public.wa_message_templates (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE CASCADE,
