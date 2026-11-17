@@ -250,6 +250,262 @@ export async function syncWhatsAppMessageTemplateStatuses(
   return { providerTemplates: providerTemplates.length, updated };
 }
 
+export async function createWhatsAppCampaign(
+  admin: Db,
+  input: {
+    tenantId: string;
+    propertyId: string;
+    locationId: string;
+    bindingId: string;
+    templateId: string;
+    name: string;
+    triggerType: "scheduled" | "event";
+    eventKey?: string | null;
+    scheduledAt?: string | null;
+    audienceFilter?: {
+      preferredLanguage?: "en" | "sw";
+      lastSeenAfter?: string;
+      lastSeenBefore?: string;
+    };
+    messageComponents?: Array<Record<string, unknown>>;
+    dailyCap?: number | null;
+    totalCap?: number | null;
+    createdBy?: string | null;
+  },
+) {
+  await assertEntitled(admin, input.tenantId, "whatsapp_campaigns", { propertyId: input.propertyId });
+  if (input.triggerType === "scheduled") {
+    if (!input.scheduledAt || new Date(input.scheduledAt).getTime() <= Date.now())
+      throw new WhatsAppCampaignGovernanceError("campaign_schedule_must_be_future");
+  } else if (!input.eventKey?.trim()) {
+    throw new WhatsAppCampaignGovernanceError("campaign_event_key_required");
+  }
+  if (input.dailyCap !== undefined && input.dailyCap !== null && input.dailyCap < 0)
+    throw new WhatsAppCampaignGovernanceError("campaign_daily_cap_invalid");
+  if (input.totalCap !== undefined && input.totalCap !== null && input.totalCap < 0)
+    throw new WhatsAppCampaignGovernanceError("campaign_total_cap_invalid");
+
+  const { data: binding, error: bindingError } = await admin
+    .from("wa_phone_number_bindings")
+    .select("id, status")
+    .eq("id", input.bindingId)
+    .eq("tenant_id", input.tenantId)
+    .eq("property_id", input.propertyId)
+    .eq("location_id", input.locationId)
+    .maybeSingle();
+  if (bindingError || !binding || binding.status !== "active")
+    throw new WhatsAppCampaignGovernanceError("campaign_binding_unavailable");
+
+  const { data: template, error: templateError } = await admin
+    .from("wa_message_templates")
+    .select("id, status, property_id")
+    .eq("id", input.templateId)
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+  if (templateError || !template || template.status !== "approved")
+    throw new WhatsAppCampaignGovernanceError("campaign_template_not_approved");
+  if (template.property_id && template.property_id !== input.propertyId)
+    throw new WhatsAppCampaignGovernanceError("campaign_template_scope_mismatch");
+
+  const audienceFilter = input.audienceFilter ?? {};
+  if (
+    (audienceFilter.lastSeenAfter && Number.isNaN(Date.parse(audienceFilter.lastSeenAfter))) ||
+    (audienceFilter.lastSeenBefore && Number.isNaN(Date.parse(audienceFilter.lastSeenBefore)))
+  ) throw new WhatsAppCampaignGovernanceError("campaign_audience_filter_invalid");
+
+  const { data, error } = await admin
+    .from("wa_campaigns")
+    .insert({
+      tenant_id: input.tenantId,
+      property_id: input.propertyId,
+      location_id: input.locationId,
+      binding_id: input.bindingId,
+      template_id: input.templateId,
+      name: input.name.trim(),
+      trigger_type: input.triggerType,
+      event_key: input.triggerType === "event" ? input.eventKey?.trim() : null,
+      audience_filter: audienceFilter,
+      message_components: input.messageComponents ?? [],
+      status: "draft",
+      scheduled_at: input.triggerType === "scheduled" ? input.scheduledAt : null,
+      daily_cap: input.dailyCap ?? null,
+      total_cap: input.totalCap ?? null,
+      created_by: input.createdBy ?? null,
+    })
+    .select("id, status")
+    .single();
+  if (error || !data) throw new WhatsAppCampaignGovernanceError("campaign_create_failed");
+  return { campaignId: String(data.id), status: String(data.status) };
+}
+
+export async function activateWhatsAppCampaign(
+  admin: Db,
+  input: { tenantId: string; propertyId: string; campaignId: string },
+) {
+  await assertEntitled(admin, input.tenantId, "whatsapp_campaigns", { propertyId: input.propertyId });
+  const { data: campaign, error } = await admin
+    .from("wa_campaigns")
+    .select("id, status, trigger_type, scheduled_at, template_id")
+    .eq("id", input.campaignId)
+    .eq("tenant_id", input.tenantId)
+    .eq("property_id", input.propertyId)
+    .maybeSingle();
+  if (error || !campaign) throw new WhatsAppCampaignGovernanceError("campaign_not_found");
+  if (!["draft", "paused"].includes(campaign.status))
+    throw new WhatsAppCampaignGovernanceError("campaign_not_activatable");
+  if (campaign.trigger_type === "scheduled" &&
+      (!campaign.scheduled_at || new Date(campaign.scheduled_at) <= new Date()))
+    throw new WhatsAppCampaignGovernanceError("campaign_schedule_not_future");
+  const { data: template, error: templateError } = await admin
+    .from("wa_message_templates")
+    .select("status")
+    .eq("id", campaign.template_id)
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+  if (templateError || template?.status !== "approved")
+    throw new WhatsAppCampaignGovernanceError("campaign_template_not_approved");
+  const nextStatus = campaign.trigger_type === "scheduled" ? "scheduled" : "ready";
+  const { error: updateError } = await admin
+    .from("wa_campaigns")
+    .update({ status: nextStatus, last_error: null, updated_at: new Date().toISOString() })
+    .eq("id", input.campaignId)
+    .eq("tenant_id", input.tenantId)
+    .eq("status", campaign.status);
+  if (updateError) throw new WhatsAppCampaignGovernanceError("campaign_activation_failed");
+  return { campaignId: input.campaignId, status: nextStatus };
+}
+
+export async function findEventTriggeredWhatsAppCampaigns(
+  admin: Db,
+  input: { tenantId: string; propertyId: string; eventKey: string },
+) {
+  const { data, error } = await admin
+    .from("wa_campaigns")
+    .select("id")
+    .eq("tenant_id", input.tenantId)
+    .eq("property_id", input.propertyId)
+    .eq("trigger_type", "event")
+    .eq("event_key", input.eventKey)
+    .eq("status", "ready")
+    .limit(50);
+  if (error) throw new WhatsAppCampaignGovernanceError("event_campaign_lookup_failed");
+  return (data ?? []).map((row: { id: string }) => row.id);
+}
+
+export async function evaluateWhatsAppCampaignAudience(
+  admin: Db,
+  input: {
+    tenantId: string;
+    propertyId: string;
+    campaignId: string;
+    eventKey?: string | null;
+    limit?: number;
+  },
+) {
+  const { campaign } = await assertWhatsAppCampaignReady(
+    admin,
+    input.tenantId,
+    input.propertyId,
+    input.campaignId,
+  );
+  const filter = (campaign as Campaign & { audience_filter?: Record<string, unknown> }).audience_filter ?? {};
+  let query = admin
+    .from("restaurant_guest_customers")
+    .select("id")
+    .eq("tenant_id", input.tenantId)
+    .eq("status", "active")
+    .not("whatsapp_user_id", "is", null)
+    .or("first_property_id.eq." + input.propertyId + ",last_property_id.eq." + input.propertyId);
+  if (filter.preferredLanguage === "en" || filter.preferredLanguage === "sw")
+    query = query.eq("preferred_language", filter.preferredLanguage);
+  if (typeof filter.lastSeenAfter === "string") query = query.gte("last_seen_at", filter.lastSeenAfter);
+  if (typeof filter.lastSeenBefore === "string") query = query.lte("last_seen_at", filter.lastSeenBefore);
+  const { data: guests, error } = await query.limit(Math.min(Math.max(input.limit ?? 500, 1), 1000));
+  if (error) throw new WhatsAppCampaignGovernanceError("campaign_audience_query_failed");
+
+  let eligible = 0;
+  let suppressed = 0;
+  for (const guest of guests ?? []) {
+    const result = await prepareWhatsAppCampaignRecipient(admin, {
+      tenantId: input.tenantId,
+      propertyId: input.propertyId,
+      campaignId: campaign.id,
+      guestCustomerId: guest.id,
+      eventKey: input.eventKey,
+    });
+    if (result.state === "eligible") eligible++;
+    else suppressed++;
+  }
+  return { evaluated: (guests ?? []).length, eligible, suppressed };
+}
+
+export async function runWhatsAppCampaign(
+  admin: Db,
+  input: {
+    tenantId: string;
+    propertyId: string;
+    campaignId: string;
+    eventKey?: string | null;
+    limit?: number;
+  },
+) {
+  const { campaign } = await assertWhatsAppCampaignReady(
+    admin,
+    input.tenantId,
+    input.propertyId,
+    input.campaignId,
+  );
+  if (campaign.trigger_type === "event" && campaign.status !== "ready")
+    throw new WhatsAppCampaignGovernanceError("event_campaign_not_ready");
+  if (campaign.trigger_type === "event" && !input.eventKey)
+    throw new WhatsAppCampaignGovernanceError("campaign_event_key_required");
+  const { error: startError } = await admin
+    .from("wa_campaigns")
+    .update({ status: "running", started_at: new Date().toISOString(), last_error: null })
+    .eq("id", campaign.id)
+    .eq("tenant_id", input.tenantId);
+  if (startError) throw new WhatsAppCampaignGovernanceError("campaign_start_failed");
+
+  try {
+    const audience = await evaluateWhatsAppCampaignAudience(admin, input);
+    const { data: recipients, error: recipientError } = await admin
+      .from("wa_campaign_recipients")
+      .select("id")
+      .eq("tenant_id", input.tenantId)
+      .eq("campaign_id", campaign.id)
+      .eq("state", "eligible")
+      .limit(Math.min(Math.max(input.limit ?? 500, 1), 1000));
+    if (recipientError) throw new WhatsAppCampaignGovernanceError("campaign_recipient_list_failed");
+    let queued = 0;
+    let suppressed = 0;
+    for (const recipient of recipients ?? []) {
+      const result = await queueWhatsAppCampaignRecipient(admin, {
+        tenantId: input.tenantId,
+        propertyId: input.propertyId,
+        campaignId: campaign.id,
+        recipientId: recipient.id,
+        eventKey: input.eventKey,
+      });
+      if (result.queued) queued++;
+      else suppressed++;
+    }
+    const { error: completeError } = await admin
+      .from("wa_campaigns")
+      .update({ status: "completed", completed_at: new Date().toISOString() })
+      .eq("id", campaign.id)
+      .eq("tenant_id", input.tenantId);
+    if (completeError) throw new WhatsAppCampaignGovernanceError("campaign_completion_failed");
+    return { ...audience, queued, suppressed, status: "completed" as const };
+  } catch (error) {
+    await admin
+      .from("wa_campaigns")
+      .update({ status: "paused", last_error: "campaign_execution_requires_review" })
+      .eq("id", campaign.id)
+      .eq("tenant_id", input.tenantId);
+    throw error;
+  }
+}
+
 /** Rechecks consent immediately before queuing a Meta-approved campaign template into the canonical WCE-02 outbox. */
 export async function queueWhatsAppCampaignRecipient(
   admin: Db,
