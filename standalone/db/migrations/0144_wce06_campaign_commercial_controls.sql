@@ -160,7 +160,8 @@ CREATE OR REPLACE FUNCTION public.wa_prepare_campaign_recipient(
   _property_id uuid,
   _campaign_id uuid,
   _guest_customer_id uuid,
-  _idempotency_key text
+  _idempotency_key text,
+  _event_key text DEFAULT NULL
 )
 RETURNS TABLE(recipient_id uuid, state text, suppression_reason text, duplicate boolean)
 LANGUAGE plpgsql
@@ -193,6 +194,10 @@ BEGIN
   IF _campaign.trigger_type = 'scheduled'
      AND (_campaign.scheduled_at IS NULL OR _campaign.scheduled_at > now()) THEN
     RAISE EXCEPTION 'campaign is not due';
+  END IF;
+  IF _campaign.trigger_type = 'event'
+     AND (_event_key IS NULL OR _campaign.event_key IS DISTINCT FROM _event_key) THEN
+    RAISE EXCEPTION 'campaign event key does not match';
   END IF;
 
   SELECT * INTO _template
@@ -273,9 +278,9 @@ BEGIN
 END;
 $wce$;
 
-REVOKE ALL ON FUNCTION public.wa_prepare_campaign_recipient(uuid, uuid, uuid, uuid, text)
+REVOKE ALL ON FUNCTION public.wa_prepare_campaign_recipient(uuid, uuid, uuid, uuid, text, text)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.wa_prepare_campaign_recipient(uuid, uuid, uuid, uuid, text)
+GRANT EXECUTE ON FUNCTION public.wa_prepare_campaign_recipient(uuid, uuid, uuid, uuid, text, text)
   TO service_role;
 
 CREATE OR REPLACE FUNCTION public.wa_campaign_usage_ledger_immutable()
