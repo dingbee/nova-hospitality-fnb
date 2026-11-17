@@ -345,6 +345,7 @@ export async function getPurchasingIntelligence(
       dailyVelocity: forecast.dailyAverage,
       leadTimeDays: leadTime,
       coverDays: COVER_DAYS,
+      targetCoverageDays: COVER_DAYS,
       recommendedQuantity: calculation.recommendedStockUnits,
       estimatedCost,
       supplierName: supplier?.name ?? null,
