@@ -199,7 +199,12 @@ export async function recordWhatsAppCampaignUsage(
     .single();
   if (error?.code === "23505") return { duplicate: true as const, amount: 0 };
   if (error || !data) throw new WhatsAppCampaignGovernanceError("usage_persistence_failed");
-  return { duplicate: false as const, usageId: data.id, amount: Number(data.amount), currency: data.currency };
+  return {
+    duplicate: false as const,
+    usageId: data.id,
+    amount: Number(data.amount),
+    currency: data.currency,
+  };
 }
 
 /** Uses the existing commercial quota engine; no parallel subscription or quota table is introduced. */
