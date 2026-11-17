@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Sb } from "../core/access.server";
 
 const mocks = vi.hoisted(() => ({
   assertCapability: vi.fn().mockResolvedValue(undefined),
@@ -60,7 +59,7 @@ function makeSupabase() {
       error: null,
     }),
   };
-  return { sb: { from: () => builder } as unknown as Sb, writes };
+  return { sb: { from: () => builder } as unknown as Parameters<typeof resolveVariance>[0], writes };
 }
 
 describe("procurement variance maker-checker", () => {
