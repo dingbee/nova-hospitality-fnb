@@ -61,7 +61,7 @@ jobs:
           src/modules/messaging/bindings.server.test.ts
           src/modules/messaging/webhook-queue.server.test.ts
           src/modules/messaging/guest-portal-sessions.server.test.ts
-          src/modules/messaging/guest-commerce.server.test.ts src/modules/messaging/outbound-queue.server.test.ts
+          src/modules/messaging/guest-commerce.server.test.ts src/modules/messaging/outbound-queue.server.test.ts src/modules/restaurant/menu/availability.server.test.ts
           src/modules/api-platform/adapters/meta-whatsapp.server.test.ts
       - name: Full repository tests
         run: bun run test
