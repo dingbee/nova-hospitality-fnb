@@ -78,7 +78,7 @@ function makeAdmin(overrides: Record<string, unknown> = {}) {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("WhatsApp Guest Portal session security", () => {
-  it("creates a 256-bit browse-only session and stores only its SHA-256 hash", async () => {
+  it("creates a 256-bit commerce session and stores only its SHA-256 hash", async () => {
     vi.stubEnv("LEXIBITE_GUEST_PORTAL_BASE_URL", "https://guest.example.test");
     const { admin, inserted } = makeAdmin();
 
@@ -86,7 +86,7 @@ describe("WhatsApp Guest Portal session security", () => {
 
     expect(result.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(result.portalUrl).toBe(`https://guest.example.test/guest/${result.token}`);
-    expect(result.scope).toBe("menu_browse");
+    expect(result.scope).toBe("guest_commerce");
     expect(result.currency).toBe("TZS");
 
     const row = inserted.find((entry) => entry.table === "wa_guest_portal_sessions")?.row;
@@ -96,7 +96,7 @@ describe("WhatsApp Guest Portal session security", () => {
       location_id: scope.locationId,
       binding_id: scope.bindingId,
       conversation_id: scope.conversationId,
-      scope: "menu_browse",
+      scope: "guest_commerce",
       acquisition_channel: "whatsapp",
       currency: "TZS",
       max_open_count: 20,
@@ -140,7 +140,7 @@ describe("WhatsApp Guest Portal session security", () => {
         currency: "TZS",
         menu_context: {},
         expires_at: "2026-11-16T21:00:00.000Z",
-        scope: "menu_browse",
+        scope: "guest_commerce",
       }],
       error: null,
     });
@@ -155,7 +155,7 @@ describe("WhatsApp Guest Portal session security", () => {
       tenantId: scope.tenantId,
       propertyId: scope.propertyId,
       locationId: scope.locationId,
-      scope: "menu_browse",
+      scope: "guest_commerce",
     });
   });
 

@@ -1,0 +1,102 @@
+name: LexiBite WCE Verification
+
+on:
+  push:
+    branches:
+      - "wce/wce-03-08-continuation"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lexibite-wce-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: WCE typecheck / lint / tests / build / migration replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lexibite_wce
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d lexibite_wce"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        run: bun install
+      - name: Changed-source lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          files="$(git diff --name-only origin/main...HEAD -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
+          if [ -n "$files" ]; then bunx eslint $files; fi
+      - name: WCE tests
+        run: >-
+          bunx vitest run
+          src/modules/messaging/providers/meta-cloud-api.server.test.ts
+          src/modules/messaging/providers/meta-onboarding.server.test.ts
+          src/modules/messaging/embedded-signup.test.ts
+          src/modules/messaging/webhooks.server.test.ts
+          src/modules/messaging/bindings.server.test.ts
+          src/modules/messaging/webhook-queue.server.test.ts
+          src/modules/messaging/guest-portal-sessions.server.test.ts
+          src/modules/messaging/guest-commerce.server.test.ts src/modules/messaging/outbound-queue.server.test.ts
+          src/modules/api-platform/adapters/meta-whatsapp.server.test.ts
+      - name: Full repository tests
+        run: bun run test
+      - name: Generate route tree and production build
+        run: bun run build
+      - name: Strict typecheck
+        run: bun run typecheck
+      - name: PostgreSQL 17 clean migration replay
+        env:
+          NOVA_DB_HOST: 127.0.0.1
+          NOVA_DB_PORT: 5432
+          NOVA_DB_NAME: lexibite_wce_replay
+          NOVA_DB_SUPERUSER: postgres
+          NOVA_DB_SUPERUSER_PASSWORD: postgres
+          NOVA_DB_AUTHENTICATOR: nova_authenticator
+          NOVA_DB_AUTHENTICATOR_PASSWORD: wce-ci-only-authenticator-password
+        run: |
+          ./local/scripts/init-db.sh
+          ./local/scripts/apply-migrations.sh
+          PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -v ON_ERROR_STOP=1 <<'SQL'
+          DO $verify$
+          BEGIN
+            IF (SELECT attnotnull FROM pg_attribute WHERE attrelid = 'public.wa_messages'::regclass AND attname = 'provider_message_id') THEN
+              RAISE EXCEPTION 'Outbound message ledger still requires provider ID before send';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.wa_messages'::regclass AND attname = 'client_request_id' AND NOT attisdropped) THEN
+              RAISE EXCEPTION 'Outbound idempotency key is missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = 'wa_claim_outbound_messages' AND p.prosecdef AND 'search_path=public, pg_temp' = ANY (p.proconfig)) THEN
+              RAISE EXCEPTION 'Outbound claim RPC is missing or lacks a fixed search path';
+            END IF;
+            IF has_function_privilege('anon', 'public.wa_claim_outbound_messages(integer,integer,text)', 'EXECUTE')
+              OR has_function_privilege('authenticated', 'public.wa_claim_outbound_messages(integer,integer,text)', 'EXECUTE')
+              OR NOT has_function_privilege('service_role', 'public.wa_claim_outbound_messages(integer,integer,text)', 'EXECUTE') THEN
+              RAISE EXCEPTION 'Outbound claim RPC grants are not service-role-only';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='wa_messages' AND indexname='wa_messages_outbound_request_uq') THEN
+              RAISE EXCEPTION 'Outbound idempotency unique index is missing';
+            END IF;
+          END $verify$;
+          SQL

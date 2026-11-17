@@ -14,6 +14,7 @@ import type {
   OrderLineInput,
   RecordPaymentInput,
   TransitionOrderInput,
+  RestaurantOrderType,
   listOrdersSchema,
   listServicePeriodsSchema,
   listTablesSchema,
@@ -739,9 +740,10 @@ export async function createGuestOrder(
     tenantId: string;
     propertyId: string | null;
     locationId: string | null;
-    tableId: string;
+    tableId: string | null;
     guestName?: string | null;
     currency: string;
+    orderType?: RestaurantOrderType;
     lines: SalesLineInput[];
     /**
      * GEP3 — the same (tenant_id, client_request_id) partial-unique index
@@ -766,6 +768,8 @@ export async function createGuestOrder(
      * (selfsession.server.ts) to read back.
      */
     guestSessionId?: string | null;
+    /** One-time WhatsApp Guest Portal session provenance for non-table orders. */
+    guestPortalSessionId?: string | null;
   },
 ) {
   const { data: order, error } = await sb
@@ -774,9 +778,9 @@ export async function createGuestOrder(
       tenant_id: input.tenantId,
       property_id: input.propertyId,
       location_id: input.locationId,
-      table_id: input.tableId,
+      table_id: input.tableId ?? null,
       order_number: reference("ORD"),
-      order_type: "dine_in",
+      order_type: input.orderType ?? "dine_in",
       status: "open",
       guest_count: 1,
       guest_name: input.guestName ?? null,
@@ -786,6 +790,7 @@ export async function createGuestOrder(
       created_by: null,
       client_request_id: input.clientRequestId ?? null,
       guest_session_id: input.guestSessionId ?? null,
+      guest_portal_session_id: input.guestPortalSessionId ?? null,
     })
     .select("id, order_number, currency")
     .single();
@@ -831,7 +836,7 @@ export async function createGuestOrder(
       currency: input.currency,
       propertyId: input.propertyId,
       locationId: input.locationId,
-      orderType: "dine_in",
+      orderType: input.orderType ?? "dine_in",
       exchangeRate,
       // This is the guest ordering path: no staff principal authorized these
       // lines, so their discount and modifier price fields are never
@@ -853,11 +858,13 @@ export async function createGuestOrder(
     throw err;
   }
 
-  await sb
-    .from("restaurant_tables")
-    .update({ status: "occupied" })
-    .eq("id", input.tableId)
-    .eq("tenant_id", input.tenantId);
+  if (input.tableId) {
+    await sb
+      .from("restaurant_tables")
+      .update({ status: "occupied" })
+      .eq("id", input.tableId)
+      .eq("tenant_id", input.tenantId);
+  }
 
   // Not routed through emitRestaurantEvent/recordEvent: that path requires a
   // real staff principal (assertIntelRead(supabase, userId)) and there is

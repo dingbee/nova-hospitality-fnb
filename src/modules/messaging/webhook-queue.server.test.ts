@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase test double mirrors untyped query builders. */
 import { describe, expect, it, vi } from "vitest";
+vi.mock("./guest-commerce.server", () => ({ handleWhatsAppGuestCommerceMessage: vi.fn().mockResolvedValue({ handled: false }) }));
 import { processPendingMetaWebhookEvents } from "./webhook-queue.server";
 
 const baseEvent = {
