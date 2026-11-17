@@ -109,6 +109,7 @@ export async function submitGuestCommerceOrder(
   const catalog = await fetchSellableCatalog(admin, session.tenantId, {
     propertyId: session.propertyId,
     locationId: session.locationId,
+    orderType: session.orderType,
   });
   const sellableIds = new Set(
     (catalog.items as any[])
