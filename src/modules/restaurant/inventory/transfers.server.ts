@@ -324,6 +324,7 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
     transfer.source_location_id,
     transfer.destination_location_id,
   );
+  await assertLocationInTenant(sb, input.tenantId, transfer.source_location_id, transfer.destination_location_id);
   if (!["approved", "requested"].includes(transfer.status)) {
     throw new Error(`Transfer cannot be dispatched from status "${transfer.status}".`);
   }
@@ -416,6 +417,7 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
     transfer.source_location_id,
     transfer.destination_location_id,
   );
+  await assertLocationInTenant(sb, input.tenantId, transfer.source_location_id, transfer.destination_location_id);
   if (!["dispatched", "partially_received"].includes(transfer.status)) {
     throw new Error(`Transfer cannot be received from status "${transfer.status}".`);
   }
