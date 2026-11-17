@@ -451,7 +451,6 @@ export function purchasingFindings(p: PurchasingIntelligence): RestaurantFinding
         forecastDemand: s.forecastDemand ?? null,
         safetyStock: s.safetyStock ?? null,
         netAvailable: s.netAvailable ?? null,
-        leadTimeDays: s.leadTimeDays ?? null,
         targetCoverageDays: s.targetCoverageDays ?? null,
         estimatedUnitCost:
           s.recommendedQuantity > 0 ? round(s.estimatedCost / s.recommendedQuantity, 4) : null,
