@@ -1,0 +1,80 @@
+name: LexiBite WCE Verification
+
+on:
+  push:
+    branches:
+      - "wce/wce-03-08-continuation"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lexibite-wce-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: WCE typecheck / lint / tests / build / migration replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lexibite_wce
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d lexibite_wce"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        run: bun install
+      - name: Strict typecheck
+        run: bun run typecheck
+      - name: Changed-source lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          files="$(git diff --name-only origin/main...HEAD -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
+          if [ -n "$files" ]; then bunx eslint $files; fi
+      - name: WCE tests
+        run: >-
+          bunx vitest run
+          src/modules/messaging/providers/meta-cloud-api.server.test.ts
+          src/modules/messaging/providers/meta-onboarding.server.test.ts
+          src/modules/messaging/embedded-signup.test.ts
+          src/modules/messaging/webhooks.server.test.ts
+          src/modules/messaging/bindings.server.test.ts
+          src/modules/messaging/webhook-queue.server.test.ts
+          src/modules/messaging/guest-portal-sessions.server.test.ts
+          src/modules/messaging/guest-commerce.server.test.ts
+          src/modules/api-platform/adapters/meta-whatsapp.server.test.ts
+      - name: Full repository tests
+        run: bun run test
+      - name: Production build
+        run: bun run build
+      - name: PostgreSQL 17 clean migration replay
+        env:
+          NOVA_DB_HOST: 127.0.0.1
+          NOVA_DB_PORT: 5432
+          NOVA_DB_NAME: lexibite_wce_replay
+          NOVA_DB_SUPERUSER: postgres
+          NOVA_DB_SUPERUSER_PASSWORD: postgres
+          NOVA_DB_AUTHENTICATOR: nova_authenticator
+          NOVA_DB_AUTHENTICATOR_PASSWORD: wce-ci-only-authenticator-password
+        run: |
+          ./local/scripts/init-db.sh
+          ./local/scripts/apply-migrations.sh
