@@ -5,6 +5,13 @@ import { writeCommercialAudit } from "@/modules/commercial/audit.server";
 import { enqueueWhatsAppGuestPortalHandoff } from "./handoff.server";
 
 type Db = any;
+type InboundEvent = {
+  id: string;
+  tenant_id: string;
+  property_id: string;
+  location_id: string;
+  binding_id: string;
+};
 type ClaimedEvent = {
   id: string;
   tenant_id: string | null;
@@ -85,7 +92,7 @@ async function getOrCreateConversation(db: Db, event: ClaimedEvent, waUserId: st
   throw new Error("conversation_create_failed");
 }
 
-async function processMessages(db: Db, event: ClaimedEvent, value: Record<string, any>) {
+async function processMessages(db: Db, event: InboundEvent, value: Record<string, any>) {
   const messages = Array.isArray(value.messages) ? value.messages : [];
   for (const message of messages) {
     const waUserId = typeof message.from === "string" ? message.from : "";
@@ -154,12 +161,19 @@ async function processEvent(db: Db, event: ClaimedEvent) {
   if (!event.binding_id || !event.tenant_id || !event.property_id || !event.location_id) {
     throw new Error("webhook_event_scope_missing");
   }
+  const scopedEvent: InboundEvent = {
+    id: event.id,
+    tenant_id: event.tenant_id,
+    property_id: event.property_id,
+    location_id: event.location_id,
+    binding_id: event.binding_id,
+  };
   const value =
     typeof event.payload?.value === "object" && event.payload.value !== null
       ? event.payload.value
       : {};
   if (event.event_type === "messages") {
-    await processMessages(db, event, value);
+    await processMessages(db, scopedEvent, value);
     await processStatuses(db, value);
   }
   // Other Meta account/template notifications are durably acknowledged here;
