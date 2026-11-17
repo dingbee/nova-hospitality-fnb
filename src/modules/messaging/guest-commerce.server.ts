@@ -2,6 +2,7 @@
 import { askNova } from "@/modules/restaurant/selforder/selfnova.server";
 import { createWhatsAppGuestPortalSession } from "./guest-portal-sessions.server";
 import {
+  getWhatsAppGuestCustomerHistory,
   parseWhatsAppConsentCommand,
   recordWhatsAppGuestConsent,
 } from "./guest-crm.server";
@@ -167,6 +168,22 @@ export async function handleWhatsAppGuestCommerceMessage(
     }));
     let conciergeReply = "I can help with menu questions and recommendations. Reply MENU or ORDER to open the secure Guest Portal.";
     try {
+      let customerContext: { displayName?: string | null; recentOrders?: Array<{ orderNumber: string; status: string; items: Array<{ name: string; quantity: number }> }> } | undefined;
+      if (conversation.guest_customer_id) {
+        const [{ data: customer }, crmHistory] = await Promise.all([
+          admin.from("restaurant_guest_customers").select("display_name")
+            .eq("id", conversation.guest_customer_id).eq("tenant_id", event.tenant_id).maybeSingle(),
+          getWhatsAppGuestCustomerHistory(admin, event.tenant_id, conversation.guest_customer_id),
+        ]);
+        customerContext = {
+          displayName: customer?.display_name ?? null,
+          recentOrders: crmHistory.recentOrders.slice(0, 5).map((order) => ({
+            orderNumber: order.orderNumber,
+            status: order.status,
+            items: order.items,
+          })),
+        };
+      }
       const result = await askNova(admin, {
         guestPortalScope: {
           tenantId: event.tenant_id,
@@ -175,6 +192,7 @@ export async function handleWhatsAppGuestCommerceMessage(
         },
         message: messageText,
         history,
+        customerContext,
         interactionMode: "discovery",
       });
       if (result.ok) conciergeReply = result.reply;
