@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - "wce/**"
       - "release/**"
       - "feat/operational-cost-intelligence-phase3-workaround"
       - "feat/operational-profitability-phase5"
