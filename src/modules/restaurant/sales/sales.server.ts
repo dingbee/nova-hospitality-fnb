@@ -1201,17 +1201,21 @@ export async function transitionOrder(
     } catch (err) {
       console.warn("[restaurant-os] receipt not issued", (err as Error).message);
     }
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const guestCrm = await import("@/modules/messaging/guest-crm.server");
     try {
-      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-      const { awardGuestLoyaltyForCompletedOrder, queueWhatsAppOrderStatusNotification } = await import("@/modules/messaging/guest-crm.server");
-      await awardGuestLoyaltyForCompletedOrder(supabaseAdmin, input.tenantId, input.orderId);
-      await queueWhatsAppOrderStatusNotification(supabaseAdmin, {
+      await guestCrm.awardGuestLoyaltyForCompletedOrder(supabaseAdmin, input.tenantId, input.orderId);
+    } catch (error) {
+      console.warn("[whatsapp] guest loyalty accrual deferred", (error as Error).message);
+    }
+    try {
+      await guestCrm.queueWhatsAppOrderStatusNotification(supabaseAdmin, {
         tenantId: input.tenantId,
         orderId: input.orderId,
         status: input.status,
       });
     } catch (error) {
-      console.warn("[whatsapp] guest CRM completion hook deferred", (error as Error).message);
+      console.warn("[whatsapp] guest order notification deferred", (error as Error).message);
     }
     return { ...updated, cost_total: Number(actualCost.toFixed(4)) };
   }
