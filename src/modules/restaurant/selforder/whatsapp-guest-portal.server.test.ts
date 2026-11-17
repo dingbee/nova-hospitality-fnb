@@ -74,8 +74,8 @@ describe("WhatsApp Guest Portal page read model", () => {
     mocks.fetchSellableCatalog.mockResolvedValue({
       categories: [{ id: "category-1", name: "Mains" }],
       items: [
-        { id: "item-1", name: "Pilau", price: 12000, currency: "TZS", available: true, priceConfigured: true },
-        { id: "item-2", name: "Hidden", price: null, available: false, priceConfigured: false },
+        { id: "item-1", name: "Pilau", price: 12000, currency: "TZS", is_available: true, priceConfigured: true },
+        { id: "item-2", name: "Hidden", price: null, is_available: false, priceConfigured: false },
       ],
     });
 
@@ -103,7 +103,7 @@ describe("WhatsApp Guest Portal page read model", () => {
     expect(mocks.fetchSellableCatalog).toHaveBeenCalledWith(
       expect.anything(),
       session.tenantId,
-      { propertyId: session.propertyId, locationId: session.locationId },
+      { propertyId: session.propertyId, locationId: session.locationId, orderType: "takeaway" },
     );
   });
 
@@ -132,7 +132,7 @@ describe("WhatsApp Guest Portal page read model", () => {
     const admin = makeAdmin();
 
     await expect(getWhatsAppGuestPortalPage(admin, "a".repeat(43))).rejects.toThrow(
-      "This Guest Portal link has expired or is no longer valid.",
+      "This Guest Commerce link has expired or is no longer valid.",
     );
     expect(admin.from).not.toHaveBeenCalled();
   });
@@ -145,7 +145,7 @@ describe("WhatsApp Guest Portal page read model", () => {
     });
 
     await expect(getWhatsAppGuestPortalPage(admin, "a".repeat(43))).rejects.toThrow(
-      "This restaurant ordering link is no longer available.",
+      "This restaurant storefront is no longer available.",
     );
     expect(mocks.fetchSellableCatalog).not.toHaveBeenCalled();
   });
