@@ -4,6 +4,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { UtensilsCrossed, Plus, Minus, ShoppingBag, CheckCircle2 } from "lucide-react";
 import { guestPortalMenuFn, submitGuestCommerceOrderFn } from "@/modules/messaging/guest-portal.functions";
+import type { GuestLineInput } from "@/modules/restaurant/selforder/selforder.contracts";
 
 export const Route = createFileRoute("/guest/$token")({
   head: () => ({
@@ -39,7 +40,7 @@ function WhatsAppGuestPortal() {
   const [guestName, setGuestName] = useState("");
   const [clientRequestId, setClientRequestId] = useState("");
   const order = useMutation({
-    mutationFn: (lines: Array<Record<string, unknown>>) => submitOrder({
+    mutationFn: (lines: GuestLineInput[]) => submitOrder({
       data: { token, guestName, clientRequestId, lines },
     }),
   });
