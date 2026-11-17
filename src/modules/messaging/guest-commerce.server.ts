@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase rows are validated at this boundary. */
 import { createWhatsAppGuestPortalSession } from "./guest-portal-sessions.server";
+import { parseWhatsAppConsentCommand, recordWhatsAppGuestConsent } from "./guest-crm.server";
 
 type Db = any;
 type CommerceEvent = {
@@ -10,7 +11,7 @@ type CommerceEvent = {
   binding_id: string;
 };
 type InboundMessage = { id: string; from: string; text?: { body?: string } };
-export type GuestCommerceIntent = "menu" | "order" | "help" | "unknown";
+export type GuestCommerceIntent = "menu" | "order" | "help" | "subscribe" | "unsubscribe" | "unknown";
 
 export function classifyGuestCommerceIntent(value: unknown): GuestCommerceIntent {
   if (typeof value !== "string") return "unknown";
@@ -80,7 +81,7 @@ export async function handleWhatsAppGuestCommerceMessage(
 
   const { data: conversation, error: conversationError } = await admin
     .from("wa_conversations")
-    .select("id, wa_user_id, status")
+    .select("id, wa_user_id, status, guest_customer_id")
     .eq("id", conversationId)
     .eq("binding_id", binding.id)
     .eq("tenant_id", event.tenant_id)
