@@ -151,23 +151,35 @@ export async function recordSupplierInvoice(sb: Sb, userId: string, input: Recor
     payload: { document_number: documentNumber, total, supplier_id: input.supplierId },
   });
 
-  const match = await matchSupplierInvoice(sb, userId, input.tenantId, invoice.id);
-  return { id: invoice.id, documentNumber, total, match };
+  // Recording and reconciling are separate duties. The recorder must not
+  // automatically perform the independent three-way match in the same call.
+  return {
+    id: invoice.id,
+    documentNumber,
+    total,
+    matchStatus: "unmatched" as const,
+    requiresIndependentReconciliation: true,
+  };
 }
 
 /** Three-way match: order vs accepted receipts vs invoice. Reports, never approves. */
 export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: string, invoiceId: string) {
-  await assertCapability(sb, userId, tenantId, "invoice.manage");
-
   const { data: invoice, error } = await sb
     .from("restaurant_supplier_invoices")
     .select(
-      "id, tenant_id, supplier_id, purchase_order_id, document_number, total, currency, property_id, location_id",
+      "id, tenant_id, supplier_id, purchase_order_id, document_number, total, currency, property_id, location_id, recorded_by",
     )
     .eq("tenant_id", tenantId)
     .eq("id", invoiceId)
     .single();
   if (error || !invoice) throw new Error("Supplier invoice not found.");
+  await assertCapability(sb, userId, tenantId, "invoice.manage", {
+    propertyId: invoice.property_id ?? null,
+    locationId: invoice.location_id ?? null,
+  });
+  if (invoice.recorded_by === userId) {
+    throw new Error("Separation of duties — the user who recorded this supplier invoice cannot reconcile it.");
+  }
 
   const invoiceTotal = Number(invoice.total ?? 0);
   let orderTotal: number | null = null;
