@@ -334,5 +334,13 @@ export async function processPendingWhatsAppOutboundMessages(
       else failed++;
     }
   }
-  return { claimed: messages.length, sent, retried, failed, campaignReconciliationRequired, campaignDispatchDeferred, campaignDispatchSuppressed };
+  return {
+    claimed: messages.length,
+    sent,
+    retried,
+    failed,
+    campaignReconciliationRequired,
+    campaignDispatchDeferred,
+    campaignDispatchSuppressed,
+  };
 }
