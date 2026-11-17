@@ -99,7 +99,7 @@ function makeDb(options: {
             provider: "meta-whatsapp",
             channel_key: "whatsapp",
             integration_type: "channel",
-            config: { graphApiVersion: "v27.0" },
+            config: { graphApiVersion: "v27.0", wabaId: "123456789" },
           }, error: null };
         }
         if (table === "wa_conversations") {
@@ -135,7 +135,7 @@ describe("Meta WhatsApp outbound Guest Portal queue", () => {
 
     expect(result).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0, uncertain: 0 });
     expect(mocks.sendTextMessage).toHaveBeenCalledWith(
-      { accessToken: "access-token", phoneNumberId: "987654321" },
+      { accessToken: "access-token", wabaId: "123456789", phoneNumberId: "987654321" },
       "255700000000",
       "Welcome. Secure menu: https://guest.example.test/guest/private-token",
       { graphApiVersion: "v27.0" },
