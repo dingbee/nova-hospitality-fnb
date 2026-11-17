@@ -54,7 +54,10 @@ vi.mock("./pricing.server", () => ({ recordPriceObservation: vi.fn(async () => u
 vi.mock("./variances.server", () => ({ raiseVariance: vi.fn(async () => null) }));
 
 import { createGoodsReceipt, postGoodsReceipt } from "./receiving.server";
-import { createIntelligentPurchaseOrders } from "./ask-lexibite.server";
+import {
+  createIntelligentPurchaseOrders,
+  transitionAskLexiBitePurchaseOrder,
+} from "./ask-lexibite.server";
 
 /* ---------------- minimal in-memory Supabase ---------------- */
 
@@ -407,6 +410,25 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
       },
     );
 
+    poBridgeMocks.transitionPurchaseOrder.mockImplementation(
+      async (_sb: any, _user: string, input: any) => {
+        const po = db["restaurant_purchase_orders"]!.find((row) => row.id === input.id);
+        if (!po) throw new Error("Purchase order not found.");
+        if (po.status !== "draft" || input.status !== "approved") {
+          throw new Error("Invalid purchase-order approval transition.");
+        }
+        po.status = input.status;
+        return {
+          id: po.id,
+          reference: po.reference,
+          status: po.status,
+          total: po.total,
+          location_id: po.location_id,
+          property_id: po.property_id,
+        };
+      },
+    );
+
     const request = {
       tenantId: TENANT,
       inventoryItemIds: [],
@@ -423,7 +445,18 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
 
     const persistedPo = db["restaurant_purchase_orders"]![0]!;
     const persistedLine = db["restaurant_purchase_order_items"]![0]!;
-    persistedPo.status = "approved";
+    const approval = await transitionAskLexiBitePurchaseOrder(sb, USER, {
+      tenantId: TENANT,
+      purchaseOrderId,
+      status: "approved",
+    });
+    expect(approval.status).toBe("approved");
+    expect(poBridgeMocks.transitionPurchaseOrder).toHaveBeenCalledWith(
+      sb,
+      USER,
+      expect.objectContaining({ tenantId: TENANT, id: purchaseOrderId, status: "approved" }),
+    );
+    expect(persistedPo.status).toBe("approved");
     const receipt = await createGoodsReceipt(sb, USER, {
       tenantId: TENANT,
       purchaseOrderId,
