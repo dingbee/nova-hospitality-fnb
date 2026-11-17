@@ -1,0 +1,14 @@
+User-agent: *
+Allow: /
+Disallow: /wp-admin/
+Disallow: /wp-content/
+Disallow: /wp-includes/
+Disallow: /wp-json/
+Disallow: /category/
+Disallow: /tag/
+Disallow: /author/
+Disallow: /hello-world/
+Disallow: /?p=
+Disallow: /feed/
+
+Sitemap: https://nova-hospitality.local/sitemap.xml

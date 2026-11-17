@@ -1,0 +1,1654 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- server function rows are untyped at this boundary. */
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import {
+  Bell,
+  ChefHat,
+  CreditCard,
+  DoorOpen,
+  Minus,
+  Plus,
+  Printer,
+  ReceiptText,
+  RotateCcw,
+  Search,
+  Send,
+  Trash2,
+  Users,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { SectionCard } from "@/components/os/SectionCard";
+import { EmptyState } from "@/components/os/EmptyState";
+import { StatusChip, type StatusTone } from "@/components/os/StatusChip";
+import { GuestContextBanner } from "./GuestContextBanner";
+import { useAdminMutation } from "@/hooks/use-admin-mutation";
+import { useRestaurantWorkspace } from "@/modules/restaurant/ui/useRestaurantWorkspace";
+import { hasRestaurantCapability } from "@/modules/restaurant/core/permissions";
+import { getRestaurantOrderFn } from "../sales.functions";
+import { fireRestaurantOrderFn } from "@/modules/restaurant/kitchen/kitchen.functions";
+import {
+  addPosLinesFn,
+  openPosOrderFn,
+  posBoardFn,
+  posCatalogFn,
+  posReceiptFn,
+  reopenPosOrderFn,
+  cancelPosOrderFn,
+  takePosPaymentFn,
+  transferPosOrderFn,
+  voidPosLineFn,
+} from "../pos.functions";
+import {
+  getRestaurantBillFn,
+  presentRestaurantBillFn,
+  refundRestaurantPaymentFn,
+  releaseRestaurantTableFn,
+  requestRestaurantBillFn,
+  saveRestaurantBillSplitFn,
+  clearRestaurantBillSplitFn,
+} from "../bill.functions";
+import {
+  acknowledgeServiceRequestFn,
+  resolveServiceRequestFn,
+} from "@/modules/restaurant/service-requests/service-requests.functions";
+import { useNewlyActiveKeys, useStaffAttentionSignal } from "@/hooks/use-attention-signal";
+import { useOfflineSync } from "@/modules/restaurant/offline/useOfflineSync";
+import { ConnectivityIndicator } from "@/modules/restaurant/offline/ui/ConnectivityIndicator";
+import type { BillSplitMode, SaveBillSplitInput } from "../bill.contracts";
+import { PosItemDialog } from "./PosItemDialog";
+import { PosBillDialog } from "./PosBillDialog";
+import { PosPaymentDialog } from "./PosPaymentDialog";
+import { PosRoomChargeDialog } from "./PosRoomChargeDialog";
+import { PosMobileMoneyDialog } from "./PosMobileMoneyDialog";
+import { getMobileMoneyAccountFn } from "../../payments/mobilemoney/mobilemoney.functions";
+import { PosReceiptDialog } from "./PosReceiptDialog";
+import { lineTotal, money, type CartLine } from "./pos-types";
+import {
+  deriveLifecycle,
+  tableTone,
+  TABLE_TONE_CLASS,
+  TABLE_TONE_LABEL,
+  type TableTone,
+} from "./lifecycle";
+import { ServiceLifecycleBar } from "./ServiceLifecycleBar";
+import { OrderTimeline } from "./OrderTimeline";
+import { PosMenuItemCard } from "./PosMenuItemCard";
+import { beverageCategories } from "@/modules/restaurant/bar/lens";
+import { BAR_STATION_TYPES } from "@/modules/restaurant/bar/contracts";
+import { sendToStationLabel } from "../stationRouting";
+import { PosStaffGate, usePosStaffSession } from "./PosStaffGate";
+
+const newRequestId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `pos-${Date.now()}-${Math.random()}`;
+
+const FLOOR_LEGEND: TableTone[] = ["free", "seated", "production", "ready", "billing", "attention"];
+
+/** Presentation-only mapping from an order item's own status word to a StatusChip tone — no new state. */
+function itemStatusTone(status: string): StatusTone {
+  switch (status) {
+    case "ready":
+      return "success";
+    case "preparing":
+      return "warning";
+    case "voided":
+      return "danger";
+    case "served":
+      return "neutral";
+    default:
+      return "info"; // "ordered"
+  }
+}
+
+/** Which operating environment the till is rendering: restaurant service or bar service. */
+export type PosLens = "restaurant" | "bar";
+
+/**
+ * The till. Floor → bill → kitchen → payment → receipt, in one screen.
+ *
+ * All money and stock consequences happen server-side in the sales core; this
+ * component only stages what the server has not yet accepted.
+ */
+function PosWorkspaceBody({
+  lens = "restaurant",
+  className,
+}: { lens?: PosLens; className?: string } = {}) {
+  const isBar = lens === "bar";
+  const { sessionId } = usePosStaffSession();
+  const ws = useRestaurantWorkspace();
+  const tenantId = ws.data?.tenant?.id;
+  const roles = (ws.data?.roles ?? []) as readonly string[];
+  const platformAdmin = ws.data?.platformAdmin ?? false;
+  const canVoid = hasRestaurantCapability(roles, "sales.void", platformAdmin);
+  const canReopen = hasRestaurantCapability(roles, "sales.reopen", platformAdmin);
+  const canRoomCharge = hasRestaurantCapability(roles, "sales.room_charge", platformAdmin);
+  const currency = ws.data?.activeProperty?.currency ?? "TZS";
+  const workspacePropertyId = ws.data?.activePropertyId ?? null;
+  const ownerOrAdmin = Boolean(platformAdmin) || roles.some((role) =>
+    ["owner", "general_manager", "restaurant_manager"].includes(role),
+  );
+  // Authenticated owners/managers bypass the staff-PIN gate. For that path
+  // there is intentionally no POS staff session, so optional posSessionId
+  // must be omitted rather than sent as null. Staff sessions still carry the
+  // real session id and are validated server-side.
+  const posSession = sessionId ? { posSessionId: sessionId } : {};
+  const posActorReady = ownerOrAdmin || Boolean(sessionId);
+  const qc = useQueryClient();
+
+  const [orderId, setOrderId] = useState<string | null>(null);
+  // P10: a queued (not-yet-server-confirmed) order is tracked separately
+  // from a real orderId — the board/order/bill queries below must never
+  // fire against a locally-generated id, and the UI must never claim
+  // "server confirmed" for one. See the openBill mutationFn's offline
+  // branch.
+  const [queuedOrder, setQueuedOrder] = useState<{
+    operationId: string;
+    guestCount: number;
+    tableId?: string;
+  } | null>(null);
+  const [cart, setCart] = useState<CartLine[]>([]);
+  // Below lg, Bill and Menu can't both get enough height to stay usable (see
+  // the tab switcher below) — this picks which one is currently shown there.
+  // Irrelevant at lg+, where both render side by side regardless of this value.
+  const [mobileRightTab, setMobileRightTab] = useState<"bill" | "menu">("menu");
+  const [mobileFloorExpanded, setMobileFloorExpanded] = useState(true);
+  const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [pickerItem, setPickerItem] = useState<any | null>(null);
+  const [payOpen, setPayOpen] = useState(false);
+  const [roomChargeAmount, setRoomChargeAmount] = useState<number | null>(null);
+  const [mobileMoneyAmount, setMobileMoneyAmount] = useState<number | null>(null);
+  const [billOpen, setBillOpen] = useState(false);
+  const [splitMode, setSplitMode] = useState<BillSplitMode>("none");
+  const [ways, setWays] = useState(2);
+  const [shareAmount, setShareAmount] = useState<number | null>(null);
+  const [splitBillId, setSplitBillId] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<any | null>(null);
+  const openKey = useRef<string>(newRequestId());
+  const payKey = useRef<string>(newRequestId());
+  const refundKey = useRef<string>(newRequestId());
+
+  // Selecting a table collapses the mobile floor automatically. The compact
+  // strip remains available for fast table switching or reopening the floor.
+  useEffect(() => {
+    setMobileFloorExpanded(!orderId);
+  }, [orderId]);
+
+  const boardFn = useServerFn(posBoardFn);
+  const catalogFn = useServerFn(posCatalogFn);
+  const orderFn = useServerFn(getRestaurantOrderFn);
+  const openFn = useServerFn(openPosOrderFn);
+  const addFn = useServerFn(addPosLinesFn);
+  const voidFn = useServerFn(voidPosLineFn);
+  const transferFn = useServerFn(transferPosOrderFn);
+  const payFn = useServerFn(takePosPaymentFn);
+  const reopenFn = useServerFn(reopenPosOrderFn);
+  const cancelFn = useServerFn(cancelPosOrderFn);
+  const receiptFn = useServerFn(posReceiptFn);
+  const fireFn = useServerFn(fireRestaurantOrderFn);
+  const billFn = useServerFn(getRestaurantBillFn);
+  const requestBillFn = useServerFn(requestRestaurantBillFn);
+  const presentBillFn = useServerFn(presentRestaurantBillFn);
+  const saveBillSplitFn = useServerFn(saveRestaurantBillSplitFn);
+  const clearBillSplitFn = useServerFn(clearRestaurantBillSplitFn);
+  const releaseTableFn = useServerFn(releaseRestaurantTableFn);
+  const refundFn = useServerFn(refundRestaurantPaymentFn);
+  const acknowledgeServiceRequestFnCall = useServerFn(acknowledgeServiceRequestFn);
+  const resolveServiceRequestFnCall = useServerFn(resolveServiceRequestFn);
+
+  const board = useQuery({
+    queryKey: ["restaurant.pos.board", tenantId, workspacePropertyId],
+    queryFn: () => boardFn({ data: { tenantId: tenantId!, propertyId: workspacePropertyId ?? undefined, ...posSession } }),
+    enabled: Boolean(tenantId && posActorReady),
+    refetchInterval: 8_000,
+  });
+
+  // Staff attention signal (visual badge is already authoritative via
+  // board.data below; this only adds sound/vibration for genuinely NEW
+  // actionable items since this screen was opened — never for whatever was
+  // already outstanding on load, and never twice for the same item across
+  // repeated polls). Reuses this same board poll rather than a second one.
+  const { muted, setMuted, unlocked, notify } = useStaffAttentionSignal();
+  const attentionKeys = useMemo(() => {
+    const tables = ((board.data as any)?.tables ?? []) as any[];
+    const keys: string[] = [];
+    for (const t of tables) {
+      if (t.serviceRequest?.status === "requested")
+        keys.push(`service-request:${t.serviceRequest.id}`);
+      if (t.order) {
+        const life = deriveLifecycle({
+          order: t.order,
+          items: t.order.items ?? [],
+          tickets: t.order.tickets ?? [],
+        });
+        if (life.billRequestedAt && !life.billPresentedAt)
+          keys.push(`bill-requested:${t.order.id}`);
+        if (life.unsent > 0) keys.push(`unsent-items:${t.order.id}`);
+      }
+    }
+    return keys;
+  }, [board.data]);
+  const newlyActiveAttention = useNewlyActiveKeys(attentionKeys);
+
+  useEffect(() => {
+    if (newlyActiveAttention.length === 0) return;
+    notify();
+    const hasServiceRequest = newlyActiveAttention.some((k) => k.startsWith("service-request:"));
+    const hasBill = newlyActiveAttention.some((k) => k.startsWith("bill-requested:"));
+    const hasUnsent = newlyActiveAttention.some((k) => k.startsWith("unsent-items:"));
+    const parts = [
+      hasServiceRequest && "Guest needs assistance",
+      hasBill && "Bill requested",
+      hasUnsent && "New items to send",
+    ].filter(Boolean);
+    if (parts.length > 0) toast(parts.join(" · "));
+    // newlyActiveAttention is a fresh array each render; compare by content.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newlyActiveAttention.join("|")]);
+  const catalog = useQuery({
+    queryKey: ["restaurant.pos.catalog", tenantId, workspacePropertyId],
+    queryFn: () => catalogFn({ data: { tenantId: tenantId!, propertyId: workspacePropertyId ?? undefined, ...posSession } }),
+    enabled: Boolean(tenantId && posActorReady),
+    staleTime: 120_000,
+  });
+  const order = useQuery({
+    queryKey: ["restaurant.pos.order", tenantId, orderId],
+    queryFn: () => orderFn({ data: { tenantId: tenantId!, orderId: orderId! } }),
+    enabled: Boolean(tenantId && orderId),
+    refetchInterval: 20_000,
+  });
+  const bill = useQuery({
+    queryKey: ["restaurant.pos.bill", tenantId, orderId, splitMode, ways],
+    queryFn: () => billFn({ data: { tenantId: tenantId!, orderId: orderId!, splitMode, ways } }),
+    enabled: Boolean(tenantId && orderId),
+    refetchInterval: 30_000,
+  });
+  const currentLocationId = (order.data as any)?.order?.location_id as string | undefined;
+  const mobileMoneyAccountFn = useServerFn(getMobileMoneyAccountFn);
+  const mobileMoneyAccount = useQuery({
+    queryKey: ["restaurant.mobilemoney.account", tenantId, currentLocationId],
+    queryFn: () =>
+      mobileMoneyAccountFn({ data: { tenantId: tenantId!, locationId: currentLocationId! } }),
+    enabled: Boolean(tenantId && currentLocationId),
+    staleTime: 60_000,
+  });
+  const mobileMoneyActive = (mobileMoneyAccount.data as any)?.activation_state === "active";
+
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ["restaurant.pos.board"] });
+    void qc.invalidateQueries({ queryKey: ["restaurant.pos.order"] });
+    void qc.invalidateQueries({ queryKey: ["restaurant.pos.bill"] });
+    void qc.invalidateQueries({ queryKey: ["restaurant.tickets"] });
+    void qc.invalidateQueries({ queryKey: ["restaurant.orders"] });
+  };
+
+  // P10 — offline operations capability. isOffline reflects real browser
+  // connectivity (see connectivity.ts); the queue*/status below are backed
+  // by IndexedDB, not memory, and replay through the exact same
+  // openPosOrderFn/addPosLinesFn/fireRestaurantOrderFn this component
+  // already calls when online (see offline/adapters.ts) — there is no
+  // second transactional path.
+  const offlineSync = useOfflineSync({
+    tenantId,
+    propertyId: workspacePropertyId,
+    outletId: currentLocationId ?? null,
+  });
+
+  const openBill = useAdminMutation({
+    mutationFn: async (vars: { tableId?: string; guestCount: number }) => {
+      if (offlineSync.isOffline) {
+        const op = await offlineSync.queueOpenOrder({
+          tenantId: tenantId!,
+          propertyId: workspacePropertyId,
+          locationId: vars.tableId ?? null,
+          tableId: vars.tableId,
+          orderType: vars.tableId ? "dine_in" : "bar",
+          guestCount: vars.guestCount,
+          currency,
+          lines: [],
+        });
+        return {
+          queued: true as const,
+          operationId: op.operationId,
+          guestCount: vars.guestCount,
+          tableId: vars.tableId,
+        };
+      }
+      const result = await openFn({
+        data: {
+          tenantId: tenantId!,
+          propertyId: workspacePropertyId ?? undefined,
+          ...posSession,
+          tableId: vars.tableId,
+          orderType: vars.tableId ? "dine_in" : "bar",
+          guestCount: vars.guestCount,
+          currency,
+          terminalId: "pos-web",
+          clientRequestId: openKey.current,
+          lines: [],
+        },
+      });
+      return { queued: false as const, ...(result as any) };
+    },
+    onSuccessToast: (data: any) =>
+      data.queued ? "Bill queued — will sync when reconnected" : "Bill opened",
+    onSuccess: (data: any) => {
+      if (data.queued) {
+        setQueuedOrder({
+          operationId: data.operationId,
+          guestCount: data.guestCount,
+          tableId: data.tableId,
+        });
+        setOrderId(null);
+      } else {
+        openKey.current = newRequestId();
+        setQueuedOrder(null);
+        setOrderId(data.id);
+      }
+      setCart([]);
+      refresh();
+    },
+  });
+
+  const sendLines = useAdminMutation({
+    mutationFn: async (vars: { fire: boolean }) => {
+      const lines = cart.map((l) => ({
+        menuItemId: l.menuItemId,
+        variantId: l.variantId,
+        stationId: l.stationId,
+        description: l.description,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        discount: 0,
+        seatNumber: l.seatNumber,
+        course: l.course,
+        notes: l.notes,
+        guestNotes: l.guestNotes,
+        modifiers: l.modifiers,
+      }));
+
+      // Offline, or targeting an order that itself is still only queued
+      // (opened offline, not yet synced): queue add_item — and
+      // fire_to_kitchen, if requested — as dependent operations against
+      // the same OrderRef, rather than calling the server functions
+      // directly. Online against an already-server-confirmed order is
+      // completely unchanged from before this pass.
+      if (offlineSync.isOffline || queuedOrder) {
+        const orderRef = queuedOrder
+          ? ({ kind: "local", operationId: queuedOrder.operationId } as const)
+          : ({ kind: "server", orderId: orderId! } as const);
+        const addOp = await offlineSync.queueAddItems(
+          orderRef,
+          lines,
+          queuedOrder?.operationId ?? null,
+        );
+        if (vars.fire) {
+          await offlineSync.queueFireToKitchen(orderRef, addOp.operationId);
+        }
+        return { queued: true as const };
+      }
+
+      // Existing bills may contain pending lines without any locally staged
+      // cart lines (e.g. a complimentary service-recovery replacement).
+      // Never submit lines: [] to addPosLines; fire the existing ordered
+      // lines directly when the operator chooses Send to bar/kitchen.
+      const res = lines.length > 0
+        ? await addFn({
+            data: { tenantId: tenantId!, ...posSession, orderId: orderId!, lines },
+          })
+        : null;
+      if (vars.fire) {
+        await fireFn({
+          data: { tenantId: tenantId!, orderId: orderId!, orderItemIds: [], priority: 0 },
+        });
+      }
+      return { queued: false as const, ...(res as any) };
+    },
+    onSuccessToast: (data: any) => (data.queued ? "Queued — will send when reconnected" : "Sent"),
+    onSuccess: () => {
+      setCart([]);
+      refresh();
+    },
+  });
+
+  const voidLine = useAdminMutation({
+    mutationFn: (vars: { orderItemId: string; reason: string }) =>
+      voidFn({
+        data: {
+          tenantId: tenantId!,
+          ...posSession,
+          orderId: orderId!,
+          orderItemId: vars.orderItemId,
+          reason: vars.reason,
+        },
+      }),
+    successMessage: "Line voided",
+    onSuccess: refresh,
+  });
+
+  const transfer = useAdminMutation({
+    mutationFn: (vars: { tableId: string | null }) =>
+      transferFn({ data: { tenantId: tenantId!, ...posSession, orderId: orderId!, tableId: vars.tableId } }),
+    successMessage: "Bill moved",
+    onSuccess: refresh,
+  });
+
+  const pay = useAdminMutation({
+    mutationFn: (vars: { method: any; amount: number; tendered?: number; reference?: string }) =>
+      payFn({
+        data: {
+          tenantId: tenantId!,
+          ...posSession,
+          orderId: orderId!,
+          splitBillId: splitBillId ?? undefined,
+          clientRequestId: payKey.current,
+          method: vars.method,
+          amount: vars.amount,
+          tendered: vars.tendered,
+          reference: vars.reference,
+          state:
+            vars.method === "room_charge"
+              ? "room_charged"
+              : vars.method === "comp"
+                ? "comped"
+                : "paid",
+          closeWhenSettled: true,
+        },
+      }),
+    successMessage: "Payment recorded",
+    onSuccess: (data: any) => {
+      const wasSplitPayment = Boolean(splitBillId);
+      payKey.current = newRequestId();
+      setShareAmount(null);
+      setSplitBillId(null);
+      if (wasSplitPayment && !data?.receipt) setPayOpen(false);
+      if (data?.receipt) {
+        setReceipt(data.receipt);
+        setPayOpen(false);
+        setBillOpen(false);
+      }
+      refresh();
+    },
+  });
+
+  const clearBillSplit = useAdminMutation({
+    mutationFn: () => clearBillSplitFn({ data: { tenantId: tenantId!, orderId: orderId! } }),
+    successMessage: "Split bills recombined",
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["restaurant.pos.bill", tenantId, orderId] });
+      setSplitMode("none");
+      setShareAmount(null);
+      setSplitBillId(null);
+    },
+  });
+
+  const requestBill = useAdminMutation({
+    mutationFn: () => requestBillFn({ data: { tenantId: tenantId!, orderId: orderId! } }),
+    successMessage: "Bill started",
+    onSuccess: () => {
+      setBillOpen(true);
+      refresh();
+    },
+  });
+
+  const presentBill = useAdminMutation({
+    mutationFn: () => presentBillFn({ data: { tenantId: tenantId!, orderId: orderId! } }),
+    successMessage: "Bill presented to the guest",
+    onSuccess: () => {
+      if (typeof window !== "undefined") window.print();
+      refresh();
+    },
+  });
+
+  const releaseTable = useAdminMutation({
+    mutationFn: (vars: { orderId: string }) =>
+      releaseTableFn({ data: { tenantId: tenantId!, orderId: vars.orderId } }),
+    successMessage: "Table released",
+    onSuccess: () => {
+      setOrderId(null);
+      setReceipt(null);
+      refresh();
+    },
+  });
+
+  const acknowledgeRequest = useAdminMutation({
+    mutationFn: (vars: { requestId: string }) =>
+      acknowledgeServiceRequestFnCall({ data: { tenantId: tenantId!, requestId: vars.requestId } }),
+    successMessage: "Guest request acknowledged",
+    onSuccess: refresh,
+  });
+
+  const resolveRequest = useAdminMutation({
+    mutationFn: (vars: { requestId: string }) =>
+      resolveServiceRequestFnCall({ data: { tenantId: tenantId!, requestId: vars.requestId } }),
+    successMessage: "Guest request resolved",
+    onSuccess: refresh,
+  });
+
+  const refund = useAdminMutation({
+    mutationFn: (vars: { paymentId: string; amount: number; reason: string }) =>
+      refundFn({
+        data: {
+          tenantId: tenantId!,
+          orderId: orderId!,
+          paymentId: vars.paymentId,
+          amount: vars.amount,
+          reason: vars.reason,
+          clientRequestId: refundKey.current,
+        },
+      }),
+    successMessage: "Refund recorded",
+    onSuccess: () => {
+      refundKey.current = newRequestId();
+      refresh();
+    },
+  });
+
+  const reopen = useAdminMutation({
+    mutationFn: (vars: { orderId: string }) =>
+      reopenFn({
+        data: { tenantId: tenantId!, ...posSession, orderId: vars.orderId, reason: "Correction at the till" },
+      }),
+    successMessage: "Bill reopened",
+    onSuccess: refresh,
+  });
+
+  // Cancelling a whole bill is a governed correction, not a delete: the server
+  // decides whether it is allowed and unwinds any stock the sale consumed.
+  const cancelBill = useAdminMutation({
+    mutationFn: (vars: { orderId: string; reason: string }) =>
+      cancelFn({ data: { tenantId: tenantId!, ...posSession, orderId: vars.orderId, reason: vars.reason } }),
+    onSuccessToast: (d: any) =>
+      d?.reversal?.reversed
+        ? `Bill cancelled — ${d.reversal.reversed} stock movement(s) reversed`
+        : "Bill cancelled",
+    onSuccess: () => {
+      setOrderId(null);
+      setCart([]);
+      refresh();
+    },
+  });
+
+  const showReceipt = useAdminMutation({
+    mutationFn: (vars: { orderId: string; reprint: boolean }) =>
+      receiptFn({ data: { tenantId: tenantId!, ...posSession, orderId: vars.orderId, reprint: vars.reprint } }),
+    silentSuccess: true,
+    onSuccess: (data: any) => setReceipt(data),
+  });
+
+  const items = (catalog.data?.items ?? []) as any[];
+  const allCategories = (catalog.data?.categories ?? []) as any[];
+  /** In the bar lens the catalogue narrows to beverage categories; falls back to all when none are tagged. */
+  const barCategories = useMemo(() => beverageCategories<any>(allCategories), [allCategories]);
+  const categories = isBar && barCategories.length > 0 ? barCategories : allCategories;
+  const scoped = useMemo(() => {
+    if (!isBar || barCategories.length === 0) return items;
+    const ids = new Set(barCategories.map((c) => c.id));
+    return items.filter((i) => ids.has(i.category_id));
+  }, [items, isBar, barCategories]);
+  const byCategory = useMemo(
+    () => (categoryId ? scoped.filter((i) => i.category_id === categoryId) : scoped),
+    [scoped, categoryId],
+  );
+  // Client-side name filter over the already-fetched catalogue — no new
+  // query, no server round trip. Purely narrows what's already in `byCategory`.
+  const filtered = useMemo(() => {
+    const q = catalogSearch.trim().toLowerCase();
+    if (!q) return byCategory;
+    return byCategory.filter((i) =>
+      String(i.name ?? "")
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [byCategory, catalogSearch]);
+
+  const serverItems = ((order.data as any)?.items ?? []) as any[];
+  const live = serverItems.filter((i) => i.status !== "voided");
+  const orderRow = (order.data as any)?.order;
+  // Which table (if any) this bill is on — read from the floor board already
+  // in memory, purely so the Bill panel can say "Table 12" instead of
+  // leaving the operator to infer it from the order number.
+  const activeTable = useMemo(
+    () => ((board.data as any)?.tables ?? []).find((t: any) => t.id === orderRow?.table_id) ?? null,
+    [board.data, orderRow?.table_id],
+  );
+  const stations = (catalog.data?.stations ?? []) as { id: string; stationType: string | null }[];
+  const stationTypeById = useMemo(
+    () => new Map(stations.map((s) => [s.id, s.stationType])),
+    [stations],
+  );
+  const itemStationById = useMemo(
+    () => new Map(items.map((i) => [i.id, i.station_id as string | null])),
+    [items],
+  );
+  /**
+   * Station types of everything about to fire: staged cart lines (proposed,
+   * from the catalogue) plus already-added-but-unfired order items (resolved,
+   * from the server at insert time). Feeds both the till's own "Send to X"
+   * button below and `deriveLifecycle`'s "Next: X" action, so there is one
+   * computation, not two — neither can claim a drink is headed to the
+   * kitchen.
+   */
+  const pendingStationTypes = useMemo(() => {
+    const pending = [
+      ...cart.map((l) => (l.menuItemId ? itemStationById.get(l.menuItemId) : l.stationId) ?? null),
+      ...live.filter((i) => i.status === "ordered").map((i) => i.station_id ?? null),
+    ];
+    return pending.map((stationId) =>
+      stationId ? (stationTypeById.get(stationId) ?? null) : null,
+    );
+  }, [cart, live, itemStationById, stationTypeById]);
+  const sendLabel = useMemo(
+    () => sendToStationLabel(pendingStationTypes, BAR_STATION_TYPES),
+    [pendingStationTypes],
+  );
+  const orderTickets = ((order.data as any)?.tickets ?? []) as any[];
+  const orderPayments = ((order.data as any)?.payments ?? []) as any[];
+  const billTotal = Number(orderRow?.total ?? 0) + cart.reduce((s, l) => s + lineTotal(l), 0);
+  const stats = (board.data as any)?.stats;
+
+  const life = useMemo(
+    () =>
+      orderRow
+        ? deriveLifecycle({
+            order: orderRow,
+            items: serverItems,
+            tickets: orderTickets,
+            payments: orderPayments,
+            stagedCount: cart.length,
+            stagedStationTypes: pendingStationTypes,
+            receipt: (bill.data as any)?.receipt ?? null,
+          })
+        : null,
+    [
+      orderRow,
+      serverItems,
+      orderTickets,
+      orderPayments,
+      cart.length,
+      pendingStationTypes,
+      bill.data,
+    ],
+  );
+
+  /** One primary action per state — the till never asks "what now?". */
+  const runNextAction = () => {
+    if (!life || !orderId) return;
+    switch (life.nextAction) {
+      case "send-to-kitchen":
+        sendLines.mutate({ fire: true });
+        break;
+      case "request-bill":
+        requestBill.mutate(undefined as never);
+        break;
+      case "present-bill":
+        setBillOpen(true);
+        break;
+      case "mark-served":
+      case "take-payment":
+      case "settle-balance":
+        setBillOpen(true);
+        break;
+      case "print-receipt":
+        showReceipt.mutate({ orderId, reprint: false });
+        break;
+      case "deliver-receipt":
+        if ((bill.data as any)?.receipt) setReceipt((bill.data as any).receipt);
+        else showReceipt.mutate({ orderId, reprint: false });
+        break;
+      case "release-table":
+        releaseTable.mutate({ orderId });
+        break;
+      default:
+        break;
+    }
+  };
+
+  /** Adjusts the quantity of a line still staged at the till — client-only state, same as removing one. Nothing already sent to the server is touched here; that's what void is for. */
+  const updateCartQty = (key: string, delta: number) => {
+    setCart((prev) =>
+      prev.flatMap((l) => {
+        if (l.key !== key) return [l];
+        const next = l.quantity + delta;
+        return next <= 0 ? [] : [{ ...l, quantity: next }];
+      }),
+    );
+  };
+
+  if (!tenantId) {
+    return (
+      <EmptyState
+        title="No restaurant workspace"
+        description="You are not a member of a restaurant tenant yet."
+      />
+    );
+  }
+
+  return (
+    <div className={cn("flex h-full min-h-0 flex-col gap-2 lg:gap-3", className)}>
+      <div className="shrink-0 space-y-3">
+        {/* Compact operational strip: the four figures a cashier glances at,
+            in one row, not four large cards — the selling workspace below
+            (Floor/Menu/Bill) is the thing this screen exists for, and it
+            must own the viewport, not compete with KPI tiles for it. */}
+        <div className="os-card os-fade-in flex min-w-0 flex-nowrap items-center gap-x-4 overflow-x-auto px-3 py-2 lg:flex-wrap lg:gap-x-6 lg:gap-y-1.5 lg:px-4 lg:py-2.5">
+          {[
+            { label: "Open bills", value: String(stats?.openBills ?? 0), icon: Users },
+            {
+              label: "Open value",
+              value: money(stats?.openValue ?? 0, currency),
+              icon: CreditCard,
+            },
+            {
+              label: "Revenue today",
+              value: money(stats?.revenueToday ?? 0, currency),
+              icon: CreditCard,
+            },
+            {
+              label: "Average check",
+              value: money(stats?.averageCheck ?? 0, currency),
+              icon: ChefHat,
+            },
+          ].map((m) => (
+            <div key={m.label} className="flex items-center gap-1.5">
+              <m.icon className="size-3.5 shrink-0 text-[color:var(--os-ink-3)]" />
+              <span className="text-[0.62rem] font-medium uppercase tracking-wide text-[color:var(--os-ink-3)]">
+                {m.label}
+              </span>
+              <span className="text-sm font-semibold tabular-nums text-[color:var(--os-ink)]">
+                {m.value}
+              </span>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => setMuted(!muted)}
+            className="ml-auto flex items-center gap-1.5 rounded-full border px-2 py-1 text-[0.62rem] font-medium uppercase tracking-wide text-[color:var(--os-ink-3)] transition-colors hover:border-primary"
+            title={
+              muted
+                ? "Alert sound muted — tap to unmute"
+                : unlocked
+                  ? "Alert sound on — tap to mute"
+                  : "Alert sound will start after you tap anywhere"
+            }
+          >
+            {muted ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+            {muted ? "Muted" : "Alerts"}
+          </button>
+          <ConnectivityIndicator status={offlineSync.status} />
+        </div>
+
+        {queuedOrder && (
+          <div
+            className="mx-4 mt-2 rounded-lg border border-dashed px-3 py-2 text-xs text-[color:var(--os-warn)]"
+            data-testid="queued-order-banner"
+          >
+            Bill queued locally for {queuedOrder.guestCount} guest
+            {queuedOrder.guestCount === 1 ? "" : "s"} — not yet confirmed by the server. It will
+            sync automatically once this device reconnects.
+          </div>
+        )}
+
+        {orderId && <GuestContextBanner tenantId={tenantId} orderId={orderId} />}
+      </div>
+
+      {/* Viewport-derived at every width, never content-driven: this grid
+          always receives a definite height from the flex-col workspace
+          above (h-full/min-h-0/flex-1, unconditional), and every row/column
+          track below is an explicit minmax(0, Nfr) — never bare "auto" and
+          never a hard pixel floor — so it always resolves to a fraction of
+          that definite height regardless of how much Floor/Menu/Bill
+          content exists. More tables, menu items or bill lines can only
+          change what scrolls *inside* a pane; they can never grow the pane,
+          this grid, the workspace, or the page.
+          Below lg: Floor and a Menu/Bill switcher stack as two proportional
+          ROWS (40fr/60fr) sharing that same fixed height, each still
+          scrolling internally — not two fixed pixel boxes and not normal
+          document flow. Floor's row carries a measured 330px floor — header
+          + one row of table cards + the status legend + the walk-in button
+          need that much before anything can scroll; without it, a
+          short/narrow phone viewport can squeeze Floor's card row to a
+          sliver a few px tall, which is not "scrolls internally", it's
+          unreadable. The single mobile column track is itself an
+          explicit minmax(0,1fr), not a bare implicit column — an implicit
+          auto-sized track lets a wide child (e.g. Floor's card grid) blow
+          out past the viewport with no scrollbar to show for it, since the
+          overflow gets silently clipped by a downstream overflow-hidden
+          instead.
+          At lg+: THREE simultaneous columns, Floor | Menu | Bill, each
+          spanning the grid's full single row — never Floor beside a
+          Bill-over-Menu stack. Bill stays persistently visible next to Menu
+          so a cashier never navigates away from the catalogue to see what
+          just got added. The Menu/Bill wrapper below uses `lg:contents` so
+          its two children (Menu, then Bill, in that DOM order) become
+          direct items of THIS grid at lg+, landing in columns 2 and 3 by
+          normal auto-placement — while below lg that same wrapper is a real
+          flex column holding the tab-switcher behavior unchanged. */}
+      <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(200px,22fr)_minmax(0,45fr)_minmax(300px,33fr)] lg:grid-rows-[minmax(0,1fr)] lg:gap-3 lg:overflow-hidden xl:gap-4">
+        {!mobileFloorExpanded && (
+          <div className="os-card z-40 flex shrink-0 items-center gap-2 overflow-x-auto px-3 py-2 lg:hidden">
+            <button type="button" onClick={() => setMobileFloorExpanded(true)} className="shrink-0 rounded-md border px-2 py-1 text-xs font-medium">
+              Floor
+            </button>
+            {((board.data as any)?.tables ?? []).map((t: any) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() =>
+                  t.order
+                    ? setOrderId(t.order.id)
+                    : openBill.mutate({ tableId: t.id, guestCount: t.seats ?? 2 })
+                }
+                className={cn(
+                  "shrink-0 rounded-md border px-2.5 py-1.5 text-xs font-semibold tabular-nums",
+                  orderId === t.order?.id ? "border-primary bg-primary text-primary-foreground" : "bg-background",
+                )}
+              >
+                {t.code}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Floor */}
+        <SectionCard
+          title={isBar ? "Bar floor & tabs" : "Floor"}
+          description={
+            isBar
+              ? "Counter, bar seats and tables — colour follows the tab."
+              : "Colour follows the bill, not just the table row."
+          }
+          className={cn(
+            mobileFloorExpanded ? "flex" : "hidden",
+            "min-h-0 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:p-4",
+          )}
+        >
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="grid grid-cols-2 gap-2">
+              {((board.data as any)?.tables ?? []).map((t: any) => {
+                const tableLife = t.order
+                  ? deriveLifecycle({
+                      order: t.order,
+                      items: t.order.items ?? [],
+                      tickets: t.order.tickets ?? [],
+                    })
+                  : null;
+                const tone = tableTone(t, tableLife);
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() =>
+                      t.order
+                        ? setOrderId(t.order.id)
+                        : openBill.mutate({ tableId: t.id, guestCount: t.seats ?? 2 })
+                    }
+                    className={`relative min-h-[104px] rounded-lg border p-3 text-left transition-colors hover:border-primary ${
+                      TABLE_TONE_CLASS[tone]
+                    } ${orderId && t.order?.id === orderId ? "ring-2 ring-primary" : ""}`}
+                  >
+                    {t.serviceRequest && (
+                      <span
+                        className={cn(
+                          "absolute -right-1.5 -top-1.5 flex size-6 items-center justify-center rounded-full border",
+                          t.serviceRequest.status === "acknowledged"
+                            ? "border-amber-500/50 bg-amber-500/10 text-amber-600"
+                            : "border-destructive/50 bg-destructive/10 text-destructive",
+                        )}
+                        title={
+                          t.serviceRequest.status === "acknowledged"
+                            ? "Staff acknowledged — not yet resolved"
+                            : "Guest needs staff"
+                        }
+                        aria-label={
+                          t.serviceRequest.status === "acknowledged"
+                            ? "Staff acknowledged — not yet resolved"
+                            : "Guest needs staff"
+                        }
+                      >
+                        <Bell className="size-3.5" />
+                      </span>
+                    )}
+                    <span className="block text-sm font-semibold">{t.code}</span>
+                    <span className="block text-xs text-muted-foreground">{t.zone ?? t.name}</span>
+                    <span className="mt-1.5 block text-sm font-semibold tabular-nums">
+                      {t.order ? money(Number(t.order.total ?? 0), currency) : `${t.seats} seats`}
+                    </span>
+                    <span className="block text-[11px] text-muted-foreground">
+                      {TABLE_TONE_LABEL[tone]}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="shrink-0">
+            <div className="mt-2 flex flex-wrap gap-1 lg:mt-3">
+              {FLOOR_LEGEND.map((tone) => (
+                <span
+                  key={tone}
+                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${TABLE_TONE_CLASS[tone]}`}
+                >
+                  {TABLE_TONE_LABEL[tone]}
+                </span>
+              ))}
+            </div>
+            <Button
+              variant="outline"
+              className="mt-2 min-h-10 w-full lg:mt-3 lg:min-h-11"
+              onClick={() => openBill.mutate({ guestCount: 1 })}
+              disabled={openBill.isPending}
+            >
+              {isBar ? "Open counter tab" : "Walk-in / bar tab"}
+            </Button>
+          </div>
+        </SectionCard>
+
+        {/* Menu+Bill wrapper: below lg this is a real flex column holding
+            the mobile tab switcher (Menu/Bill share this one pane's height,
+            switched by tab — see the comment on the outer grid above for
+            why splitting height between them doesn't fit on short
+            viewports). At lg+ it dissolves via `lg:contents`: Menu and Bill
+            (in that DOM order) become direct items of the OUTER three-
+            column grid, landing in columns 2 and 3 — persistently
+            side-by-side, never stacked, never a tab away from each other. */}
+        <div className="flex min-h-0 flex-col gap-2 lg:contents">
+          <div className="sticky top-0 z-30 flex shrink-0 gap-2 bg-background/95 py-1 backdrop-blur lg:hidden">
+            <Button
+              type="button"
+              variant={mobileRightTab === "menu" ? "default" : "outline"}
+              className="min-h-10 flex-1 lg:min-h-11"
+              onClick={() => setMobileRightTab("menu")}
+            >
+              {isBar ? "Drinks" : "Menu"}
+            </Button>
+            <Button
+              type="button"
+              variant={mobileRightTab === "bill" ? "default" : "outline"}
+              className="min-h-11 flex-1"
+              onClick={() => setMobileRightTab("bill")}
+            >
+              Bill{live.length + cart.length > 0 ? ` (${live.length + cart.length})` : ""}
+            </Button>
+          </div>
+
+          {/* Menu */}
+          <SectionCard
+            title={isBar ? "Drinks" : "Menu"}
+            description={
+              isBar
+                ? "Tap a drink, pick the serve (single, double, bottle, glass) and add it to the tab."
+                : "Tap an item to configure and stage it on the bill."
+            }
+            className={cn(
+              mobileRightTab === "menu" ? "flex" : "hidden",
+              "min-h-[calc(100dvh-15rem)] flex-1 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:min-h-0 lg:p-4",
+            )}
+          >
+            <div className="shrink-0">
+              <div className="relative mb-2">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={catalogSearch}
+                  onChange={(e) => setCatalogSearch(e.target.value)}
+                  placeholder={isBar ? "Search drinks…" : "Search the menu…"}
+                  className="h-10 pl-8 lg:h-11"
+                />
+              </div>
+              <div className="mb-2 flex gap-2 overflow-x-auto pb-1 lg:mb-3">
+                <Button
+                  variant={categoryId ? "outline" : "default"}
+                  className="min-h-10 shrink-0 rounded-full lg:min-h-11"
+                  onClick={() => setCategoryId(null)}
+                >
+                  All
+                </Button>
+                {categories.map((c) => (
+                  <Button
+                    key={c.id}
+                    variant={categoryId === c.id ? "default" : "outline"}
+                    className="min-h-11 shrink-0 rounded-full"
+                    onClick={() => setCategoryId(c.id)}
+                  >
+                    {c.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto touch-pan-y">
+              {filtered.length === 0 ? (
+                <EmptyState
+                  title={catalogSearch ? "No matches" : isBar ? "No drinks" : "No items"}
+                  description={
+                    catalogSearch
+                      ? "Try a different search or category."
+                      : isBar
+                        ? "Publish a beverage menu to sell from the bar till."
+                        : "Publish a menu to sell from this till."
+                  }
+                />
+              ) : (
+                // Menu now occupies its own ~45%-width column (not the full
+                // right side), so the target is three cards per row at
+                // desktop — never the five-column grid a full-width Menu
+                // pane used to fit.
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {filtered.map((i) => (
+                    <PosMenuItemCard
+                      key={i.id}
+                      item={i}
+                      currency={currency}
+                      disabled={
+                        (!orderId && !queuedOrder) ||
+                        i.available === false ||
+                        i.priceConfigured === false
+                      }
+                      onSelect={() => setPickerItem(i)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </SectionCard>
+
+          {/* Bill */}
+          <SectionCard
+            title={orderRow ? `Bill ${orderRow.order_number}` : "Bill"}
+            description={
+              orderRow ? `${orderRow.status} · ${orderRow.payment_state}` : "Open a table to start."
+            }
+            actions={
+              orderRow ? (
+                <Badge variant="outline" className="min-h-8 px-3 text-sm font-semibold">
+                  {activeTable ? `Table ${activeTable.code}` : "Walk-in / bar tab"}
+                </Badge>
+              ) : undefined
+            }
+            className={cn(
+              mobileRightTab === "bill" ? "flex" : "hidden",
+              "min-h-[calc(100dvh-15rem)] flex-1 flex-col overflow-hidden p-3 lg:flex lg:h-full lg:min-h-0 lg:p-4",
+            )}
+          >
+            {!orderId && queuedOrder ? (
+              // P10: a queued order has no server row to render the normal
+              // orderRow-based bill from — this is a deliberately minimal,
+              // additive view (cart contents + client-computed total only),
+              // not a duplicate of the online bill UI below. Payment,
+              // receipt and void are all correctly unavailable here (they
+              // require a real, server-confirmed order) — only adding more
+              // items and sending to the kitchen are offered.
+              <div className="flex h-full min-h-0 flex-col" data-testid="queued-bill-panel">
+                <div className="flex-1 space-y-2 overflow-y-auto">
+                  {cart.length === 0 ? (
+                    <EmptyState title="No items yet" description="Add items from the menu." />
+                  ) : (
+                    cart.map((l, idx) => (
+                      <div key={idx} className="flex justify-between text-sm">
+                        <span>
+                          {l.quantity} × {l.description}
+                        </span>
+                        <span className="tabular-nums">{money(lineTotal(l), currency)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="mt-2 flex items-center justify-between border-t pt-2 text-sm font-semibold">
+                  <span>Total (queued)</span>
+                  <span className="tabular-nums">{money(billTotal, currency)}</span>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    disabled={cart.length === 0 || sendLines.isPending}
+                    onClick={() => sendLines.mutate({ fire: false })}
+                  >
+                    Queue items
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    disabled={cart.length === 0 || sendLines.isPending}
+                    onClick={() => sendLines.mutate({ fire: true })}
+                  >
+                    <Send className="mr-1.5 size-4" /> Queue &amp; send to kitchen
+                  </Button>
+                </div>
+              </div>
+            ) : !orderId ? (
+              <EmptyState
+                title="No bill selected"
+                description="Tap a table or start a walk-in tab."
+              />
+            ) : (
+              <div className="flex h-full min-h-0 flex-col">
+                {/* Everything here scrolls as one region: status/lifecycle info,
+                    line items and secondary actions can all grow arbitrarily
+                    (30+ badges, 30+ lines, a long "More" list) without ever
+                    touching the pinned Total/primary-action footer below —
+                    that footer is the one thing a cashier must always be
+                    able to reach, so its own height stays bounded (a total
+                    row plus a single button) instead of competing for space
+                    with whatever this bill happens to contain right now. */}
+                <div className="min-h-0 flex-1 overflow-y-auto pt-1 lg:space-y-2 lg:pt-2">
+                  {/* Line items are the most important thing on a bill — they
+                      render first, above the fold, before the lifecycle
+                      status block below. Same scroll region, just item-first
+                      priority so a cashier sees WHAT'S ON THE BILL without
+                      needing to scroll past status chrome first. The column
+                      header row below doubles as the section's own label —
+                      matching the reference ticket, which has no separate
+                      "On the bill" caption above its Qty/Item/... columns. */}
+                  {live.length > 0 && (
+                    <div className="space-y-1">
+                      <span className="sr-only">On the bill</span>
+                      {/* A professional POS order ticket, not a card per line:
+                          Qty / Item / Notes / Price / Total columns, the
+                          header row only shown once md+ has room for it —
+                          below that the same data still renders per row, just
+                          without the redundant column headings. */}
+                      <div className="hidden grid-cols-[2rem_minmax(0,1fr)_minmax(6rem,8rem)_minmax(5rem,6rem)_minmax(5rem,6rem)_2.25rem] gap-2 px-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground 2xl:grid">
+                        <span>Qty</span>
+                        <span>Item</span>
+                        <span>Notes / Modifiers</span>
+                        <span className="text-right">Price</span>
+                        <span className="text-right">Total</span>
+                        <span />
+                      </div>
+                      <div className="divide-y rounded-lg border bg-card">
+                        {live.map((i) => {
+                          const noteText =
+                            i.notes ||
+                            (i.modifiers ?? []).map((m: any) => m.name).join(", ") ||
+                            "—";
+                          return (
+                            <div
+                              key={i.id}
+                              className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)_auto] items-start gap-2 p-2 text-sm 2xl:grid-cols-[2rem_minmax(0,1fr)_minmax(6rem,8rem)_minmax(5rem,6rem)_minmax(5rem,6rem)_2.25rem] 2xl:items-center 2xl:py-1"
+                            >
+                              <span className="tabular-nums text-muted-foreground">
+                                {Number(i.quantity)}
+                              </span>
+                              <span className="min-w-0">
+                                <span className="block break-words font-medium 2xl:truncate">{i.description}</span>
+                                {/* Status/seat/notes only stack onto a second
+                                    line on mobile, where there's no separate
+                                    Notes column to hold them — at md+ they'd
+                                    just double every row's height for no
+                                    reason, since Notes/Modifiers already has
+                                    its own column there. */}
+                                <span className="mt-0.5 flex flex-wrap items-center gap-1.5 2xl:hidden">
+                                  {i.seat_number && (
+                                    <span className="text-xs text-muted-foreground">
+                                      Seat {i.seat_number}
+                                    </span>
+                                  )}
+                                  <StatusChip tone={itemStatusTone(i.status)}>
+                                    {i.status}
+                                  </StatusChip>
+                                  <span className="text-xs text-muted-foreground">{noteText}</span>
+                                </span>
+                              </span>
+                              <span className="hidden truncate text-xs text-muted-foreground 2xl:block">
+                                {noteText}
+                              </span>
+                              <span className="hidden text-right tabular-nums text-muted-foreground md:block">
+                                {money(Number(i.unit_price ?? 0), currency)}
+                              </span>
+                              <span className="hidden text-right font-medium tabular-nums md:block">
+                                {money(Number(i.line_total ?? 0), currency)}
+                              </span>
+                              <span className="flex items-start justify-end gap-1 2xl:contents">
+                                <span className="text-right font-medium tabular-nums md:hidden">
+                                  {money(Number(i.line_total ?? 0), currency)}
+                                </span>
+                                {canVoid && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="size-8 justify-self-end"
+                                    onClick={() => {
+                                      const reason = window.prompt("Reason for voiding this line?");
+                                      if (reason && reason.trim().length >= 3) {
+                                        voidLine.mutate({
+                                          orderItemId: i.id,
+                                          reason: reason.trim(),
+                                        });
+                                      }
+                                    }}
+                                  >
+                                    <Trash2 className="size-4" />
+                                  </Button>
+                                )}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {life && (
+                    <div className="space-y-2 rounded-lg border bg-muted/30 p-2">
+                      <ServiceLifecycleBar life={life} compact />
+                      <p className="text-xs text-muted-foreground">{life.reason}</p>
+                      <div className="flex flex-wrap gap-1 text-[11px]">
+                        {life.staged > 0 && <Badge variant="outline">{life.staged} staged</Badge>}
+                        {life.unsent > 0 && <Badge variant="outline">{life.unsent} unsent</Badge>}
+                        {life.inProduction > 0 && (
+                          <Badge variant="secondary">{life.inProduction} in production</Badge>
+                        )}
+                        {life.ready > 0 && <Badge>{life.ready} ready</Badge>}
+                        {life.balance > 0 && (
+                          <Badge variant="outline">Balance {money(life.balance, currency)}</Badge>
+                        )}
+                        {life.delayed && <Badge variant="destructive">Delayed</Badge>}
+                        {life.billRequestedAt && !life.billPresentedAt && (
+                          <Badge variant="secondary">Bill asked for</Badge>
+                        )}
+                        {life.receiptDelivered && (
+                          <Badge variant="secondary">Receipt delivered</Badge>
+                        )}
+                      </div>
+                      {activeTable?.serviceRequest && (
+                        <div
+                          className={cn(
+                            "flex items-center justify-between gap-2 rounded-lg border p-2",
+                            activeTable.serviceRequest.status === "acknowledged"
+                              ? "border-amber-500/40 bg-amber-500/5"
+                              : "border-destructive/40 bg-destructive/5",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "flex items-center gap-1.5 text-xs font-medium",
+                              activeTable.serviceRequest.status === "acknowledged"
+                                ? "text-amber-700 dark:text-amber-400"
+                                : "text-destructive",
+                            )}
+                          >
+                            <Bell className="size-3.5" />
+                            {activeTable.serviceRequest.status === "acknowledged"
+                              ? "Acknowledged — awaiting resolution"
+                              : "Guest needs assistance"}
+                          </span>
+                          {activeTable.serviceRequest.status === "acknowledged" ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="min-h-8"
+                              disabled={resolveRequest.isPending}
+                              onClick={() =>
+                                resolveRequest.mutate({
+                                  requestId: activeTable.serviceRequest.id,
+                                })
+                              }
+                            >
+                              Resolve
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="min-h-8"
+                              disabled={acknowledgeRequest.isPending}
+                              onClick={() =>
+                                acknowledgeRequest.mutate({
+                                  requestId: activeTable.serviceRequest.id,
+                                })
+                              }
+                            >
+                              Acknowledge
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {cart.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Not yet sent
+                      </p>
+                      {cart.map((l) => (
+                        <div key={l.key} className="rounded border border-dashed p-2 text-sm">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="min-w-0">
+                              <span className="block font-medium">{l.description}</span>
+                              {l.modifiers.length > 0 && (
+                                <span className="block text-xs text-muted-foreground">
+                                  {l.modifiers.map((m) => m.name).join(", ")}
+                                </span>
+                              )}
+                            </span>
+                            <span className="shrink-0 tabular-nums">
+                              {money(lineTotal(l), currency)}
+                            </span>
+                          </div>
+                          <div className="mt-1.5 flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <Button
+                                size="icon"
+                                variant="outline"
+                                className="size-7"
+                                onClick={() => updateCartQty(l.key, -1)}
+                                aria-label="Decrease quantity"
+                              >
+                                <Minus className="size-3.5" />
+                              </Button>
+                              <span className="w-5 text-center text-xs font-medium tabular-nums">
+                                {l.quantity}
+                              </span>
+                              <Button
+                                size="icon"
+                                variant="outline"
+                                className="size-7"
+                                onClick={() => updateCartQty(l.key, 1)}
+                                aria-label="Increase quantity"
+                              >
+                                <Plus className="size-3.5" />
+                              </Button>
+                            </div>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="size-7"
+                              onClick={() => setCart((prev) => prev.filter((c) => c.key !== l.key))}
+                              aria-label="Remove item"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <details className="rounded-lg border bg-card p-2">
+                    <summary className="cursor-pointer text-xs font-medium">
+                      Service timeline
+                    </summary>
+                    <div className="mt-2">
+                      <OrderTimeline
+                        order={orderRow}
+                        items={serverItems}
+                        tickets={orderTickets}
+                        payments={orderPayments}
+                        receipt={(bill.data as any)?.receipt ?? null}
+                      />
+                    </div>
+                  </details>
+
+                  {/* Manual overrides and account-management actions: secondary
+                      to the one pinned "Next" CTA below, so they live in the
+                      scroll region — always reachable, never competing with
+                      the primary action for the footer's guaranteed space. */}
+                  <div className="grid gap-2 border-t pt-3">
+                    <Button
+                      className="min-h-11"
+                      disabled={(cart.length === 0 && !live.some((item) => item.status === "ordered")) || sendLines.isPending}
+                      onClick={() => sendLines.mutate({ fire: true })}
+                    >
+                      <Send className="size-4" /> {sendLabel}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="min-h-11"
+                      disabled={cart.length === 0 || sendLines.isPending}
+                      onClick={() => sendLines.mutate({ fire: false })}
+                    >
+                      Hold on bill
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      className="min-h-11"
+                      disabled={cart.length > 0 || !orderRow || Number(orderRow.total ?? 0) <= 0}
+                      onClick={() => setBillOpen(true)}
+                    >
+                      <ReceiptText className="size-4" /> Bill &amp; payment
+                    </Button>
+                    {orderRow?.status === "closed" && orderRow?.table_id && (
+                      <Button
+                        variant="outline"
+                        className="min-h-11"
+                        onClick={() => releaseTable.mutate({ orderId })}
+                      >
+                        <DoorOpen className="size-4" /> Release table
+                      </Button>
+                    )}
+
+                    <div className="mt-1 space-y-2 border-t pt-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        More
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          variant="ghost"
+                          className="min-h-11"
+                          onClick={() => {
+                            const code = window.prompt(
+                              "Move to which table code? Leave blank to detach.",
+                            );
+                            if (code === null) return;
+                            const match = ((board.data as any)?.tables ?? []).find(
+                              (t: any) =>
+                                String(t.code).toLowerCase() === code.trim().toLowerCase(),
+                            );
+                            transfer.mutate({ tableId: match?.id ?? null });
+                          }}
+                        >
+                          Move table
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="min-h-11"
+                          onClick={() => showReceipt.mutate({ orderId: orderId, reprint: false })}
+                        >
+                          <Printer className="size-4" /> Receipt
+                        </Button>
+                      </div>
+                      {canReopen && orderRow?.status === "closed" && (
+                        <Button
+                          variant="outline"
+                          className="min-h-11 w-full"
+                          onClick={() => reopen.mutate({ orderId })}
+                        >
+                          <RotateCcw className="size-4" /> Reopen bill
+                        </Button>
+                      )}
+                      {canVoid && orderRow?.status !== "cancelled" && (
+                        <Button
+                          variant="ghost"
+                          className="min-h-11 w-full text-destructive"
+                          disabled={cancelBill.isPending}
+                          onClick={() => {
+                            const reason = window.prompt("Cancel this whole bill. Reason?");
+                            if (reason && reason.trim().length >= 3)
+                              cancelBill.mutate({ orderId, reason: reason.trim() });
+                          }}
+                        >
+                          Cancel bill
+                        </Button>
+                      )}
+                      {canVoid &&
+                        orderPayments.some(
+                          (p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded",
+                        ) && (
+                          <Button
+                            variant="ghost"
+                            className="min-h-11 w-full text-destructive"
+                            onClick={() => {
+                              const target = orderPayments.find(
+                                (p: any) => Number(p.amount ?? 0) > 0 && p.state !== "refunded",
+                              );
+                              if (!target) return;
+                              const reason = window.prompt(
+                                `Refund ${money(Number(target.amount), currency)} taken by ${target.method}. Reason?`,
+                              );
+                              if (reason && reason.trim().length >= 3) {
+                                refund.mutate({
+                                  paymentId: target.id,
+                                  amount: Number(target.amount),
+                                  reason: reason.trim(),
+                                });
+                              }
+                            }}
+                          >
+                            <CreditCard className="size-4" /> Refund a payment
+                          </Button>
+                        )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pinned primary-action footer: bounded to a total row plus
+                    one button, so it always fits inside Bill's allotted
+                    height regardless of how much scrolls above it — this is
+                    the one thing that must never clip, fall off-screen, or
+                    need a page scroll to reach. */}
+                <div className="shrink-0 space-y-2 border-t-2 pt-2">
+                  <div className="flex items-center justify-between text-base font-semibold">
+                    <span>Total</span>
+                    <span className="tabular-nums">{money(billTotal, currency)}</span>
+                  </div>
+                  {life && (
+                    <Button
+                      className="min-h-11 w-full"
+                      disabled={life.nextAction === "none" || life.blocked || sendLines.isPending}
+                      onClick={runNextAction}
+                    >
+                      Next: {life.nextActionLabel}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+          </SectionCard>
+        </div>
+      </div>
+
+      <PosItemDialog
+        item={pickerItem}
+        groups={(catalog.data?.modifierGroups ?? []) as any[]}
+        currency={currency}
+        seats={Number(orderRow?.guest_count ?? 0)}
+        tenantId={tenantId}
+        onClose={() => setPickerItem(null)}
+        onAdd={(line) => setCart((prev) => [...prev, line])}
+      />
+
+      <PosPaymentDialog
+        open={payOpen}
+        currency={currency}
+        total={Number(orderRow?.total ?? 0)}
+        paid={Number(orderRow?.paid_total ?? 0)}
+        pending={pay.isPending}
+        suggestedAmount={shareAmount}
+        canRoomCharge={canRoomCharge}
+        onRoomCharge={(value) => {
+          setPayOpen(false);
+          setRoomChargeAmount(value);
+        }}
+        mobileMoneyActive={mobileMoneyActive}
+        onRequestMobileMoney={(value) => {
+          setPayOpen(false);
+          setMobileMoneyAmount(value);
+        }}
+        onClose={() => {
+          setPayOpen(false);
+          setShareAmount(null);
+        }}
+        onPay={(input) => pay.mutate(input)}
+      />
+
+      <PosMobileMoneyDialog
+        open={mobileMoneyAmount != null && Boolean(orderId)}
+        tenantId={tenantId}
+        orderId={orderId}
+        splitBillId={splitBillId}
+        amount={mobileMoneyAmount ?? 0}
+        currency={currency}
+        onClose={() => setMobileMoneyAmount(null)}
+        onPosted={() => {
+          setMobileMoneyAmount(null);
+          setShareAmount(null);
+          setSplitBillId(null);
+          refresh();
+        }}
+      />
+
+      <PosRoomChargeDialog
+        open={roomChargeAmount != null && Boolean(orderId)}
+        tenantId={tenantId}
+        orderId={orderId}
+        splitBillId={splitBillId}
+        amount={roomChargeAmount ?? 0}
+        currency={currency}
+        onClose={() => setRoomChargeAmount(null)}
+        onPosted={(result) => {
+          setRoomChargeAmount(null);
+          setShareAmount(null);
+          setSplitBillId(null);
+          setBillOpen(false);
+          if (result?.receipt) setReceipt(result.receipt);
+          refresh();
+        }}
+      />
+
+      <PosBillDialog
+        open={billOpen && Boolean(orderId)}
+        bill={bill.data as any}
+        loading={bill.isLoading}
+        currency={currency}
+        splitMode={splitMode}
+        ways={ways}
+        presenting={presentBill.isPending}
+        onSplitMode={setSplitMode}
+        onWays={setWays}
+        onClose={() => setBillOpen(false)}
+        onPresent={() => presentBill.mutate(undefined as never)}
+        onRecombine={() => clearBillSplit.mutate()}
+        recombining={clearBillSplit.isPending}
+        onPayShare={async (value) => {
+          let resolvedSplitId = value.splitBillId;
+          if (value.splitPlan && !value.splitBillId) {
+            const created = await saveBillSplitFn({ data: value.splitPlan });
+            const rows = (created ?? []) as any[];
+            if (value.splitBillId) resolvedSplitId = value.splitBillId;
+            else if (value.amount != null) {
+              const match = rows.find((row) => Number(row.split_no) === Number(value.splitNo));
+              resolvedSplitId = match?.id ?? null;
+            }
+            void qc.invalidateQueries({ queryKey: ["restaurant.pos.bill", tenantId, orderId] });
+          }
+          setSplitBillId(resolvedSplitId ?? null);
+          setShareAmount(value.amount);
+          setBillOpen(false);
+          setPayOpen(true);
+        }}
+      />
+
+      <PosReceiptDialog
+        receipt={receipt}
+        onClose={() => setReceipt(null)}
+        onReprint={() =>
+          receipt && showReceipt.mutate({ orderId: receipt.order_id, reprint: true })
+        }
+        tenantId={tenantId ?? undefined}
+      />
+    </div>
+  );
+}
+
+
+export function PosWorkspace(props: { lens?: PosLens; className?: string } = {}) {
+  return <PosStaffGate><PosWorkspaceBody {...props} /></PosStaffGate>;
+}

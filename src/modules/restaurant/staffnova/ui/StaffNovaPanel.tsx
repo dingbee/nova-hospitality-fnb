@@ -1,0 +1,1572 @@
+import { useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import { AlertCircle, Brain, CircleAlert, Info, Sparkles, Wand2, X } from "lucide-react";
+import { PRODUCT } from "@/config/product";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { askStaffNovaFn } from "../staffnova.functions";
+import { commitNovaPreparationFn } from "../../prepare/prepare.functions";
+import {
+  createAskLexiBitePurchaseOrderFn,
+  transitionAskLexiBitePurchaseOrderFn,
+  receiveAskLexiBitePurchaseOrderFn,
+  createIntelligentPurchaseOrdersFn,
+} from "../../procurement/ask-lexibite.functions";
+import { executeNovaPreparationFn, previewNovaExecutionFn } from "../../act/act.functions";
+import {
+  approveRequisitionFn,
+  getRequisitionFn,
+  issueRequisitionFn,
+  submitRequisitionFn,
+} from "../../requisitions/requisitions.functions";
+import {
+  getRestaurantPurchaseRequestFn,
+  transitionRestaurantPurchaseRequestFn,
+} from "../../procurement/procurement.functions";
+import { forgetRestaurantMemoryFn, recallRestaurantMemoryFn } from "../../memory/memory.functions";
+import type { NovaIntentContract } from "../../understand/intent.contracts";
+import type { NovaPreparation, NovaPreparationWorkflow } from "../../prepare/prepare.contracts";
+import type { IntelligentPurchaseOrderPlan } from "../../procurement/ask-lexibite.server";
+import type { NovaExecutableWorkflow } from "../../act/act.contracts";
+import { shouldRenderManagerBrief } from "./manager-brief";
+import { ActionWorkspace } from "./action-workspace";
+
+const STARTER_PROMPTS = [
+  "What should we prepare for tomorrow?",
+  "Why did food cost increase this week?",
+  "Which items need replenishment?",
+  "What happened to kitchen performance today?",
+];
+
+type BriefTone = "critical" | "action" | "warning" | "info";
+
+type BriefItem = {
+  title: string;
+  detail: string;
+  action?: string;
+  tone: BriefTone;
+};
+
+const BRIEF_TONE_META: Record<
+  BriefTone,
+  { label: string; className: string; icon: typeof AlertCircle }
+> = {
+  critical: {
+    label: "Immediate",
+    className: "border-red-200 bg-red-50/70 dark:border-red-900/60 dark:bg-red-950/20",
+    icon: CircleAlert,
+  },
+  action: {
+    label: "Action due",
+    className: "border-orange-200 bg-orange-50/70 dark:border-orange-900/60 dark:bg-orange-950/20",
+    icon: AlertCircle,
+  },
+  warning: {
+    label: "Warning",
+    className: "border-amber-200 bg-amber-50/70 dark:border-amber-900/60 dark:bg-amber-950/20",
+    icon: AlertCircle,
+  },
+  info: {
+    label: "Insight",
+    className: "border-sky-200 bg-sky-50/70 dark:border-sky-900/60 dark:bg-sky-950/20",
+    icon: Info,
+  },
+};
+
+const BRIEF_SECTION_META: Record<
+  BriefTone,
+  { title: string; subtitle: string }
+> = {
+  critical: {
+    title: "Immediate attention",
+    subtitle: "These require action now.",
+  },
+  action: {
+    title: "Actions due",
+    subtitle: "Take action soon to avoid disruption.",
+  },
+  warning: {
+    title: "Financial / data warning",
+    subtitle: "Review before making consequential decisions.",
+  },
+  info: {
+    title: "Other observations",
+    subtitle: "Informational — no immediate action required.",
+  },
+};
+
+
+function renderInlineAssistantText(value: string) {
+  const parts = value.split(/(\*\*[^*]+\*\*|__[^_]+__)/g);
+  return parts.map((part, index) => {
+    const bold = /^\*\*[^*]+\*\*$/.test(part) || /^__[^_]+__$/.test(part);
+    const text = bold ? part.slice(2, -2) : part;
+    return bold ? (
+      <strong key={index} className="font-semibold text-foreground">
+        {text}
+      </strong>
+    ) : (
+      <span key={index}>{text}</span>
+    );
+  });
+}
+
+function AssistantAnswer({ content }: { content: string }) {
+  const lines = content.replace(/\r/g, "").split("\n");
+  const blocks: Array<{ type: "paragraph" | "bullet"; text: string }> = [];
+  let paragraph = "";
+
+  const flushParagraph = () => {
+    if (paragraph.trim()) {
+      blocks.push({ type: "paragraph", text: paragraph.trim() });
+      paragraph = "";
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      continue;
+    }
+
+    const bullet = line.match(/^[-*•]\s+(.+)$/);
+    const numbered = line.match(/^\d+[.)]\s+(.+)$/);
+    if (bullet || numbered) {
+      flushParagraph();
+      blocks.push({ type: "bullet", text: (bullet ?? numbered)![1] });
+      continue;
+    }
+
+    paragraph = paragraph ? paragraph + " " + line : line;
+  }
+  flushParagraph();
+
+  return (
+    <div className="space-y-2.5 leading-6">
+      {blocks.map((block, index) =>
+        block.type === "bullet" ? (
+          <div key={index} className="flex items-start gap-2">
+            <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
+            <p className="min-w-0 flex-1">{renderInlineAssistantText(block.text)}</p>
+          </div>
+        ) : (
+          <p key={index}>{renderInlineAssistantText(block.text)}</p>
+        ),
+      )}
+    </div>
+  );
+}
+
+function cleanBriefText(value: string) {
+  return value
+    .replace(/^\s*(?:#{1,6}\s+|[-*•]\s+|\d+[.)]\s+)/, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .trim();
+}
+
+function inferBriefTone(text: string): BriefTone {
+  const value = text.toLowerCase();
+
+  if (
+    /\b(critical|urgent|immediately|severe|stockout|out of stock|overdue)\b/.test(
+      value,
+    ) ||
+    /\b100%\s+of\s+\d+\s+(?:analysed\s+)?tickets?\s+(?:were\s+)?delayed\b/.test(
+      value,
+    )
+  ) {
+    return "critical";
+  }
+
+  if (
+    /\b(action|reorder|prepare|review|follow up|address|resolve|needs? attention|priority|approved recommendation|approved guidance|run out in|replenishment|remove .* specials|up-sell)\b/.test(
+      value,
+    )
+  ) {
+    return "action";
+  }
+
+  if (
+    /\b(risk|at risk|shortage|exposure|increase|decrease|declin|below|above|delay|variance|unreliable|over target|threat|conflict|margin|cost)\b/.test(
+      value,
+    )
+  ) {
+    return "warning";
+  }
+
+  return "info";
+}
+
+function briefTitle(text: string) {
+  const cleaned = cleanBriefText(text);
+  const colon = cleaned.indexOf(":");
+  if (colon > 0 && colon < 72) {
+    return cleaned.slice(0, colon).trim();
+  }
+
+  const firstSentence = cleaned.split(/(?<=[.!?])\s+/)[0] ?? cleaned;
+  if (firstSentence.length <= 64) return firstSentence;
+
+  const words = firstSentence.split(/\s+/);
+  return words.slice(0, 8).join(" ") + "…";
+}
+
+function extractBriefAction(text: string) {
+  const match = text.match(
+    /(?:approved recommendation calls for|approved guidance is|approved recommendation is|the priority is|action is|recommendation is|should|needs? to|need to|review|confirm|investigate|complete|remove|order(?:ing)?|replenish(?:ment)?)\s+(.+?)(?:[.!?](?:\s|$)|$)/i,
+  );
+
+  return match?.[1]?.trim().replace(/[.!?]+$/, "") || undefined;
+}
+
+function extractBriefItems(content: string): BriefItem[] {
+  const normalized = content
+    .replace(/\r/g, "")
+    .replace(/\s+(?=\d+[.)]\s+)/g, "\n")
+    .trim();
+
+  if (!normalized) return [];
+
+  const lines = normalized.split("\n");
+  const items: string[] = [];
+  let current = "";
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      if (current) {
+        items.push(current.trim());
+        current = "";
+      }
+      continue;
+    }
+
+    const bullet = line.match(/^(?:[-*•]|\d+[.)])\s+(.+)$/);
+    if (bullet) {
+      if (current) items.push(current.trim());
+      current = bullet[1];
+      continue;
+    }
+
+    current = current ? current + " " + line : line;
+  }
+
+  if (current) items.push(current.trim());
+
+  const sourceItems =
+    items.length > 1
+      ? items
+      : normalized.split(/(?<=[.!?])\s+(?=[A-Z])/);
+
+  return sourceItems
+    .map((item) => cleanBriefText(item))
+    .filter(Boolean)
+    .slice(0, 8)
+    .map((detail) => ({
+      title: briefTitle(detail),
+      detail,
+      action: extractBriefAction(detail),
+      tone: inferBriefTone(detail),
+    }));
+}
+
+function highlightBriefDetail(text: string) {
+  const metric =
+    /(?:TZS\s?[\d,]+(?:\.\d+)?|[+-]?\d+(?:\.\d+)?%|\b\d+(?:\.\d+)?\s*(?:days?|hours?|minutes?|mins?|tickets?|covers?|units?)\b)/gi;
+  const parts = text.split(metric);
+
+  return parts.map((part, index) => {
+    if (index % 2 === 0) return part;
+
+    return (
+      <span
+        key={part + "-" + index}
+        className="font-semibold text-foreground tabular-nums"
+      >
+        {part}
+      </span>
+    );
+  });
+}
+
+function ManagerBrief({ content }: { content: string }) {
+  const items = extractBriefItems(content);
+
+  if (items.length === 0) {
+    return (
+      <div className="w-full rounded-xl border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
+        {content}
+      </div>
+    );
+  }
+
+  const groups = (["critical", "action", "warning", "info"] as BriefTone[])
+    .map((tone) => ({
+      tone,
+      items: items.filter((item) => item.tone === tone),
+    }))
+    .filter((group) => group.items.length > 0);
+
+  return (
+    <div className="w-full space-y-3">
+      <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+        <Sparkles className="size-3.5 text-primary" aria-hidden />
+        Manager brief
+      </div>
+
+      <div className="rounded-lg border bg-muted/20 px-3 py-2.5 text-xs leading-5 text-muted-foreground">
+        Here is what needs the manager&apos;s attention right now, based on the
+        latest operational, financial, and inventory data.
+      </div>
+
+      {groups.map(({ tone, items: sectionItems }) => {
+        const section = BRIEF_SECTION_META[tone];
+
+        return (
+          <section key={tone} className="space-y-2">
+            <div className="flex items-center justify-between gap-3 px-0.5">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">
+                  {section.title}{" "}
+                  <span className="text-muted-foreground">
+                    ({sectionItems.length})
+                  </span>
+                </h3>
+                <p className="text-[11px] text-muted-foreground">
+                  {section.subtitle}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-2 md:grid-cols-2">
+              {sectionItems.map((item, index) => {
+                const meta = BRIEF_TONE_META[item.tone];
+                const Icon = meta.icon;
+
+                return (
+                  <article
+                    key={String(index) + "-" + item.title}
+                    className={
+                      "rounded-xl border px-3 py-3 shadow-sm " + meta.className
+                    }
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-background/80">
+                        <Icon
+                          className="size-3.5 text-foreground"
+                          aria-hidden
+                        />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-semibold leading-5 text-foreground">
+                            {item.title}
+                          </p>
+                          <span className="shrink-0 rounded-full border bg-background/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            {meta.label}
+                          </span>
+                        </div>
+
+                        <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                          {highlightBriefDetail(item.detail)}
+                        </p>
+
+                        {item.action && (
+                          <div className="mt-2.5 rounded-md border bg-background/70 px-2.5 py-2 text-xs leading-4">
+                            <span className="font-semibold text-foreground">
+                              Action:
+                            </span>{" "}
+                            <span className="text-muted-foreground">
+                              {item.action}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+type StaffNovaTurn =
+  | { id: string; role: "user"; content: string }
+  | {
+      id: string;
+      role: "assistant";
+      content: string;
+      degraded: boolean;
+      sourceMessage?: string;
+      understanding?: NovaIntentContract;
+      preparation?: NovaPreparation;
+      managerBrief?: boolean;
+      intelligentPurchaseOrder?: IntelligentPurchaseOrderPlan;
+    };
+
+/** I12: the existing route + tab each preparable workflow's draft is reviewed in — never a new NOVA-specific page. */
+const WORKFLOW_ROUTE: Record<
+  NovaPreparationWorkflow,
+  { to: string; search?: Record<string, string> }
+> = {
+  purchase_request: { to: "/admin/restaurant/procurement", search: { tab: "requests" } },
+  stock_transfer: { to: "/admin/restaurant/inventory-control", search: { tab: "transfers" } },
+  requisition: { to: "/admin/restaurant/requisitions" },
+};
+const WORKFLOW_LABEL: Record<NovaPreparationWorkflow, string> = {
+  purchase_request: "purchase request",
+  stock_transfer: "stock transfer",
+  requisition: "requisition",
+};
+
+/**
+ * I12: the "Prepare & open" action. Nothing is written until this button
+ * is clicked — previewNovaPreparation (already run automatically) only
+ * ever classified readiness. A click calls commitNovaPreparationFn, which
+ * independently re-verifies everything again server-side before creating
+ * the one real (draft-status, non-operational) row; once that succeeds the
+ * button becomes "Open", which only ever navigates to the EXISTING
+ * workflow page — that page remains the authoritative place to review,
+ * edit, and eventually submit/approve/dispatch it.
+ */
+function PurchaseOrderLifecycleActions({
+  tenantId,
+  contract,
+}: {
+  tenantId: string;
+  contract: NovaIntentContract;
+}) {
+  const transitionFn = useServerFn(transitionAskLexiBitePurchaseOrderFn);
+  const receiveFn = useServerFn(receiveAskLexiBitePurchaseOrderFn);
+  const po = contract.purchaseOrder;
+  const [receiving, setReceiving] = useState(false);
+
+  const transition = useMutation({
+    mutationFn: (status: "submitted" | "approved") =>
+      transitionFn({ data: { tenantId, purchaseOrderId: po!.resolvedId!, status } }),
+  });
+
+  const receive = useMutation({
+    mutationFn: (confirm: boolean) =>
+      receiveFn({ data: { tenantId, purchaseOrderId: po!.resolvedId!, confirm } }),
+  });
+
+  if (!po?.resolvedId || po.status !== "exact") return null;
+
+  if (contract.action === "approve_purchase_order" || contract.action === "submit_purchase_order") {
+    const target = contract.action === "approve_purchase_order" ? "approved" : "submitted";
+    const label = target === "approved" ? "Confirm approval" : "Confirm submission";
+    const verb = target === "approved" ? "approve" : "submit";
+    return (
+      <div className="mt-2 space-y-2 rounded-md border px-2.5 py-2">
+        <p className="text-xs font-medium">
+          {target === "approved" ? "Approval" : "Submission"} requested for{" "}
+          <span className="font-semibold">{po.documentNumber ?? po.reference ?? po.raw}</span>.
+        </p>
+        <p className="text-[11px] text-muted-foreground">
+          Current status: {po.orderStatus}. Confirm to {verb} this purchase order.
+        </p>
+        <Button type="button" size="sm" disabled={transition.isPending} onClick={() => transition.mutate(target)}>
+          {transition.isPending ? (target === "approved" ? "Approving…" : "Submitting…") : label}
+        </Button>
+        {transition.data && <p className="text-xs text-foreground">{transition.data.message}</p>}
+        {transition.isError && <p className="text-xs text-destructive">{transition.error.message}</p>}
+      </div>
+    );
+  }
+
+  if (contract.action === "receive_purchase_order") {
+    if (receiving && receive.data?.preview) {
+      return (
+        <div className="mt-2 space-y-1.5 rounded-md border bg-muted/20 px-2 py-2">
+          <p className="text-xs font-medium">Review outstanding receiving quantities</p>
+          <ul className="text-xs text-muted-foreground">
+            {receive.data.lines.map((line) => <li key={line.purchaseOrderItemId}>• {line.description} — {line.quantity}</li>)}
+          </ul>
+          <p className="text-[11px] text-amber-600">Confirm only if the physical delivery matches these quantities.</p>
+          <div className="flex gap-1.5">
+            <Button type="button" size="sm" variant="ghost" onClick={() => setReceiving(false)}>Cancel</Button>
+            <Button type="button" size="sm" disabled={receive.isPending} onClick={() => receive.mutate(true)}>
+              {receive.isPending ? "Receiving…" : "Confirm & receive"}
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="mt-2 space-y-2 rounded-md border px-2.5 py-2">
+        <p className="text-xs font-medium">Receive stock against {po.documentNumber ?? po.reference ?? po.raw}.</p>
+        <p className="text-[11px] text-muted-foreground">Ask LexiBite will re-check outstanding quantities first. Nothing is posted until you confirm.</p>
+        <Button type="button" size="sm" variant="outline" disabled={receive.isPending} onClick={() => { setReceiving(true); receive.mutate(false); }}>
+          {receive.isPending ? "Checking…" : "Review receiving"}
+        </Button>
+        {receive.data && !receive.data.preview && <p className="text-xs text-foreground">{receive.data.message}</p>}
+        {receive.isError && <p className="text-xs text-destructive">{receive.error.message}</p>}
+      </div>
+    );
+  }
+  return null;
+}
+
+function PreparationActions({
+  preparation,
+  contract,
+  tenantId,
+}: {
+  preparation: NovaPreparation;
+  contract: NovaIntentContract;
+  tenantId: string;
+}) {
+  const navigate = useNavigate();
+  const commitFn = useServerFn(commitNovaPreparationFn);
+  const [committed, setCommitted] = useState<{
+    createdRecordId: string;
+    documentNumber: string | null;
+    workflow: NovaPreparationWorkflow;
+  } | null>(null);
+  const [quantities, setQuantities] = useState<Record<string, number>>(() =>
+    Object.fromEntries(
+      contract.entities
+        .filter((entity) => entity.entityDomain === "inventory_item" && entity.resolvedId && entity.quantity)
+        .map((entity) => [entity.resolvedId!, entity.quantity!.quantity]),
+    ),
+  );
+
+  const reviewedContract: NovaIntentContract = {
+    ...contract,
+    entities: contract.entities.map((entity) => {
+      if (!entity.resolvedId || !entity.quantity) return entity;
+      const quantity = quantities[entity.resolvedId];
+      return Number.isFinite(quantity) && quantity > 0
+        ? { ...entity, quantity: { ...entity.quantity, quantity } }
+        : entity;
+    }),
+  };
+
+  const commit = useMutation({
+    mutationFn: () => commitFn({ data: { tenantId, contract: reviewedContract } }),
+    networkMode: "always",
+    onSuccess: (result, message) => {
+      if (result.createdRecordId && preparation.workflow) {
+        setCommitted({
+          createdRecordId: result.createdRecordId,
+          documentNumber: result.documentNumber,
+          workflow: preparation.workflow,
+        });
+      }
+    },
+  });
+
+  if (!preparation.workflow) return null;
+  const label = WORKFLOW_LABEL[preparation.workflow];
+  const route = preparation.workflow ? WORKFLOW_ROUTE[preparation.workflow] : null;
+
+  if (preparation.action === "prepare_purchase_order") {
+    if (preparation.readiness !== "ready" && preparation.readiness !== "ready_with_warnings") {
+      return <p className="mt-2 text-xs text-muted-foreground">{preparation.message}</p>;
+    }
+    return (
+      <div className="space-y-2">
+        <PurchaseOrderActions tenantId={tenantId} contract={reviewedContract} />
+        <div className="rounded-md border border-dashed px-2.5 py-2">
+          <p className="text-[11px] text-muted-foreground">
+            Prefer the approval-request stage? LexiBite can create a governed purchase request instead.
+          </p>
+          <Button type="button" size="sm" variant="ghost" disabled={commit.isPending} onClick={() => commit.mutate()}>
+            {commit.isPending ? "Preparing request…" : "Prepare purchase request instead"}
+          </Button>
+          {commit.isError && <p className="text-xs text-destructive">Something went wrong preparing the request — please try again.</p>}
+        </div>
+      </div>
+    );
+  }
+
+  if (preparation.workflow === "stock_transfer" || preparation.workflow === "requisition") {
+    if (preparation.readiness !== "ready" && preparation.readiness !== "ready_with_warnings") {
+      return <p className="mt-2 text-xs text-muted-foreground">{preparation.message}</p>;
+    }
+    return (
+      <div className="space-y-2">
+        <div className="rounded-md border bg-muted/20 px-2.5 py-2">
+          <p className="text-xs font-semibold text-foreground">Review {label} quantities</p>
+          <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+            Adjust the requested quantities before LexiBite creates the governed draft. Nothing moves yet.
+          </p>
+          <div className="mt-2 space-y-1.5">
+            {contract.entities
+              .filter((entity) => entity.entityDomain === "inventory_item" && entity.resolvedId && entity.quantity)
+              .map((entity) => {
+                const id = entity.resolvedId!;
+                return (
+                  <div key={id} className="flex items-center justify-between gap-2 rounded-lg border bg-card px-2 py-1.5">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-foreground">{entity.resolvedName ?? entity.raw}</p>
+                      <p className="text-[10px] text-muted-foreground">Requested {entity.quantity!.quantity} {entity.quantity!.unitText}</p>
+                    </div>
+                    <Input
+                      type="number" min="0.01" step="0.01"
+                      value={quantities[id] ?? entity.quantity!.quantity}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        setQuantities((current) => ({ ...current, [id]: value }));
+                      }}
+                      className="h-8 w-20 text-xs"
+                      aria-label={label + " quantity for " + (entity.resolvedName ?? entity.raw)}
+                    />
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+        <Button type="button" size="sm" disabled={commit.isPending} onClick={() => commit.mutate()}>
+          {commit.isPending ? "Preparing…" : `Prepare & open ${label}`}
+        </Button>
+        {commit.isError && <p className="text-xs text-destructive">Something went wrong preparing this — please try again.</p>}
+      </div>
+    );
+  }
+
+  if (committed) {
+    return (
+      <div className="space-y-2">
+        <Button type="button" size="sm" variant="outline" onClick={() => route && navigate({ to: route.to as never, search: route.search as never })}>
+          Open {label}{committed.documentNumber ? ` (${committed.documentNumber})` : ""}
+        </Button>
+        {committed.workflow === "purchase_request" && (
+          <PurchaseRequestLifecycleActions tenantId={tenantId} requestId={committed.createdRecordId} />
+        )}
+        {committed.workflow === "requisition" && (
+          <RequisitionLifecycleActions tenantId={tenantId} requisitionId={committed.createdRecordId} />
+        )}
+        {EXECUTABLE_WORKFLOWS.includes(committed.workflow) && (
+          <ExecutionActions workflow={committed.workflow as NovaExecutableWorkflow} recordId={committed.createdRecordId} tenantId={tenantId} />
+        )}
+      </div>
+    );
+  }
+
+  if (preparation.readiness !== "ready" && preparation.readiness !== "ready_with_warnings") {
+    return <p className="mt-2 text-xs text-muted-foreground">{preparation.message}</p>;
+  }
+
+  return (
+    <div className="mt-2 space-y-1">
+      {preparation.warnings.map((w) => (
+        <p key={w} className="text-xs text-muted-foreground">
+          {w}
+        </p>
+      ))}
+      <Button type="button" size="sm" disabled={commit.isPending} onClick={() => commit.mutate()}>
+        {commit.isPending ? "Preparing…" : `Prepare & open ${label}`}
+      </Button>
+      {commit.isError && (
+        <p className="text-xs text-destructive">
+          Something went wrong preparing this — please try again.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function PurchaseRequestLifecycleActions({ tenantId, requestId }: { tenantId: string; requestId: string }) {
+  const navigate = useNavigate();
+  const getFn = useServerFn(getRestaurantPurchaseRequestFn);
+  const transitionFn = useServerFn(transitionRestaurantPurchaseRequestFn);
+  const request = useQuery({
+    queryKey: ["ask-lexibite", "purchase-request", tenantId, requestId],
+    queryFn: () => getFn({ data: { tenantId, id: requestId } }),
+  });
+  const transition = useMutation({
+    mutationFn: (action: "submit" | "approve" | "cancel") =>
+      transitionFn({ data: { tenantId, id: requestId, action } }),
+    onSuccess: () => request.refetch(),
+  });
+  const status = request.data?.request?.status;
+  if (request.isLoading) return <p className="text-[11px] text-muted-foreground">Checking request status…</p>;
+  if (!request.data) return <p className="text-xs text-destructive">The purchase request could not be reloaded.</p>;
+  const next =
+    status === "draft" ? { action: "submit" as const, label: "Submit request" } :
+    status === "submitted" ? { action: "approve" as const, label: "Approve request" } : null;
+  if (!next) {
+    return <p className="text-[11px] text-muted-foreground">Request status: <span className="font-semibold">{status}</span>. Open the request for the next workflow stage.</p>;
+  }
+  return (
+    <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
+      <p className="text-xs font-medium">Next action: {next.label}</p>
+      <p className="mt-0.5 text-[11px] text-muted-foreground">This changes the real purchase-request record and is checked again server-side.</p>
+      <Button type="button" size="sm" className="mt-2" disabled={transition.isPending} onClick={() => transition.mutate(next.action)}>
+        {transition.isPending ? "Updating…" : next.label}
+      </Button>
+      {transition.data && <p className="mt-1.5 text-xs text-foreground">Status: {transition.data.status}</p>}
+      {transition.isError && <p className="mt-1.5 text-xs text-destructive">{transition.error.message}</p>}
+      {status === "approved" && (
+        <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => navigate({ to: "/admin/restaurant/procurement", search: { tab: "requests" } })}>
+          Open approved request
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function RequisitionLifecycleActions({ tenantId, requisitionId }: { tenantId: string; requisitionId: string }) {
+  const getFn = useServerFn(getRequisitionFn);
+  const submitFn = useServerFn(submitRequisitionFn);
+  const approveFn = useServerFn(approveRequisitionFn);
+  const issueFn = useServerFn(issueRequisitionFn);
+  const requisition = useQuery({
+    queryKey: ["ask-lexibite", "requisition", tenantId, requisitionId],
+    queryFn: () => getFn({ data: { tenantId, id: requisitionId } }),
+  });
+  const [confirming, setConfirming] = useState(false);
+  const submit = useMutation({ mutationFn: () => submitFn({ data: { tenantId, requisitionId } }), onSuccess: () => requisition.refetch() });
+  const approve = useMutation({
+    mutationFn: () => approveFn({
+      data: {
+        tenantId,
+        requisitionId,
+        lines: (requisition.data?.lines ?? []).map((line: { id: string; approved_quantity?: number | null; requested_quantity?: number | null; issued_quantity?: number | null }) => ({
+          lineId: line.id,
+          approvedQuantity: Number(line.approved_quantity ?? line.requested_quantity ?? 0),
+        })),
+      },
+    }),
+    onSuccess: () => requisition.refetch(),
+  });
+  const issue = useMutation({
+    mutationFn: () => issueFn({
+      data: {
+        tenantId,
+        requisitionId,
+        lines: (requisition.data?.lines ?? []).map((line: { id: string; approved_quantity?: number | null; requested_quantity?: number | null; issued_quantity?: number | null }) => ({
+          lineId: line.id,
+          issueQuantity: Math.max(0, Number(line.approved_quantity ?? line.requested_quantity ?? 0) - Number(line.issued_quantity ?? 0)),
+        })),
+      },
+    }),
+    onSuccess: () => requisition.refetch(),
+  });
+  if (requisition.isLoading) return <p className="text-[11px] text-muted-foreground">Checking requisition status…</p>;
+  if (!requisition.data) return <p className="text-xs text-destructive">The requisition could not be reloaded.</p>;
+  const status = requisition.data.requisition.status;
+  if (status === "draft") return (
+    <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
+      <p className="text-xs font-medium">Next action: submit requisition</p>
+      <Button type="button" size="sm" className="mt-2" disabled={submit.isPending} onClick={() => submit.mutate()}>
+        {submit.isPending ? "Submitting…" : "Submit requisition"}
+      </Button>
+      {submit.isError && <p className="mt-1.5 text-xs text-destructive">{submit.error.message}</p>}
+    </div>
+  );
+  if (status === "submitted") return (
+    <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
+      <p className="text-xs font-medium">Next action: approve requisition</p>
+      <Button type="button" size="sm" className="mt-2" disabled={approve.isPending} onClick={() => approve.mutate()}>
+        {approve.isPending ? "Approving…" : "Approve requisition"}
+      </Button>
+      {approve.isError && <p className="mt-1.5 text-xs text-destructive">{approve.error.message}</p>}
+    </div>
+  );
+  if (status === "approved" || status === "partially_issued") return (
+    <div className="rounded-lg border bg-muted/20 px-2.5 py-2">
+      <p className="text-xs font-medium">Next action: issue stock</p>
+      <p className="text-[11px] text-muted-foreground">LexiBite will issue only the outstanding approved quantities through the existing inventory ledger path.</p>
+      {!confirming ? (
+        <Button type="button" size="sm" className="mt-2" onClick={() => setConfirming(true)}>Review issue</Button>
+      ) : (
+        <div className="mt-2 flex gap-1.5">
+          <Button type="button" size="sm" variant="ghost" onClick={() => setConfirming(false)}>Cancel</Button>
+          <Button type="button" size="sm" disabled={issue.isPending} onClick={() => issue.mutate()}>
+            {issue.isPending ? "Issuing…" : "Confirm & issue"}
+          </Button>
+        </div>
+      )}
+      {issue.data && <p className="mt-1.5 text-xs text-foreground">Status: {issue.data.status}</p>}
+      {issue.isError && <p className="mt-1.5 text-xs text-destructive">{issue.error.message}</p>}
+    </div>
+  );
+  return <p className="text-[11px] text-muted-foreground">Requisition status: <span className="font-semibold">{status}</span>. No further Ask LexiBite action is available from this state.</p>;
+}
+
+const EXECUTABLE_WORKFLOWS: readonly NovaPreparationWorkflow[] = ["stock_transfer"];
+
+function IntelligentPurchaseOrderActions({
+  tenantId,
+  plan,
+}: {
+  tenantId: string;
+  plan: IntelligentPurchaseOrderPlan;
+}) {
+  const navigate = useNavigate();
+  const createFn = useServerFn(createIntelligentPurchaseOrdersFn);
+  const [reviewing, setReviewing] = useState(false);
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const [quantities, setQuantities] = useState<Record<string, number>>(() =>
+    Object.fromEntries(
+      plan.groups.flatMap((group) =>
+        group.lines.map((line) => [line.inventoryItemId, line.quantity]),
+      ),
+    ),
+  );
+
+  const create = useMutation({
+    mutationFn: () => createFn({
+      data: {
+        tenantId,
+        inventoryItemIds: plan.groups.flatMap((group) =>
+          group.lines.map((line) => line.inventoryItemId),
+        ),
+        supplierId: null,
+        idempotencyKey,
+        lineOverrides: Object.entries(quantities).map(([inventoryItemId, quantity]) => ({
+          inventoryItemId,
+          quantity,
+        })),
+      },
+    }),
+    networkMode: "always",
+  });
+
+  if (create.data) {
+    return (
+      <div className="mt-2 space-y-2 rounded-xl border border-green-600/30 bg-green-600/10 px-3 py-2.5">
+        <p className="text-xs font-semibold text-foreground">
+          {create.data.created.length} draft PO{create.data.created.length === 1 ? "" : "s"} created.
+        </p>
+        <div className="space-y-1">
+          {create.data.created.map((po) => (
+            <div key={po.id} className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-muted-foreground">
+                {po.documentNumber} · {po.supplierName} · {po.currency} {po.total.toLocaleString()}
+              </span>
+              <Button type="button" size="sm" variant="outline" onClick={() =>
+                navigate({ to: "/admin/restaurant/procurement", search: { tab: "orders" } })
+              }>
+                Open POs
+              </Button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!plan.groups.length) {
+    return (
+      <div className="mt-2 rounded-xl border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+        Purchasing Intelligence has no safe PO draft from the current replenishment recommendations.
+        {plan.skipped.length > 0 && <div className="mt-1.5 space-y-1">{plan.skipped.slice(0, 4).map((reason) => <p key={reason}>• {reason}</p>)}</div>}
+      </div>
+    );
+  }
+
+  if (!reviewing) {
+    return (
+      <div className="mt-2 space-y-2 rounded-xl border bg-card px-3 py-2.5">
+        <p className="text-xs font-semibold text-foreground">Intelligent PO plan</p>
+        <p className="text-[11px] leading-4 text-muted-foreground">
+          {plan.suggestionCount} replenishment recommendation{plan.suggestionCount === 1 ? "" : "s"}
+          {" "}→ {plan.groups.length} draft PO{plan.groups.length === 1 ? "" : "s"} · {plan.currency} {plan.totalEstimatedSpend.toLocaleString()}
+        </p>
+        <Button type="button" size="sm" onClick={() => setReviewing(true)}>Review intelligent PO</Button>
+      </div>
+    );
+  }
+
+  const editedSpend = plan.groups.reduce(
+    (total, group) =>
+      total +
+      group.lines.reduce(
+        (subtotal, line) =>
+          subtotal + (quantities[line.inventoryItemId] ?? line.quantity) * line.unitPrice,
+        0,
+      ),
+    0,
+  );
+
+  return (
+    <div className="mt-2 space-y-2 rounded-xl border bg-card px-3 py-2.5">
+      <div>
+        <p className="text-xs font-semibold text-foreground">Purchasing Intelligence</p>
+        <p className="text-[11px] text-muted-foreground">Quantities come from the live replenishment engine. You can adjust them before the draft PO is created; supplier prices are revalidated server-side.</p>
+      </div>
+      <div className="space-y-2">
+        {plan.groups.map((group) => (
+          <section key={group.key} className="rounded-lg border bg-muted/20 p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-foreground">{group.supplierName}</p>
+              <span className="text-[11px] font-semibold tabular-nums text-foreground">{group.currency} {group.lines.reduce((sum, line) => sum + (quantities[line.inventoryItemId] ?? line.quantity) * line.unitPrice, 0).toLocaleString()}</span>
+            </div>
+            <div className="mt-1.5 space-y-1.5">
+              {group.lines.map((line) => (
+                <div key={line.inventoryItemId} className="flex items-start justify-between gap-3 text-xs">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-foreground">{line.description}</p>
+                    <p className="text-[11px] text-muted-foreground">{group.currency} {line.unitPrice.toLocaleString()} each · {line.currentQuantity} on hand · {line.leadTimeDays}d lead · recommended {line.quantity}</p>
+                  </div>
+                  <label className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+                    Qty
+                    <Input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={quantities[line.inventoryItemId] ?? line.quantity}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        setQuantities((current) => ({ ...current, [line.inventoryItemId]: value }));
+                      }}
+                      className="h-8 w-20 text-xs"
+                      aria-label={"Quantity for " + line.description}
+                    />
+                  </label>
+                  <span className="shrink-0 font-semibold tabular-nums text-foreground">{group.currency} {line.estimatedCost.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+      {plan.skipped.length > 0 && <div className="rounded-lg border border-amber-300/50 bg-amber-50/50 px-2.5 py-2 text-[11px] text-amber-700 dark:bg-amber-950/20 dark:text-amber-300"><p className="font-semibold">Not included</p>{plan.skipped.slice(0, 4).map((reason) => <p key={reason}>• {reason}</p>)}</div>}
+      <p className="text-[11px] text-muted-foreground">Nothing has been submitted or approved. Confirming below creates draft POs only. Edited quantities are validated again server-side.</p>
+      <div className="rounded-lg border bg-muted/20 px-2.5 py-2 text-xs">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-muted-foreground">Reviewed estimated spend</span>
+          <span className="font-semibold tabular-nums">{plan.currency} {editedSpend.toLocaleString()}</span>
+        </div>
+      </div>
+      {create.isError && <p className="text-xs text-destructive">{create.error.message}</p>}
+      <div className="flex gap-1.5 pt-1">
+        <Button type="button" size="sm" variant="ghost" onClick={() => setReviewing(false)}>Cancel</Button>
+        <Button type="button" size="sm" disabled={create.isPending} onClick={() => create.mutate()}>
+          {create.isPending ? "Creating draft POs…" : "Create " + plan.groups.length + " draft PO" + (plan.groups.length === 1 ? "" : "s")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+/**
+ * Procurement actions are deliberately separate from I12 preparation.
+ * Creating the PO is an explicit human confirmation, then each lifecycle
+ * transition is independently governed by the real purchasing/receiving
+ * services. Ask LexiBite never bypasses separation of duties.
+ */
+function PurchaseOrderActions({
+  tenantId,
+  contract,
+}: {
+  tenantId: string;
+  contract: NovaIntentContract;
+}) {
+  const navigate = useNavigate();
+  const createFn = useServerFn(createAskLexiBitePurchaseOrderFn);
+  const transitionFn = useServerFn(transitionAskLexiBitePurchaseOrderFn);
+  const receiveFn = useServerFn(receiveAskLexiBitePurchaseOrderFn);
+  const [order, setOrder] = useState<{
+    id: string;
+    documentNumber: string;
+    status: string;
+  } | null>(null);
+  const [receiveReview, setReceiveReview] = useState(false);
+
+  const create = useMutation({
+    mutationFn: () => createFn({ data: { tenantId, contract } }),
+    networkMode: "always",
+    onSuccess: (result) => {
+      setOrder({
+        id: result.id,
+        documentNumber: result.documentNumber,
+        status: result.status,
+      });
+    },
+  });
+
+  const transition = useMutation({
+    mutationFn: (status: "submitted" | "approved") =>
+      transitionFn({ data: { tenantId, purchaseOrderId: order!.id, status } }),
+    networkMode: "always",
+    onSuccess: (result) => {
+      setOrder((current) => (current ? { ...current, status: result.status } : current));
+    },
+  });
+
+  const receive = useMutation({
+    mutationFn: (confirm: boolean) =>
+      receiveFn({ data: { tenantId, purchaseOrderId: order!.id, confirm } }),
+    networkMode: "always",
+    onSuccess: (result) => {
+      if (result.orderStatus) {
+        setOrder((current) => (current ? { ...current, status: result.orderStatus! } : current));
+      }
+      if (!result.preview) setReceiveReview(false);
+    },
+  });
+
+  if (!order) {
+    return (
+      <div className="mt-2 space-y-1.5">
+        <p className="text-xs text-muted-foreground">
+          This creates a real draft purchase order using live supplier prices. It is not submitted
+          or approved until an explicit lifecycle action is confirmed.
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          disabled={create.isPending}
+          onClick={() => create.mutate()}
+        >
+          {create.isPending ? "Preparing PO…" : "Prepare Purchase Order"}
+        </Button>
+        {create.isError && (
+          <p className="text-xs text-destructive">{create.error.message}</p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 space-y-2 rounded-md border px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold">Purchase Order {order.documentNumber}</p>
+          <p className="text-[11px] text-muted-foreground">Status: {order.status}</p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() =>
+            navigate({
+              to: "/admin/restaurant/procurement",
+              search: { tab: "orders" },
+            })
+          }
+        >
+          Open PO
+        </Button>
+      </div>
+
+      {order.status === "draft" && (
+        <Button
+          type="button"
+          size="sm"
+          disabled={transition.isPending}
+          onClick={() => transition.mutate("submitted")}
+        >
+          {transition.isPending ? "Submitting…" : "Submit PO"}
+        </Button>
+      )}
+
+      {order.status === "submitted" && (
+        <Button
+          type="button"
+          size="sm"
+          disabled={transition.isPending}
+          onClick={() => transition.mutate("approved")}
+        >
+          {transition.isPending ? "Approving…" : "Approve PO"}
+        </Button>
+      )}
+
+      {["approved", "partially_received"].includes(order.status) && !receiveReview && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={receive.isPending}
+          onClick={() => {
+            setReceiveReview(true);
+            receive.mutate(false);
+          }}
+        >
+          Review & receive stock
+        </Button>
+      )}
+
+      {receiveReview && receive.data?.preview && (
+        <div className="space-y-1.5 rounded-md border bg-muted/20 px-2 py-2">
+          <p className="text-xs font-medium">Receive all outstanding quantities</p>
+          <ul className="text-xs text-muted-foreground">
+            {receive.data.lines.map((line) => (
+              <li key={line.purchaseOrderItemId}>
+                • {line.description} — {line.quantity}
+              </li>
+            ))}
+          </ul>
+          <p className="text-[11px] text-amber-600">
+            Confirm only if the physical delivery matches these quantities.
+          </p>
+          {receive.data.message && (
+            <p className="text-xs text-muted-foreground">{receive.data.message}</p>
+          )}
+          <div className="flex gap-1.5 pt-1">
+            <Button type="button" size="sm" variant="ghost" onClick={() => setReceiveReview(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={receive.isPending}
+              onClick={() => receive.mutate(true)}
+            >
+              {receive.isPending ? "Receiving…" : "Confirm & receive"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {receive.data && !receive.data.preview && (
+        <div className="rounded-md border border-green-600/30 bg-green-600/10 px-2 py-1.5 text-xs whitespace-pre-line">
+          {receive.data.message}
+        </div>
+      )}
+
+      {(transition.isError || receive.isError) && (
+        <p className="text-xs text-destructive">
+          {(transition.error ?? receive.error)?.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * I13 — the "Execute" confirmation boundary. Only rendered once I12 has
+ * already committed a real draft (never before, per spec section 4: a user
+ * message must never reach a mutation without this explicit confirmation
+ * step). Fetches a fresh, re-verified preview on mount/retry — never
+ * trusts the chat turn's stale preparation snapshot — and the Execute
+ * button itself calls executeNovaPreparationFn, which re-verifies
+ * everything again server-side before touching anything (see
+ * act.server.ts). Failure never hides behind a generic error: the
+ * server's own operational-language message is shown verbatim.
+ */
+function ExecutionActions({
+  workflow,
+  recordId,
+  tenantId,
+}: {
+  workflow: NovaExecutableWorkflow;
+  recordId: string;
+  tenantId: string;
+}) {
+  const previewFn = useServerFn(previewNovaExecutionFn);
+  const executeFn = useServerFn(executeNovaPreparationFn);
+  const [reviewing, setReviewing] = useState(false);
+
+  const preview = useMutation({
+    mutationFn: () => previewFn({ data: { tenantId, workflow, recordId } }),
+    networkMode: "always",
+  });
+  const execute = useMutation({
+    mutationFn: () => executeFn({ data: { tenantId, workflow, recordId } }),
+    networkMode: "always",
+  });
+
+  if (execute.data) {
+    return execute.data.ok ? (
+      <div className="mt-2 rounded-md border border-green-600/30 bg-green-600/10 px-2 py-1.5 text-xs whitespace-pre-line text-foreground">
+        {execute.data.message}
+      </div>
+    ) : (
+      <p className="mt-2 text-xs text-destructive">{execute.data.message}</p>
+    );
+  }
+
+  if (!reviewing) {
+    return (
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="mt-2"
+        onClick={() => {
+          setReviewing(true);
+          preview.mutate();
+        }}
+      >
+        Review & execute
+      </Button>
+    );
+  }
+
+  if (preview.isPending || !preview.data) {
+    return <p className="mt-2 text-xs text-muted-foreground">Checking…</p>;
+  }
+
+  if (preview.data.readiness !== "ready") {
+    return <p className="mt-2 text-xs text-muted-foreground">{preview.data.message}</p>;
+  }
+
+  return (
+    <div className="mt-2 space-y-1 rounded-md border px-2 py-1.5">
+      <p className="text-xs font-medium">
+        Ready to execute this stock movement:
+        {preview.data.sourceLocationName && preview.data.destinationLocationName
+          ? ` ${preview.data.sourceLocationName} → ${preview.data.destinationLocationName}`
+          : ""}
+      </p>
+      <ul className="text-xs text-muted-foreground">
+        {preview.data.lines.map((l) => (
+          <li key={l.inventoryItemId}>
+            • {l.inventoryItemName} — {l.quantity}
+          </li>
+        ))}
+      </ul>
+      {preview.data.warnings.map((w) => (
+        <p key={w} className="text-xs text-amber-600">
+          {w}
+        </p>
+      ))}
+      <div className="flex gap-1.5 pt-1">
+        <Button type="button" size="sm" variant="ghost" onClick={() => setReviewing(false)}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          disabled={execute.isPending}
+          onClick={() => execute.mutate()}
+        >
+          {execute.isPending ? "Executing…" : "Execute movement"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function newTurnId() {
+  return Math.random().toString(36).slice(2);
+}
+
+/**
+ * I11: the small "Understanding" card shown instead of a plain answer when
+ * a staff message was classified as an operational instruction rather
+ * than a question — reuses this panel's own chat bubble, no new UI
+ * surface. The summary text alone (content) already states everything
+ * resolved/missing/ambiguous in plain English; this only adds a visual
+ * label plus, when present, the concrete list of unresolved candidates so
+ * a manager can see at a glance what still needs clarifying.
+ */
+function UnderstandingBadgeAndCandidates({ understanding }: { understanding: NovaIntentContract }) {
+  const needsClarification =
+    understanding.ambiguities.length > 0 || understanding.missingInformation.length > 0;
+  return (
+    <div className="mb-1.5 space-y-1.5">
+      <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+        <Wand2 className="size-3" aria-hidden />
+        Understanding{needsClarification ? " — needs clarification" : ""}
+      </div>
+      {understanding.ambiguities.map((a) => (
+        <div key={a.field} className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+          {a.candidates.length > 0
+            ? `Did you mean: ${a.candidates.map((c) => c.name).join(", ")}?`
+            : a.reason}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * I15 — "what NOVA remembers", deliberately compact (spec: not a
+ * complicated memory dashboard). Lists this tenant's shared operating
+ * memory plus the signed-in staff member's own personal memory (never
+ * another staff member's — recallRestaurantMemoryFn already enforces
+ * that server-side) with a one-click Forget per row. Forgetting marks the
+ * row dismissed server-side, never a hard delete.
+ */
+function MemoryPanel({ tenantId, onClose }: { tenantId: string; onClose: () => void }) {
+  const recallFn = useServerFn(recallRestaurantMemoryFn);
+  const forgetFn = useServerFn(forgetRestaurantMemoryFn);
+  const queryClient = useQueryClient();
+  const queryKey = ["staff-nova-memory", tenantId];
+
+  const memories = useQuery({
+    queryKey,
+    queryFn: () => recallFn({ data: { tenantId, limit: 20 } }),
+  });
+
+  const forget = useMutation({
+    mutationFn: (memoryId: string) => forgetFn({ data: { tenantId, memoryId } }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+  });
+
+  return (
+    <div className="mb-2 rounded-md border bg-card p-2">
+      <div className="mb-1.5 flex items-center justify-between">
+        <div className="flex items-center gap-1 text-xs font-medium">
+          <Brain className="size-3" aria-hidden /> What {PRODUCT.aiName} remembers
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <X className="size-3.5" aria-hidden />
+        </button>
+      </div>
+      {memories.isLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {memories.data && memories.data.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          Nothing remembered yet. Tell {PRODUCT.aiName} a preference and it can remember it here.
+        </p>
+      )}
+      <ul className="space-y-1">
+        {(memories.data ?? []).map((m) => (
+          <li
+            key={m.id}
+            className="flex items-start justify-between gap-2 rounded bg-muted/50 px-1.5 py-1 text-xs"
+          >
+            <span>
+              <span className="mr-1 rounded bg-muted px-1 text-[10px] uppercase text-muted-foreground">
+                {m.scope === "user" ? "Personal" : "Restaurant"}
+              </span>
+              {m.memoryValue}
+            </span>
+            <button
+              type="button"
+              disabled={forget.isPending}
+              onClick={() => forget.mutate(m.id)}
+              className="shrink-0 text-muted-foreground hover:text-destructive"
+            >
+              Forget
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Staff Ask NOVA — a bounded conversational panel over this tenant's own
+ * already-computed operational data. See staffnova.server.ts for the
+ * grounding/security design. This component owns only chat UI state
+ * (turns, input text) — nothing here is persisted, matching guest Ask
+ * NOVA's own client-held-only conversation model.
+ */
+export function StaffNovaPanel({
+  open,
+  onOpenChange,
+  tenantId,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  tenantId: string;
+}) {
+  const askFn = useServerFn(askStaffNovaFn);
+  const navigate = useNavigate();
+  const [turns, setTurns] = useState<StaffNovaTurn[]>([]);
+  const [input, setInput] = useState("");
+  const [memoryOpen, setMemoryOpen] = useState(false);
+
+  const ask = useMutation({
+    mutationFn: (message: string) => {
+      const history = turns.map((t) => ({ role: t.role, content: t.content }));
+      return askFn({ data: { tenantId, message, history } });
+    },
+    networkMode: "always",
+    onSuccess: (result, message) => {
+      setTurns((t) => [
+        ...t,
+        {
+          id: newTurnId(),
+          role: "assistant",
+          content: result.answer,
+          degraded: result.degraded,
+          sourceMessage: message,
+          understanding: result.understanding,
+          preparation: result.preparation,
+          intelligentPurchaseOrder: result.intelligentPurchaseOrder,
+          managerBrief: shouldRenderManagerBrief(message),
+          },
+      ]);
+    },
+    onError: () => {
+      setTurns((t) => [
+        ...t,
+        {
+          id: newTurnId(),
+          role: "assistant",
+          content: `Something went wrong reaching ${PRODUCT.aiName}. Please try again.`,
+          degraded: true,
+          managerBrief: false,
+        },
+      ]);
+    },
+  });
+
+  const send = (message: string) => {
+    const text = message.trim();
+    if (!text || ask.isPending) return;
+    setTurns((t) => [...t, { id: newTurnId(), role: "user", content: text }]);
+    setInput("");
+    ask.mutate(text);
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="flex w-full flex-col sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle className="flex items-center justify-between gap-1.5">
+            <span className="flex items-center gap-1.5">
+              <Sparkles className="size-4 text-primary" aria-hidden /> Ask {PRODUCT.aiName}
+            </span>
+            <button
+              type="button"
+              onClick={() => setMemoryOpen((v) => !v)}
+              className="flex items-center gap-1 text-xs font-normal text-muted-foreground hover:text-foreground"
+            >
+              <Brain className="size-3.5" aria-hidden /> Memory
+            </button>
+          </SheetTitle>
+        </SheetHeader>
+
+        {memoryOpen && <MemoryPanel tenantId={tenantId} onClose={() => setMemoryOpen(false)} />}
+
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-2">
+          {turns.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              Ask about sales, menu performance, inventory, purchasing, kitchen performance, or
+              current findings and decisions for this restaurant. {PRODUCT.aiName} only answers
+              from this restaurant's own data — if it doesn't have what you're asking for, it'll
+              say so.
+            </p>
+          )}
+          {turns.map((t) =>
+            t.role === "user" ? (
+              <div
+                key={t.id}
+                className="ml-auto max-w-[85%] rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-sm text-primary-foreground"
+              >
+                {t.content}
+              </div>
+            ) : (
+              <div
+                key={t.id}
+                className={
+                  t.managerBrief && !t.understanding
+                    ? "mr-auto w-full text-sm"
+                    : `mr-auto max-w-[90%] rounded-2xl rounded-tl-sm border px-3 py-2 text-sm ${
+                        t.degraded ? "bg-muted text-muted-foreground" : "bg-card"
+                      }`
+                }
+              >
+                {t.understanding && (
+                  <UnderstandingBadgeAndCandidates understanding={t.understanding} />
+                )}
+                {t.managerBrief && !t.understanding ? (
+                  <ManagerBrief content={t.content} />
+                ) : (
+                  <AssistantAnswer content={t.content} />
+                )}
+                {t.sourceMessage && /\b(adjust|adjustment|correct|correction|reconcile)\b.{0,80}\b(stock|inventory|quantity|balance)\b/i.test(t.sourceMessage) && (
+                  <ActionWorkspace
+                    stage="review"
+                    title="Inventory adjustment"
+                    summary="Stock corrections must be reviewed and posted through Inventory Control with a reason."
+                  >
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => navigate({ to: "/admin/restaurant/inventory-control" as never, search: { tab: "waste" } as never })}
+                    >
+                      Open stock adjustments
+                    </Button>
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                      LexiBite does not silently post a stock correction from chat. The existing inventory form remains the authoritative adjustment workflow.
+                    </p>
+                  </ActionWorkspace>
+                )}
+                {t.understanding && ["approve_purchase_order", "submit_purchase_order", "receive_purchase_order"].includes(t.understanding.action) && (
+                  <ActionWorkspace
+                    stage={t.understanding.action === "approve_purchase_order" ? "approve" : t.understanding.action === "submit_purchase_order" ? "submit" : "receive"}
+                    title="Purchase order action"
+                    summary="Review the current state before LexiBite changes procurement records."
+                  >
+                    <PurchaseOrderLifecycleActions tenantId={tenantId} contract={t.understanding} />
+                  </ActionWorkspace>
+                )}
+                {t.intelligentPurchaseOrder && (
+                  <ActionWorkspace
+                    stage="recommend"
+                    title="Recommended replenishment"
+                    summary="Purchasing Intelligence has produced a governed action plan. Review it before creating drafts."
+                  >
+                    <IntelligentPurchaseOrderActions
+                      tenantId={tenantId}
+                      plan={t.intelligentPurchaseOrder}
+                    />
+                  </ActionWorkspace>
+                )}
+                {t.preparation && t.understanding && (
+                  <ActionWorkspace
+                    stage={t.preparation.readiness === "ready" || t.preparation.readiness === "ready_with_warnings" ? "preview" : "review"}
+                    title={t.preparation.workflow ? WORKFLOW_LABEL[t.preparation.workflow] : "Operational action"}
+                    summary="LexiBite has translated the instruction into a governed operational preparation."
+                  >
+                    <PreparationActions
+                      preparation={t.preparation}
+                      contract={t.understanding}
+                      tenantId={tenantId}
+                    />
+                  </ActionWorkspace>
+                )}
+              </div>
+            ),
+          )}
+          {ask.isPending && (
+            <div className="mr-auto max-w-[90%] rounded-2xl rounded-tl-sm border bg-card px-3 py-2 text-sm text-muted-foreground">
+              Thinking…
+            </div>
+          )}
+        </div>
+
+        {turns.length === 0 && (
+          <div className="flex flex-wrap gap-1.5 pb-2">
+            {STARTER_PROMPTS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => send(s)}
+                className="min-h-9 rounded-full border px-3 text-xs text-foreground"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <form
+          className="flex items-center gap-2 border-t pt-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            send(input);
+          }}
+        >
+          <Input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={`Ask ${PRODUCT.aiName} about your restaurant…`}
+            maxLength={2000}
+            className="h-11"
+          />
+          <Button type="submit" disabled={ask.isPending || !input.trim()} className="h-11">
+            Send
+          </Button>
+        </form>
+      </SheetContent>
+    </Sheet>
+  );
+}

@@ -1,0 +1,55 @@
+name: Phase 4 Cost Reconciliation
+on:
+  push:
+    branches:
+      - "feat/operational-cost-intelligence-phase4"
+      - "feat/operational-cost-intelligence-phase3-workaround"
+    paths:
+      - "src/modules/restaurant/costing/**"
+      - "src/routes/_authenticated.admin.restaurant.cost-reconciliation.tsx"
+      - "standalone/db/migrations/0040_operational_cost_intelligence.sql"
+      - "standalone/db/migrations/0042_cost_reconciliation_variance_intelligence.sql"
+      - "standalone/db/migrations/0043_cost_reconciliation_baselines.sql"
+      - "standalone/db/verification/test-operational-cost-intelligence.sql"
+      - ".github/workflows/phase3-hybrid-allocation.yml"
+  pull_request:
+    paths:
+      - "src/modules/restaurant/costing/**"
+      - "src/routes/_authenticated.admin.restaurant.cost-reconciliation.tsx"
+      - "standalone/db/migrations/0040_operational_cost_intelligence.sql"
+      - "standalone/db/migrations/0042_cost_reconciliation_variance_intelligence.sql"
+      - "standalone/db/migrations/0043_cost_reconciliation_baselines.sql"
+      - "standalone/db/verification/test-operational-cost-intelligence.sql"
+      - ".github/workflows/phase3-hybrid-allocation.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reconciliation-kernel-and-db:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lexibite_cost_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d lexibite_cost_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Run Phase 4 reconciliation kernel tests
+        run: bunx vitest run src/modules/restaurant/costing/hybrid-allocation.test.ts src/modules/restaurant/costing/profitability.server.test.ts src/modules/restaurant/costing/cost-reconciliation.engine.test.ts
+      - name: Apply operational cost and Phase 4 migrations; verify expense, budget, reconciliation RLS
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d lexibite_cost_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-operational-cost-intelligence.sql

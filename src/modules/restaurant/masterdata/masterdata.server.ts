@@ -1,0 +1,426 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Supabase rows are untyped at this boundary. */
+import { z } from "zod";
+import { assertCapability, assertTenantRead } from "../core/access.server";
+import { classifyProperty } from "@/modules/commercial/property-classification.server";
+import type {
+  UpsertBusinessProfileInput,
+  UpsertInventoryCategoryInput,
+  UpsertInventoryUnitInput,
+  UpsertPropertyInput,
+  UpsertProductCategoryInput,
+  UpsertServiceRequestSettingsInput,
+  UpsertGuestPaymentTimingInput,
+  UpsertOperationalServiceConfigInput,
+  listAllMasterDataSchema,
+  listInventoryCategoriesSchema,
+} from "./contracts";
+
+type Sb = any;
+
+/* ---------------- Business profile & properties ---------------- */
+
+export async function upsertProperty(sb: Sb, userId: string, input: UpsertPropertyInput) {
+  await assertCapability(sb, userId, input.tenantId, "tenant.manage");
+  const isNewProperty = !input.id;
+  // NEW properties are born non-operational. This is a deliberate safety
+  // boundary: commercial classification happens after the insert, so an
+  // additional chargeable property can never become active in the gap
+  // between creation and classification. The database trigger is the final
+  // enforcement layer and also forces direct active INSERTs to pending.
+  const row = {
+    tenant_id: input.tenantId,
+    slug: input.slug,
+    name: input.name,
+    timezone: input.timezone,
+    currency: input.currency,
+    status: isNewProperty ? "pending_activation" : input.status,
+  };
+  const q = input.id
+    ? sb
+        .from("restaurant_properties")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
+    : sb.from("restaurant_properties").insert({ ...row, settings: {} });
+  const { data, error } = await q.select("id, name, slug, status").single();
+  if (error) throw new Error(error.message);
+
+  // P01: every NEW property passes through the commercial classification
+  // engine exactly once. A chargeable property stays pending until the
+  // property-specific commercial invoice is fully paid; the DB trigger
+  // prevents every alternate client/write path from bypassing that gate.
+  const commercial = isNewProperty
+    ? await classifyProperty(sb, userId, input.tenantId, data.id)
+    : null;
+
+  if (isNewProperty && commercial && !commercial.chargeable) {
+    const { data: activated, error: activationError } = await sb
+      .from("restaurant_properties")
+      .update({ status: "active" })
+      .eq("id", data.id)
+      .eq("tenant_id", input.tenantId)
+      .select("id, name, slug, status")
+      .single();
+    if (activationError) throw new Error(activationError.message);
+    return { ...activated, commercial: { ...commercial, activationState: "active" as const } };
+  }
+
+  return {
+    ...data,
+    commercial: commercial
+      ? { ...commercial, activationState: "pending_activation" as const }
+      : null,
+  };
+}
+
+export async function upsertBusinessProfile(
+  sb: Sb,
+  userId: string,
+  input: UpsertBusinessProfileInput,
+) {
+  await assertCapability(sb, userId, input.tenantId, "tenant.manage");
+  const { data: tenant, error: readErr } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", input.tenantId)
+    .single();
+  if (readErr) throw new Error(readErr.message);
+  // logoUrl is exclusively managed by tenant-logo.server.ts's upload/remove
+  // functions, never by this text-fields form — carry the existing value
+  // forward unchanged so saving the business profile can never silently
+  // drop a configured logo.
+  const existingLogoUrl =
+    (tenant?.settings as { business?: { logoUrl?: string | null } } | null)?.business?.logoUrl ??
+    null;
+  const settings = {
+    ...(tenant?.settings ?? {}),
+    business: {
+      legalName: input.legalName,
+      tradingName: input.tradingName ?? null,
+      code: input.code ?? null,
+      taxId: input.taxId ?? null,
+      defaultCurrency: input.defaultCurrency,
+      timezone: input.timezone,
+      phone: input.phone ?? null,
+      email: input.email ?? null,
+      address: input.address ?? null,
+      website: input.website ?? null,
+      logoUrl: existingLogoUrl,
+    },
+  };
+  const { data, error } = await sb
+    .from("restaurant_tenants")
+    .update({ settings })
+    .eq("id", input.tenantId)
+    .select("id, name, slug, settings")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+/**
+ * settings.serviceRequests.cooldownSeconds — the one admin-facing control
+ * over how long a guest waits after a resolved "Request staff" alert
+ * before they can request again (selfstaff.server.ts reads this; a
+ * tenant that has never saved one gets DEFAULT_SERVICE_REQUEST_COOLDOWN_
+ * SECONDS instead of a broken/missing value). Spreads the existing settings
+ * object exactly like upsertBusinessProfile above, so saving this can never
+ * clobber settings.business or any other namespace.
+ */
+export async function upsertServiceRequestSettings(
+  sb: Sb,
+  userId: string,
+  input: UpsertServiceRequestSettingsInput,
+) {
+  await assertCapability(sb, userId, input.tenantId, "tenant.manage");
+  const { data: tenant, error: readErr } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", input.tenantId)
+    .single();
+  if (readErr) throw new Error(readErr.message);
+  const settings = {
+    ...(tenant?.settings ?? {}),
+    serviceRequests: {
+      ...((tenant?.settings as { serviceRequests?: Record<string, unknown> } | null)
+        ?.serviceRequests ?? {}),
+      cooldownSeconds: Math.round(input.cooldownMinutes * 60),
+    },
+  };
+  const { data, error } = await sb
+    .from("restaurant_tenants")
+    .update({ settings })
+    .eq("id", input.tenantId)
+    .select("id, name, slug, settings")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+/**
+ * Guest payment timing is an operational policy, not a client-side hint.
+ * The explicit setting is stored beside the existing tenant settings; "auto"
+ * deliberately falls back to the authoritative onboarding operating model.
+ */
+export async function upsertGuestPaymentTiming(
+  sb: Sb,
+  userId: string,
+  input: UpsertGuestPaymentTimingInput,
+) {
+  await assertCapability(sb, userId, input.tenantId, "tenant.manage");
+  const { data: tenant, error: readErr } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", input.tenantId)
+    .single();
+  if (readErr) throw new Error(readErr.message);
+
+  const settings = {
+    ...(tenant?.settings ?? {}),
+    payment: {
+      ...((tenant?.settings as { payment?: Record<string, unknown> } | null)?.payment ?? {}),
+      guestTiming: input.timing,
+    },
+  };
+  const { data, error } = await sb
+    .from("restaurant_tenants")
+    .update({ settings })
+    .eq("id", input.tenantId)
+    .select("id, name, slug, settings")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+
+/**
+ * Operational service configuration is independent from payment timing.
+ * "auto" values preserve the existing onboarding operating model defaults.
+ */
+export async function upsertOperationalServiceConfig(
+  sb: Sb,
+  userId: string,
+  input: UpsertOperationalServiceConfigInput,
+) {
+  await assertCapability(sb, userId, input.tenantId, "tenant.manage");
+  const { data: tenant, error: readErr } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", input.tenantId)
+    .single();
+  if (readErr) throw new Error(readErr.message);
+
+  const settings = {
+    ...(tenant?.settings ?? {}),
+    operations: {
+      ...((tenant?.settings as { operations?: Record<string, unknown> } | null)?.operations ?? {}),
+      serviceMode: input.serviceMode,
+      collectionMethod: input.collectionMethod,
+      readyAlert: input.readyAlert,
+    },
+  };
+  const { data, error } = await sb
+    .from("restaurant_tenants")
+    .update({ settings })
+    .eq("id", input.tenantId)
+    .select("id, name, slug, settings")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+/* ---------------- Inventory units ---------------- */
+
+export async function upsertInventoryUnit(sb: Sb, userId: string, input: UpsertInventoryUnitInput) {
+  await assertCapability(sb, userId, input.tenantId, "inventory.manage");
+  if (input.baseUnitId && input.id && input.baseUnitId === input.id) {
+    throw new Error("A unit cannot be its own base unit.");
+  }
+  const row = {
+    tenant_id: input.tenantId,
+    code: input.code,
+    name: input.name,
+    dimension: input.dimension,
+    base_unit_id: input.baseUnitId ?? null,
+    factor: input.factor,
+  };
+  const q = input.id
+    ? sb
+        .from("restaurant_inventory_units")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
+    : sb.from("restaurant_inventory_units").insert(row);
+  const { data, error } = await q
+    .select("id, code, name, dimension, factor, base_unit_id")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+/* ---------------- Inventory categories ---------------- */
+
+export async function listInventoryCategories(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listInventoryCategoriesSchema>,
+) {
+  await assertTenantRead(sb, userId, input.tenantId);
+  let q = sb
+    .from("restaurant_inventory_categories")
+    .select("id, parent_id, name, slug, kind, sort_order, active")
+    .eq("tenant_id", input.tenantId)
+    .order("sort_order");
+  if (input.kind) q = q.eq("kind", input.kind);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+export async function upsertInventoryCategory(
+  sb: Sb,
+  userId: string,
+  input: UpsertInventoryCategoryInput,
+) {
+  await assertCapability(sb, userId, input.tenantId, "inventory.manage");
+  const row = {
+    tenant_id: input.tenantId,
+    parent_id: input.parentId ?? null,
+    name: input.name,
+    slug: input.slug,
+    kind: input.kind,
+    sort_order: input.sortOrder,
+    active: input.active,
+  };
+  const q = input.id
+    ? sb
+        .from("restaurant_inventory_categories")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
+    : sb.from("restaurant_inventory_categories").insert(row);
+  const { data, error } = await q.select("id, name, kind, active").single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+/* ---------------- Product / menu categories ---------------- */
+
+export async function upsertProductCategory(
+  sb: Sb,
+  userId: string,
+  input: UpsertProductCategoryInput,
+) {
+  await assertCapability(sb, userId, input.tenantId, "menu.manage");
+  const row = {
+    tenant_id: input.tenantId,
+    property_id: input.propertyId ?? null,
+    parent_id: input.parentId ?? null,
+    kind: input.kind,
+    name: input.name,
+    slug: input.slug,
+    description: input.description ?? null,
+    sort_order: input.sortOrder,
+    active: input.active,
+  };
+  const q = input.id
+    ? sb
+        .from("restaurant_categories")
+        .update(row)
+        .eq("id", input.id)
+        .eq("tenant_id", input.tenantId)
+    : sb.from("restaurant_categories").insert(row);
+  const { data, error } = await q.select("id, name, kind, active").single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+/* ---------------- One-call workbench snapshot ---------------- */
+
+export async function listAllMasterData(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listAllMasterDataSchema>,
+) {
+  await assertTenantRead(sb, userId, input.tenantId);
+  const tenantId = input.tenantId;
+
+  const [inventoryMod, menuMod, suppliersMod, kitchenMod, salesMod, wasteMod] = await Promise.all([
+    import("../inventory/inventory.server"),
+    import("../menu/menu.server"),
+    import("../suppliers/suppliers.server"),
+    import("../kitchen/kitchen.server"),
+    import("../sales/sales.server"),
+    import("../inventory/waste.server"),
+  ]);
+
+  const [
+    { data: tenantRow },
+    { data: properties, error: propErr },
+    { data: locations, error: locErr },
+    units,
+    inventoryCategories,
+    productCategories,
+    { data: inventoryItems, error: itemErr },
+    suppliers,
+    supplierProducts,
+    stations,
+    tables,
+    servicePeriods,
+    reasons,
+  ] = await Promise.all([
+    sb
+      .from("restaurant_tenants")
+      .select("id, slug, name, status, settings")
+      .eq("id", tenantId)
+      .single(),
+    sb
+      .from("restaurant_properties")
+      .select("id, tenant_id, slug, name, timezone, currency, status")
+      .eq("tenant_id", tenantId)
+      .order("name"),
+    sb
+      .from("restaurant_locations")
+      .select(
+        "id, tenant_id, property_id, scope, parent_id, slug, code, name, location_type, is_storage, status, notes",
+      )
+      .eq("tenant_id", tenantId)
+      .order("name"),
+    inventoryMod.listUnits(sb, userId, tenantId),
+    listInventoryCategories(sb, userId, { tenantId }),
+    menuMod.listCategories(sb, userId, { tenantId, kind: "menu" }),
+    sb
+      .from("restaurant_inventory_items")
+      .select(
+        "id, name, sku, item_type, current_quantity, par_level, reorder_point, average_cost, currency, status, category_id, unit_id, location_id, track_batches, allow_negative, purchase_unit_id, consumption_unit_id, pack_size, shelf_life_days, content_per_stock_unit, content_unit_id",
+      )
+      .eq("tenant_id", tenantId)
+      .order("name"),
+    suppliersMod.listSuppliers(sb, userId, { tenantId, limit: 300 }),
+    suppliersMod.listSupplierProducts(sb, userId, tenantId),
+    kitchenMod.listStations(sb, userId, { tenantId }),
+    salesMod.listTables(sb, userId, { tenantId }),
+    salesMod.listServicePeriods(sb, userId, { tenantId }),
+    wasteMod.listReasons(sb, userId, { tenantId }),
+  ]);
+
+  if (propErr) throw new Error(propErr.message);
+  if (locErr) throw new Error(locErr.message);
+  if (itemErr) throw new Error(itemErr.message);
+
+  return {
+    tenant: tenantRow ?? null,
+    properties: properties ?? [],
+    locations: locations ?? [],
+    units,
+    inventoryCategories,
+    productCategories,
+    inventoryItems: inventoryItems ?? [],
+    suppliers,
+    supplierProducts,
+    stations,
+    tables,
+    servicePeriods,
+    reasons,
+  };
+}

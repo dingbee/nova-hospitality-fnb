@@ -1,0 +1,26 @@
+-- P08 — API Access + Integration Platform: new restaurant_role enum value.
+--
+-- External API credentials are a machine principal, not a human staff
+-- member, but the canonical authorization chain (user -> role -> permission
+-- -> tenant/property scope, see CLAUDE.md) has exactly one enforcement point
+-- for tenant/property-scoped business capabilities: `assertCapability` in
+-- `src/modules/restaurant/core/access.server.ts`, which resolves a caller's
+-- `restaurant_members` rows and checks their `restaurant_role` against
+-- `CAPABILITY_ROLES` in `src/modules/restaurant/core/permissions.ts`.
+--
+-- Rather than inventing a parallel authorization system for API credentials
+-- (forbidden by CLAUDE.md), P08 gives every API credential a synthetic
+-- `restaurant_members` row (see `src/modules/api-platform/credentials.server.ts`)
+-- keyed to a new, narrowly-scoped role: `api_service`. It is granted exactly
+-- one capability in `permissions.ts` — `sales.manage`, the same capability
+-- `openPosOrder`/`addPosLines`/`takePosPayment`/`transitionOrder` already
+-- require of a human bartender/manager — so a write-scoped API credential
+-- can do no more than place/progress/settle orders, nothing else. A
+-- read-only credential instead gets the pre-existing `viewer` role (zero
+-- capabilities), so it can only ever satisfy `assertTenantRead`.
+--
+-- This is additive only: no existing role, capability grant or RLS policy
+-- is changed. `ALTER TYPE ... ADD VALUE` cannot be used in the same
+-- transaction that inserts a row using the new value, so this is its own
+-- migration file, applied before 0086_p08_api_integration_platform.sql.
+ALTER TYPE public.restaurant_role ADD VALUE IF NOT EXISTS 'api_service';

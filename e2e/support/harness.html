@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>P10 offline real-browser harness</title>
+  </head>
+  <body>
+    <div id="status">loading</div>
+    <script type="module">
+      import * as offline from "./offline-bundle.js";
+      window.__offline = offline;
+      document.getElementById("status").textContent = "ready";
+    </script>
+  </body>
+</html>

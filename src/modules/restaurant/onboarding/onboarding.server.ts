@@ -1,0 +1,209 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Supabase rows are untyped at this boundary. */
+/**
+ * P12 First-Run Experience — server module.
+ *
+ * Customer owners arrive through a Commercial Centre invitation. Activation
+ * establishes the tenant membership first; everything after that (property,
+ * outlet, operating model) uses the existing authoritative functions. There is
+ * no self-service tenant-creation path in the web application.
+ */
+import { assertCapability, assertTenantRead } from "../core/access.server";
+import type { z } from "zod";
+import { upsertProperty } from "../masterdata/masterdata.server";
+import { upsertLocation } from "../inventory/locations.server";
+import { emitRestaurantEvent } from "../events/emit.server";
+import type {
+  createFirstOutletSchema,
+  recordOnboardingEventSchema,
+  setOperatingModelSchema,
+} from "./contracts";
+
+type Sb = any;
+
+function slugify(input: string): string {
+  const base = input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  return base.length >= 2 ? base : "restaurant";
+}
+
+/**
+ * §10-12 — single-outlet-optimized property + outlet creation in one call.
+ * A first-time owner with one restaurant should never have to understand
+ * "property vs outlet" as two separate decisions; this creates both from
+ * the two names the wizard actually asks for. Reuses upsertProperty and
+ * upsertLocation exactly as the (multi-outlet-aware) Setup Workbench does
+ * for every later property/outlet a tenant adds — the underlying hierarchy
+ * is unchanged, only the first-run UX collapses it.
+ */
+/** Accepts only the invitation bound to the authenticated user by the commercial invitation RPC. */
+export async function activateInvitedOwner(sb: Sb, userId: string, invitationId: string) {
+  const { data, error } = await sb.rpc("restaurant_activate_invited_owner", {
+    _invitation_id: invitationId,
+  });
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.tenant_id || !row?.member_id) {
+    throw new Error("The owner invitation could not be activated.");
+  }
+  return { tenantId: String(row.tenant_id), memberId: String(row.member_id), userId };
+}
+
+export async function createFirstOutlet(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof createFirstOutletSchema>,
+) {
+  const property = await upsertProperty(sb, userId, {
+    tenantId: input.tenantId,
+    name: input.propertyName,
+    slug: slugify(input.propertyName),
+    timezone: "Africa/Dar_es_Salaam",
+    currency: "TZS",
+    status: "active",
+  });
+
+  const location = await upsertLocation(sb, userId, {
+    tenantId: input.tenantId,
+    propertyId: property.id,
+    name: input.outletName,
+    slug: slugify(input.outletName),
+    locationType: "restaurant",
+    scope: "property",
+    isStorage: false,
+    active: true,
+  });
+
+  return { propertyId: property.id as string, locationId: location.id as string };
+}
+
+export async function setOperatingModel(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof setOperatingModelSchema>,
+) {
+  await assertCapability(sb, userId, input.tenantId, "tenant.manage");
+  const { data: tenant, error: readErr } = await sb
+    .from("restaurant_tenants")
+    .select("settings")
+    .eq("id", input.tenantId)
+    .single();
+  if (readErr) throw new Error(readErr.message);
+  const existing = (tenant?.settings ?? {}) as Record<string, any>;
+  const settings = {
+    ...existing,
+    onboarding: {
+      ...(existing.onboarding ?? {}),
+      operatingMode: input.operatingMode,
+      serviceFeatures: input.serviceFeatures,
+    },
+  };
+  const { data, error } = await sb
+    .from("restaurant_tenants")
+    .update({ settings })
+    .eq("id", input.tenantId)
+    .select("id, name, slug, settings")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+/**
+ * §20 — records one funnel-telemetry fact. Best-effort: `emitRestaurantEvent`
+ * never throws (a boundary rejection or infra failure is swallowed and
+ * logged), so a telemetry failure can never block onboarding. The caller
+ * must already belong to the tenant — this never runs before
+ * `bootstrapTenant` has created it, so the same tenant-scope check every
+ * other restaurant event goes through applies here too.
+ */
+export async function recordOnboardingEvent(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof recordOnboardingEventSchema>,
+): Promise<{ delivered: boolean; duplicate: boolean }> {
+  const result = await emitRestaurantEvent(sb, userId, {
+    type: input.type,
+    tenantId: input.tenantId,
+    payload: input.payload,
+    source: "onboarding",
+    occurredAt: input.occurredAt,
+  });
+  return { delivered: result.delivered, duplicate: result.duplicate };
+}
+
+export type OnboardingStage = "property" | "outlet" | "operating_model" | "ready";
+
+export interface OnboardingStatus {
+  tenantId: string;
+  stage: OnboardingStage;
+  percentComplete: number;
+  businessName: string | null;
+  businessType: string | null;
+  property: { done: boolean; count: number };
+  outlet: { done: boolean; count: number };
+  operatingModel: { done: boolean; value: string | null; features: string[] };
+}
+
+/**
+ * §15/§17/§19 — progress derived from live rows, exactly like Setup
+ * Workbench's own doc comment: "never from a stored step". This is what
+ * makes resumability free: leave after creating the business, come back
+ * next week, this recomputes the same true stage from the same rows.
+ */
+export async function getOnboardingStatus(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+): Promise<OnboardingStatus> {
+  await assertTenantRead(sb, userId, tenantId);
+  const [
+    { data: tenant, error: tErr },
+    { data: properties, error: pErr },
+    { data: locations, error: lErr },
+  ] = await Promise.all([
+    sb.from("restaurant_tenants").select("id, name, settings").eq("id", tenantId).single(),
+    sb.from("restaurant_properties").select("id").eq("tenant_id", tenantId),
+    sb.from("restaurant_locations").select("id").eq("tenant_id", tenantId),
+  ]);
+  if (tErr) throw new Error(tErr.message);
+  if (pErr) throw new Error(pErr.message);
+  if (lErr) throw new Error(lErr.message);
+
+  const settings = (tenant?.settings ?? {}) as {
+    onboarding?: {
+      businessType?: string | null;
+      operatingMode?: string | null;
+      serviceFeatures?: string[] | null;
+    };
+  };
+  const propertyCount = (properties ?? []).length;
+  const outletCount = (locations ?? []).length;
+  const operatingModeValue = settings.onboarding?.operatingMode ?? null;
+
+  const steps = [propertyCount > 0, outletCount > 0, Boolean(operatingModeValue)];
+  const percentComplete = Math.round((steps.filter(Boolean).length / steps.length) * 100);
+
+  let stage: OnboardingStage = "property";
+  if (propertyCount === 0) stage = "property";
+  else if (outletCount === 0) stage = "outlet";
+  else if (!operatingModeValue) stage = "operating_model";
+  else stage = "ready";
+
+  return {
+    tenantId,
+    stage,
+    percentComplete,
+    businessName: tenant?.name ?? null,
+    businessType: settings.onboarding?.businessType ?? null,
+    property: { done: propertyCount > 0, count: propertyCount },
+    outlet: { done: outletCount > 0, count: outletCount },
+    operatingModel: {
+      done: Boolean(operatingModeValue),
+      value: operatingModeValue,
+      features: settings.onboarding?.serviceFeatures ?? [],
+    },
+  };
+}

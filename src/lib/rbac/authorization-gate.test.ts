@@ -1,0 +1,734 @@
+/**
+ * FINAL STANDALONE F&B SECURITY GATE — authorization regression suite.
+ *
+ * These tests exist to make a specific class of regression impossible:
+ * an authorization decision that resolves anywhere other than
+ *
+ *   USER -> rbac_user_roles -> roles -> role_permissions -> permissions -> scope
+ *
+ * They are deliberately source-level as well as behavioural, because the
+ * dangerous failures (a second role store, a hidden admin bypass, a server
+ * function with no middleware) are structural, not runtime.
+ */
+import { describe, expect, it } from "vitest";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { ForbiddenError, assertPermission, hasPermission } from "./rbac.server";
+
+const ROOT = process.cwd();
+const MIG_DIR = join(ROOT, "standalone/db/migrations");
+const sqlOf = (f: string) => readFileSync(join(MIG_DIR, f), "utf8");
+const CANONICAL = sqlOf("0004_rbac_canonicalisation.sql");
+const RBAC = sqlOf("0003_tenancy_rbac.sql");
+
+function walk(dir: string, out: string[] = []): string[] {
+  for (const e of readdirSync(dir)) {
+    const p = join(dir, e);
+    if (statSync(p).isDirectory()) walk(p, out);
+    else out.push(p);
+  }
+  return out;
+}
+const SRC = walk(join(ROOT, "src"));
+const read = (p: string) => readFileSync(p, "utf8");
+
+/** Latest definition of a SQL function across the migration chain. */
+function latestFunctionBody(name: string): string {
+  const files = readdirSync(MIG_DIR)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+  let body = "";
+  for (const f of files) {
+    const sql = sqlOf(f);
+    const re = new RegExp(
+      `CREATE OR REPLACE FUNCTION public\\.${name}\\b[\\s\\S]*?\\$\\$([\\s\\S]*?)\\$\\$;`,
+      "g",
+    );
+    for (const m of sql.matchAll(re)) body = m[1]!;
+  }
+  return body;
+}
+
+/**
+ * Latest USING clause of a named policy across the FULL migration chain, as
+ * it would actually exist after replaying every migration in order —
+ * unlike checking one migration file in isolation, this catches a later
+ * migration silently reverting an earlier one's fix (exactly what
+ * 0071_me01_reconcile_concurrent_rbac_user_roles_policy.sql did to
+ * "rbac_user_roles_read" until 0077 fixed it back).
+ */
+function latestPolicyUsing(table: string, policyName: string): string | null {
+  const files = readdirSync(MIG_DIR)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+  let using: string | null = null;
+  for (const f of files) {
+    const sql = sqlOf(f);
+    if (
+      new RegExp(`DROP POLICY IF EXISTS\\s+"?${policyName}"?\\s+ON\\s+public\\.${table}`).test(sql)
+    ) {
+      using = null;
+    }
+    const re = new RegExp(
+      `CREATE POLICY\\s+"?${policyName}"?\\s+ON\\s+public\\.${table}[\\s\\S]*?USING\\s*\\(([\\s\\S]*?)\\)\\s*(?:WITH CHECK|;)`,
+      "g",
+    );
+    for (const m of sql.matchAll(re)) using = m[1]!;
+  }
+  return using;
+}
+
+/* --------------------------------------------------- has_any_role: canonical */
+describe("has_any_role resolves exclusively through canonical RBAC", () => {
+  const body = latestFunctionBody("has_any_role");
+
+  it("is redefined by the canonicalisation migration", () => {
+    expect(body.length).toBeGreaterThan(0);
+    expect(CANONICAL).toContain("CREATE OR REPLACE FUNCTION public.has_any_role");
+  });
+
+  it("reads the canonical role tables", () => {
+    const canonical = latestFunctionBody("has_any_role").includes("rbac_user_roles")
+      ? latestFunctionBody("has_any_role")
+      : CANONICAL;
+    expect(canonical).toMatch(/rbac_user_roles/);
+    expect(canonical).toMatch(/rbac_legacy_role_map/);
+    expect(canonical).toMatch(/app_users/);
+  });
+
+  it("no longer falls back to the legacy public.user_roles store", () => {
+    // The 4-arg body is the single source of truth; the 2-arg shim delegates.
+    const fourArg = CANONICAL.slice(
+      CANONICAL.indexOf("CREATE OR REPLACE FUNCTION public.has_any_role("),
+      CANONICAL.indexOf("COMMENT ON FUNCTION public.has_any_role"),
+    );
+    expect(fourArg).not.toMatch(/FROM public\.user_roles/);
+    expect(fourArg).toMatch(/au\.status = 'active'/);
+  });
+
+  it("honours tenant, property and outlet scope", () => {
+    expect(CANONICAL).toMatch(/ur\.tenant_id\s+=\s+_tenant_id/);
+    expect(CANONICAL).toMatch(/ur\.property_id = _property_id/);
+    expect(CANONICAL).toMatch(/ur\.outlet_id {3}= _outlet_id/);
+  });
+
+  it("never infers authorization from email or user metadata", () => {
+    for (const fn of ["has_any_role", "has_role", "is_any_staff", "nova_has_permission"]) {
+      const b = latestFunctionBody(fn);
+      expect(b).not.toMatch(/raw_user_meta_data/);
+      expect(b).not.toMatch(/@/); // no hard-coded address, no email comparison
+    }
+  });
+
+  it("revokes the legacy store from the Data API", () => {
+    expect(CANONICAL).toMatch(/REVOKE ALL ON public\.user_roles FROM authenticated, anon/);
+  });
+
+  it("leaves no application code reading the legacy store", () => {
+    const offenders = SRC.filter(
+      (p) =>
+        /\.(ts|tsx)$/.test(p) &&
+        !p.endsWith(".test.ts") &&
+        /from\("user_roles"\)|\.from\('user_roles'\)/.test(read(p)),
+    );
+    expect(offenders).toEqual([]);
+  });
+});
+
+/* -------------------------------------------------------- scope enforcement */
+describe("nova_has_permission scope chain", () => {
+  const body = latestFunctionBody("nova_has_permission");
+  it("joins role_permissions and requires an active account", () => {
+    expect(body).toMatch(/role_permissions/);
+    expect(body).toMatch(/au\.status = 'active'/);
+  });
+  it("compares every scope level", () => {
+    for (const s of ["_tenant_id", "_property_id", "_outlet_id"]) expect(body).toContain(s);
+  });
+  it("passes the caller scope through from the server guard", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const sb = {
+      rpc: async (_fn: string, args: Record<string, unknown>) => {
+        seen.push(args);
+        return { data: false, error: null };
+      },
+    };
+    await expect(
+      assertPermission(sb, "u1", "INVENTORY:WRITE", {
+        tenantId: "t1",
+        propertyId: "p1",
+        outletId: "o1",
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+    expect(seen[0]).toMatchObject({ _tenant_id: "t1", _property_id: "p1", _outlet_id: "o1" });
+  });
+  it("denies a cross-scope grant", async () => {
+    // Grant exists for tenant A only; the database answers false for tenant B.
+    const grants = new Set(["u1|INVENTORY:WRITE|tenantA"]);
+    const sb = {
+      rpc: async (_fn: string, a: Record<string, unknown>) => ({
+        data: grants.has(`${a["_user_id"]}|${a["_permission"]}|${a["_tenant_id"]}`),
+        error: null,
+      }),
+    };
+    expect(await hasPermission(sb, "u1", "INVENTORY:WRITE", { tenantId: "tenantA" })).toBe(true);
+    expect(await hasPermission(sb, "u1", "INVENTORY:WRITE", { tenantId: "tenantB" })).toBe(false);
+    await expect(
+      assertPermission(sb, "u1", "INVENTORY:WRITE", { tenantId: "tenantB" }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+});
+
+/* ------------------------------------------------- assignment / revocation */
+describe("role assignment and revocation", () => {
+  /** Minimal in-memory stand-in for the canonical resolution chain. */
+  function db() {
+    const rows = new Set<string>();
+    const matrix: Record<string, string[]> = {
+      OWNER: ["ADMINISTRATION:ADMIN", "INVENTORY:WRITE", "STAFF:READ"],
+      WAITER: ["POS:WRITE"],
+    };
+    return {
+      grant: (u: string, r: string) => rows.add(`${u}|${r}`),
+      revoke: (u: string, r: string) => rows.delete(`${u}|${r}`),
+      sb: {
+        rpc: async (_fn: string, a: Record<string, unknown>) => {
+          const uid = String(a["_user_id"]);
+          const perm = String(a["_permission"]);
+          const allowed = [...rows]
+            .filter((k) => k.startsWith(`${uid}|`))
+            .flatMap((k) => matrix[k.split("|")[1]!] ?? []);
+          return { data: allowed.includes(perm), error: null };
+        },
+      },
+    };
+  }
+
+  it("grants access only after the role is assigned", async () => {
+    const d = db();
+    await expect(assertPermission(d.sb, "u1", "INVENTORY:WRITE")).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    d.grant("u1", "OWNER");
+    await expect(assertPermission(d.sb, "u1", "INVENTORY:WRITE")).resolves.toBeUndefined();
+  });
+
+  it("denies immediately after revocation — no stale privilege", async () => {
+    const d = db();
+    d.grant("u1", "OWNER");
+    await expect(assertPermission(d.sb, "u1", "INVENTORY:WRITE")).resolves.toBeUndefined();
+    d.revoke("u1", "OWNER");
+    // Re-checked on every call: nothing is cached in a session claim.
+    await expect(assertPermission(d.sb, "u1", "INVENTORY:WRITE")).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+  });
+
+  it("a wrong role is not an insufficient-permission escape hatch", async () => {
+    const d = db();
+    d.grant("u1", "WAITER");
+    await expect(assertPermission(d.sb, "u1", "POS:WRITE")).resolves.toBeUndefined();
+    await expect(assertPermission(d.sb, "u1", "ADMINISTRATION:ADMIN")).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+  });
+
+  it("fails closed when the database errors", async () => {
+    const sb = { rpc: async () => ({ data: null, error: { message: "connection lost" } }) };
+    await expect(assertPermission(sb, "u1", "FINANCE:ADMIN")).rejects.toThrow(/connection lost/);
+  });
+
+  it("re-checks authorization on every call rather than trusting a claim", () => {
+    const guard = read(join(ROOT, "src/lib/rbac/rbac.server.ts"));
+    expect(guard).not.toMatch(/cache|memo|claims\[.role/i);
+    expect(guard).toMatch(/supabase\.rpc\("nova_has_permission"/);
+  });
+});
+
+/* ---------------------------------------------------------- OWNER bootstrap */
+describe("OWNER bootstrap", () => {
+  it("grants the canonical OWNER role, not a legacy flag", () => {
+    expect(CANONICAL).toMatch(
+      /INSERT INTO public\.rbac_user_roles \(user_id, role_code, tenant_id\)[\s\S]*?'OWNER'/,
+    );
+  });
+
+  it("is idempotent on replay", () => {
+    const grant = CANONICAL.slice(CANONICAL.indexOf("FUNCTION public.nova_grant_owner"));
+    expect(grant).toMatch(/ON CONFLICT \(code\) DO UPDATE/);
+    expect(grant).toMatch(/ON CONFLICT \(user_id\) DO UPDATE/);
+    expect(grant).toMatch(
+      /ON CONFLICT \(user_id, role_code, tenant_id, property_id, outlet_id\) DO NOTHING/,
+    );
+  });
+
+  it("refuses to mint a second owner through bootstrap replay", () => {
+    expect(CANONICAL).toMatch(
+      /IF EXISTS \(SELECT 1 FROM public\.rbac_user_roles WHERE role_code = 'OWNER'\)/,
+    );
+  });
+
+  it("never creates, renames or deletes an account", () => {
+    const grant = CANONICAL.slice(CANONICAL.indexOf("FUNCTION public.nova_grant_owner"));
+    expect(grant).not.toMatch(/INSERT INTO auth\.users/);
+    expect(grant).not.toMatch(/DELETE FROM auth\.users/);
+  });
+
+  it("is reachable only by the service role", () => {
+    expect(CANONICAL).toMatch(
+      /REVOKE ALL ON FUNCTION public\.nova_grant_owner\(uuid, text, text\) FROM public, anon, authenticated/,
+    );
+    expect(CANONICAL).toMatch(
+      /GRANT EXECUTE ON FUNCTION public\.nova_grant_owner\(uuid, text, text\) TO service_role/,
+    );
+  });
+
+  it("the appliance installer grants OWNER through the canonical path", () => {
+    const local = readFileSync(join(ROOT, "local/sql/post/10-nova-local.sql"), "utf8");
+    expect(local).toMatch(/PERFORM public\.nova_grant_owner\(v_user_id/);
+  });
+
+  it("OWNER can administer, assign and revoke roles", async () => {
+    const { ROLE_PERMISSIONS } = await import("./permissions");
+    for (const p of ["ADMINISTRATION:ADMIN", "STAFF:READ", "STAFF:ADMIN"]) {
+      expect(ROLE_PERMISSIONS.OWNER).toContain(p);
+    }
+  });
+});
+
+/* ------------------------------------------- direct RPC / API bypass surface */
+describe("direct server-function bypass", () => {
+  const fnFiles = SRC.filter((p) => p.endsWith(".functions.ts"));
+
+  it("finds the full server-function surface", () => {
+    expect(fnFiles.length).toBeGreaterThan(30);
+  });
+
+  /**
+   * Exactly eight files may skip requireSupabaseAuth, and all eight are
+   * held to the same rule as every other bypass surface in this describe
+   * block: no identity, only an unguessable id, and every other fact
+   * (tenant, property, location, price, station, payable amount, order
+   * status, timestamps, staff identity, catalogue content) re-derived
+   * server-side rather than trusted from the request. Adding a ninth
+   * entry here is a security review, not a formatting change.
+   */
+  const ALLOWED_UNAUTHENTICATED = [
+    join(ROOT, "src/modules/restaurant/receipts/delivery.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selfbill.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selffeedback.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selfmobilemoney.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selfnova.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selforder.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selfpay.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selfsession.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selfstaff.functions.ts"),
+    join(ROOT, "src/modules/restaurant/selforder/selftrack.functions.ts"),
+  ].sort();
+
+  it("every server function authenticates, except the token-scoped guest surfaces", () => {
+    const unauthenticated: string[] = [];
+    for (const f of fnFiles) {
+      const s = read(f);
+      for (const m of s.matchAll(/createServerFn\s*\(/g)) {
+        const head = s.slice(m.index!, m.index! + 500);
+        if (!/\.middleware\(\[[^\]]*requireSupabaseAuth/.test(head)) unauthenticated.push(f);
+      }
+    }
+    expect([...new Set(unauthenticated)].sort()).toEqual(ALLOWED_UNAUTHENTICATED);
+  });
+
+  it("the guest receipt is scoped by an unguessable token, not by identity", () => {
+    const s = read(join(ROOT, "src/modules/restaurant/receipts/delivery.functions.ts"));
+    expect(s).toMatch(/sharedReceiptSchema\.parse/);
+    expect(s).toMatch(/getSharedReceipt\(data\.token\)/);
+  });
+
+  it("self-ordering is scoped by table id, never by a client-supplied tenant/property/location", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selforder.functions.ts"));
+    expect(fn).toMatch(/guestMenuSchema\.parse/);
+    expect(fn).toMatch(/submitGuestOrderSchema\.parse/);
+    // The input schemas below carry no tenantId/propertyId/locationId field at
+    // all — resolveGuestTableContext is the only place those are produced,
+    // and it derives them from the table row, never from the request body.
+    const contracts = read(join(ROOT, "src/modules/restaurant/selforder/selforder.contracts.ts"));
+    expect(contracts).not.toMatch(/tenantId|propertyId|locationId/);
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selforder.server.ts"));
+    expect(server).toMatch(/resolveGuestTableContext/);
+    expect(server).not.toMatch(/input\.tenantId|input\.propertyId|input\.locationId/);
+  });
+
+  it("self-order payment never accepts an amount, currency or payment/order status from the client", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selfpay.functions.ts"));
+    expect(fn).toMatch(/guestOrderStatusSchema\.parse/);
+    expect(fn).toMatch(/initiateGuestPaymentSchema\.parse/);
+    // The client sends nothing but tableId/orderId/method — the payable
+    // amount is order.total - order.paid_total, read fresh server-side.
+    // (Checked as schema field definitions, not prose: this file's own doc
+    // comment above legitimately talks about "amount"/"currency".)
+    const contracts = read(join(ROOT, "src/modules/restaurant/selforder/selfpay.contracts.ts"));
+    expect(contracts).not.toMatch(/\n\s*(amount|currency|status|paymentState)\s*:/i);
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selfpay.server.ts"));
+    expect(server).toMatch(/resolveGuestTableContext/);
+    expect(server).toMatch(/order\.total.*order\.paid_total|amountDue/);
+    // No path here ever sets restaurant_orders.payment_state or
+    // restaurant_payments.state to "paid" except through recalcOrder, which
+    // derives it from actual payment rows — a guest cannot declare victory.
+    expect(server).not.toMatch(/payment_state:\s*["']paid["']/);
+  });
+
+  it("self-order bill request never accepts tenant/property/location/status/timestamps, and never calls the staff-only requestBill", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selfbill.functions.ts"));
+    expect(fn).toMatch(/requestGuestBillSchema\.parse/);
+    // The contract carries only tableId/orderId — everything else this
+    // action needs (tenant, order status, whether it was already
+    // requested) is re-derived server-side from that lookup, never
+    // accepted from the client.
+    // Matched as field definitions ("word:"), not prose — this file's own
+    // doc comment legitimately talks about "tenant"/"status"/"timestamp".
+    const contracts = read(join(ROOT, "src/modules/restaurant/selforder/selfbill.contracts.ts"));
+    expect(contracts).not.toMatch(
+      /\n\s*(tenantId|propertyId|locationId|status|billRequestedAt|billPresentedAt)\s*:/,
+    );
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selfbill.server.ts"));
+    expect(server).toMatch(/resolveGuestTableContext/);
+    expect(server).not.toMatch(/input\.tenantId|input\.propertyId|input\.locationId/);
+    // This wrapper performs the same minimal state transition requestBill()
+    // does, but never calls the staff-only function itself (which requires
+    // assertCapability + a real userId) — the two paths stay independent,
+    // so nothing here can silently change what staff-triggered requestBill
+    // is authorized to do.
+    expect(server).not.toMatch(/\brequestBill\(/);
+    expect(server).not.toMatch(/assertCapability/);
+  });
+
+  it("self-order tracking never accepts tenant/station/ticket status from the client, writes nothing, and never touches payment state", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selftrack.functions.ts"));
+    expect(fn).toMatch(/guestOrderProgressSchema\.parse/);
+    // The contract carries only tableId/orderId — station, ticket status and
+    // production stage are all re-derived server-side, never accepted from
+    // the client. Matched as field definitions, not prose.
+    const contracts = read(join(ROOT, "src/modules/restaurant/selforder/selftrack.contracts.ts"));
+    expect(contracts).not.toMatch(
+      /\n\s*(tenantId|propertyId|locationId|station|stationId|status|stage|overallStage)\s*:/,
+    );
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selftrack.server.ts"));
+    expect(server).toMatch(/resolveGuestTableContext/);
+    expect(server).not.toMatch(/input\.tenantId|input\.propertyId|input\.locationId/);
+    // This is a pure read — it must never call .update(/.insert(/.delete(
+    // against any table, unlike the write-side selfbill.server.ts/
+    // selfpay.server.ts, and it has no business with payment/payment_state
+    // at all — that stays authoritative in selfpay.server.ts alone.
+    expect(server).not.toMatch(/\.(update|insert|delete)\(/);
+    expect(server).not.toMatch(/payment_state|restaurant_payments/);
+  });
+
+  it("self-order staff requests never accept tenant/property/location/status/staff identity from the client, and never call the staff-only acknowledgeServiceRequest", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selfstaff.functions.ts"));
+    expect(fn).toMatch(/requestStaffSchema\.parse/);
+    // The contract carries only tableId/orderId — everything else (whether
+    // an alert already exists, its status, who acknowledged it) is
+    // re-derived server-side, never accepted from the client. Matched as
+    // field definitions, not prose.
+    const contracts = read(join(ROOT, "src/modules/restaurant/selforder/selfstaff.contracts.ts"));
+    expect(contracts).not.toMatch(
+      /\n\s*(tenantId|propertyId|locationId|status|requestedAt|acknowledgedAt|acknowledgedBy)\s*:/,
+    );
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selfstaff.server.ts"));
+    expect(server).toMatch(/resolveGuestTableContext/);
+    expect(server).not.toMatch(/input\.tenantId|input\.propertyId|input\.locationId/);
+    // The staff-only acknowledgement path (service-requests.server.ts) is a
+    // separate module this file never imports or calls — a guest can never
+    // reach the capability-gated acknowledge action.
+    expect(server).not.toMatch(/acknowledgeServiceRequest/);
+    expect(server).not.toMatch(/assertCapability/);
+  });
+
+  it("self-order feedback never accepts tenant/property/location/payment state from the client, is scoped to a paid order, and is distinct from the intelligence-core submitFeedbackSchema", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selffeedback.functions.ts"));
+    expect(fn).toMatch(/guestFeedbackStatusSchema\.parse/);
+    expect(fn).toMatch(/submitGuestFeedbackSchema\.parse/);
+    // The contract carries only tableId/orderId/rating/comment — payment
+    // state and eligibility are re-derived server-side, never accepted
+    // from the client. Matched as field definitions, not prose.
+    const contracts = read(
+      join(ROOT, "src/modules/restaurant/selforder/selffeedback.contracts.ts"),
+    );
+    expect(contracts).not.toMatch(/\n\s*(tenantId|propertyId|locationId|paymentState|status)\s*:/);
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selffeedback.server.ts"));
+    expect(server).toMatch(/resolveGuestTableContext/);
+    expect(server).not.toMatch(/input\.tenantId|input\.propertyId|input\.locationId/);
+    // This is a distinct guest-experience concept from the intelligence
+    // core's own submitFeedbackSchema (AI-recommendation usefulness) —
+    // neither file imports the other.
+    expect(server).not.toMatch(/intelligence\/core/);
+    const intelContracts = read(join(ROOT, "src/modules/intelligence/core/contracts.ts"));
+    expect(intelContracts).not.toMatch(/restaurant_guest_feedback/);
+  });
+
+  it("Ask NOVA never accepts tenant/property/location/catalogue content from the client, and grounds every reply in the real sellable catalogue", () => {
+    const fn = read(join(ROOT, "src/modules/restaurant/selforder/selfnova.functions.ts"));
+    expect(fn).toMatch(/askNovaSchema\.parse/);
+    // The contract carries only tableId/message/history — the entire menu
+    // NOVA is grounded in comes from resolveGuestTableContext's own lookup
+    // (via guestMenu), never from anything the client sends. Matched as
+    // field definitions, not prose.
+    const contracts = read(join(ROOT, "src/modules/restaurant/selforder/selfnova.contracts.ts"));
+    expect(contracts).not.toMatch(
+      /\n\s*(tenantId|propertyId|locationId|items|categories|catalogue)\s*:/,
+    );
+    const server = read(join(ROOT, "src/modules/restaurant/selforder/selfnova.server.ts"));
+    expect(server).toMatch(/guestMenu\(/);
+    expect(server).not.toMatch(/input\.tenantId|input\.propertyId|input\.locationId/);
+    // Every recommended item is re-hydrated from the catalogue map, never
+    // read off the model's own response — this is what makes a fabricated
+    // price or an invented dish impossible to display, not just unlikely.
+    expect(server).toMatch(/validateNovaResponse/);
+    expect(server).toMatch(/itemById\.get\(id\)/);
+  });
+
+  /**
+   * api/pesapal-ipn.ts is deliberately outside src/ (it's a Vercel Function,
+   * not a TanStack Start route — see its own header comment for why) so the
+   * SRC walk above never sees it. Held to the same rule anyway: it must not
+   * trust the IPN's own query params for anything but locating which order
+   * to re-check, and must go through the one shared, tested verification
+   * path rather than recording a payment itself.
+   */
+  it("the Pesapal IPN endpoint re-verifies with the provider and never records a payment itself", () => {
+    const ipn = read(join(ROOT, "api/pesapal-ipn.ts"));
+    expect(ipn).toMatch(/confirmPesapalCallback/);
+    expect(ipn).not.toMatch(/recordGuestPayment|recordPayment|takePosPayment/);
+    expect(ipn).not.toMatch(/payment_state:\s*["']paid["']/);
+    // The service-role client must stay server-side, never in the response body.
+    expect(ipn).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY/);
+  });
+
+  /**
+   * api/mobile-money-webhook.ts is deliberately outside src/ (a Vercel
+   * Function, not a TanStack Start route — see its own header comment for
+   * why, same reasoning as api/pesapal-ipn.ts) so the SRC walk above never
+   * sees it. Held to the same rule: it must not record a payment itself
+   * from the webhook's own claims, and must go through the one shared,
+   * tested, idempotent, re-verifying handler rather than writing anything.
+   */
+  it("the mobile money webhook endpoint never records a payment itself and leaks no service-role key", () => {
+    const wh = read(join(ROOT, "api/mobile-money-webhook.ts"));
+    expect(wh).toMatch(/handleMobileMoneyWebhookEvent/);
+    expect(wh).not.toMatch(/recordGuestPayment|takePosPayment|confirmMobileMoneyCollection/);
+    expect(wh).not.toMatch(/restaurant_payments/);
+    expect(wh).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY/);
+  });
+
+  it("the mobile money webhook handler re-verifies with the provider and is idempotent by provider event id, never trusting the payload's own status/amount", () => {
+    const s = read(join(ROOT, "src/modules/restaurant/payments/mobilemoney/mobilemoney.server.ts"));
+    const fn = s.slice(s.indexOf("export async function handleMobileMoneyWebhookEvent"));
+    expect(fn).toMatch(/verifyTransaction/);
+    expect(fn).toMatch(/restaurant_mobile_money_webhook_events/);
+    expect(fn).toMatch(/signatureValid/);
+  });
+
+  it("no server function accepts a role, permission or admin flag from the client", () => {
+    const offenders: string[] = [];
+    for (const f of fnFiles) {
+      const s = read(f);
+      // `role` as a *grant target* is legitimate in the administered staff API,
+      // which independently requires ADMINISTRATION:ADMIN before using it.
+      if (f.endsWith("staff.functions.ts")) continue;
+      if (/data\.(permission|permissions|isAdmin|is_admin|roles)\b/.test(s)) offenders.push(f);
+      if (/context\.roles|sendContext/.test(s)) offenders.push(f);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("the administered staff API checks ADMINISTRATION:ADMIN — scoped to the grant's own tenant/property/outlet — before every grant or revoke", () => {
+    // ME-02: assertPermission(..., "ADMINISTRATION:ADMIN") with no scope was
+    // the KD-11 gap — nova_has_permission treats an omitted tenant/property/
+    // outlet argument as "don't check this level" for the *caller's own*
+    // grant, so a caller holding ADMINISTRATION:ADMIN in one tenant passed
+    // the same check as a platform-wide grant. assertCanManageRbacRole
+    // (rbac.server.ts) closes this by calling the database's own
+    // nova_can_manage_scoped(permission, tenant, property, outlet) — the
+    // exact predicate 0059_p09_tenancy_write_isolation.sql already puts
+    // behind the rbac_user_roles RLS write policy — with the *target*
+    // grant's own scope, never omitted.
+    const rbacServer = read(join(ROOT, "src/lib/rbac/rbac.server.ts"));
+    expect(rbacServer).toMatch(/export async function assertCanManageRbacRole/);
+    const guardBody = rbacServer.slice(
+      rbacServer.indexOf("export async function assertCanManageRbacRole"),
+    );
+    expect(guardBody).toMatch(/nova_can_manage_scoped/);
+    expect(guardBody).toMatch(/"ADMINISTRATION:ADMIN"/);
+    expect(guardBody).toMatch(/_tenant_id:\s*scope\.tenantId/);
+    expect(guardBody).toMatch(/_property_id:\s*scope\.propertyId/);
+    expect(guardBody).toMatch(/_outlet_id:\s*scope\.outletId/);
+
+    const s = read(join(ROOT, "src/lib/staff.functions.ts"));
+    for (const fn of ["assignRole", "revokeRole"]) {
+      const seg = s.slice(s.indexOf(`export const ${fn}`));
+      const body = seg.slice(
+        0,
+        seg.indexOf("export const", 10) === -1 ? seg.length : seg.indexOf("export const", 10),
+      );
+      expect(body).toMatch(/assertCanManageRbacRole\(/);
+      expect(body).not.toMatch(/assertPermission\([^)]*"ADMINISTRATION:ADMIN"\)/);
+      expect(body).toMatch(/rbac_user_roles/);
+    }
+  });
+
+  it("the principal endpoint never accepts a caller-supplied identity", () => {
+    const s = read(join(ROOT, "src/lib/rbac/rbac.functions.ts"));
+    expect(s).not.toMatch(/inputValidator/);
+    expect(s).toMatch(/context as \{/);
+  });
+});
+
+/* ---------------------------------------------- UI is presentation, not gate */
+describe("UI authorization is never the only control", () => {
+  it("the client permission hook is read-only and derived from the server", () => {
+    const s = read(join(ROOT, "src/lib/rbac/usePermissions.ts"));
+    expect(s).toMatch(/getCurrentPrincipal/);
+    expect(s).not.toMatch(/localStorage|sessionStorage/);
+  });
+
+  it("no component decides authorization from local or session storage", () => {
+    const offenders = SRC.filter(
+      (p) =>
+        /\.tsx$/.test(p) &&
+        /(localStorage|sessionStorage)[\s\S]{0,80}(role|admin|permission)/i.test(read(p)),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("the intelligence core has no parallel role vocabulary", () => {
+    const s = read(join(ROOT, "src/modules/intelligence/core/permissions.ts"));
+    expect(s).toMatch(/@\/lib\/rbac\/permissions/);
+    for (const legacy of ["reception", "housekeeping", "marketing:", "editor"]) {
+      expect(s).not.toContain(`"${legacy}"`);
+    }
+    const a = read(join(ROOT, "src/modules/intelligence/core/access.server.ts"));
+    expect(a).toMatch(/assertPermission/);
+    expect(a).not.toMatch(/has_any_role/);
+  });
+});
+
+/* ------------------------------------------------- tenant isolation in RLS */
+describe("tenant / property / outlet isolation", () => {
+  it("scoped RBAC tables are governed by permission policies, not by 'true'", () => {
+    expect(RBAC).toMatch(/CREATE POLICY rbac_user_roles_admin[\s\S]*?ADMINISTRATION:ADMIN/);
+    expect(RBAC).toMatch(/CREATE POLICY app_users_admin[\s\S]*?STAFF:ADMIN/);
+  });
+
+  it("cross-tenant document reads are refused server-side, not filtered in the UI", () => {
+    const s = read(join(ROOT, "src/modules/restaurant/documents/documents.functions.ts"));
+    expect(s).toMatch(/assertCapability\([\s\S]*?data\.tenantId/);
+    expect(s).toMatch(/assertTenantRead\([\s\S]*?data\.tenantId/);
+  });
+
+  it("the folio seam requires POS permissions, not merely a signed-in account", () => {
+    const s = read(join(ROOT, "src/domains/hospitality/folio/folioAdapter.server.ts"));
+    expect(s).toMatch(/_permission: "POS:WRITE"/);
+    expect(s).toMatch(/_permission: "POS:READ"/);
+    expect(s).not.toMatch(/is_any_staff/);
+  });
+});
+
+/* --------------------------------------------- identity-check self-only gate */
+describe("RBAC identity-check functions refuse to answer for another user", () => {
+  // Regression for a live-verified defect (P11 continuation, 0050): these
+  // functions are SECURITY DEFINER, callable by `authenticated` via
+  // PostgREST RPC, and every legitimate caller (RLS policy or app server)
+  // only ever passes its own auth.uid(). Without a self-check, any signed-in
+  // user could pass a *different* user's id directly over the RPC endpoint
+  // and read that user's roles/permissions/staff/commercial-admin status.
+  const SELF_ONLY = [
+    "has_any_role",
+    "is_any_staff",
+    "nova_has_permission",
+    "nova_permissions_for",
+    "restaurant_is_commercial_admin",
+  ];
+
+  it("requires _user_id = auth.uid() in its latest definition", () => {
+    for (const fn of SELF_ONLY) {
+      const body = latestFunctionBody(fn);
+      expect(body.length, `${fn}: no definition found`).toBeGreaterThan(0);
+      expect(body, `${fn} must gate on _user_id = auth.uid()`).toMatch(
+        /_user_id\s*=\s*auth\.uid\(\)/,
+      );
+    }
+  });
+
+  it("has_role and restaurant_is_platform_admin inherit the guard by delegating to has_any_role", () => {
+    expect(latestFunctionBody("has_role")).toMatch(/has_any_role\(_user_id/);
+    expect(latestFunctionBody("restaurant_is_platform_admin")).toMatch(/has_any_role\(_user_id/);
+  });
+});
+
+/* ------------------------------------------- ME-02 live-verified defects */
+describe("restaurant_fiscal_next_counter is authorized (ME-02, CONFIRMED CRITICAL)", () => {
+  // Live-verified on the production database: this SECURITY DEFINER
+  // function is GRANTed EXECUTE to `authenticated` directly
+  // (0031_tra_vfd_protocol.sql) so it's reachable via
+  // /rest/v1/rpc/restaurant_fiscal_next_counter by any signed-in user of
+  // ANY tenant. Before 0065, its body had no authorization check at all —
+  // it trusted the comment "writes only ever happen through this function,
+  // called from an already-checked code path", which the GRANT itself
+  // falsifies. A hostile call with another tenant's `_tenant`/
+  // `_fiscal_config` would advance or corrupt that tenant's fiscal
+  // (tax-authority) receipt counter. 0065 closes it by enforcing the exact
+  // predicate the table's own RLS policy ("fiscal_counters_write scoped",
+  // 0031) already requires.
+  const body = latestFunctionBody("restaurant_fiscal_next_counter");
+
+  it("checks the caller is authenticated", () => {
+    expect(body).toMatch(/auth\.uid\(\)\s+IS\s+NULL/i);
+  });
+
+  it("checks restaurant_can_write_scoped for the target tenant/property before writing", () => {
+    const authIdx = body.search(/restaurant_can_write_scoped/);
+    const insertIdx = body.search(/INSERT INTO public\.restaurant_fiscal_counters/i);
+    expect(authIdx).toBeGreaterThan(-1);
+    expect(insertIdx).toBeGreaterThan(-1);
+    expect(authIdx).toBeLessThan(insertIdx); // the check runs before any write
+  });
+});
+
+describe("rbac_user_roles read policy is scoped per row (ME-02, CONFIRMED CRITICAL)", () => {
+  // Live-verified on the production database: before
+  // 0068_p11_rbac_user_roles_read_scope.sql, the "rbac_user_roles_read"
+  // policy's second disjunct called nova_has_permission(auth.uid(),
+  // 'STAFF:READ') with no scope arguments, which — per
+  // nova_has_permission's own NULL-is-"don't check" semantics — does not
+  // reference the row's tenant_id/property_id/outlet_id at all, so it
+  // evaluates identically for every row. Any authenticated user holding
+  // STAFF:READ anywhere (even a single-property grant) could therefore
+  // SELECT every rbac_user_roles row for every tenant on the platform. 0068
+  // replaced it with nova_can_manage_scoped, matched per row, mirroring the
+  // sibling write policy (rbac_user_roles_admin_scoped, 0059) that already
+  // did this correctly.
+  //
+  // This checks the FINAL merged policy across the whole migration chain,
+  // not 0068 in isolation — 0068's fix alone is not evidence of anything
+  // once a later migration can touch the same policy. That distinction is
+  // exactly what let 0071 (a same-day concurrent-modification reconciler)
+  // silently OR the old unscoped check back in alongside 0068's scoped one
+  // instead of replacing it, live in production, until 0077 fixed it back.
+  const finalUsing = latestPolicyUsing("rbac_user_roles", "rbac_user_roles_read");
+
+  it("the policy still exists after every migration replays", () => {
+    expect(finalUsing).not.toBeNull();
+  });
+
+  it("no longer grants a scope-blind STAFF:READ bypass", () => {
+    expect(finalUsing).not.toMatch(
+      /nova_has_permission\(\s*(?:\(select )?auth\.uid\(\)\)?,\s*'STAFF:READ'\)/,
+    );
+  });
+
+  it("scopes the read to the row's own tenant/property/outlet via nova_can_manage_scoped", () => {
+    expect(finalUsing).toMatch(
+      /nova_can_manage_scoped\('STAFF:READ'::text,\s*tenant_id,\s*property_id,\s*outlet_id\)/,
+    );
+  });
+});

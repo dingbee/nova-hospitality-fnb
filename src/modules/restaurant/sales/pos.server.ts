@@ -1,0 +1,942 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Supabase rows are untyped at this boundary. */
+/**
+ * POS transactional core.
+ *
+ * The till is a terminal over the existing sales engine — it never owns its own
+ * order model, pricing or costing. Every write here funnels into the same
+ * `insertLines` / `recalcOrder` / `transitionOrder` path the admin order pad
+ * uses, so a bill rung up at the bar and one typed in the back office are
+ * indistinguishable to Finance, Inventory and the Intelligence Core.
+ *
+ * Two invariants the floor depends on:
+ *  - Idempotency: a double-tapped "Open table" or "Take payment" is one order
+ *    and one charge, enforced by a unique client request key in Postgres.
+ *  - Evidence: voids, transfers and reopens are recorded with an actor and a
+ *    reason; nothing money-affecting happens silently.
+ */
+import {
+  accessibleLocationIds,
+  assertCapability,
+  assertTenantRead,
+  getTenantScope,
+  NO_MATCH_ID,
+  type TenantScope,
+} from "../core/access.server";
+import { emitRestaurantEvent } from "../events/emit.server";
+import { cancelKitchenTicketItemsForOrderItems } from "../kitchen/kitchen.server";
+import { reverseMovementsForOrderItem } from "../inventory/reversal.server";
+import { REASON_CODES } from "../inventory/policy";
+import {
+  createOrder,
+  insertLines,
+  recalcOrder,
+  transitionOrder,
+  type SalesLineInput,
+} from "./sales.server";
+import { loadRuleSet, resolveDisplayPrice } from "../pricing/resolution.server";
+import { listActiveServiceRequests } from "../service-requests/service-requests.server";
+import type {
+  AddPosLinesInput,
+  OpenPosOrderInput,
+  PosLineInput,
+  PosPaymentInput,
+  ReopenPosOrderInput,
+  TransferPosOrderInput,
+  VoidPosLineInput,
+} from "./pos.contracts";
+
+type Sb = any;
+
+const OPEN_STATES = ["open", "sent", "served"];
+
+/* ---------------- Reads ---------------- */
+
+/**
+ * Everything a till needs to paint the floor in one round trip: tables, the
+ * live bill on each one, and the shift's running numbers.
+ */
+export async function posBoard(
+  sb: Sb,
+  userId: string,
+  input: { tenantId: string; propertyId?: string; locationId?: string },
+) {
+  const scope = await getTenantScope(sb, userId, input.tenantId);
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
+
+  // No explicit locationId: restrict to what this caller may actually see.
+  // An explicit propertyId (already validated above) resolves to that
+  // property's own locations; no propertyId falls back to every location
+  // the caller's grants cover (null for a tenant-wide caller — no
+  // restriction, matching prior behaviour for the common case).
+  let restrictedLocationIds: string[] | null = null;
+  if (!input.locationId) {
+    if (input.propertyId) {
+      const { data: locs } = await sb
+        .from("restaurant_locations")
+        .select("id")
+        .eq("tenant_id", input.tenantId)
+        .eq("property_id", input.propertyId);
+      restrictedLocationIds = ((locs ?? []) as any[]).map((l) => l.id);
+    } else {
+      restrictedLocationIds = await accessibleLocationIds(sb, scope);
+    }
+  }
+  const applyLocationScope = (q: any) => {
+    if (input.locationId) return q.eq("location_id", input.locationId);
+    if (restrictedLocationIds !== null)
+      return q.in(
+        "location_id",
+        restrictedLocationIds.length ? restrictedLocationIds : [NO_MATCH_ID],
+      );
+    return q;
+  };
+
+  const tableQuery = applyLocationScope(
+    sb
+      .from("restaurant_tables")
+      .select("id, code, name, zone, seats, status, active, location_id")
+      .eq("tenant_id", input.tenantId)
+      .eq("active", true)
+      .order("code"),
+  );
+
+  const orderQuery = applyLocationScope(
+    sb
+      .from("restaurant_orders")
+      .select(
+        // bill_requested_at/bill_presented_at were missing here even though
+        // tableTone()/TABLE_TONE_LABEL.billing already fully support a
+        // "Billing" floor tile — the floor grid could never actually show it
+        // because this row never carried the fact. Same two columns
+        // bill.server.ts's requestBill/presentBill already write.
+        "id, order_number, order_type, status, payment_state, guest_count, guest_name, table_id, location_id, property_id, opened_at, closed_at, subtotal, total, paid_total, currency, terminal_id, bill_requested_at, bill_presented_at",
+      )
+      .eq("tenant_id", input.tenantId)
+      .in("status", OPEN_STATES)
+      .order("opened_at", { ascending: false })
+      .limit(200),
+  );
+
+  const since = new Date();
+  since.setHours(0, 0, 0, 0);
+
+  const [{ data: tables }, { data: orders }, { data: today }, serviceRequests] = await Promise.all([
+    tableQuery,
+    orderQuery,
+    applyLocationScope(
+      sb
+        .from("restaurant_orders")
+        .select("total, cost_total, guest_count, status")
+        .eq("tenant_id", input.tenantId)
+        .gte("opened_at", since.toISOString())
+        .limit(1000),
+    ),
+    // Guest "Request staff" alerts, reusing this same already-polled board
+    // read rather than a second polling loop — see
+    // service-requests.server.ts / selfstaff.server.ts.
+    listActiveServiceRequests(sb, userId, input.tenantId),
+  ]);
+
+  const openOrders = (orders ?? []) as any[];
+  const closedToday = ((today ?? []) as any[]).filter((o) => o.status === "closed");
+  const revenue = closedToday.reduce((s, o) => s + Number(o.total ?? 0), 0);
+  const covers = closedToday.reduce((s, o) => s + Number(o.guest_count ?? 0), 0);
+
+  // deriveLifecycle() needs items/tickets to tell "table just opened" apart
+  // from "in production" / "ready" / "bill requested" — without them it
+  // falls straight into its own empty-bill branch every time. The
+  // per-order detail fetch (getOrder) already supplies this for whichever
+  // one order is selected; the floor grid draws a tone for every open
+  // order at once, so it gets the same two reads scoped across all of
+  // them in one round trip each, not one per table.
+  const openOrderIds = openOrders.map((o) => o.id);
+  const [{ data: allItems }, { data: allTickets }] =
+    openOrderIds.length > 0
+      ? await Promise.all([
+          sb
+            .from("restaurant_order_items")
+            .select("order_id, status")
+            .eq("tenant_id", input.tenantId)
+            .in("order_id", openOrderIds),
+          sb
+            .from("restaurant_kitchen_tickets")
+            .select("order_id, status, queued_at, target_minutes, is_delayed")
+            .eq("tenant_id", input.tenantId)
+            .in("order_id", openOrderIds),
+        ])
+      : [{ data: [] }, { data: [] }];
+
+  const itemsByOrder = new Map<string, any[]>();
+  for (const i of (allItems ?? []) as any[]) {
+    itemsByOrder.set(i.order_id, [...(itemsByOrder.get(i.order_id) ?? []), i]);
+  }
+  const now = Date.now();
+  const ticketsByOrder = new Map<string, any[]>();
+  for (const t of (allTickets ?? []) as any[]) {
+    const elapsed = (now - new Date(t.queued_at).getTime()) / 1000;
+    const ticket = {
+      status: t.status,
+      // Same "still open and past its own prep target" formula
+      // kitchen.server.ts's listTickets already computes — mirrored, not
+      // reinvented, so the floor grid and the Kitchen board never disagree
+      // about what "delayed" means.
+      is_delayed:
+        t.status === "queued" || t.status === "preparing"
+          ? elapsed > t.target_minutes * 60
+          : t.is_delayed,
+    };
+    ticketsByOrder.set(t.order_id, [...(ticketsByOrder.get(t.order_id) ?? []), ticket]);
+  }
+  const withLifecycleInputs = (o: any) => ({
+    ...o,
+    items: itemsByOrder.get(o.id) ?? [],
+    tickets: ticketsByOrder.get(o.id) ?? [],
+  });
+  const openOrdersWithLifecycleInputs = openOrders.map(withLifecycleInputs);
+
+  return {
+    tables: ((tables ?? []) as any[]).map((t) => ({
+      ...t,
+      order: openOrdersWithLifecycleInputs.find((o) => o.table_id === t.id) ?? null,
+      serviceRequest: serviceRequests.find((r) => r.tableId === t.id) ?? null,
+    })),
+    openOrders: openOrdersWithLifecycleInputs,
+    serviceRequests,
+    stats: {
+      openBills: openOrders.length,
+      openValue: Number(openOrders.reduce((s, o) => s + Number(o.total ?? 0), 0).toFixed(2)),
+      revenueToday: Number(revenue.toFixed(2)),
+      coversToday: covers,
+      averageCheck: closedToday.length > 0 ? Number((revenue / closedToday.length).toFixed(2)) : 0,
+    },
+  };
+}
+
+/** Sellable catalogue for the till: menu items, their product/station mapping, variants and modifier groups. */
+export async function posCatalog(
+  sb: Sb,
+  userId: string,
+  input: { tenantId: string; propertyId?: string; locationId?: string; menuId?: string },
+) {
+  // Property/location here are a narrowing filter over an intentionally
+  // tenant-wide catalogue (menus/prices are shared across a tenant's
+  // properties by design), but a caller must still be scoped to the
+  // property they're asking to preview — otherwise a property-scoped
+  // till could be pointed at a different property's price list.
+  await assertTenantRead(sb, userId, input.tenantId, {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
+  return fetchSellableCatalog(sb, input.tenantId, input);
+}
+
+/**
+ * The tenant-scoped catalogue read itself, with no caller-identity check —
+ * every filter below is `tenant_id`-scoped, so this is safe to call from any
+ * context that has already established which tenant it's allowed to read
+ * (a staff caller via `posCatalog`'s `assertTenantRead`, or a guest caller
+ * whose tenant was derived from a resolved table, never from client input).
+ */
+export async function fetchSellableCatalog(
+  sb: Sb,
+  tenantId: string,
+  input: { propertyId?: string; locationId?: string; menuId?: string } = {},
+) {
+  let menuQuery = sb
+    .from("restaurant_menus")
+    .select("id, name, status, currency, location_id")
+    .eq("tenant_id", tenantId)
+    .eq("status", "published")
+    .order("updated_at", { ascending: false });
+  if (input.locationId)
+    menuQuery = menuQuery.or(`location_id.is.null,location_id.eq.${input.locationId}`);
+  const { data: menus } = await menuQuery;
+  const menuIds = ((menus ?? []) as any[]).map((m) => m.id);
+  // A caller that asks for one specific menu (e.g. a future per-terminal
+  // selector) gets exactly that. Otherwise the catalogue is every published,
+  // in-scope menu's items together — a tenant routinely runs more than one
+  // published menu at once (e.g. a separate Restaurant menu and Bar menu,
+  // both scoped to the same location), and picking only the single
+  // most-recently-updated one silently dropped every other published menu's
+  // items from POS and Guest Self-Order, which never pass an explicit menuId.
+  const menuIdsToUse = input.menuId ? [input.menuId] : menuIds;
+  const activeMenuId = input.menuId ?? menuIds[0] ?? null;
+
+  const [
+    { data: categories },
+    { data: items },
+    { data: products },
+    { data: variants },
+    { data: groups },
+    { data: modifiers },
+    { data: links },
+    { data: stations },
+  ] = await Promise.all([
+    sb
+      .from("restaurant_categories")
+      .select("id, name, slug, kind, sort_order")
+      .eq("tenant_id", tenantId)
+      .order("sort_order"),
+    menuIdsToUse.length > 0
+      ? sb
+          .from("restaurant_menu_items")
+          .select(
+            "id, menu_id, category_id, name, description, price, currency, available, tags, allergens, sort_order, image_url",
+          )
+          .eq("tenant_id", tenantId)
+          .in("menu_id", menuIdsToUse)
+          .order("sort_order")
+      : Promise.resolve({ data: [] }),
+    sb
+      .from("restaurant_products")
+      .select("id, name, menu_item_id, station_id, price, product_type, active")
+      .eq("tenant_id", tenantId)
+      .eq("active", true),
+    sb
+      .from("restaurant_product_variants")
+      .select("id, product_id, name, price, price_is_delta, active, sort_order")
+      .eq("tenant_id", tenantId)
+      .eq("active", true)
+      .order("sort_order"),
+    sb
+      .from("restaurant_modifier_groups")
+      .select("id, code, name, min_select, max_select, required, sort_order")
+      .eq("tenant_id", tenantId)
+      .eq("active", true)
+      .order("sort_order"),
+    sb
+      .from("restaurant_modifiers")
+      .select("id, group_id, name, price_delta, effect, sort_order")
+      .eq("tenant_id", tenantId)
+      .eq("active", true)
+      .order("sort_order"),
+    sb
+      .from("restaurant_product_modifier_groups")
+      .select("product_id, group_id, sort_order")
+      .eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_stations")
+      .select("id, station_type")
+      .eq("tenant_id", tenantId)
+      .eq("active", true),
+  ]);
+
+  const productByMenuItem = new Map<string, any>();
+  for (const p of (products ?? []) as any[])
+    if (p.menu_item_id) productByMenuItem.set(p.menu_item_id, p);
+
+  const groupList = ((groups ?? []) as any[]).map((g) => ({
+    ...g,
+    modifiers: ((modifiers ?? []) as any[]).filter((m) => m.group_id === g.id),
+  }));
+
+  // The exact same authority insertLines resolves each line's price from
+  // (loadRuleSet -> resolveBasePrice), asked once here for every item on the
+  // menu instead of once per order line. A menu item with no eligible
+  // restaurant_prices row is never shown as orderable at a number the order
+  // path would then refuse — the two can't drift apart because they're the
+  // same lookup.
+  const menuItemIds = ((items ?? []) as any[]).map((i) => i.id);
+  const rules = await loadRuleSet(sb, tenantId, { menuItemIds });
+  const priceAt = new Date();
+
+  return {
+    menus: menus ?? [],
+    activeMenuId,
+    categories: (categories ?? []).filter((c: any) => c.kind !== "inventory"),
+    /** Station type per station id, so the till can label "send to production" accurately without guessing. */
+    stations: ((stations ?? []) as any[]).map((s) => ({ id: s.id, stationType: s.station_type })),
+    modifierGroups: groupList,
+    items: ((items ?? []) as any[]).map((i) => {
+      const product = productByMenuItem.get(i.id) ?? null;
+      const groupIds = product
+        ? ((links ?? []) as any[]).filter((l) => l.product_id === product.id).map((l) => l.group_id)
+        : [];
+      const resolved = resolveDisplayPrice(rules, {
+        at: priceAt,
+        propertyId: input.propertyId ?? null,
+        locationId: input.locationId ?? null,
+        productId: product?.id ?? null,
+        menuItemId: i.id,
+        orderType: "dine_in",
+        channel: "dine_in",
+        quantity: 1,
+      });
+      return {
+        ...i,
+        product_id: product?.id ?? null,
+        station_id: product?.station_id ?? null,
+        variants: product
+          ? ((variants ?? []) as any[]).filter((v) => v.product_id === product.id)
+          : [],
+        modifier_group_ids: groupIds,
+        // No `?? i.price` fallback here on purpose: i.price is the menu
+        // item's own base/display field, never an authoritative Pricing
+        // Centre price, and falling back to it would show a number the
+        // order path (insertLines, strict for any catalogued line) would
+        // then refuse — exactly the "displayed price disagrees with what's
+        // orderable" contradiction this catalogue exists to prevent (see
+        // the comment above resolveDisplayPrice's call).
+        price: resolved?.amount ?? null,
+        currency: resolved?.currency ?? i.currency,
+        /** False means insertLines will refuse this line — the catalogue must not present it as orderable. */
+        priceConfigured: resolved !== null,
+      };
+    }),
+  };
+}
+
+/* ---------------- Writes ---------------- */
+
+function toSalesLines(lines: PosLineInput[]): SalesLineInput[] {
+  return lines.map((l) => ({
+    menuItemId: l.menuItemId,
+    stationId: l.stationId,
+    description: l.description,
+    quantity: l.quantity,
+    unitPrice: l.unitPrice,
+    discount: l.discount,
+    taxAmount: 0,
+    course: l.course,
+    notes: l.notes,
+    variantId: l.variantId,
+    seatNumber: l.seatNumber,
+    guestNotes: l.guestNotes,
+    modifiers: l.modifiers,
+  }));
+}
+
+/** Opens a bill. The same client request key always resolves to the same order. */
+export async function openPosOrder(sb: Sb, userId: string, input: OpenPosOrderInput) {
+  // ME-13: resolved once and threaded through createOrder/addPosLines below
+  // instead of each re-resolving isPlatformAdmin/memberGrantsInTenant for
+  // the same (userId, tenantId) — this single logical "open a table, maybe
+  // with starting lines" action used to cost 2-3 independent authorization
+  // resolutions (4-6 round trips); now it costs exactly one.
+  const tenantScope = await getTenantScope(sb, userId, input.tenantId);
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", undefined, tenantScope);
+
+  // ME-03: client_request_id is now claimed atomically inside createOrder's
+  // own insert (see sales.server.ts#createOrder), not via a pre-check
+  // followed by a second, separate UPDATE. The old shape had a real race: two
+  // concurrent opens with the same clientRequestId could both pass the
+  // pre-check before either wrote the id, each fully create its own order
+  // (with its own lines and table-occupied side effects), and only then
+  // collide on the claiming UPDATE — by which point two real orders already
+  // existed. createOrder's insert-time recovery means at most one order is
+  // ever created for a given (tenant, clientRequestId).
+  const order = await createOrder(
+    sb,
+    userId,
+    {
+      tenantId: input.tenantId,
+      propertyId: input.propertyId,
+      locationId: input.locationId,
+      tableId: input.tableId,
+      servicePeriodId: input.servicePeriodId,
+      orderType: input.orderType,
+      guestCount: input.guestCount,
+      guestName: input.guestName,
+      bookingId: input.bookingId,
+      currency: input.currency,
+      source: "pos",
+      clientRequestId: input.clientRequestId,
+      lines: [],
+    } as any,
+    tenantScope,
+  );
+
+  if ((order as any).duplicate) {
+    return { ...order, idempotent: true };
+  }
+
+  if (input.terminalId) {
+    await sb
+      .from("restaurant_orders")
+      .update({ terminal_id: input.terminalId })
+      .eq("tenant_id", input.tenantId)
+      .eq("id", order.id);
+  }
+
+  if (input.lines.length > 0) {
+    await addPosLines(
+      sb,
+      userId,
+      {
+        tenantId: input.tenantId,
+        orderId: order.id,
+        lines: input.lines,
+      },
+      tenantScope,
+    );
+  }
+  const totals = await recalcOrder(sb, input.tenantId, order.id);
+  return { ...order, ...totals, idempotent: false };
+}
+
+export async function addPosLines(
+  sb: Sb,
+  userId: string,
+  input: AddPosLinesInput,
+  tenantScope?: TenantScope,
+) {
+  const { data: order } = await sb
+    .from("restaurant_orders")
+    .select(
+      "id, order_number, status, currency, property_id, location_id, order_type, exchange_rate",
+    )
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .single();
+  if (!order) throw new Error("Order not found.");
+  // Property/location scope re-checked against the order's own row, not the
+  // caller's claim — a sales.manage grant scoped to Property A must not
+  // reach Property B's order just because its id was discoverable.
+  await assertCapability(
+    sb,
+    userId,
+    input.tenantId,
+    "sales.manage",
+    {
+      propertyId: order.property_id,
+      locationId: order.location_id,
+    },
+    tenantScope,
+  );
+  if (!OPEN_STATES.includes(order.status))
+    throw new Error("This bill is closed and can no longer be modified.");
+
+  // Idempotency (P10): a batch replayed with the same clientRequestId — the
+  // offline sync engine's retry-after-timeout/refresh-during-sync case —
+  // must produce exactly the lines it produced the first time, never a
+  // second copy. Every line in one addPosLines call is stamped with the
+  // same key (unlike restaurant_orders/_payments, one client_request_id
+  // here spans N rows, so this is an existence check, not a unique-index
+  // insert-conflict catch — mirroring openPosOrder's own
+  // check-before-create shape at the batch level instead of the row level).
+  if (input.clientRequestId) {
+    const { data: alreadyInserted } = await sb
+      .from("restaurant_order_items")
+      .select(
+        "id, menu_item_id, station_id, description, quantity, unit_price, discount, tax_amount, line_total, status, course, notes",
+      )
+      .eq("tenant_id", input.tenantId)
+      .eq("order_id", input.orderId)
+      .eq("client_request_id", input.clientRequestId);
+    if (alreadyInserted && alreadyInserted.length > 0) {
+      const totals = await recalcOrder(sb, input.tenantId, input.orderId);
+      return { items: alreadyInserted, order: totals, idempotent: true };
+    }
+  }
+
+  const inserted = await insertLines(sb, input.tenantId, input.orderId, toSalesLines(input.lines), {
+    currency: order.currency ?? "TZS",
+    propertyId: order.property_id,
+    locationId: order.location_id,
+    orderType: order.order_type,
+    exchangeRate: Number(order.exchange_rate ?? 1),
+    userId,
+    clientRequestId: input.clientRequestId ?? null,
+  });
+  const totals = await recalcOrder(sb, input.tenantId, input.orderId);
+
+  await emitRestaurantEvent(sb, userId, {
+    type: "restaurant.order.item.added",
+    tenantId: input.tenantId,
+    propertyId: order.property_id ?? undefined,
+    locationId: order.location_id ?? undefined,
+    entityType: "restaurant_order",
+    entityId: order.id,
+    source: "restaurant-pos",
+    payload: {
+      order_number: order.order_number,
+      lines: input.lines.length,
+      order_total: Number(totals.total),
+    },
+  });
+  return { items: inserted, order: totals, idempotent: false };
+}
+
+/**
+ * Voids a line. A line already fired to the kitchen keeps its ticket history —
+ * the void is a correction on the record, never an erasure.
+ *
+ * If the line had already consumed stock (the bill was closed and later
+ * reopened, or the line was room-charged), the consumption is unwound through
+ * the ledger in the same operation: a void that leaves stock deducted is a
+ * silent inventory loss, which is exactly what UAT-1 exists to stop.
+ */
+export async function voidPosLine(sb: Sb, userId: string, input: VoidPosLineInput) {
+  const { data: item } = await sb
+    .from("restaurant_order_items")
+    .select("id, order_id, description, quantity, line_total, line_cost, status")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderItemId)
+    .single();
+  if (!item || item.order_id !== input.orderId) throw new Error("Line not found on this bill.");
+  if (item.status === "voided") throw new Error("This line is already voided.");
+
+  const { data: order } = await sb
+    .from("restaurant_orders")
+    .select("property_id, location_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .maybeSingle();
+  await assertCapability(sb, userId, input.tenantId, "sales.void", {
+    propertyId: order?.property_id ?? null,
+    locationId: order?.location_id ?? null,
+  });
+
+  // A void is a bill correction, not proof that physical stock is reusable.
+  // Only an un-fired line can safely unwind its stock movements. Once a line
+  // has reached a production/service state, consumption remains in the ledger:
+  // reversing it would put already-prepared/served goods back into inventory.
+  const stockDisposition = ["fired", "sent", "preparing", "ready", "served"].includes(String(item.status))
+    ? "preserve_consumption"
+    : "reverse_unprepared";
+  const reversal = stockDisposition === "reverse_unprepared"
+    ? await reverseMovementsForOrderItem(sb, userId, {
+        tenantId: input.tenantId,
+        orderItemId: item.id,
+        reason: `Line void: ${input.reason}`,
+        reasonCode: REASON_CODES.saleReversal,
+      })
+    : { reversed: 0, alreadyReversed: 0, costRestored: 0, movementIds: [] as string[] };
+
+  const { error } = await sb
+    .from("restaurant_order_items")
+    .update({
+      status: "voided",
+      void_reason: input.reason,
+      voided_by: userId,
+      voided_at: new Date().toISOString(),
+    })
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderItemId);
+  if (error) throw new Error(error.message);
+
+  // The line may already have been fired to the kitchen/bar — a voided line
+  // must not leave a phantom ticket item behind for production to keep
+  // acting on. See cancelKitchenTicketItemsForOrderItems's own doc comment.
+  await cancelKitchenTicketItemsForOrderItems(sb, input.tenantId, [item.id]);
+
+  const totals = await recalcOrder(sb, input.tenantId, input.orderId);
+
+  await emitRestaurantEvent(sb, userId, {
+    type: "restaurant.order.item.voided",
+    tenantId: input.tenantId,
+    locationId: totals.location_id ?? undefined,
+    entityType: "restaurant_order",
+    entityId: input.orderId,
+    source: "restaurant-pos",
+    payload: {
+      description: item.description,
+      quantity: Number(item.quantity),
+      value: Number(item.line_total ?? 0),
+      reason: input.reason,
+      stock_movements_reversed: reversal.reversed,
+      stock_already_reversed: reversal.alreadyReversed,
+      cost_restored: reversal.costRestored,
+      stock_disposition: stockDisposition,
+      wastage_follow_up_required: stockDisposition === "preserve_consumption",
+    },
+    dedupeKey: `void:${item.id}`,
+  });
+  return { ...totals, reversal };
+}
+
+/** Moves a bill to another table (or off the floor) and keeps table states honest. */
+export async function transferPosOrder(sb: Sb, userId: string, input: TransferPosOrderInput) {
+  const { data: order } = await sb
+    .from("restaurant_orders")
+    .select("id, order_number, status, table_id, location_id, property_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .single();
+  if (!order) throw new Error("Order not found.");
+  await assertCapability(sb, userId, input.tenantId, "sales.manage", {
+    propertyId: order.property_id,
+    locationId: order.location_id,
+  });
+  if (!OPEN_STATES.includes(order.status)) throw new Error("A closed bill cannot be transferred.");
+
+  const patch: Record<string, unknown> = {};
+  if (input.tableId !== undefined) patch.table_id = input.tableId;
+  if (input.guestCount !== undefined) patch.guest_count = input.guestCount;
+
+  const { data: updated, error } = await sb
+    .from("restaurant_orders")
+    .update(patch)
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .select("id, order_number, table_id, guest_count")
+    .single();
+  if (error) throw new Error(error.message);
+
+  if (input.tableId !== undefined) {
+    if (order.table_id && order.table_id !== input.tableId) {
+      await sb
+        .from("restaurant_tables")
+        .update({ status: "cleaning" })
+        .eq("id", order.table_id)
+        .eq("tenant_id", input.tenantId);
+    }
+    if (input.tableId) {
+      await sb
+        .from("restaurant_tables")
+        .update({ status: "occupied" })
+        .eq("id", input.tableId)
+        .eq("tenant_id", input.tenantId);
+    }
+  }
+
+  await emitRestaurantEvent(sb, userId, {
+    type: "restaurant.order.transferred",
+    tenantId: input.tenantId,
+    propertyId: order.property_id ?? undefined,
+    locationId: order.location_id ?? undefined,
+    entityType: "restaurant_order",
+    entityId: order.id,
+    source: "restaurant-pos",
+    payload: {
+      order_number: order.order_number,
+      from_table: order.table_id,
+      to_table: input.tableId ?? null,
+      reason: input.reason ?? null,
+    },
+  });
+  return updated;
+}
+
+/**
+ * Takes a payment. Split payments are simply several calls; the order settles
+ * (and closes) only when the paid total reaches the bill.
+ */
+export async function takePosPayment(sb: Sb, userId: string, input: PosPaymentInput) {
+  const { data: order } = await sb
+    .from("restaurant_orders")
+    .select("property_id, location_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .maybeSingle();
+  if (!order) throw new Error("Order not found.");
+  // ME-13: resolved once and threaded through transitionOrder→issueReceipt
+  // below when this payment settles and closes the bill — that chain used
+  // to independently re-resolve isPlatformAdmin/memberGrantsInTenant twice
+  // more for the same (userId, tenantId).
+  const tenantScope = await getTenantScope(sb, userId, input.tenantId);
+  await assertCapability(
+    sb,
+    userId,
+    input.tenantId,
+    "sales.manage",
+    {
+      propertyId: order.property_id,
+      locationId: order.location_id,
+    },
+    tenantScope,
+  );
+
+  // ME-03: a pre-check-then-insert here left a real race — two concurrent
+  // requests carrying the same clientRequestId (a genuine double-tap, or a
+  // client retry racing the original request) could both read "no existing
+  // payment" before either had inserted, and the second insert then hit the
+  // (tenant_id, client_request_id) unique index and threw a raw duplicate-key
+  // error instead of resolving idempotently. Insert unconditionally and
+  // recover on conflict instead — the same pattern createGuestOrder already
+  // uses for orders.
+  const { error } = await sb.from("restaurant_payments").insert({
+    tenant_id: input.tenantId,
+    order_id: input.orderId,
+    split_bill_id: input.splitBillId ?? null,
+    client_request_id: input.clientRequestId,
+    method: input.method,
+    state: input.state,
+    amount: input.amount,
+    tendered: input.tendered ?? null,
+    change_due:
+      input.tendered != null ? Math.max(0, Number((input.tendered - input.amount).toFixed(2))) : 0,
+    reference: input.reference ?? null,
+    booking_id: input.bookingId ?? null,
+    created_by: userId,
+  });
+  let duplicate = false;
+  if (error) {
+    if (String((error as any).code) === "23505") {
+      duplicate = true;
+    } else {
+      throw new Error(error.message);
+    }
+  }
+
+  let totals = await recalcOrder(sb, input.tenantId, input.orderId);
+  if (input.state === "room_charged" || input.state === "comped") {
+    await sb
+      .from("restaurant_orders")
+      .update({ payment_state: input.state })
+      .eq("tenant_id", input.tenantId)
+      .eq("id", input.orderId);
+    totals = { ...totals, payment_state: input.state };
+  }
+
+  if (!duplicate) {
+    await emitRestaurantEvent(sb, userId, {
+      type: "restaurant.payment.captured",
+      tenantId: input.tenantId,
+      locationId: totals.location_id ?? undefined,
+      entityType: "restaurant_order",
+      entityId: input.orderId,
+      source: "restaurant-pos",
+      payload: {
+        method: input.method,
+        amount: input.amount,
+        state: input.state,
+        order_total: Number(totals.total),
+      },
+      dedupeKey: `pay:${input.clientRequestId}`,
+    });
+  }
+
+  const settled = ["paid", "comped", "room_charged"].includes(String(totals.payment_state));
+  let receipt: any = null;
+  if (input.closeWhenSettled && settled && totals.status !== "closed") {
+    // Closing is the commercial commit point: it consumes stock, posts actual
+    // cost and freezes the receipt. It lives in the sales core, not here.
+    await transitionOrder(
+      sb,
+      userId,
+      {
+        tenantId: input.tenantId,
+        orderId: input.orderId,
+        status: "closed",
+      },
+      tenantScope,
+    );
+    const { getReceipt } = await import("./receipts.server");
+    receipt = await getReceipt(
+      sb,
+      userId,
+      { tenantId: input.tenantId, orderId: input.orderId },
+      tenantScope,
+    );
+    totals = await recalcOrder(sb, input.tenantId, input.orderId);
+  }
+
+  return { order: totals, settled, duplicate: Boolean(duplicate), receipt };
+}
+
+/**
+ * The same recording+idempotency+recalc core as takePosPayment, for a
+ * caller with no staff session — the self-order payment surface. No
+ * assertCapability (there is no restaurant_members row for a guest), no
+ * auto-close (closing consumes stock and posts actual cost; that stays a
+ * staff action at the till, same as it always has), no event emission (the
+ * same reason createGuestOrder skips it — that path requires a real
+ * principal). `providerReference` is used as both the idempotency key and
+ * the traceable reference, exactly as the POS's own "Reference" field is
+ * already described to staff: recorded so the payment can be traced back
+ * to the provider.
+ */
+export async function recordGuestPayment(
+  sb: Sb,
+  input: {
+    tenantId: string;
+    orderId: string;
+    method: string;
+    amount: number;
+    currency: string;
+    providerReference: string;
+  },
+) {
+  // ME-03: same check-then-insert race as takePosPayment — insert
+  // unconditionally and recover on the (tenant_id, client_request_id)
+  // unique-index conflict instead of pre-checking then racing on the write.
+  const { error } = await sb.from("restaurant_payments").insert({
+    tenant_id: input.tenantId,
+    order_id: input.orderId,
+    client_request_id: input.providerReference,
+    method: input.method,
+    state: "paid",
+    amount: input.amount,
+    currency: input.currency,
+    reference: input.providerReference,
+    created_by: null,
+  });
+  let duplicate = false;
+  if (error) {
+    if (String((error as any).code) === "23505") {
+      duplicate = true;
+    } else {
+      throw new Error(error.message);
+    }
+  }
+
+  const totals = await recalcOrder(sb, input.tenantId, input.orderId);
+  return { order: totals, duplicate };
+}
+
+/** Reopens a closed bill for correction. Supervisor-only and always evidenced. */
+export async function reopenPosOrder(sb: Sb, userId: string, input: ReopenPosOrderInput) {
+  const { data: order } = await sb
+    .from("restaurant_orders")
+    .select("id, order_number, status, location_id, property_id, table_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .single();
+  if (!order) throw new Error("Order not found.");
+  await assertCapability(sb, userId, input.tenantId, "sales.reopen", {
+    propertyId: order.property_id,
+    locationId: order.location_id,
+  });
+  if (order.status !== "closed") throw new Error("Only a closed bill can be reopened.");
+
+  const { data: fiscalReceipt } = await sb
+    .from("restaurant_fiscal_receipts")
+    .select("state")
+    .eq("tenant_id", input.tenantId)
+    .eq("order_id", input.orderId)
+    .maybeSingle();
+  if (fiscalReceipt?.state === "fiscalized") {
+    throw new Error(
+      "This bill has already been fiscalized and reported to the tax authority. It cannot be reopened or edited — the reported totals must stay traceable to what was submitted.",
+    );
+  }
+
+  const { data: updated, error } = await sb
+    .from("restaurant_orders")
+    .update({
+      status: "served",
+      closed_at: null,
+      reopened_at: new Date().toISOString(),
+      reopened_by: userId,
+      reopen_reason: input.reason,
+    })
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .select("id, order_number, status")
+    .single();
+  if (error) throw new Error(error.message);
+
+  if (order.table_id) {
+    await sb
+      .from("restaurant_tables")
+      .update({ status: "occupied" })
+      .eq("id", order.table_id)
+      .eq("tenant_id", input.tenantId);
+  }
+
+  await emitRestaurantEvent(sb, userId, {
+    type: "restaurant.order.reopened",
+    tenantId: input.tenantId,
+    propertyId: order.property_id ?? undefined,
+    locationId: order.location_id ?? undefined,
+    entityType: "restaurant_order",
+    entityId: order.id,
+    source: "restaurant-pos",
+    payload: { order_number: order.order_number, reason: input.reason },
+  });
+  return updated;
+}

@@ -1,0 +1,760 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Supabase rows are untyped at this boundary. */
+/**
+ * Inventory Movement Engine.
+ *
+ * Stock levels are no longer edited directly: every change is a *movement*.
+ * `restaurant_stock_movements` is the ledger; a database trigger applies each
+ * movement to `restaurant_inventory_items` (quantity + weighted average cost)
+ * and stamps `balance_after`, so the ledger and the balance can never diverge.
+ */
+import { z } from "zod";
+import type {
+  RecordMovementInput,
+  StockMovementType,
+  TransferStockInput,
+  listMovementsSchema,
+} from "../core/contracts";
+import { assertCapability, assertTenantRead } from "../core/access.server";
+import { emitRestaurantEvent } from "../events/emit.server";
+import { evaluateNegativeStock } from "./policy";
+import { componentToStock, type UnitRow } from "./units";
+import { assertLocationInTenant } from "./locations.server";
+
+type Sb = any;
+
+/** Refusal raised when a movement would breach the tenant's negative-stock policy. */
+export class NegativeStockError extends Error {
+  readonly code = "negative_stock";
+  constructor(
+    message: string,
+    readonly detail: {
+      inventoryItemId: string;
+      movementType: StockMovementType;
+      shortfall: number;
+    },
+  ) {
+    super(message);
+    this.name = "NegativeStockError";
+  }
+}
+
+/** Direction is a property of the movement type, never of caller input. */
+const OUTBOUND: readonly StockMovementType[] = [
+  "consumption",
+  "wastage",
+  "transfer_out",
+  "adjustment_out",
+  "return_to_supplier",
+];
+
+export function signedQuantity(
+  type: StockMovementType,
+  magnitude: number,
+  signedAllowed = false,
+): number {
+  // `adjustment` and `reversal` carry their own sign; everything else derives it.
+  if (type === "adjustment" || type === "reversal") return signedAllowed ? magnitude : magnitude;
+  return OUTBOUND.includes(type) ? -Math.abs(magnitude) : Math.abs(magnitude);
+}
+
+export async function listMovements(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listMovementsSchema>,
+) {
+  await assertTenantRead(sb, userId, input.tenantId);
+  let q = sb
+    .from("restaurant_stock_movements")
+    .select(
+      "id, inventory_item_id, movement_type, quantity, unit_cost, total_cost, balance_after, currency, reason, notes, occurred_at, location_id, destination_location_id, reference_type, reference_id",
+    )
+    .eq("tenant_id", input.tenantId)
+    .order("occurred_at", { ascending: false })
+    .limit(input.limit);
+  if (input.locationId) q = q.eq("location_id", input.locationId);
+  if (input.inventoryItemId) q = q.eq("inventory_item_id", input.inventoryItemId);
+  if (input.movementType) q = q.eq("movement_type", input.movementType);
+  if (input.from) q = q.gte("occurred_at", input.from);
+  if (input.to) q = q.lte("occurred_at", input.to);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+/** Raw ledger write. All movement helpers funnel through here. */
+export async function insertMovement(
+  sb: Sb,
+  userId: string,
+  row: {
+    tenantId: string;
+    propertyId?: string | null;
+    locationId?: string | null;
+    destinationLocationId?: string | null;
+    inventoryItemId: string;
+    unitId?: string | null;
+    movementType: StockMovementType;
+    quantity: number;
+    unitCost: number;
+    currency: string;
+    reason?: string | null;
+    notes?: string | null;
+    referenceType?: string | null;
+    referenceId?: string | null;
+    orderItemId?: string | null;
+    transferId?: string | null;
+    transferLineId?: string | null;
+    stocktakeId?: string | null;
+    productionId?: string | null;
+    batchId?: string | null;
+    reversalOfId?: string | null;
+    correlationId?: string | null;
+    reasonCode?: string | null;
+    approvedBy?: string | null;
+    occurredAt?: string;
+    dedupeKey?: string | null;
+  },
+) {
+  // Resolve a known idempotency key before evaluating current stock. A
+  // retry must resolve to the original ledger fact, not fail because that
+  // original movement has already reduced the available balance.
+  if (row.dedupeKey && row.referenceType === "restaurant_order" && row.reason?.startsWith("Operational ")) {
+    const existing = await findMovementByDedupeKey(sb, row.tenantId, row.dedupeKey);
+    if (existing) return null;
+  }
+
+  // One policy for every stock-affecting path. Corrections and inbound
+  // movements pass straight through; an outbound movement that would push the
+  // balance below zero is refused unless the item allows it or a supervisor
+  // has approved this specific movement.
+  {
+    const { data: item } = await sb
+      .from("restaurant_inventory_items")
+      .select("id, name, current_quantity, allow_negative")
+      .eq("tenant_id", row.tenantId)
+      .eq("id", row.inventoryItemId)
+      .maybeSingle();
+    if (item) {
+      const decision = evaluateNegativeStock({
+        movementType: row.movementType,
+        quantity: row.quantity,
+        currentQuantity: Number(item.current_quantity ?? 0),
+        allowNegative: Boolean(item.allow_negative),
+        approvedBy: row.approvedBy ?? null,
+        itemName: item.name,
+      });
+      if (!decision.allowed) {
+        throw new NegativeStockError(decision.message, {
+          inventoryItemId: row.inventoryItemId,
+          movementType: row.movementType,
+          shortfall: decision.shortfall,
+        });
+      }
+    }
+  }
+
+  const { data, error } = await sb
+    .from("restaurant_stock_movements")
+    .insert({
+      tenant_id: row.tenantId,
+      property_id: row.propertyId ?? null,
+      location_id: row.locationId ?? null,
+      destination_location_id: row.destinationLocationId ?? null,
+      inventory_item_id: row.inventoryItemId,
+      unit_id: row.unitId ?? null,
+      movement_type: row.movementType,
+      quantity: row.quantity,
+      unit_cost: row.unitCost,
+      total_cost: Math.abs(row.quantity) * row.unitCost,
+      currency: row.currency,
+      reason: row.reason ?? null,
+      notes: row.notes ?? null,
+      reference_type: row.referenceType ?? null,
+      reference_id: row.referenceId ?? null,
+      order_item_id: row.orderItemId ?? null,
+      transfer_id: row.transferId ?? null,
+      transfer_line_id: row.transferLineId ?? null,
+      stocktake_id: row.stocktakeId ?? null,
+      production_id: row.productionId ?? null,
+      batch_id: row.batchId ?? null,
+      reversal_of_id: row.reversalOfId ?? null,
+      correlation_id: row.correlationId ?? null,
+      reason_code: row.reasonCode ?? null,
+      approved_by: row.approvedBy ?? null,
+      approved_at: row.approvedBy ? new Date().toISOString() : null,
+      occurred_at: row.occurredAt ?? new Date().toISOString(),
+      dedupe_key: row.dedupeKey ?? null,
+      created_by: userId,
+    })
+    .select(
+      "id, quantity, unit_cost, total_cost, balance_after, movement_type, inventory_item_id, location_id",
+    )
+    .single();
+  if (error) {
+    // Idempotency: the same fact must never move stock twice.
+    if (String(error.code) === "23505") return null;
+    throw new Error(error.message);
+  }
+  return data;
+}
+
+/**
+ * Resolves the movement an `insertMovement` dedupe-key collision (a null
+ * return) refers to. Needed by any compensating (out/in pair) write that
+ * must tell "this leg already committed, just finish the pair" apart from
+ * "this leg already committed AND was compensated, this key is dead" — see
+ * `movementHasReversal` and `transferStock`/`issueRequisition`.
+ */
+export async function findMovementByDedupeKey(sb: Sb, tenantId: string, dedupeKey: string) {
+  const { data } = await sb
+    .from("restaurant_stock_movements")
+    .select("id, quantity, total_cost, location_id, movement_type")
+    .eq("tenant_id", tenantId)
+    .eq("dedupe_key", dedupeKey)
+    .maybeSingle();
+  return data as { id: string; quantity: number; total_cost: number; location_id: string | null; movement_type: string } | null;
+}
+
+/** Whether `movementId` already has a reversal posted against it. */
+export async function movementHasReversal(sb: Sb, movementId: string): Promise<boolean> {
+  const { data } = await sb
+    .from("restaurant_stock_movements")
+    .select("id")
+    .eq("reversal_of_id", movementId)
+    .maybeSingle();
+  return Boolean(data);
+}
+
+export async function recordMovement(sb: Sb, userId: string, input: RecordMovementInput) {
+  const { data: item, error: itemErr } = await sb
+    .from("restaurant_inventory_items")
+    .select("id, name, average_cost, currency, reorder_point, unit_id, location_id, property_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.inventoryItemId)
+    .single();
+  if (itemErr || !item) throw new Error("Inventory item not found.");
+
+  // A caller-supplied location must at minimum belong to this tenant — it
+  // was previously accepted with no validation at all.
+  await assertLocationInTenant(sb, input.tenantId, input.locationId);
+  await assertCapability(sb, userId, input.tenantId, "stock.manage", {
+    propertyId: input.propertyId ?? item.property_id,
+    locationId: input.locationId ?? item.location_id,
+  });
+
+  const unitCost = input.unitCost ?? Number(item.average_cost ?? 0);
+  const quantity = signedQuantity(input.movementType, input.quantity);
+
+  const moved = await insertMovement(sb, userId, {
+    tenantId: input.tenantId,
+    propertyId: input.propertyId ?? item.property_id,
+    locationId: input.locationId ?? item.location_id,
+    inventoryItemId: input.inventoryItemId,
+    unitId: input.unitId ?? item.unit_id,
+    movementType: input.movementType,
+    quantity,
+    unitCost,
+    currency: input.currency ?? item.currency ?? "TZS",
+    reason: input.reason,
+    notes: input.notes,
+    referenceType: input.referenceType,
+    referenceId: input.referenceId,
+    occurredAt: input.occurredAt,
+    dedupeKey: input.dedupeKey,
+  });
+  if (!moved) return { duplicate: true as const };
+
+  await emitRestaurantEvent(sb, userId, {
+    type: input.movementType === "wastage" ? "restaurant.waste.recorded" : "restaurant.stock.moved",
+    tenantId: input.tenantId,
+    propertyId: input.propertyId,
+    locationId: input.locationId ?? undefined,
+    entityType: "restaurant_inventory_item",
+    entityId: input.inventoryItemId,
+    source: "restaurant-os",
+    payload: {
+      name: item.name,
+      movement_type: input.movementType,
+      quantity: Number(moved.quantity),
+      cost: Number(moved.total_cost),
+      balance_after: Number(moved.balance_after ?? 0),
+      reason: input.reason ?? null,
+    },
+  });
+
+  if (
+    item.reorder_point != null &&
+    Number(moved.balance_after ?? 0) <= Number(item.reorder_point)
+  ) {
+    await emitRestaurantEvent(sb, userId, {
+      type: "restaurant.inventory.low",
+      tenantId: input.tenantId,
+      propertyId: input.propertyId,
+      locationId: input.locationId ?? undefined,
+      entityType: "restaurant_inventory_item",
+      entityId: input.inventoryItemId,
+      source: "restaurant-os",
+      payload: {
+        name: item.name,
+        quantity: Number(moved.balance_after ?? 0),
+        reorder_point: Number(item.reorder_point),
+      },
+    });
+  }
+  return { duplicate: false as const, movement: moved };
+}
+
+/**
+ * A transfer is two ledger entries so both outlets keep an auditable history.
+ *
+ * Both legs must exist together or not at all, and a retried call must never
+ * move the same stock twice:
+ *  - idempotency: each leg gets its own deterministic dedupe key derived from
+ *    the caller's `dedupeKey` (required precisely so a retry can supply the
+ *    same value); a duplicate call resolves to the same pair of movements,
+ *    not a second transfer.
+ *  - atomicity: `insertMovement` calls are separate network round-trips, not
+ *    one database transaction, so a failure between the two legs (a dropped
+ *    connection, a negative-stock refusal on the destination) would
+ *    otherwise leave stock removed from the source with nothing received at
+ *    the destination. If the second leg fails after the first committed, the
+ *    first leg is compensated with an explicit reversal (itself idempotent
+ *    via `reversal:<movementId>`) before the error is re-thrown, so the
+ *    ledger is never left in a state `restaurant_stock_reconciliation_v`
+ *    would have to explain away.
+ *  - retry-after-compensation: a dedupe-key collision on the outbound leg
+ *    does not by itself mean "already fully applied" — it can also mean
+ *    "already applied, then reversed after the inbound leg failed." Those
+ *    are told apart by checking whether the existing outbound movement has
+ *    a reversal before touching the inbound leg; if it does, this
+ *    dedupeKey is dead and the caller must retry with a new one, rather
+ *    than silently attempting a fresh inbound leg against an outbound that
+ *    no longer has any effect (which would create stock at the destination
+ *    with nothing actually leaving the source).
+ */
+export async function transferStock(sb: Sb, userId: string, input: TransferStockInput) {
+  const { data: item } = await sb
+    .from("restaurant_inventory_items")
+    .select("id, name, average_cost, currency, unit_id, location_id, property_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.inventoryItemId)
+    .single();
+  if (!item) throw new Error("Inventory item not found.");
+
+  // The destination previously had no tenant check at all — any
+  // stock.manage holder could move stock to any locationId they knew,
+  // including one belonging to a different tenant entirely.
+  await assertLocationInTenant(
+    sb,
+    input.tenantId,
+    input.locationId ?? item.location_id,
+    input.destinationLocationId,
+  );
+  const sourceLocationId = input.locationId ?? item.location_id;
+  const { data: endpoints, error: endpointsError } = await sb
+    .from("restaurant_locations")
+    .select("id, property_id, scope, is_storage, status")
+    .eq("tenant_id", input.tenantId)
+    .in("id", [sourceLocationId, input.destinationLocationId]);
+  if (endpointsError) throw new Error(endpointsError.message);
+  const endpointById = new Map(((endpoints ?? []) as any[]).map((l) => [l.id, l]));
+  const source = endpointById.get(sourceLocationId);
+  const destination = endpointById.get(input.destinationLocationId);
+  if (!source || !destination || endpointById.size !== new Set([sourceLocationId, input.destinationLocationId]).size) {
+    throw new Error("Transfer blocked: source and destination must both belong to this tenant.");
+  }
+  if (source.status !== "active" || destination.status !== "active") {
+    throw new Error("Transfer blocked: inactive locations cannot move stock.");
+  }
+  if (!source.is_storage || !destination.is_storage) {
+    throw new Error("Transfer blocked: stock transfers require storage locations at both ends. Use the issue-to-outlet workflow for service outlets.");
+  }
+  if (source.scope !== "tenant" && source.property_id != null && item.property_id !== source.property_id) {
+    throw new Error("Transfer blocked: inventory item does not belong to the source property's stock.");
+  }
+  if (source.scope !== "tenant" && destination.scope !== "tenant" && destination.property_id !== source.property_id) {
+    throw new Error("Transfer blocked: cross-property stock movement must use an approved stock-transfer document.");
+  }
+  await assertCapability(sb, userId, input.tenantId, "stock.manage", {
+    propertyId: input.propertyId ?? item.property_id,
+    locationId: sourceLocationId,
+  });
+  await assertCapability(sb, userId, input.tenantId, "stock.manage", {
+    propertyId: destination.property_id ?? null,
+    locationId: input.destinationLocationId,
+  });
+
+  const unitCost = Number(item.average_cost ?? 0);
+  const dedupeBase =
+    input.dedupeKey ??
+    `transfer-stock:${input.inventoryItemId}:${input.locationId ?? item.location_id}:${input.destinationLocationId}`;
+  const correlationId = crypto.randomUUID();
+  const base = {
+    tenantId: input.tenantId,
+    propertyId: input.propertyId ?? item.property_id,
+    inventoryItemId: input.inventoryItemId,
+    unitId: input.unitId ?? item.unit_id,
+    unitCost,
+    currency: item.currency ?? "TZS",
+    reason: input.reason ?? "Internal transfer",
+    referenceType: "restaurant_transfer",
+    correlationId,
+  };
+  const stamp = new Date().toISOString();
+
+  const outAttempt = await insertMovement(sb, userId, {
+    ...base,
+    locationId: input.locationId ?? item.location_id,
+    destinationLocationId: input.destinationLocationId,
+    movementType: "transfer_out",
+    quantity: -Math.abs(input.quantity),
+    occurredAt: stamp,
+    dedupeKey: `${dedupeBase}:out`,
+  });
+
+  // `outAttempt` is null when this exact dedupeKey's outbound leg was
+  // already recorded by an earlier attempt — either still valid (that
+  // attempt's inbound leg just hasn't run yet) or already compensated (a
+  // prior attempt's inbound leg failed and this outbound was reversed,
+  // below). Those two cases must not be treated the same: resolving the
+  // existing row and checking whether it was reversed is what tells them
+  // apart, and is what stops a retry from silently attempting a fresh
+  // inbound leg against an outbound that no longer has any effect (which
+  // would create stock at the destination with nothing actually leaving
+  // the source).
+  const outRow =
+    outAttempt ?? (await findMovementByDedupeKey(sb, input.tenantId, `${dedupeBase}:out`));
+  if (!outRow) throw new Error("Transfer failed: the source leg could not be recorded or located.");
+  if (!outAttempt) {
+    const alreadyReversed = await movementHasReversal(sb, outRow.id);
+    if (alreadyReversed) {
+      throw new Error(
+        "This transfer previously failed and was rolled back. Retry with a new idempotency key.",
+      );
+    }
+  }
+
+  let inb: Awaited<ReturnType<typeof insertMovement>>;
+  try {
+    inb = await insertMovement(sb, userId, {
+      ...base,
+      locationId: input.destinationLocationId,
+      movementType: "transfer_in",
+      quantity: Math.abs(input.quantity),
+      occurredAt: stamp,
+      dedupeKey: `${dedupeBase}:in`,
+    });
+  } catch (err) {
+    // The outbound leg committed (this attempt or an earlier one) but the
+    // inbound leg just failed — never leave stock stuck in transit.
+    // Compensating is itself idempotent (dedupe_key `reversal:<outRow.id>`),
+    // so if a concurrent attempt already reversed the same outbound leg
+    // this insert simply no-ops via the same 23505 path every other
+    // movement write uses.
+    await insertMovement(sb, userId, {
+      tenantId: input.tenantId,
+      propertyId: base.propertyId,
+      locationId: outRow.location_id,
+      inventoryItemId: input.inventoryItemId,
+      unitId: base.unitId,
+      movementType: "reversal",
+      quantity: -Number(outRow.quantity),
+      unitCost,
+      currency: base.currency,
+      reason: "Transfer reversed — destination leg failed",
+      referenceType: base.referenceType,
+      reversalOfId: outRow.id,
+      correlationId,
+      approvedBy: userId,
+      occurredAt: new Date().toISOString(),
+      dedupeKey: `reversal:${outRow.id}`,
+    });
+    throw err;
+  }
+
+  await emitRestaurantEvent(sb, userId, {
+    type: "restaurant.stock.transferred",
+    tenantId: input.tenantId,
+    propertyId: input.propertyId,
+    locationId: input.locationId ?? undefined,
+    entityType: "restaurant_inventory_item",
+    entityId: input.inventoryItemId,
+    source: "restaurant-os",
+    payload: {
+      name: item.name,
+      quantity: Math.abs(input.quantity),
+      to_location_id: input.destinationLocationId,
+      cost: Math.abs(input.quantity) * unitCost,
+    },
+  });
+  return { out: outAttempt, in: inb };
+}
+
+/**
+ * Recipe-driven consumption — the seam between sales and stock.
+ * Depletes every mapped ingredient for an order item and returns actual cost.
+ */
+export async function consumeForOrderItem(
+  sb: Sb,
+  userId: string,
+  args: {
+    tenantId: string;
+    propertyId?: string | null;
+    locationId?: string | null;
+    orderId: string;
+    orderItemId: string;
+    menuItemId: string | null;
+    quantity: number;
+    occurredAt?: string;
+  },
+): Promise<number> {
+  if (!args.menuItemId) return 0;
+
+  const { data: components } = await sb
+    .from("restaurant_recipe_components")
+    .select("id, inventory_item_id, unit_id, quantity, yield_percent")
+    .eq("tenant_id", args.tenantId)
+    .eq("menu_item_id", args.menuItemId);
+
+  const rows = ((components ?? []) as any[]).filter((c) => c.inventory_item_id);
+  if (rows.length === 0) return 0;
+
+  const ids = [...new Set(rows.map((c) => c.inventory_item_id))];
+  const { data: inv, error: invError } = await sb
+    .from("restaurant_inventory_items")
+    .select(
+      "id, name, average_cost, currency, location_id, property_id, unit_id, content_per_stock_unit, content_unit_id",
+    )
+    .eq("tenant_id", args.tenantId)
+    .in("id", ids);
+  if (invError) throw new Error(invError.message);
+  const costs = new Map<string, any>(((inv ?? []) as any[]).map((r) => [r.id, r]));
+  if (costs.size !== ids.length) {
+    throw new Error("Sales consumption blocked: one or more inventory items are missing or outside this tenant.");
+  }
+
+  const { data: orderLocation, error: locationError } = args.locationId
+    ? await sb
+        .from("restaurant_locations")
+        .select("id, property_id, scope, is_storage, status")
+        .eq("tenant_id", args.tenantId)
+        .eq("id", args.locationId)
+        .maybeSingle()
+    : { data: null, error: null };
+  if (locationError) throw new Error(locationError.message);
+  if (!args.locationId || !orderLocation) {
+    throw new Error("Sales consumption blocked: a valid tenant-owned POS serving location is required.");
+  }
+  const orderPropertyId = args.propertyId ?? orderLocation.property_id ?? null;
+  if (
+    !orderPropertyId ||
+    orderLocation.scope === "tenant" ||
+    orderLocation.property_id !== orderPropertyId ||
+    orderLocation.status !== "active"
+  ) {
+    throw new Error("Sales consumption blocked: the POS location must be active and scoped to the order property.");
+  }
+  for (const [itemId, info] of costs) {
+    if (!info.property_id || info.property_id !== orderPropertyId) {
+      throw new Error(`Sales consumption blocked: "${info.name ?? itemId}" is not assigned to this property. Transfer stock into property-scoped inventory before sale.`);
+    }
+  }
+
+  // average_cost is priced per the item's own stock unit — a recipe
+  // component written in a different unit must be converted to stock units
+  // before it is costed or deducted (see units.ts#componentToStock).
+  const unitIds = [
+    ...new Set(
+      [...rows.map((c) => c.unit_id), ...[...costs.values()].map((v) => v.unit_id)].filter(Boolean),
+    ),
+  ] as string[];
+  const { data: unitRows } = unitIds.length
+    ? await sb
+        .from("restaurant_inventory_units")
+        .select("id, code, name, dimension, factor, base_unit_id")
+        .in("id", unitIds)
+    : { data: [] as any[] };
+  const unitById = new Map(((unitRows ?? []) as UnitRow[]).map((u) => [u.id, u]));
+
+  let actualCost = 0;
+  for (const c of rows) {
+    const meta = costs.get(c.inventory_item_id);
+    const unitCost = Number(meta?.average_cost ?? 0);
+    if (!/^[A-Z]{3}$/.test(String(meta?.currency ?? ""))) {
+      throw new Error(`Sales consumption blocked: "${meta?.name ?? c.inventory_item_id}" has no valid inventory currency.`);
+    }
+    const perServing = Number(c.quantity) / (Number(c.yield_percent ?? 100) / 100);
+    const consumed = perServing * args.quantity;
+    if (consumed <= 0) continue;
+
+    const converted = componentToStock(consumed, c.unit_id, meta ?? {}, unitById);
+    if (!converted.exact) {
+      throw new Error(
+        `"${meta?.name ?? c.inventory_item_id}": recipe component is in a unit that cannot be converted to this item's stock unit (${converted.reason ?? "unknown conversion"}). Fix the component's unit, or the item's stock unit, before this order can close.`,
+      );
+    }
+
+    const moved = await insertMovement(sb, userId, {
+      tenantId: args.tenantId,
+      propertyId: orderPropertyId,
+      locationId: args.locationId,
+      inventoryItemId: c.inventory_item_id,
+      unitId: meta?.unit_id ?? c.unit_id ?? null,
+      movementType: "consumption",
+      quantity: -converted.quantity,
+      unitCost,
+      currency: meta.currency,
+      reason: "Sales consumption",
+      referenceType: "restaurant_order",
+      referenceId: args.orderId,
+      orderItemId: args.orderItemId,
+      occurredAt: args.occurredAt,
+      dedupeKey: `consume:${args.orderItemId}:${c.id}`,
+    });
+    // A retry must use the original ledger cost, not today's average cost.
+    // Average cost may have changed since the first attempt; recomputing it
+    // would make order.cost_total diverge from the immutable stock movement.
+    const committedMovement = moved ?? await findMovementByDedupeKey(
+      sb,
+      args.tenantId,
+      `consume:${args.orderItemId}:${c.id}`,
+    );
+    if (!committedMovement) {
+      throw new Error(`Sales consumption for "${meta?.name ?? c.inventory_item_id}" could not be verified.`);
+    }
+    actualCost += Number(committedMovement.total_cost ?? 0);
+  }
+  return Number(actualCost.toFixed(4));
+}
+
+
+/**
+ * Applies configured per-cover operational consumables once per order.
+ * The stock movement ledger remains the only inventory source of truth;
+ * Phase 1 events are a classification projection created by its DB trigger.
+ */
+export async function consumeOperationalConsumablesForOrder(
+  sb: Sb,
+  userId: string,
+  args: {
+    tenantId: string;
+    propertyId: string;
+    locationId: string;
+    orderId: string;
+    guestCount: number;
+    currency: string;
+    occurredAt?: string;
+  },
+): Promise<number> {
+  if (!/^[A-Z]{3}$/.test(args.currency)) {
+    throw new Error("Operational consumables require a valid property currency.");
+  }
+  const [{ data: profiles, error: profileError }] = await Promise.all([
+    sb.from("restaurant_consumption_profiles")
+      .select("id, cost_class, property_id, location_id, active, effective_from, effective_to")
+      .eq("tenant_id", args.tenantId)
+      .eq("active", true),
+  ]);
+  if (profileError) throw new Error(profileError.message);
+  const date = (args.occurredAt ?? new Date().toISOString()).slice(0, 10);
+  const applicableProfiles = ((profiles ?? []) as any[])
+    .filter((p) =>
+      (p.property_id === null || p.property_id === args.propertyId) &&
+      (p.location_id === null || p.location_id === args.locationId) &&
+      p.effective_from <= date && (!p.effective_to || p.effective_to >= date)
+    )
+    .sort((a, b) =>
+      Number(b.location_id === args.locationId) - Number(a.location_id === args.locationId) ||
+      Number(b.property_id === args.propertyId) - Number(a.property_id === args.propertyId)
+    );
+  if (applicableProfiles.length === 0) return 0;
+  const profileIds = applicableProfiles.map((p) => p.id);
+  const { data: rules, error: ruleError } = await sb
+    .from("restaurant_consumption_rules")
+    .select("id, profile_id, inventory_item_id, unit_id, quantity_per_cover, active, effective_from, effective_to")
+    .eq("tenant_id", args.tenantId)
+    .eq("active", true)
+    .in("profile_id", profileIds);
+  if (ruleError) throw new Error(ruleError.message);
+  const profileById = new Map(applicableProfiles.map((p) => [p.id, p]));
+  const profilePriority = new Map(applicableProfiles.map((p, index) => [p.id, index]));
+  const selectedRules = new Map<string, any>();
+  const orderedRules = ((rules ?? []) as any[]).sort(
+    (a, b) => (profilePriority.get(a.profile_id) ?? Number.MAX_SAFE_INTEGER) -
+      (profilePriority.get(b.profile_id) ?? Number.MAX_SAFE_INTEGER),
+  );
+  for (const rule of orderedRules) {
+    const profile = profileById.get(rule.profile_id);
+    if (!profile || !rule.quantity_per_cover || Number(rule.quantity_per_cover) <= 0 ||
+        rule.effective_from > date || (rule.effective_to && rule.effective_to < date)) continue;
+    if (!selectedRules.has(rule.inventory_item_id)) selectedRules.set(rule.inventory_item_id, { ...rule, profile });
+  }
+  const ruleRows = [...selectedRules.values()];
+  if (ruleRows.length === 0) return 0;
+  const inventoryIds = ruleRows.map((r) => r.inventory_item_id);
+  const { data: inventory, error: inventoryError } = await sb
+    .from("restaurant_inventory_items")
+    .select("id, name, average_cost, currency, property_id, unit_id, content_per_stock_unit, content_unit_id")
+    .eq("tenant_id", args.tenantId)
+    .in("id", inventoryIds);
+  if (inventoryError) throw new Error(inventoryError.message);
+  const inventoryById = new Map(((inventory ?? []) as any[]).map((item) => [item.id, item]));
+  if (inventoryById.size !== inventoryIds.length) {
+    throw new Error("Operational consumable configuration references missing or foreign inventory items.");
+  }
+  const unitIds = [...new Set([
+    ...ruleRows.map((r) => r.unit_id),
+    ...[...inventoryById.values()].map((item: any) => item.unit_id),
+  ].filter(Boolean))] as string[];
+  const { data: units, error: unitError } = unitIds.length
+    ? await sb.from("restaurant_inventory_units")
+        .select("id, code, name, dimension, factor, base_unit_id")
+        .in("id", unitIds)
+    : { data: [], error: null };
+  if (unitError) throw new Error(unitError.message);
+  const unitById = new Map(((units ?? []) as UnitRow[]).map((unit) => [unit.id, unit]));
+  let actualCost = 0;
+  const covers = Math.max(1, Number(args.guestCount || 1));
+  for (const rule of ruleRows) {
+    const item = inventoryById.get(rule.inventory_item_id);
+    if (!item || (item.property_id !== null && item.property_id !== args.propertyId)) {
+      throw new Error(`Operational consumable "${item?.name ?? rule.inventory_item_id}" is not assigned to this property.`);
+    }
+    if (!/^[A-Z]{3}$/.test(String(item.currency ?? "")) || item.currency !== args.currency) {
+      throw new Error(`Operational consumable "${item.name}" has a missing or mismatched currency.`);
+    }
+    const conversion = componentToStock(
+      Number(rule.quantity_per_cover) * covers,
+      rule.unit_id,
+      item,
+      unitById,
+    );
+    if (!conversion.exact) {
+      throw new Error(`"${item.name}": operational consumable unit cannot be converted to its stock unit (${conversion.reason ?? "unknown conversion"}).`);
+    }
+    const unitCost = Number(item.average_cost ?? 0);
+    if (!Number.isFinite(unitCost) || unitCost < 0) {
+      throw new Error(`"${item.name}": operational consumable has an invalid average cost.`);
+    }
+    const dedupeKey = `operational-consume:${args.orderId}:${rule.id}`;
+    const inserted = await insertMovement(sb, userId, {
+      tenantId: args.tenantId,
+      propertyId: args.propertyId,
+      locationId: args.locationId,
+      inventoryItemId: item.id,
+      unitId: item.unit_id ?? rule.unit_id ?? null,
+      movementType: "consumption",
+      quantity: -conversion.quantity,
+      unitCost,
+      currency: args.currency,
+      reason: `Operational ${rule.profile.cost_class.replaceAll("_", " ")}`,
+      referenceType: "restaurant_order",
+      referenceId: args.orderId,
+      occurredAt: args.occurredAt,
+      dedupeKey,
+    });
+    const committedMovement = inserted ?? await findMovementByDedupeKey(sb, args.tenantId, dedupeKey);
+    if (!committedMovement) throw new Error(`Operational consumable movement for "${item.name}" could not be verified.`);
+    actualCost += Number(committedMovement.total_cost ?? 0);
+  }
+  return Number(actualCost.toFixed(4));
+}

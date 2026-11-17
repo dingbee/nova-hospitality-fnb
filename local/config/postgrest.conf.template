@@ -1,0 +1,25 @@
+## NOVA Hospitality — Restaurant & Bar OS — local PostgREST configuration.
+## Rendered by local/scripts/start.sh; do not edit the rendered copy.
+
+db-uri = "postgres://${NOVA_DB_AUTHENTICATOR}:${NOVA_DB_AUTHENTICATOR_PASSWORD}@${NOVA_DB_HOST}:${NOVA_DB_PORT}/${NOVA_DB_NAME}"
+db-schemas = "${NOVA_POSTGREST_SCHEMAS}"
+
+## Unauthenticated requests act as `anon`; a valid bearer token switches to the
+## role in its claims. This is exactly the hosted behaviour, so RLS policies
+## and auth.uid() work unchanged.
+db-anon-role = "anon"
+
+## Verification uses the PUBLIC JWK only — the signing key stays in the gateway.
+jwt-secret = "@${NOVA_KEY_DIR}/jwks.json"
+jwt-aud = "nova-local"
+jwt-role-claim-key = ".role"
+
+## Loopback only. The LAN reaches the data layer through the gateway.
+server-host = "${NOVA_POSTGREST_HOST}"
+server-port = ${NOVA_POSTGREST_PORT}
+
+db-pool = 12
+db-pool-acquisition-timeout = 10
+max-rows = 5000
+db-max-rows = 5000
+log-level = "error"
