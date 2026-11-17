@@ -5,17 +5,23 @@ on:
     branches:
       - "wce/wce-02-messaging-sessions"
       - "wce/wce-03-08-stack"
+      - "wce/wce-06-campaign-commercial-controls"
+      - "wce/wce-07-operations-analytics"
+      - "wce/wce-08-integrated-certification"
   pull_request:
     branches:
       - "wce/wce-02-messaging-sessions"
       - "wce/wce-03-08-stack"
+      - "wce/wce-06-campaign-commercial-controls"
+      - "wce/wce-07-operations-analytics"
+      - "wce/wce-08-integrated-certification"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: lexibite-wce-ci-${{ github.event.pull_request.number || github.ref }}
+  group: lexibite-wce-ci-\${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -41,7 +47,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.head_ref || github.ref }}
+          ref: \${{ github.head_ref || github.ref }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -51,29 +57,52 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin wce/wce-02-messaging-sessions
-          files="$(git diff --name-only origin/wce/wce-02-messaging-sessions...HEAD -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
-          if [ -n "$files" ]; then bunx eslint $files; fi
+          git fetch origin main wce/wce-02-messaging-sessions
+          branch="\${GITHUB_HEAD_REF:-\${GITHUB_REF_NAME}}"
+          base_ref="origin/wce/wce-02-messaging-sessions"
+          if [ "$branch" = "wce/wce-02-messaging-sessions" ]; then
+            base_ref="origin/main"
+          fi
+          files="$(git diff --name-only "$base_ref"...HEAD -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
+          if [ -n "$files" ]; then
+            bunx eslint $files
+          fi
       - name: WCE tests
-        run: >-
-          bunx vitest run
-          src/modules/messaging/providers/meta-cloud-api.server.test.ts
-          src/modules/messaging/providers/meta-onboarding.server.test.ts
-          src/modules/messaging/embedded-signup.test.ts
-          src/modules/messaging/webhooks.server.test.ts
-          src/modules/messaging/bindings.server.test.ts
-          src/modules/messaging/webhook-queue.server.test.ts
-          src/modules/messaging/guest-portal-sessions.server.test.ts
-          src/modules/messaging/guest-commerce.server.test.ts
-          src/modules/messaging/guest-crm.server.test.ts
-          src/modules/messaging/outbound-queue.server.test.ts
-          src/modules/messaging/guest-reservations.server.test.ts
-          src/modules/restaurant/selforder/providers/pesapal.server.test.ts
-          src/modules/restaurant/selforder/selfpay.server.test.ts
-          src/modules/restaurant/selforder/selfpay.concurrency.test.ts
-          src/modules/restaurant/selforder/selfpay.integration.test.ts
-          src/modules/restaurant/menu/availability.server.test.ts
-          src/modules/api-platform/adapters/meta-whatsapp.server.test.ts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_files=(
+            src/modules/messaging/providers/meta-cloud-api.server.test.ts
+            src/modules/messaging/providers/meta-onboarding.server.test.ts
+            src/modules/messaging/embedded-signup.test.ts
+            src/modules/messaging/webhooks.server.test.ts
+            src/modules/messaging/bindings.server.test.ts
+            src/modules/messaging/webhook-queue.server.test.ts
+            src/modules/messaging/guest-portal-sessions.server.test.ts
+            src/modules/messaging/guest-commerce.server.test.ts
+            src/modules/messaging/guest-crm.server.test.ts
+            src/modules/messaging/outbound-queue.server.test.ts
+            src/modules/messaging/guest-reservations.server.test.ts
+            src/modules/messaging/campaign-governance.server.test.ts
+            src/modules/messaging/operations.server.test.ts
+            src/modules/restaurant/selforder/providers/pesapal.server.test.ts
+            src/modules/restaurant/selforder/selfpay.server.test.ts
+            src/modules/restaurant/selforder/selfpay.concurrency.test.ts
+            src/modules/restaurant/selforder/selfpay.integration.test.ts
+            src/modules/restaurant/menu/availability.server.test.ts
+            src/modules/api-platform/adapters/meta-whatsapp.server.test.ts
+          )
+          existing_tests=()
+          for test_file in "\${test_files[@]}"; do
+            if [ -f "$test_file" ]; then
+              existing_tests+=("$test_file")
+            fi
+          done
+          if [ "\${#existing_tests[@]}" -eq 0 ]; then
+            echo "No WCE tests found on this branch"
+            exit 1
+          fi
+          bunx vitest run "\${existing_tests[@]}"
       - name: Full repository tests
         run: bun run test
       - name: Strict typecheck
@@ -90,21 +119,29 @@ jobs:
           NOVA_DB_AUTHENTICATOR: nova_authenticator
           NOVA_DB_AUTHENTICATOR_PASSWORD: wce-ci-only-authenticator-password
         run: |
+          set -euo pipefail
           ./local/scripts/init-db.sh
           ./local/scripts/apply-migrations.sh
           PGPASSWORD="$NOVA_DB_SUPERUSER_PASSWORD" psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -v ON_ERROR_STOP=1 <<'SQL'
           DO $verify$
           DECLARE
             table_name text;
-            table_names text[] := ARRAY[
+            wce02_tables text[] := ARRAY[
               'wa_phone_number_bindings',
               'wa_webhook_events',
               'wa_conversations',
               'wa_messages',
               'wa_guest_portal_sessions'
             ];
+            wce06_tables text[] := ARRAY[
+              'wa_message_templates',
+              'wa_campaigns',
+              'wa_campaign_recipients',
+              'wa_meta_message_rates',
+              'wa_campaign_usage_ledger'
+            ];
           BEGIN
-            FOREACH table_name IN ARRAY table_names LOOP
+            FOREACH table_name IN ARRAY wce02_tables LOOP
               IF to_regclass(format('public.%I', table_name)) IS NULL THEN
                 RAISE EXCEPTION 'WCE-02 required table is missing: %', table_name;
               END IF;
@@ -150,22 +187,87 @@ jobs:
             ) THEN
               RAISE EXCEPTION 'WCE-02 tenant-scoped read policies are missing';
             END IF;
-            IF (SELECT attnotnull FROM pg_attribute WHERE attrelid = 'public.wa_messages'::regclass AND attname = 'provider_message_id') THEN
-              RAISE EXCEPTION 'Outbound message ledger still requires provider ID before send';
+
+            IF EXISTS (
+              SELECT 1 FROM pg_attribute
+              WHERE attrelid = 'public.wa_messages'::regclass
+                AND attname = 'client_request_id'
+                AND NOT attisdropped
+            ) THEN
+              IF (SELECT attnotnull FROM pg_attribute WHERE attrelid = 'public.wa_messages'::regclass AND attname = 'provider_message_id') THEN
+                RAISE EXCEPTION 'Outbound message ledger still requires provider ID before send';
+              END IF;
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_proc p
+                JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'wa_claim_outbound_messages'
+                  AND p.prosecdef AND 'search_path=public, pg_temp' = ANY (p.proconfig)
+              ) THEN
+                RAISE EXCEPTION 'Outbound claim RPC is missing or lacks a fixed search path';
+              END IF;
+              IF has_function_privilege('anon', 'public.wa_claim_outbound_messages(integer,integer,text)', 'EXECUTE')
+                OR has_function_privilege('authenticated', 'public.wa_claim_outbound_messages(integer,integer,text)', 'EXECUTE')
+                OR NOT has_function_privilege('service_role', 'public.wa_claim_outbound_messages(integer,integer,text)', 'EXECUTE') THEN
+                RAISE EXCEPTION 'Outbound claim RPC grants are not service-role-only';
+              END IF;
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE schemaname = 'public' AND tablename = 'wa_messages'
+                  AND indexname = 'wa_messages_outbound_request_uq'
+              ) THEN
+                RAISE EXCEPTION 'Outbound idempotency unique index is missing';
+              END IF;
             END IF;
-            IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.wa_messages'::regclass AND attname = 'client_request_id' AND NOT attisdropped) THEN
-              RAISE EXCEPTION 'Outbound idempotency key is missing';
-            END IF;
-            IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = 'wa_claim_outbound_messages' AND p.prosecdef AND 'search_path=public, pg_temp' = ANY (p.proconfig)) THEN
-              RAISE EXCEPTION 'Outbound claim RPC is missing or lacks a fixed search path';
-            END IF;
-            IF has_function_privilege('anon', 'public.wa_claim_outbound_messages(integer,integer,text)', 'EXECUTE')
-              OR has_function_privilege('authenticated', 'public.wa_claim_outbound_messages(integer,integer,text)', 'EXECUTE')
-              OR NOT has_function_privilege('service_role', 'public.wa_claim_outbound_messages(integer,integer,text)', 'EXECUTE') THEN
-              RAISE EXCEPTION 'Outbound claim RPC grants are not service-role-only';
-            END IF;
-            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='wa_messages' AND indexname='wa_messages_outbound_request_uq') THEN
-              RAISE EXCEPTION 'Outbound idempotency unique index is missing';
+
+            FOREACH table_name IN ARRAY ARRAY[
+              'restaurant_guest_customers',
+              'restaurant_guest_customer_consents'
+            ] LOOP
+              IF to_regclass(format('public.%I', table_name)) IS NOT NULL
+                AND NOT (
+                  SELECT c.relrowsecurity
+                  FROM pg_class c
+                  WHERE c.oid = to_regclass(format('public.%I', table_name))
+                ) THEN
+                RAISE EXCEPTION 'Guest CRM/consent table has RLS disabled: %', table_name;
+              END IF;
+            END LOOP;
+
+            IF to_regclass('public.wa_campaigns') IS NOT NULL THEN
+              FOREACH table_name IN ARRAY wce06_tables LOOP
+                IF to_regclass(format('public.%I', table_name)) IS NULL THEN
+                  RAISE EXCEPTION 'WCE-06 required table is missing: %', table_name;
+                END IF;
+                IF NOT (
+                  SELECT c.relrowsecurity
+                  FROM pg_class c
+                  WHERE c.oid = to_regclass(format('public.%I', table_name))
+                ) THEN
+                  RAISE EXCEPTION 'WCE-06 table has RLS disabled: %', table_name;
+                END IF;
+              END LOOP;
+
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_proc p
+                JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'wa_campaign_usage_ledger_immutable'
+                  AND p.prosecdef AND 'search_path=public, pg_temp' = ANY (p.proconfig)
+              ) THEN
+                RAISE EXCEPTION 'WCE-06 immutable usage evidence trigger function missing or unsafe';
+              END IF;
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_proc p
+                JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'wa_prepare_campaign_recipient'
+                  AND p.prosecdef AND 'search_path=public, pg_temp' = ANY (p.proconfig)
+              ) THEN
+                RAISE EXCEPTION 'WCE-06 atomic recipient preparation RPC missing or unsafe';
+              END IF;
+              IF has_function_privilege('anon', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text,text)', 'EXECUTE')
+                OR has_function_privilege('authenticated', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text,text)', 'EXECUTE')
+                OR NOT has_function_privilege('service_role', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text,text)', 'EXECUTE') THEN
+                RAISE EXCEPTION 'WCE-06 recipient preparation RPC grants are not service-role-only';
+              END IF;
             END IF;
           END $verify$;
           SQL
