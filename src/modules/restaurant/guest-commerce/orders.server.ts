@@ -68,7 +68,7 @@ export async function submitGuestCommerceOrder(
     throw new Error("Room-service checkout requires a verified guest-room assignment.");
   }
   if (session.orderType === "takeaway" &&
-      !["takeaway", "counter_service", "self_service"].includes(service.serviceMode)) {
+      !["takeaway", "counter_service", "quick_service", "self_service"].includes(service.serviceMode)) {
     throw new Error("This outlet no longer accepts collection orders.");
   }
   if (session.orderType === "dine_in" && !session.tableId) {
