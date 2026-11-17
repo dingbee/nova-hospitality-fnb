@@ -865,3 +865,86 @@ export async function accountWhatsAppCampaignMessageUsage(
 ) {
   return incrementUsage(admin, tenantId, "whatsapp_campaign_messages", { propertyId, amount });
 }
+
+/** Runs a bounded batch of due scheduled campaigns from the authenticated internal dispatcher. */
+export async function processDueWhatsAppCampaigns(
+  admin: Db,
+  options: { limit?: number; now?: Date } = {},
+) {
+  const limit = Math.min(Math.max(options.limit ?? 10, 1), 25);
+  const now = options.now ?? new Date();
+  const { data, error } = await admin
+    .from("wa_campaigns")
+    .select("id, tenant_id, property_id")
+    .eq("trigger_type", "scheduled")
+    .eq("status", "scheduled")
+    .lte("scheduled_at", now.toISOString())
+    .order("scheduled_at", { ascending: true })
+    .limit(limit);
+  if (error) throw new WhatsAppCampaignGovernanceError("scheduled_campaign_lookup_failed");
+
+  const results: Array<{ campaignId: string; status: "completed" | "paused"; error?: string }> = [];
+  for (const campaign of data ?? []) {
+    try {
+      await runWhatsAppCampaign(admin, {
+        tenantId: campaign.tenant_id,
+        propertyId: campaign.property_id,
+        campaignId: campaign.id,
+      });
+      results.push({ campaignId: campaign.id, status: "completed" });
+    } catch (error) {
+      results.push({
+        campaignId: campaign.id,
+        status: "paused",
+        error:
+          error instanceof WhatsAppCampaignGovernanceError
+            ? error.code
+            : "campaign_execution_failed",
+      });
+    }
+  }
+  return {
+    discovered: (data ?? []).length,
+    completed: results.filter((result) => result.status === "completed").length,
+    paused: results.filter((result) => result.status === "paused").length,
+    results,
+  };
+}
+
+/** Entry point for trusted domain events; the caller supplies server-derived tenant/property scope. */
+export async function triggerEventWhatsAppCampaigns(
+  admin: Db,
+  input: { tenantId: string; propertyId: string; eventKey: string; limit?: number },
+) {
+  const campaignIds = await findEventTriggeredWhatsAppCampaigns(admin, input);
+  const limit = Math.min(Math.max(input.limit ?? 10, 1), 25);
+  const results: Array<{ campaignId: string; status: "completed" | "paused"; error?: string }> = [];
+  for (const campaignId of campaignIds.slice(0, limit)) {
+    try {
+      await runWhatsAppCampaign(admin, {
+        tenantId: input.tenantId,
+        propertyId: input.propertyId,
+        campaignId,
+        eventKey: input.eventKey,
+      });
+      results.push({ campaignId, status: "completed" });
+    } catch (error) {
+      results.push({
+        campaignId,
+        status: "paused",
+        error:
+          error instanceof WhatsAppCampaignGovernanceError
+            ? error.code
+            : "campaign_execution_failed",
+      });
+    }
+  }
+  return {
+    discovered: campaignIds.length,
+    processed: results.length,
+    completed: results.filter((result) => result.status === "completed").length,
+    paused: results.filter((result) => result.status === "paused").length,
+    results,
+  };
+}
+
