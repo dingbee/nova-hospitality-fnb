@@ -120,5 +120,13 @@ jobs:
             IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='wa_campaign_usage_ledger_immutable' AND p.prosecdef AND 'search_path=public, pg_temp'=ANY(p.proconfig)) THEN
               RAISE EXCEPTION 'WCE-06 immutable usage evidence trigger function missing or unsafe';
             END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='wa_prepare_campaign_recipient' AND p.prosecdef AND 'search_path=public, pg_temp'=ANY(p.proconfig)) THEN
+              RAISE EXCEPTION 'WCE-06 atomic recipient preparation RPC missing or unsafe';
+            END IF;
+            IF has_function_privilege('anon', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text)', 'EXECUTE')
+              OR has_function_privilege('authenticated', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text)', 'EXECUTE')
+              OR NOT has_function_privilege('service_role', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text)', 'EXECUTE') THEN
+              RAISE EXCEPTION 'WCE-06 recipient preparation RPC grants are not service-role-only';
+            END IF;
           END $verify$;
           SQL
