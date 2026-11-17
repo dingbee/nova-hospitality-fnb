@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase rows are validated at this boundary. */
 import { assertEntitled } from "@/modules/commercial/resolver.server";
 import { incrementUsage } from "@/modules/commercial/quota.server";
+import { hasWhatsAppGuestMarketingConsent } from "./guest-crm.server";
 import { getIntegrationSecret } from "@/modules/api-platform/integrations.server";
 import {
   createWabaMessageTemplate,
@@ -12,6 +13,8 @@ type Campaign = {
   id: string;
   tenant_id: string;
   property_id: string;
+  location_id: string;
+  binding_id: string;
   template_id: string;
   status: string;
   trigger_type: "scheduled" | "event";
@@ -48,7 +51,7 @@ export async function assertWhatsAppCampaignReady(
   const { data: campaign, error: campaignError } = await admin
     .from("wa_campaigns")
     .select(
-      "id, tenant_id, property_id, template_id, status, trigger_type, scheduled_at, daily_cap, total_cap",
+      "id, tenant_id, property_id, location_id, binding_id, template_id, status, trigger_type, scheduled_at, daily_cap, total_cap",
     )
     .eq("id", campaignId)
     .eq("tenant_id", tenantId)
@@ -244,6 +247,161 @@ export async function syncWhatsAppMessageTemplateStatuses(
     updated++;
   }
   return { providerTemplates: providerTemplates.length, updated };
+}
+
+/** Rechecks consent immediately before queuing a Meta-approved campaign template into the canonical WCE-02 outbox. */
+export async function queueWhatsAppCampaignRecipient(
+  admin: Db,
+  input: {
+    tenantId: string;
+    propertyId: string;
+    campaignId: string;
+    recipientId: string;
+    eventKey?: string | null;
+  },
+) {
+  const { campaign, template } = await assertWhatsAppCampaignReady(
+    admin,
+    input.tenantId,
+    input.propertyId,
+    input.campaignId,
+  );
+  const { data: recipient, error: recipientError } = await admin
+    .from("wa_campaign_recipients")
+    .select("id, guest_customer_id, state")
+    .eq("id", input.recipientId)
+    .eq("tenant_id", input.tenantId)
+    .eq("campaign_id", campaign.id)
+    .maybeSingle();
+  if (recipientError || !recipient)
+    throw new WhatsAppCampaignGovernanceError("campaign_recipient_not_found");
+  if (recipient.state === "queued" || recipient.state === "sent")
+    return { queued: true as const, duplicate: true as const };
+  if (recipient.state !== "eligible")
+    return { queued: false as const, reason: String(recipient.state) };
+
+  const { data: guest, error: guestError } = await admin
+    .from("restaurant_guest_customers")
+    .select("id, whatsapp_user_id, status")
+    .eq("id", recipient.guest_customer_id)
+    .eq("tenant_id", input.tenantId)
+    .maybeSingle();
+  if (guestError || !guest || !guest.whatsapp_user_id)
+    throw new WhatsAppCampaignGovernanceError("campaign_guest_unavailable");
+  if (guest.status === "blocked") {
+    await admin.from("wa_campaign_recipients").update({
+      state: "suppressed",
+      suppression_reason: "guest_blocked",
+    }).eq("id", recipient.id).eq("tenant_id", input.tenantId);
+    return { queued: false as const, reason: "guest_blocked" };
+  }
+  if (
+    template.category === "marketing" &&
+    !(await hasWhatsAppGuestMarketingConsent(admin, input.tenantId, recipient.guest_customer_id))
+  ) {
+    await admin.from("wa_campaign_recipients").update({
+      state: "suppressed",
+      suppression_reason: "marketing_consent_revoked",
+    }).eq("id", recipient.id).eq("tenant_id", input.tenantId);
+    return { queued: false as const, reason: "marketing_consent_revoked" };
+  }
+
+  const { data: binding, error: bindingError } = await admin
+    .from("wa_phone_number_bindings")
+    .select("id, status")
+    .eq("id", campaign.binding_id)
+    .eq("tenant_id", input.tenantId)
+    .eq("property_id", input.propertyId)
+    .eq("location_id", campaign.location_id)
+    .maybeSingle();
+  if (bindingError || !binding || binding.status !== "active")
+    throw new WhatsAppCampaignGovernanceError("campaign_binding_unavailable");
+
+  const { data: existingConversation, error: conversationError } = await admin
+    .from("wa_conversations")
+    .select("id")
+    .eq("binding_id", campaign.binding_id)
+    .eq("tenant_id", input.tenantId)
+    .eq("property_id", input.propertyId)
+    .eq("location_id", campaign.location_id)
+    .eq("wa_user_id", guest.whatsapp_user_id)
+    .in("status", ["open", "human_handoff"])
+    .order("last_message_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (conversationError) throw new WhatsAppCampaignGovernanceError("campaign_conversation_lookup_failed");
+  let conversationId = existingConversation?.id as string | undefined;
+  if (!conversationId) {
+    const { data: created, error: createError } = await admin
+      .from("wa_conversations")
+      .insert({
+        tenant_id: input.tenantId,
+        property_id: input.propertyId,
+        location_id: campaign.location_id,
+        binding_id: campaign.binding_id,
+        wa_user_id: guest.whatsapp_user_id,
+        guest_customer_id: recipient.guest_customer_id,
+        status: "open",
+        last_message_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+    if (createError || !created) throw new WhatsAppCampaignGovernanceError("campaign_conversation_create_failed");
+    conversationId = created.id;
+  }
+
+  const clientRequestId = "wa-campaign:" + campaign.id + ":" + recipient.guest_customer_id;
+  const { data: message, error: messageError } = await admin
+    .from("wa_messages")
+    .insert({
+      tenant_id: input.tenantId,
+      property_id: input.propertyId,
+      location_id: campaign.location_id,
+      conversation_id: conversationId,
+      provider_message_id: null,
+      client_request_id: clientRequestId,
+      direction: "outbound",
+      message_type: "template",
+      status: "queued",
+      content: null,
+      payload: {
+        template: {
+          name: template.template_name,
+          language: template.language,
+          components: [],
+        },
+        campaign_id: campaign.id,
+        campaign_recipient_id: recipient.id,
+        template_id: template.id,
+      },
+      next_attempt_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+  let messageId = message?.id as string | undefined;
+  if (messageError?.code === "23505") {
+    const { data: existingMessage, error: existingError } = await admin
+      .from("wa_messages")
+      .select("id")
+      .eq("tenant_id", input.tenantId)
+      .eq("client_request_id", clientRequestId)
+      .maybeSingle();
+    if (existingError || !existingMessage)
+      throw new WhatsAppCampaignGovernanceError("campaign_outbox_idempotency_lookup_failed");
+    messageId = existingMessage.id;
+  } else if (messageError || !messageId) {
+    throw new WhatsAppCampaignGovernanceError("campaign_outbox_persistence_failed");
+  }
+
+  const { error: recipientUpdateError } = await admin
+    .from("wa_campaign_recipients")
+    .update({ state: "queued", message_id: messageId, suppression_reason: null })
+    .eq("id", recipient.id)
+    .eq("tenant_id", input.tenantId)
+    .eq("state", "eligible");
+  if (recipientUpdateError)
+    throw new WhatsAppCampaignGovernanceError("campaign_recipient_queue_state_failed");
+  return { queued: true as const, duplicate: Boolean(messageError?.code === "23505"), messageId };
 }
 
 /** Resolves the current effective Meta market/category rate without caching or rewriting historical rates. */
