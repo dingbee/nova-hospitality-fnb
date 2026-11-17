@@ -76,7 +76,7 @@ function makeFakeSupabase(options: { itemProperty?: string | null; locationScope
     currency: "TZS",
     location_id: LOCATION,
     property_id: options.itemProperty === undefined ? PROPERTY : options.itemProperty,
-    unit_id: null,
+    unit_id: "unit-stock",
     content_per_stock_unit: null,
     content_unit_id: null,
     current_quantity: 1000,
