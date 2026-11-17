@@ -173,6 +173,34 @@ export async function locationNameMap(sb: Sb, tenantId: string): Promise<Map<str
   }));
 }
 
+/** Require inventory postings to target active, tenant-owned storage locations only. */
+export async function assertActiveStorageLocations(
+  sb: Sb,
+  tenantId: string,
+  ...locationIds: Array<string | null | undefined>
+) {
+  const ids = [...new Set(locationIds.filter(Boolean) as string[])];
+  if (ids.length === 0) {
+    throw new Error("An active inventory storage location is required.");
+  }
+  const { data, error } = await sb
+    .from("restaurant_locations")
+    .select("id, is_storage, status")
+    .eq("tenant_id", tenantId)
+    .in("id", ids);
+  if (error) throw new Error(error.message);
+  const byId = new Map(((data ?? []) as any[]).map((row) => [row.id, row]));
+  if (byId.size !== ids.length) {
+    throw new Error("Forbidden — location does not belong to this tenant.");
+  }
+  for (const id of ids) {
+    const location = byId.get(id);
+    if (location?.is_storage !== true || location?.status !== "active") {
+      throw new Error("Inventory movements require an active storage location.");
+    }
+  }
+}
+
 /** Fail fast when a caller names a location outside its own tenant. */
 export async function assertLocationInTenant(sb: Sb, tenantId: string, ...locationIds: Array<string | null | undefined>) {
   const ids = locationIds.filter(Boolean) as string[];
