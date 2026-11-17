@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Sb } from "../core/access.server";
 
 const mocks = vi.hoisted(() => ({
   assertCapability: vi.fn().mockResolvedValue(undefined),
@@ -33,22 +34,34 @@ function makeSupabase() {
     status: "submitted",
     reference: "REQ-001",
   };
-  const writes: any[] = [];
-  function builder(table: string) {
-    const api: any = {
+  const writes: unknown[] = [];
+  type ListResult = { data: unknown[]; error: null };
+  type Query = PromiseLike<ListResult> & {
+    select: (...args: unknown[]) => Query;
+    eq: (...args: unknown[]) => Query;
+    order: (...args: unknown[]) => Query;
+    update: (value: unknown) => Query;
+    single: () => Promise<{ data: typeof requisition | null; error: null }>;
+  };
+  function builder(table: string): Query {
+    const api: Query = {
       select: () => api,
       eq: () => api,
       order: () => api,
-      update: (value: any) => {
+      update: (value) => {
         writes.push(value);
         return api;
       },
-      single: async () => ({ data: table === "restaurant_requisitions" ? requisition : null, error: null }),
-      then: async (resolve: any) => resolve({ data: [], error: null }),
+      single: async () => ({
+        data: table === "restaurant_requisitions" ? requisition : null,
+        error: null,
+      }),
+      then: (onfulfilled, onrejected) =>
+        Promise.resolve({ data: [], error: null }).then(onfulfilled, onrejected),
     };
     return api;
   }
-  return { sb: { from: builder }, writes };
+  return { sb: { from: builder } as unknown as Sb, writes };
 }
 
 describe("requisition maker-checker and endpoint scope", () => {
@@ -59,7 +72,7 @@ describe("requisition maker-checker and endpoint scope", () => {
         tenantId: TENANT,
         requisitionId: REQUISITION,
         lines: [],
-      } as any),
+      } as Parameters<typeof approveRequisition>[2]),
     ).rejects.toThrow(/Separation of duties/);
 
     expect(mocks.assertCapability).toHaveBeenNthCalledWith(
