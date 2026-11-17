@@ -5,6 +5,7 @@ import {
   getWhatsAppGuestCustomerHistory,
   parseWhatsAppConsentCommand,
   recordWhatsAppGuestConsent,
+  requestWhatsAppHumanHandoff,
 } from "./guest-crm.server";
 
 type Db = any;
@@ -32,6 +33,7 @@ export function classifyGuestCommerceIntent(value: unknown): GuestCommerceIntent
     return "menu";
   if (/^(order|oda|place order|buy)$/.test(normalised)) return "order";
   if (/^(help|msaada|support)$/.test(normalised)) return "help";
+  if (/^(staff|agent|human|representative|mtu)$/.test(normalised)) return "handoff";
   return "unknown";
 }
 
@@ -44,6 +46,9 @@ function replyText(intent: GuestCommerceIntent, url?: string): string {
   }
   if (intent === "unsubscribe") {
     return "Umeondolewa kwenye matangazo ya WhatsApp. Hutapokea tena ofa za masoko.\nYou have been unsubscribed from WhatsApp marketing messages.";
+  }
+  if (intent === "handoff") {
+    return "Timu yetu itajiunga na mazungumzo haya hivi karibuni.\nA team member has been requested and will join this conversation shortly.";
   }
   if (!url) {
     return "Karibu! Reply MENU to explore the menu and order securely through the restaurant's Guest Portal.\nWelcome! Reply MENU to explore the menu and order securely through the restaurant's Guest Portal.";
@@ -126,6 +131,17 @@ export async function handleWhatsAppGuestCommerceMessage(
   if (priorReplyError) throw new Error("whatsapp_commerce_idempotency_lookup_failed");
   if (priorReply) return { handled: true as const, duplicate: true as const };
 
+  if (intent === "handoff") {
+    await requestWhatsAppHumanHandoff(admin, {
+      tenantId: event.tenant_id,
+      propertyId: event.property_id,
+      locationId: event.location_id,
+      conversationId,
+      sourceEventId: event.id,
+      reason: "Guest requested a human team member via WhatsApp.",
+    });
+  }
+
   if (intent === "subscribe" || intent === "unsubscribe") {
     if (!conversation.guest_customer_id) throw new Error("whatsapp_guest_customer_unavailable");
     await recordWhatsAppGuestConsent(admin, {
@@ -151,6 +167,8 @@ export async function handleWhatsAppGuestCommerceMessage(
     });
     portalUrl = session.portalUrl;
     content = replyText(intent, portalUrl);
+  } else if (intent === "unknown" && conversation.status === "human_handoff") {
+    content = "A team member is handling this conversation. Please wait for their reply.\nMjumbe wa timu yetu anashughulikia mazungumzo haya. Tafadhali subiri.";
   } else if (intent === "unknown") {
     const { data: historyRows, error: historyError } = await admin
       .from("wa_messages")
