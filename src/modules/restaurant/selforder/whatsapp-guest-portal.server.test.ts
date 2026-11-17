@@ -23,6 +23,9 @@ const session = {
   propertyId: "property-internal",
   locationId: "outlet-internal",
   bindingId: "binding-internal",
+  tableId: null,
+  sourceChannel: "whatsapp" as const,
+  orderType: "takeaway" as const,
   currency: "TZS",
   expiresAt: "2026-11-16T22:00:00.000Z",
 };
@@ -84,6 +87,9 @@ describe("WhatsApp Guest Portal page read model", () => {
       propertyName: "Dar Property",
       outletName: "City Centre",
       currency: "TZS",
+      sourceChannel: "whatsapp",
+      orderType: "takeaway",
+      canCheckout: true,
       supportPhone: "+255700000000",
       categories: [{ id: "category-1", name: "Mains" }],
       items: [{ id: "item-1", name: "Pilau", price: 12000 }],
@@ -99,6 +105,26 @@ describe("WhatsApp Guest Portal page read model", () => {
       session.tenantId,
       { propertyId: session.propertyId, locationId: session.locationId },
     );
+  });
+
+  it("renders a website commerce session without requiring WhatsApp binding data", async () => {
+    const websiteSession = {
+      ...session,
+      bindingId: null,
+      sourceChannel: "website" as const,
+    };
+    mocks.resolveSession.mockResolvedValue(websiteSession);
+    mocks.fetchSellableCatalog.mockResolvedValue({ categories: [], items: [] });
+    const admin = makeAdmin({ wa_phone_number_bindings: null });
+
+    const result = await getWhatsAppGuestPortalPage(admin, "a".repeat(43));
+
+    expect(result).toMatchObject({
+      sourceChannel: "website",
+      orderType: "takeaway",
+      canCheckout: true,
+      supportPhone: null,
+    });
   });
 
   it("rejects expired or invalid session tokens before querying tenant data", async () => {
