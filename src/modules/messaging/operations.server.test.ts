@@ -61,4 +61,17 @@ describe("WhatsApp operations authorization", () => {
     ).rejects.toThrow("guest read required");
     expect(db.from).not.toHaveBeenCalled();
   });
+  it("does not let platform-admin status substitute for tenant membership on tenant APIs", async () => {
+    vi.mocked(getTenantScope).mockResolvedValue({
+      tenantId: "tenant-1",
+      platformAdmin: true,
+      grants: [],
+    });
+    const db = { from: vi.fn() };
+    await expect(
+      listWhatsAppInbox(db, "platform-admin", { tenantId: "tenant-1" }),
+    ).rejects.toThrow("tenant_membership_required");
+    expect(db.from).not.toHaveBeenCalled();
+  });
+
 });
