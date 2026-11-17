@@ -137,9 +137,7 @@ export async function submitGuestCommerceOrder(
   }));
 
   const paymentTiming = resolveGuestPaymentTiming(effectiveSettings);
-  let order;
-  try {
-    order = await createGuestOrder(admin, {
+  const order = await createGuestOrder(admin, {
       tenantId: session.tenantId,
       propertyId: session.propertyId,
       locationId: session.locationId,
@@ -154,9 +152,6 @@ export async function submitGuestCommerceOrder(
       clientRequestId: input.clientRequestId,
       guestSessionId,
     });
-  } catch (error) {
-    throw error;
-  }
 
   if (order.idempotent) {
     const { data: winner, error: winnerError } = await admin
