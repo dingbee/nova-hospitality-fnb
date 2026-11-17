@@ -291,3 +291,37 @@ describe("guest reservation cancellation", () => {
     expect(rows.restaurant_table_reservations[0].status).toBe("cancelled");
   });
 });
+
+
+describe("reservation/order linkage", () => {
+  it("prevents a guest from cancelling a reservation with an active order", async () => {
+    const rows = {
+      ...baseRows(),
+      restaurant_table_reservations: [
+        {
+          id: "reservation-2",
+          tenant_id: tenantId,
+          property_id: propertyId,
+          location_id: locationId,
+          guest_customer_id: guestCustomerId,
+          status: "confirmed",
+          starts_at: new Date(Date.now() + 48 * 60 * 60_000).toISOString(),
+        },
+      ],
+      restaurant_orders: [
+        {
+          id: "order-1",
+          tenant_id: tenantId,
+          guest_reservation_id: "reservation-2",
+          status: "open",
+        },
+      ],
+    };
+    await expect(
+      cancelGuestTableReservation(reservationDb(rows) as any, {
+        token,
+        reservationId: "reservation-2",
+      }),
+    ).rejects.toThrow("An order is already linked");
+  });
+});
