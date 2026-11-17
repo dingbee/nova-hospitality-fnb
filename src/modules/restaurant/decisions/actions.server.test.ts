@@ -127,12 +127,16 @@ function makeFakeSupabase(opts: {
     ...(opts.existingRequests ?? []).map((r) => ({ ...r })),
   ];
   const items: Record<string, any>[] = (opts.existingItems ?? []).map((i) => ({ ...i }));
+  const decisionFacts = (opts.decision?.context as any)?.finding?.facts as
+    | Record<string, unknown>
+    | undefined;
   const inventoryItem = opts.inventoryItem ?? {
     id: INVENTORY_ITEM_ID,
     tenant_id: TENANT_A,
     property_id: null,
     location_id: null,
-    current_quantity: 5,
+    current_quantity:
+      typeof decisionFacts?.currentQuantity === "number" ? decisionFacts.currentQuantity : 5,
     status: "active",
   };
   const priceReviews: Record<string, any>[] = (opts.existingPriceReviews ?? []).map((r) => ({
@@ -1070,6 +1074,9 @@ describe("restaurant.inventory.replenish_review — I5", () => {
       status: "executed",
       executionResult: "procurement_request_created",
       procurementRequestStatus: "draft",
+    });
+    expect(assertEntitled).toHaveBeenCalledWith(fake.supabase, TENANT_A, "inventory_agent", {
+      propertyId: null,
     });
     const lineInsert = fake.calls.find(
       (c) => c.table === "restaurant_purchase_request_items" && c.op === "insert",
