@@ -41,6 +41,7 @@ export async function raiseVariance(sb: Sb, userId: string, draft: VarianceDraft
     .from("restaurant_procurement_variances")
     .insert({
       tenant_id: draft.tenantId,
+      created_by: userId,
       property_id: draft.propertyId ?? null,
       location_id: draft.locationId ?? null,
       variance_type: draft.varianceType,
@@ -115,14 +116,20 @@ export async function listVariances(sb: Sb, userId: string, input: z.infer<typeo
 }
 
 export async function resolveVariance(sb: Sb, userId: string, input: z.infer<typeof resolveVarianceSchema>) {
-  await assertCapability(sb, userId, input.tenantId, "variance.manage");
   const { data: before } = await sb
     .from("restaurant_procurement_variances")
-    .select("id, status, label")
+    .select("id, status, label, created_by, property_id, location_id")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.id)
     .single();
   if (!before) throw new Error("Variance not found.");
+  await assertCapability(sb, userId, input.tenantId, "variance.manage", {
+    propertyId: before.property_id ?? null,
+    locationId: before.location_id ?? null,
+  });
+  if (before.created_by === userId) {
+    throw new Error("Separation of duties — the user who raised this variance cannot resolve it.");
+  }
 
   const { data, error } = await sb
     .from("restaurant_procurement_variances")
