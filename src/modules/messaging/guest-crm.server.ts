@@ -154,7 +154,7 @@ export async function getWhatsAppGuestCustomerHistory(
   const [
     { data: orders, error: orderError },
     marketingConsent,
-    { data: loyaltyEntries, error: loyaltyError },
+    loyaltyPointsBalance,
   ] = await Promise.all([
     admin
       .from("restaurant_orders")
@@ -164,14 +164,12 @@ export async function getWhatsAppGuestCustomerHistory(
       .order("opened_at", { ascending: false })
       .limit(10),
     hasWhatsAppGuestMarketingConsent(admin, tenantId, guestCustomerId),
-    admin
-      .from("restaurant_guest_loyalty_ledger")
-      .select("points_delta")
-      .eq("tenant_id", tenantId)
-      .eq("guest_customer_id", guestCustomerId),
+    admin.rpc("restaurant_guest_loyalty_balance", {
+      _tenant_id: tenantId,
+      _guest_customer_id: guestCustomerId,
+    }),
   ]);
   if (orderError) throw new Error("Guest CRM order history could not be loaded.");
-  if (loyaltyError) throw new Error("Guest loyalty balance could not be loaded.");
   const orderIds = (orders ?? []).map((order: any) => order.id);
   const { data: lines, error: linesError } = orderIds.length
     ? await admin
@@ -199,10 +197,7 @@ export async function getWhatsAppGuestCustomerHistory(
       items: linesByOrder.get(order.id) ?? [],
     })),
     whatsappMarketingConsent: marketingConsent,
-    loyaltyPointsBalance: (loyaltyEntries ?? []).reduce(
-      (sum: number, entry: any) => sum + Number(entry.points_delta ?? 0),
-      0,
-    ),
+    loyaltyPointsBalance: Number(loyaltyPointsBalance ?? 0),
   };
 }
 
