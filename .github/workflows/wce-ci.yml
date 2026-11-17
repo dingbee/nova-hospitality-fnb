@@ -3,7 +3,10 @@ name: LexiBite WCE Verification
 on:
   push:
     branches:
-      - "wce/wce-03-08-continuation"
+      - "wce/wce-03-08-stack"
+  pull_request:
+    branches:
+      - "wce/wce-02-messaging-sessions"
   workflow_dispatch:
 
 permissions:
@@ -45,8 +48,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin main
-          files="$(git diff --name-only origin/main...HEAD -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
+          git fetch origin wce/wce-02-messaging-sessions
+          files="$(git diff --name-only origin/wce/wce-02-messaging-sessions...HEAD -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
           if [ -n "$files" ]; then bunx eslint $files; fi
       - name: WCE tests
         run: >-
