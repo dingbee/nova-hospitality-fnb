@@ -124,15 +124,16 @@ export function WhatsAppOperationsCentre() {
     void qc.invalidateQueries({ queryKey: ["whatsapp", "usage"] });
   };
   const createTemplate = useAdminMutation({
-    mutationFn: () => createTemplateFn({
+    mutationFn: () =>
+      createTemplateFn({
         data: {
           tenantId: tenantId!,
-        propertyId,
+          propertyId,
           templateName,
           language: templateLanguage,
-        category: templateCategory,
+          category: templateCategory,
         },
-    }),
+      }),
     successMessage: "Draft template created",
     onSuccess: () => {
       setTemplateName("");
@@ -140,25 +141,26 @@ export function WhatsAppOperationsCentre() {
     },
   });
   const createCampaign = useAdminMutation({
-    mutationFn: () => createCampaignFn({
-      data: {
+    mutationFn: () =>
+      createCampaignFn({
+        data: {
           tenantId: tenantId!,
           propertyId: propertyId!,
           locationId: campaignLocationId,
-        bindingId: campaignBindingId,
+          bindingId: campaignBindingId,
           marketCode: campaignMarketCode.toUpperCase(),
-        templateId: campaignTemplateId,
+          templateId: campaignTemplateId,
           name: campaignName,
           triggerType: campaignTriggerType,
           scheduledAt:
             campaignTriggerType === "scheduled"
               ? new Date(campaignScheduledAt).toISOString()
               : undefined,
-        eventKey: campaignTriggerType === "event" ? campaignEventKey : undefined,
+          eventKey: campaignTriggerType === "event" ? campaignEventKey : undefined,
           preferredLanguage: campaignLanguage || undefined,
           dailyCap: campaignDailyCap ? Number(campaignDailyCap) : null,
-        totalCap: campaignTotalCap ? Number(campaignTotalCap) : null,
-      },
+          totalCap: campaignTotalCap ? Number(campaignTotalCap) : null,
+        },
       }),
     successMessage: "Campaign draft created",
     onSuccess: () => {
@@ -167,16 +169,18 @@ export function WhatsAppOperationsCentre() {
     },
   });
   const activateCampaign = useAdminMutation({
-    mutationFn: (campaignId: string) => activateCampaignFn({
-      data: { tenantId: tenantId!, propertyId: propertyId!, campaignId },
-    }),
+    mutationFn: (campaignId: string) =>
+      activateCampaignFn({
+        data: { tenantId: tenantId!, propertyId: propertyId!, campaignId },
+      }),
     successMessage: "Campaign activated",
     onSuccess: invalidateWorkspace,
   });
   const pauseCampaign = useAdminMutation({
-    mutationFn: (campaignId: string) => pauseCampaignFn({
+    mutationFn: (campaignId: string) =>
+      pauseCampaignFn({
         data: { tenantId: tenantId!, propertyId: propertyId!, campaignId },
-    }),
+      }),
     successMessage: "Campaign paused",
     onSuccess: invalidateWorkspace,
   });
@@ -336,7 +340,8 @@ export function WhatsAppOperationsCentre() {
                 </ol>
               )}
               <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-                <ShieldCheck className="size-3.5" /> Read-only operational view. Replies continue through the canonical, governed outbox.
+                <ShieldCheck className="size-3.5" /> Read-only operational view. Replies continue
+                through the canonical, governed outbox.
               </p>
             </SectionCard>
           </div>
@@ -429,7 +434,8 @@ export function WhatsAppOperationsCentre() {
                   value={templateLanguage}
                   onChange={(event) => setTemplateLanguage(event.target.value)}
                 >
-                  <option value="en">English</option><option value="sw">Swahili</option>
+                  <option value="en">English</option>
+                  <option value="sw">Swahili</option>
                 </select>
                 <select
                   className="h-9 rounded-md border bg-background px-2 text-sm"
@@ -553,7 +559,8 @@ export function WhatsAppOperationsCentre() {
                     setCampaignTriggerType(event.target.value as typeof campaignTriggerType)
                   }
                 >
-                  <option value="scheduled">Scheduled</option><option value="event">Event triggered</option>
+                  <option value="scheduled">Scheduled</option>
+                  <option value="event">Event triggered</option>
                 </select>
                 {campaignTriggerType === "scheduled" ? (
                   <input
