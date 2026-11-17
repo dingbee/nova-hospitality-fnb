@@ -15,6 +15,7 @@ type Campaign = {
   property_id: string;
   location_id: string;
   binding_id: string;
+  market_code: string;
   template_id: string;
   status: string;
   trigger_type: "scheduled" | "event";
@@ -54,7 +55,7 @@ export async function assertWhatsAppCampaignReady(
   const { data: campaign, error: campaignError } = await admin
     .from("wa_campaigns")
     .select(
-      "id, tenant_id, property_id, location_id, binding_id, template_id, status, trigger_type, event_key, audience_filter, scheduled_at, daily_cap, total_cap, message_components",
+      "id, tenant_id, property_id, location_id, binding_id, market_code, template_id, status, trigger_type, event_key, audience_filter, scheduled_at, daily_cap, total_cap, message_components",
     )
     .eq("id", campaignId)
     .eq("tenant_id", tenantId)
@@ -130,6 +131,8 @@ async function resolveWhatsAppPropertyCredentials(
   tenantId: string,
   propertyId: string,
 ) {
+  if (!/^[A-Z]{2,3}$/.test(input.marketCode.toUpperCase()))
+    throw new WhatsAppCampaignGovernanceError("campaign_market_code_invalid");
   const { data: binding, error: bindingError } = await admin
     .from("wa_phone_number_bindings")
     .select("id, phone_number_id, integration_id, waba_id, status")
@@ -259,6 +262,7 @@ export async function createWhatsAppCampaign(
     propertyId: string;
     locationId: string;
     bindingId: string;
+    marketCode: string;
     templateId: string;
     name: string;
     triggerType: "scheduled" | "event";
@@ -322,6 +326,7 @@ export async function createWhatsAppCampaign(
       property_id: input.propertyId,
       location_id: input.locationId,
       binding_id: input.bindingId,
+      market_code: input.marketCode.toUpperCase(),
       template_id: input.templateId,
       name: input.name.trim(),
       trigger_type: input.triggerType,
@@ -611,6 +616,12 @@ export async function queueWhatsAppCampaignRecipient(
     conversationId = created.id;
   }
 
+  const metaRate = await resolveEffectiveMetaMessageRate(
+    admin,
+    campaign.market_code,
+    template.category,
+  );
+  await accountWhatsAppCampaignMessageUsage(admin, input.tenantId, input.propertyId, 1);
   const clientRequestId = "wa-campaign:" + campaign.id + ":" + recipient.guest_customer_id;
   const { data: message, error: messageError } = await admin
     .from("wa_messages")
@@ -634,6 +645,13 @@ export async function queueWhatsAppCampaignRecipient(
         campaign_id: campaign.id,
         campaign_recipient_id: recipient.id,
         template_id: template.id,
+        campaign_usage: {
+          rate_id: metaRate.id,
+          market_code: metaRate.marketCode,
+          template_category: metaRate.category.toLowerCase(),
+          unit_price: metaRate.unitPrice,
+          currency: metaRate.currency,
+        },
       },
       next_attempt_at: new Date().toISOString(),
     })
