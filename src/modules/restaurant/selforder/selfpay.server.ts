@@ -128,6 +128,8 @@ async function orderStatusByTenantAndId(sb: Sb, tenantId: string, orderId: strin
  */
 export type PaymentProviderAdapter = {
   name: string;
+  /** Validates the stored provider credentials without creating a payment. */
+  testConnection?(): Promise<void>;
   /**
    * Starts a hosted checkout for a server-derived amount/currency. Returns
    * where to send the payer — nothing is recorded as paid by this call.
