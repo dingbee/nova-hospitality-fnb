@@ -87,6 +87,9 @@ function query(table: string) {
       filters.push([col, val]);
       return api;
     },
+    or() {
+      return api;
+    },
     in(col: string, vals: any[]) {
       filters.push([col, { __in: vals }]);
       return api;
