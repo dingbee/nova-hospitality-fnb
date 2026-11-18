@@ -17,12 +17,14 @@ const bindSchema = z.object({
 function getVerifiedPhoneAssets(config: Record<string, any>) {
   if (Array.isArray(config.phoneNumbers)) return config.phoneNumbers;
   if (typeof config.phoneNumberId === "string") {
-    return [{
-      id: config.phoneNumberId,
-      displayPhoneNumber: config.displayPhoneNumber ?? null,
-      verifiedName: config.verifiedName ?? null,
-      qualityRating: config.qualityRating ?? null,
-    }];
+    return [
+      {
+        id: config.phoneNumberId,
+        displayPhoneNumber: config.displayPhoneNumber ?? null,
+        verifiedName: config.verifiedName ?? null,
+        qualityRating: config.qualityRating ?? null,
+      },
+    ];
   }
   return [];
 }
@@ -58,7 +60,9 @@ export async function bindMetaWhatsAppPhoneNumber(
   const assets = getVerifiedPhoneAssets(integration.config ?? {});
   const phone = assets.find((asset: Record<string, any>) => asset.id === input.phoneNumberId);
   if (!phone || typeof integration.config?.wabaId !== "string") {
-    throw new Error("The selected receiving number is not part of the server-verified Meta signup.");
+    throw new Error(
+      "The selected receiving number is not part of the server-verified Meta signup.",
+    );
   }
 
   const { data: location, error: locationError } = await sb
@@ -75,7 +79,9 @@ export async function bindMetaWhatsAppPhoneNumber(
     location.is_storage ||
     !["outlet", "restaurant", "bar"].includes(location.location_type)
   ) {
-    throw new Error("The selected location is not an active customer-facing outlet in this property.");
+    throw new Error(
+      "The selected location is not an active customer-facing outlet in this property.",
+    );
   }
 
   const { data: existing, error: existingError } = await sb
@@ -92,7 +98,9 @@ export async function bindMetaWhatsAppPhoneNumber(
       existing.location_id !== input.locationId ||
       existing.integration_id !== input.integrationId
     ) {
-      throw new Error("This WhatsApp receiving number is already assigned to another outlet or property.");
+      throw new Error(
+        "This WhatsApp receiving number is already assigned to another outlet or property.",
+      );
     }
     const { error } = await sb
       .from("wa_phone_number_bindings")
@@ -107,7 +115,11 @@ export async function bindMetaWhatsAppPhoneNumber(
       entityType: "wa_phone_number_binding",
       entityId: existing.id,
       tenantId: input.tenantId,
-      after: { propertyId: input.propertyId, locationId: input.locationId, phoneNumberId: input.phoneNumberId },
+      after: {
+        propertyId: input.propertyId,
+        locationId: input.locationId,
+        phoneNumberId: input.phoneNumberId,
+      },
     });
     return { id: existing.id, phoneNumberId: input.phoneNumberId, locationId: input.locationId };
   }
@@ -168,7 +180,9 @@ export async function listMetaWhatsAppPhoneBindings(
   });
   const { data, error } = await sb
     .from("wa_phone_number_bindings")
-    .select("id, location_id, integration_id, waba_id, phone_number_id, display_phone_number, verified_name, quality_rating, status, created_at")
+    .select(
+      "id, location_id, integration_id, waba_id, phone_number_id, display_phone_number, verified_name, quality_rating, status, created_at",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("property_id", input.propertyId)
     .order("created_at", { ascending: false });
@@ -195,7 +209,12 @@ export async function disableMetaWhatsAppIntegration(
     .eq("tenant_id", input.tenantId)
     .eq("property_id", input.propertyId)
     .maybeSingle();
-  if (lookupError || !integration || integration.provider !== "meta-whatsapp" || integration.channel_key !== "whatsapp") {
+  if (
+    lookupError ||
+    !integration ||
+    integration.provider !== "meta-whatsapp" ||
+    integration.channel_key !== "whatsapp"
+  ) {
     throw new Error("WhatsApp integration not found in this tenant/property scope.");
   }
 
@@ -213,7 +232,10 @@ export async function disableMetaWhatsAppIntegration(
     .eq("integration_id", input.integrationId)
     .eq("tenant_id", input.tenantId)
     .eq("property_id", input.propertyId);
-  if (bindingError) throw new Error("WhatsApp integration disabled, but receiving-number bindings need reconciliation.");
+  if (bindingError)
+    throw new Error(
+      "WhatsApp integration disabled, but receiving-number bindings need reconciliation.",
+    );
 
   await writeCommercialAudit(sb, {
     actorId: userId,
