@@ -133,17 +133,18 @@ describe("WhatsApp Guest Portal session security", () => {
     const token = "a".repeat(43);
     const { admin, rpc } = makeAdmin();
     rpc.mockResolvedValueOnce({
-      data: [{
+      data: [
+        {
           session_id: "session-1",
-        tenant_id: scope.tenantId,
-        property_id: scope.propertyId,
-        location_id: scope.locationId,
-        binding_id: scope.bindingId,
+          tenant_id: scope.tenantId,
+          property_id: scope.propertyId,
+          location_id: scope.locationId,
+          binding_id: scope.bindingId,
           conversation_id: scope.conversationId,
-        currency: "TZS",
-        menu_context: {},
-        expires_at: "2026-11-16T21:00:00.000Z",
-        scope: "menu_browse",
+          currency: "TZS",
+          menu_context: {},
+          expires_at: "2026-11-16T21:00:00.000Z",
+          scope: "menu_browse",
         },
       ],
       error: null,
