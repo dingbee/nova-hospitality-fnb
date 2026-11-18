@@ -365,6 +365,13 @@ export const NAV_GROUPS: NavGroup[] = [
         hint: "Operational preferences",
       },
       {
+        to: "/admin/restaurant/whatsapp",
+        label: "WhatsApp operations",
+        icon: MessageSquare,
+        permission: "SETTINGS:READ",
+        hint: "Guest conversations, CRM, campaigns and conversion analytics",
+      },
+      {
         to: "/admin/restaurant/integrations",
         label: "Channel integrations",
         icon: Link2,
@@ -387,6 +394,13 @@ export const NAV_GROUPS: NavGroup[] = [
         requiresCommercialAdmin: true,
         exact: true,
         hint: "Plans, pricing, entitlements, quotas and commercial governance",
+      },
+      {
+        to: "/admin/commercial/whatsapp",
+        label: "WhatsApp Platform Control",
+        icon: MessageSquare,
+        requiresCommercialAdmin: true,
+        hint: "Provider onboarding, webhook health, usage and security",
       },
     ],
   },
