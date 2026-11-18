@@ -124,13 +124,7 @@ export function ReceiptDeliveryPanel({
         {Object.values(last).map((r) => (
           <StatusChip
             key={r.id}
-            tone={
-              r.status === "failed"
-                ? "danger"
-                : r.status === "shared"
-                  ? "warning"
-                  : "success"
-            }
+            tone={r.status === "failed" ? "danger" : r.status === "shared" ? "warning" : "success"}
           >
             {r.status === "failed"
               ? `${labelFor(r.method)} failed`
@@ -177,7 +171,8 @@ export function ReceiptDeliveryPanel({
           )}
           {last["email"]?.status === "sent" && (
             <p className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Check className="size-3" /> Accepted by the mail provider · {last["email"]?.recipient}
+              <Check className="size-3" /> Accepted by the mail provider ·{" "}
+              {last["email"]?.recipient}
             </p>
           )}
         </div>
@@ -257,7 +252,7 @@ export function DeliveryRow({ attempt }: { attempt: DeliveryRecord }) {
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2 text-xs">
       <span className="min-w-0">
         <span className="font-medium">{labelFor(attempt.method)}</span> · attempt {attempt.attempt} ·{" "}
-        {attempt.recipient ?? "—"}
+          {attempt.recipient ?? "—"}
         <span className="block text-muted-foreground">
           {String(attempt.requestedAt).replace("T", " ").slice(0, 16)}
           {attempt.providerReference ? ` · ref ${attempt.providerReference}` : ""}
