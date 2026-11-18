@@ -142,8 +142,15 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
         }
         if (op === "update") {
           const id = filters.id as string;
-          transfers[id] = { ...transfers[id], ...payload };
-          return { data: transfers[id], error: null };
+          const current = transfers[id];
+          if (
+            filters.status !== undefined &&
+            current?.status !== filters.status
+          ) {
+            return { data: null, error: null };
+          }
+          transfers[id] = { ...current, ...payload };
+          return { data: single ? transfers[id] : [transfers[id]], error: null };
         }
         // select
         const id = filters.id as string;
@@ -166,9 +173,18 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
         if (op === "update") {
           const id = filters.id as string;
           const current = transferLines[id];
+          const compareFields = [
+            "dispatched_quantity",
+            "received_quantity",
+            "rejected_quantity",
+            "damaged_quantity",
+          ];
           if (
-            filters.dispatched_quantity !== undefined &&
-            Number(current?.dispatched_quantity ?? 0) !== Number(filters.dispatched_quantity)
+            compareFields.some(
+              (field) =>
+                filters[field] !== undefined &&
+                Number(current?.[field] ?? 0) !== Number(filters[field]),
+            )
           ) {
             return { data: null, error: null };
           }
@@ -324,6 +340,76 @@ describe("stock transfer lifecycle — the exact reported P0 scenario", () => {
     } as any);
     expect(fake.transfers[created.id].status).toBe("completed");
     expect(fake.onHandAt(DEST)).toBe(10);
+  });
+
+  it("serializes simultaneous receipt retries and records one inbound movement", async () => {
+    const fake = makeFakeSupabase({ itemQuantity: 16 });
+    const created = await createTransfer(fake.supabase, USER, {
+      tenantId: TENANT,
+      sourceLocationId: SOURCE,
+      destinationLocationId: DEST,
+      requiresApproval: false,
+      submit: true,
+      lines: [{ inventoryItemId: ITEM, requestedQuantity: 15 }],
+    } as any);
+    const lineId = Object.keys(fake.transferLines)[0];
+
+    await dispatchTransfer(fake.supabase, USER, {
+      tenantId: TENANT,
+      transferId: created.id,
+      lines: [{ lineId, dispatchedQuantity: 15 }],
+    } as any);
+
+    const receive = () =>
+      receiveTransfer(fake.supabase, USER, {
+        tenantId: TENANT,
+        transferId: created.id,
+        lines: [{ lineId, receivedQuantity: 10, rejectedQuantity: 0, damagedQuantity: 0 }],
+      } as any);
+
+    const outcomes = await Promise.allSettled([receive(), receive()]);
+    expect(outcomes.some((outcome) => outcome.status === "fulfilled")).toBe(true);
+    expect(
+      fake.movements.filter((movement) => movement.dedupe_key === `transfer:in:${lineId}`),
+    ).toHaveLength(1);
+    expect(fake.movements.find((movement) => movement.dedupe_key === `transfer:in:${lineId}`)?.quantity).toBe(10);
+    expect(fake.transferLines[lineId].received_quantity).toBe(10);
+    expect(fake.transfers[created.id].status).toBe("partially_received");
+    expect(fake.item.current_quantity).toBe(11);
+  });
+
+  it("rejects a concurrent receipt retry with a different quantity without corrupting the ledger", async () => {
+    const fake = makeFakeSupabase({ itemQuantity: 16 });
+    const created = await createTransfer(fake.supabase, USER, {
+      tenantId: TENANT,
+      sourceLocationId: SOURCE,
+      destinationLocationId: DEST,
+      requiresApproval: false,
+      submit: true,
+      lines: [{ inventoryItemId: ITEM, requestedQuantity: 15 }],
+    } as any);
+    const lineId = Object.keys(fake.transferLines)[0];
+
+    await dispatchTransfer(fake.supabase, USER, {
+      tenantId: TENANT,
+      transferId: created.id,
+      lines: [{ lineId, dispatchedQuantity: 15 }],
+    } as any);
+
+    const receive = (receivedQuantity: number) =>
+      receiveTransfer(fake.supabase, USER, {
+        tenantId: TENANT,
+        transferId: created.id,
+        lines: [{ lineId, receivedQuantity, rejectedQuantity: 0, damagedQuantity: 0 }],
+      } as any);
+
+    const outcomes = await Promise.allSettled([receive(8), receive(10)]);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+    const inbound = fake.movements.find((movement) => movement.dedupe_key === `transfer:in:${lineId}`);
+    expect(inbound).toBeDefined();
+    expect(fake.transferLines[lineId].received_quantity).toBe(inbound?.quantity);
+    expect(fake.item.current_quantity).toBe(1 + Number(inbound?.quantity));
   });
 
   it("refuses a same-location transfer", async () => {
