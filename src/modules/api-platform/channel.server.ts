@@ -108,14 +108,16 @@ export async function updateChannelConnection(
   if (existing.channel_key) {
     const channel = await getChannelDefinition(sb, existing.channel_key);
     if (!channel) throw new Error("Channel definition is no longer enabled.");
-    if (channel.providerKey !== existing.provider) throw new Error("Channel provider boundary mismatch.");
+    if (channel.providerKey !== existing.provider)
+      throw new Error("Channel provider boundary mismatch.");
   }
 
   const provider = assertChannelProvider(existing.provider);
   const adapter = getChannelAdapter(provider.key);
-  const config = input.config !== undefined
-    ? adapter.validateConfig({ ...(existing.config ?? {}), ...input.config })
-    : undefined;
+  const config =
+    input.config !== undefined
+      ? adapter.validateConfig({ ...(existing.config ?? {}), ...input.config })
+      : undefined;
 
   return updateIntegration(sb, userId, {
     tenantId: input.tenantId,
