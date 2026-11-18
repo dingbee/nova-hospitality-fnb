@@ -33,6 +33,7 @@ export interface AiUsageInput {
   model: string;
   provider: string;
   workloadType: string;
+  sourceChannel?: "whatsapp" | "guest_portal" | "table" | "staff" | "unknown";
   requestCount?: number;
   inputUsage?: number;
   outputUsage?: number;
@@ -76,6 +77,7 @@ export async function recordAiUsage(sb: Sb, usage: AiUsageInput): Promise<void> 
     model: usage.model,
     provider: usage.provider,
     workload_type: usage.workloadType,
+    source_channel: usage.sourceChannel ?? "unknown",
     request_count: usage.requestCount ?? 1,
     input_usage: usage.inputUsage ?? 0,
     output_usage: usage.outputUsage ?? 0,
