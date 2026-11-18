@@ -105,9 +105,7 @@ CREATE OR REPLACE FUNCTION public.wa_account_campaign_message_quota(
   _quota_definition_id uuid,
   _period_start timestamptz,
   _period_end timestamptz,
-  _delta integer,
-  _state text,
-  _blocked boolean DEFAULT false
+  _delta integer
 )
 RETURNS TABLE(used_value numeric, state text, duplicate boolean)
 LANGUAGE plpgsql
@@ -116,12 +114,68 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   _accounted_at timestamptz;
+  _current_used numeric := 0;
   _counter_used numeric;
   _counter_state text;
+  _limit_value numeric;
+  _effective_limit numeric;
+  _warning_threshold numeric;
+  _near_limit_threshold numeric;
+  _overage_behavior text;
+  _scope text;
+  _override_payload jsonb;
+  _has_override boolean := false;
+  _bypass boolean := false;
+  _new_used numeric;
+  _new_state text;
 BEGIN
   IF coalesce(auth.role(), '') <> 'service_role' THEN
     RAISE EXCEPTION 'service role required';
   END IF;
+  IF _delta IS NULL OR _delta < 1 OR _period_end <= _period_start THEN
+    RAISE EXCEPTION 'invalid quota reservation input';
+  END IF;
+
+  SELECT q.limit_value, q.warning_threshold_pct, q.near_limit_threshold_pct,
+         q.overage_behavior, q.scope
+  INTO _limit_value, _warning_threshold, _near_limit_threshold, _overage_behavior, _scope
+  FROM public.commercial_quota_definitions q
+  WHERE q.id = _quota_definition_id
+    AND q.active = true;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'quota definition is unavailable';
+  END IF;
+  IF (_scope = 'property' AND _property_id IS NULL)
+     OR (_scope <> 'property' AND _property_id IS NOT NULL) THEN
+    RAISE EXCEPTION 'quota property scope mismatch';
+  END IF;
+
+  SELECT o.payload
+  INTO _override_payload
+  FROM public.commercial_overrides o
+  WHERE o.scope_type = 'quota'
+    AND o.scope_id = _quota_definition_id
+    AND o.status = 'active'
+    AND o.effective_from <= now()
+    AND (o.effective_until IS NULL OR o.effective_until > now())
+    AND (o.tenant_id IS NULL OR o.tenant_id = _tenant_id)
+  ORDER BY (o.tenant_id = _tenant_id) DESC
+  LIMIT 1;
+  _has_override := FOUND;
+  _bypass := coalesce((_override_payload ->> 'bypass')::boolean, false);
+  _effective_limit := CASE
+    WHEN coalesce(_override_payload ->> 'limitValue', '') ~ '^[0-9]+(\.[0-9]+)?$'
+      THEN (_override_payload ->> 'limitValue')::numeric
+    ELSE _limit_value
+  END;
+
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended(
+      _tenant_id::text || ':' || coalesce(_property_id::text, 'tenant') || ':' ||
+      _quota_definition_id::text || ':' || _period_start::text,
+      0
+    )
+  );
 
   SELECT r.quota_accounted_at
   INTO _accounted_at
@@ -133,7 +187,6 @@ BEGIN
     AND r.tenant_id = _tenant_id
     AND (_property_id IS NULL OR c.property_id = _property_id)
   FOR UPDATE OF r;
-
   IF NOT FOUND THEN
     RAISE EXCEPTION 'campaign recipient is unavailable for quota accounting';
   END IF;
@@ -156,8 +209,41 @@ BEGIN
     RETURN;
   END IF;
 
-  IF _blocked THEN
+  SELECT counter.used_value
+  INTO _current_used
+  FROM public.commercial_usage_counters counter
+  WHERE counter.tenant_id = _tenant_id
+    AND counter.quota_definition_id = _quota_definition_id
+    AND counter.period_start = _period_start
+    AND (
+      (_property_id IS NULL AND counter.property_id IS NULL)
+      OR (_property_id IS NOT NULL AND counter.property_id = _property_id)
+    )
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    _current_used := 0;
+  END IF;
+
+  IF NOT _bypass
+     AND _overage_behavior = 'block'
+     AND _effective_limit > 0
+     AND _current_used >= _effective_limit THEN
     RAISE EXCEPTION 'quota_exceeded';
+  END IF;
+
+  _new_used := _current_used + _delta;
+  IF _has_override THEN
+    _new_state := 'OVERRIDE';
+  ELSIF _effective_limit <= 0 THEN
+    _new_state := CASE WHEN _new_used > 0 THEN 'LIMIT_REACHED' ELSE 'NORMAL' END;
+  ELSIF (_new_used / _effective_limit) * 100 >= 100 THEN
+    _new_state := CASE WHEN _overage_behavior = 'block' THEN 'BLOCKED' ELSE 'LIMIT_REACHED' END;
+  ELSIF (_new_used / _effective_limit) * 100 >= _near_limit_threshold THEN
+    _new_state := 'NEAR_LIMIT';
+  ELSIF (_new_used / _effective_limit) * 100 >= _warning_threshold THEN
+    _new_state := 'WARNING';
+  ELSE
+    _new_state := 'NORMAL';
   END IF;
 
   SELECT q.used_value, q.state
@@ -169,7 +255,7 @@ BEGIN
     _period_start,
     _period_end,
     _delta,
-    _state
+    _new_state
   ) q;
 
   UPDATE public.wa_campaign_recipients
@@ -182,7 +268,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.wa_account_campaign_message_quota(uuid, uuid, uuid, uuid, timestamptz, timestamptz, integer, text, boolean)
+REVOKE ALL ON FUNCTION public.wa_account_campaign_message_quota(uuid, uuid, uuid, uuid, timestamptz, timestamptz, integer)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.wa_account_campaign_message_quota(uuid, uuid, uuid, uuid, timestamptz, timestamptz, integer, text, boolean)
+GRANT EXECUTE ON FUNCTION public.wa_account_campaign_message_quota(uuid, uuid, uuid, uuid, timestamptz, timestamptz, integer)
   TO service_role;

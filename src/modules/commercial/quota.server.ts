@@ -282,9 +282,9 @@ export async function incrementUsageOnceForCampaignRecipient(
   if (!def) return null;
   const { start, end } = periodWindow(def.period);
   const scopedProperty = def.scope === "property" ? (opts.propertyId ?? null) : null;
-  const newUsed = before.usedValue + amount;
-  const newState = deriveState(
-    newUsed,
+  const fallbackUsed = before.usedValue + amount;
+  const fallbackState = deriveState(
+    fallbackUsed,
     { ...def, limit_value: before.limitValue },
     before.hasOverride,
   );
@@ -296,8 +296,6 @@ export async function incrementUsageOnceForCampaignRecipient(
     _period_start: start.toISOString(),
     _period_end: end.toISOString(),
     _delta: amount,
-    _state: newState,
-    _blocked: before.state === "BLOCKED",
   });
   if (error) {
     if (String(error.message ?? "").includes("quota_exceeded")) {
@@ -306,11 +304,9 @@ export async function incrementUsageOnceForCampaignRecipient(
     throw new Error(error.message);
   }
   const row = Array.isArray(data) ? data[0] : data;
-  const finalUsed = Number(row?.used_value ?? newUsed);
-  const finalState = deriveState(
-    finalUsed,
-    { ...def, limit_value: before.limitValue },
-    before.hasOverride,
-  );
-  return { ...before, usedValue: finalUsed, state: finalState };
+  return {
+    ...before,
+    usedValue: Number(row?.used_value ?? fallbackUsed),
+    state: (row?.state ?? fallbackState) as UsageState,
+  };
 }
