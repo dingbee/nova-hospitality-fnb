@@ -48,18 +48,16 @@ describe("Meta WhatsApp Cloud API foundation", () => {
   });
 
   it("exchanges Embedded Signup authorization codes server-side", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            access_token: "exchanged-token",
-            token_type: "bearer",
-            expires_in: 3600,
-          }),
-          { status: 200 },
-        ),
-      );
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: "exchanged-token",
+          token_type: "bearer",
+          expires_in: 3600,
+        }),
+        { status: 200 },
+      ),
+    );
     vi.stubGlobal("fetch", fetchMock);
     await expect(
       exchangeEmbeddedSignupCode("signup-code", {
