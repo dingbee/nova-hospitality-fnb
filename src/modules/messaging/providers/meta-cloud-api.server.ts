@@ -363,7 +363,7 @@ export async function sendTextMessage(
     {
     method: "POST",
     body: JSON.stringify({
-      messaging_product: "whatsapp",
+        messaging_product: "whatsapp",
         recipient_type: "individual",
       to: recipient,
         type: "text",
