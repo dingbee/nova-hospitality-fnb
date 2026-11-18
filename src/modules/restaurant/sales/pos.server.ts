@@ -594,17 +594,20 @@ export async function voidPosLine(sb: Sb, userId: string, input: VoidPosLineInpu
   // Only an un-fired line can safely unwind its stock movements. Once a line
   // has reached a production/service state, consumption remains in the ledger:
   // reversing it would put already-prepared/served goods back into inventory.
-  const stockDisposition = ["fired", "sent", "preparing", "ready", "served"].includes(String(item.status))
+  const stockDisposition = ["fired", "sent", "preparing", "ready", "served"].includes(
+    String(item.status),
+  )
     ? "preserve_consumption"
     : "reverse_unprepared";
-  const reversal = stockDisposition === "reverse_unprepared"
-    ? await reverseMovementsForOrderItem(sb, userId, {
-        tenantId: input.tenantId,
-        orderItemId: item.id,
-        reason: `Line void: ${input.reason}`,
-        reasonCode: REASON_CODES.saleReversal,
-      })
-    : { reversed: 0, alreadyReversed: 0, costRestored: 0, movementIds: [] as string[] };
+  const reversal =
+    stockDisposition === "reverse_unprepared"
+      ? await reverseMovementsForOrderItem(sb, userId, {
+          tenantId: input.tenantId,
+          orderItemId: item.id,
+          reason: `Line void: ${input.reason}`,
+          reasonCode: REASON_CODES.saleReversal,
+        })
+      : { reversed: 0, alreadyReversed: 0, costRestored: 0, movementIds: [] as string[] };
 
   const { error } = await sb
     .from("restaurant_order_items")
@@ -859,7 +862,9 @@ export async function ensurePosReceipt(
     paymentState === "paid" &&
     Number(order.paid_total ?? 0) + 0.005 >= Number(order.total ?? 0);
   if (!nonCashSettled && !fullyPaid) {
-    throw new Error("The bill is not fully settled. Record the outstanding payment before printing a receipt.");
+    throw new Error(
+      "The bill is not fully settled. Record the outstanding payment before printing a receipt.",
+    );
   }
 
   const tenantScope = await getTenantScope(sb, userId, input.tenantId);
@@ -905,7 +910,11 @@ export async function ensurePosReceipt(
       tenantScope,
     );
   }
-  if (!receipt) throw new Error("The bill is closed, but receipt issuance did not complete. Retry receipt issuance.");
+  if (!receipt) {
+    throw new Error(
+      "The bill is closed, but receipt issuance did not complete. Retry receipt issuance.",
+    );
+  }
   return receipt;
 }
 
