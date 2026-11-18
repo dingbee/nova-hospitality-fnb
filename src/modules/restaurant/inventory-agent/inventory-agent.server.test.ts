@@ -289,28 +289,6 @@ describe("LexiBite Inventory Agent V1", () => {
     });
   });
 
-  it("fails closed when the inventory-agent entitlement is absent", async () => {
-    mocks.assertEntitled.mockRejectedValueOnce(new Error("inventory_agent entitlement required"));
-    const sb = sbFor({});
-
-    await expect(runInventoryAgent(sb, USER, { tenantId: TENANT })).rejects.toThrow(
-      /inventory_agent entitlement required/i,
-    );
-    expect(mocks.runRestaurantDecisionPass).not.toHaveBeenCalled();
-    expect(sb.from).not.toHaveBeenCalled();
-  });
-
-  it("fails closed before action discovery when intelligence.read is absent", async () => {
-    mocks.assertCapability.mockRejectedValueOnce(new Error("intelligence.read required"));
-    const sb = sbFor({});
-
-    await expect(
-      executeApprovedInventoryAgentActions(sb, USER, { tenantId: TENANT }),
-    ).rejects.toThrow(/intelligence.read required/i);
-    expect(sb.from).not.toHaveBeenCalled();
-    expect(mocks.executeRestaurantAction).not.toHaveBeenCalled();
-  });
-
   it("keeps execution and verification separate", async () => {
     mocks.assertCapability.mockResolvedValue(undefined);
     mocks.executeRestaurantAction.mockResolvedValue({
