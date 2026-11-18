@@ -1642,12 +1642,6 @@ function PosWorkspaceBody({
         onReprint={() =>
           receipt && showReceipt.mutate({ orderId: receipt.order_id, reprint: true })
         }
-        onPrint={() => {
-          if (typeof window === "undefined" || typeof window.print !== "function") {
-            throw new Error("Printing is not available in this browser. Use the receipt secure link or email delivery.");
-          }
-          window.print();
-        }}
         tenantId={tenantId ?? undefined}
       />
     </div>
