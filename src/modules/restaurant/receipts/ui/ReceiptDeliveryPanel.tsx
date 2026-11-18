@@ -118,7 +118,6 @@ export function ReceiptDeliveryPanel({
           [data-pos-receipt-dialog] button { display: none !important; }
         }
       `}</style>
-      <div className="receipt-delivery-panel space-y-4 border-t pt-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <StatusChip tone="success">Issued</StatusChip>
         <StatusChip tone="success">Paid</StatusChip>
