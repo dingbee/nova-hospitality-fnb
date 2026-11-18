@@ -79,6 +79,11 @@ describe("WhatsApp operations authorization", () => {
 
 describe("WCE-08 WhatsApp-to-commerce conversion reconciliation", () => {
   it("counts converted sessions rather than orders when one session places multiple orders", async () => {
+    vi.mocked(getTenantScope).mockResolvedValue({
+      tenantId: "tenant-1",
+      platformAdmin: false,
+      grants: [{ role: "owner", propertyId: "property-1" }],
+    });
     const datasets: Record<string, unknown[]> = {
       wa_guest_portal_sessions: [
         {
