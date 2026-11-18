@@ -528,6 +528,7 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
       component: row.usage_component,
       currency: row.currency,
       amount: row.amount,
+      costKnown: true,
     })),
     ...(aiUsage ?? []).map((row: any) => ({
       component: "ai",
