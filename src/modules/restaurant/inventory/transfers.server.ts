@@ -428,7 +428,7 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
     dispatchedValue += l.dispatchedQuantity * Number(line.unit_cost ?? 0);
   }
 
-  const { error } = await sb
+  const { data: updatedTransfer, error } = await sb
     .from("restaurant_stock_transfers")
     .update({
       status: "dispatched",
@@ -437,8 +437,23 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
       notes: input.notes ?? transfer.notes,
     })
     .eq("id", input.transferId)
-    .eq("tenant_id", input.tenantId);
+    .eq("tenant_id", input.tenantId)
+    .eq("status", transfer.status)
+    .select("id")
+    .maybeSingle();
   if (error) throw new Error(error.message);
+  if (!updatedTransfer) {
+    const { data: latestTransfer, error: latestError } = await sb
+      .from("restaurant_stock_transfers")
+      .select("status")
+      .eq("id", input.transferId)
+      .eq("tenant_id", input.tenantId)
+      .single();
+    if (latestError) throw new Error(latestError.message);
+    if (latestTransfer?.status !== "dispatched") {
+      throw new Error("Concurrent dispatch changed the transfer status; reconciliation is required.");
+    }
+  }
 
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.inventory.transfer.dispatched",
