@@ -42,10 +42,54 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  _recipient_id := NULLIF(NEW.payload ->> 'campaign_recipient_id', '')::uuid;
-  IF _recipient_id IS NULL THEN
+  IF COALESCE(NEW.payload ->> 'campaign_recipient_id', '') !~
+    '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}
+  _recipient_state := CASE NEW.status
+    WHEN 'queued' THEN 'queued'
+    WHEN 'sent' THEN 'sent'
+    WHEN 'delivered' THEN 'delivered'
+    WHEN 'read' THEN 'read'
+    WHEN 'failed' THEN 'failed'
+    ELSE NULL
+  END;
+
+  IF _recipient_state IS NULL THEN
     RETURN NEW;
   END IF;
+
+  UPDATE public.wa_campaign_recipients
+  SET state = _recipient_state,
+      dispatched_at = CASE
+        WHEN _recipient_state IN ('sent', 'delivered', 'read')
+          THEN COALESCE(dispatched_at, NEW.sent_at, now())
+        ELSE dispatched_at
+      END
+  WHERE id = _recipient_id
+    AND tenant_id = NEW.tenant_id
+    AND message_id = NEW.id
+    AND state <> 'suppressed';
+
+  RETURN NEW;
+END;
+$wce$;
+
+REVOKE ALL ON FUNCTION public.wa_reconcile_campaign_recipient_delivery()
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.wa_reconcile_campaign_recipient_delivery()
+  TO service_role;
+
+DROP TRIGGER IF EXISTS wa_messages_campaign_delivery_reconcile ON public.wa_messages;
+CREATE TRIGGER wa_messages_campaign_delivery_reconcile
+AFTER UPDATE OF status ON public.wa_messages
+FOR EACH ROW
+WHEN (OLD.status IS DISTINCT FROM NEW.status)
+EXECUTE FUNCTION public.wa_reconcile_campaign_recipient_delivery();
+
+NOTIFY pgrst, 'reload schema';
+ THEN
+    RETURN NEW;
+  END IF;
+  _recipient_id := (NEW.payload ->> 'campaign_recipient_id')::uuid;
 
   _recipient_state := CASE NEW.status
     WHEN 'queued' THEN 'queued'
