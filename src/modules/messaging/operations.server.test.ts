@@ -244,11 +244,26 @@ describe("WCE-08 WhatsApp usage attribution", () => {
     const db = {
       from: (table: string) => {
         const builder: any = {
-          select: (...args: unknown[]) => { calls.push({ table, method: "select", args }); return builder; },
-          eq: (...args: unknown[]) => { calls.push({ table, method: "eq", args }); return builder; },
-          in: (...args: unknown[]) => { calls.push({ table, method: "in", args }); return builder; },
-          order: (...args: unknown[]) => { calls.push({ table, method: "order", args }); return builder; },
-          limit: (...args: unknown[]) => { calls.push({ table, method: "limit", args }); return builder; },
+          select: (...args: unknown[]) => {
+            calls.push({ table, method: "select", args });
+            return builder;
+          },
+          eq: (...args: unknown[]) => {
+            calls.push({ table, method: "eq", args });
+            return builder;
+          },
+          in: (...args: unknown[]) => {
+            calls.push({ table, method: "in", args });
+            return builder;
+          },
+          order: (...args: unknown[]) => {
+            calls.push({ table, method: "order", args });
+            return builder;
+          },
+          limit: (...args: unknown[]) => {
+            calls.push({ table, method: "limit", args });
+            return builder;
+          },
           then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
             Promise.resolve({ data: datasets[table] ?? [], error: null }).then(resolve, reject),
         };
@@ -271,4 +286,3 @@ describe("WCE-08 WhatsApp usage attribution", () => {
     expect(result.entries).toHaveLength(2);
   });
 });
-
