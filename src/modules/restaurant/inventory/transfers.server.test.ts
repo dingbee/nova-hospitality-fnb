@@ -438,7 +438,9 @@ describe("stock transfer lifecycle — the exact reported P0 scenario", () => {
     // database dedupe key and line compare-and-set must prevent double issue.
     const outcomes = await Promise.allSettled([attempt(), attempt()]);
     expect(outcomes.some((outcome) => outcome.status === "fulfilled")).toBe(true);
-    expect(fake.movements.filter((movement) => movement.dedupe_key === `transfer:out:${lineId}`)).toHaveLength(1);
+    expect(
+      fake.movements.filter((movement) => movement.dedupe_key === `transfer:out:${lineId}`),
+    ).toHaveLength(1);
     expect(fake.item.current_quantity).toBe(1);
     expect(fake.transferLines[lineId].dispatched_quantity).toBe(15);
     expect(fake.transfers[created.id].status).toBe("dispatched");
