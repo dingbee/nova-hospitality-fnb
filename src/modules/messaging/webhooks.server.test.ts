@@ -1,9 +1,6 @@
 import { createHmac } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  ingestMetaWhatsAppWebhook,
-  MetaWebhookSignatureError,
-} from "./webhooks.server";
+import { ingestMetaWhatsAppWebhook, MetaWebhookSignatureError } from "./webhooks.server";
 
 const appSecret = "test-meta-app-secret";
 const binding = {
@@ -21,17 +18,34 @@ function signedBody(body: string) {
   return `sha256=${createHmac("sha256", appSecret).update(body).digest("hex")}`;
 }
 
-function makeAdmin(options: { binding?: typeof binding | null; integrationStatus?: string; insertError?: { code: string } | null } = {}) {
+function makeAdmin(
+  options: {
+    binding?: typeof binding | null;
+    integrationStatus?: string;
+    insertError?: { code: string } | null;
+  } = {},
+) {
   const insert = vi.fn().mockResolvedValue({ error: options.insertError ?? null });
   const from = vi.fn((table: string) => {
     if (table === "wa_webhook_events") return { insert };
     const query = {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue(
+      maybeSingle: vi
+        .fn()
+        .mockResolvedValue(
         table === "wa_phone_number_bindings"
           ? { data: options.binding === undefined ? binding : options.binding, error: null }
-          : { data: { id: binding.integration_id, status: options.integrationStatus ?? "active", provider: "meta-whatsapp", channel_key: "whatsapp", integration_type: "channel" }, error: null },
+            : {
+                data: {
+                  id: binding.integration_id,
+                  status: options.integrationStatus ?? "active",
+                  provider: "meta-whatsapp",
+                  channel_key: "whatsapp",
+                  integration_type: "channel",
+                },
+                error: null,
+              },
       ),
     };
     return query;
@@ -42,15 +56,26 @@ function makeAdmin(options: { binding?: typeof binding | null; integrationStatus
 const body = JSON.stringify({
   object: "whatsapp_business_account",
   entry: [{
-    id: binding.waba_id,
-    changes: [{
+      id: binding.waba_id,
+      changes: [
+        {
       field: "messages",
       value: {
-        metadata: { phone_number_id: binding.phone_number_id },
-        messages: [{ id: "wamid.1", from: "255700000000", timestamp: "1794850000", type: "text", text: { body: "Hello" } }],
-      },
-    }],
-  }],
+            metadata: { phone_number_id: binding.phone_number_id },
+            messages: [
+              {
+                id: "wamid.1",
+                from: "255700000000",
+                timestamp: "1794850000",
+                type: "text",
+                text: { body: "Hello" },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  ],
 });
 
 describe("Meta WhatsApp webhook durable ingress", () => {
@@ -99,9 +124,9 @@ describe("Meta WhatsApp webhook durable ingress", () => {
 
   it("rejects invalid signatures before database access", async () => {
     const { admin, insert } = makeAdmin();
-    await expect(ingestMetaWhatsAppWebhook(admin, body, "sha256=invalid", appSecret)).rejects.toBeInstanceOf(
-      MetaWebhookSignatureError,
-    );
+    await expect(
+      ingestMetaWhatsAppWebhook(admin, body, "sha256=invalid", appSecret),
+    ).rejects.toBeInstanceOf(MetaWebhookSignatureError);
     expect(insert).not.toHaveBeenCalled();
   });
 
@@ -109,6 +134,8 @@ describe("Meta WhatsApp webhook durable ingress", () => {
     const { admin, insert } = makeAdmin({ integrationStatus: "disabled" });
     const result = await ingestMetaWhatsAppWebhook(admin, body, signedBody(body), appSecret);
     expect(result.rejected).toBe(1);
-    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ binding_id: null, status: "rejected" }));
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ binding_id: null, status: "rejected" }),
+    );
   });
 });
