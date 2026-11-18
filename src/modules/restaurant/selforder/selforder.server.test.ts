@@ -358,16 +358,22 @@ describe("guestMenu", () => {
       categories: [],
       items: [
         { id: "item-ok", name: "Grilled Fish", available: true, priceConfigured: true },
-        {
-          id: "item-unavailable",
-          name: "Sold Out Special",
-          available: false,
-          priceConfigured: true,
-        },
+        { id: "item-unavailable", name: "Sold Out Special", available: false, priceConfigured: true },
         { id: "item-unpriced", name: "No Price Set", available: true, priceConfigured: false },
+        { id: "item-no-composition", name: "Plain Placeholder", available: true, priceConfigured: true },
       ],
     });
-    const menu = await guestMenu(fakeSb(tableRows) as any, "table-1");
+    const sb = fakeSb({
+      ...tableRows,
+      restaurant_products: [
+        { menu_item_id: "item-ok", recipe_id: "recipe-1", active: true },
+      ],
+      restaurant_recipe_components: [],
+      restaurant_recipe_lines: [
+        { recipe_id: "recipe-1", inventory_item_id: "ingredient-1", sub_recipe_id: null },
+      ],
+    });
+    const menu = await guestMenu(sb as any, "table-1");
     expect(menu.items.map((i: any) => i.id)).toEqual(["item-ok"]);
   });
 
