@@ -270,6 +270,11 @@ jobs:
               )) = 0 THEN
                 RAISE EXCEPTION 'WCE-06 service-role quota accounting path is not enabled';
               END IF;
+              IF has_function_privilege('anon', 'public.wa_account_campaign_message_quota(uuid,uuid,uuid,uuid,timestamptz,timestamptz,integer,text,boolean)', 'EXECUTE')
+                OR has_function_privilege('authenticated', 'public.wa_account_campaign_message_quota(uuid,uuid,uuid,uuid,timestamptz,timestamptz,integer,text,boolean)', 'EXECUTE')
+                OR NOT has_function_privilege('service_role', 'public.wa_account_campaign_message_quota(uuid,uuid,uuid,uuid,timestamptz,timestamptz,integer,text,boolean)', 'EXECUTE') THEN
+                RAISE EXCEPTION 'WCE-08 idempotent campaign quota RPC grants are not service-role-only';
+              END IF;
               IF NOT EXISTS (
                 SELECT 1 FROM pg_attribute
                 WHERE attrelid = 'public.wa_campaign_recipients'::regclass

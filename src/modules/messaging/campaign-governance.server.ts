@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase rows are validated at this boundary. */
 import { assertEntitled } from "@/modules/commercial/resolver.server";
-import { incrementUsage } from "@/modules/commercial/quota.server";
+import { incrementUsageOnceForCampaignRecipient } from "@/modules/commercial/quota.server";
 import { hasWhatsAppGuestMarketingConsent } from "./guest-crm.server";
 import { getIntegrationSecret } from "@/modules/api-platform/integrations.server";
 import {
@@ -753,7 +753,13 @@ export async function queueWhatsAppCampaignRecipient(
     campaign.market_code,
     template.category,
   );
-  await accountWhatsAppCampaignMessageUsage(admin, input.tenantId, input.propertyId, 1);
+  await accountWhatsAppCampaignMessageUsage(
+    admin,
+    input.tenantId,
+    input.propertyId,
+    recipient.id,
+    1,
+  );
   const { data: message, error: messageError } = await admin
     .from("wa_messages")
     .insert({
@@ -926,9 +932,15 @@ export async function accountWhatsAppCampaignMessageUsage(
   admin: Db,
   tenantId: string,
   propertyId: string,
+  recipientId: string,
   amount = 1,
 ) {
-  return incrementUsage(admin, tenantId, "whatsapp_campaign_messages", { propertyId, amount });
+  return incrementUsageOnceForCampaignRecipient(
+    admin,
+    tenantId,
+    "whatsapp_campaign_messages",
+    { propertyId, recipientId, amount },
+  );
 }
 
 /** Recovers provider-cost ledger rows when send succeeded but ledger persistence did not. */

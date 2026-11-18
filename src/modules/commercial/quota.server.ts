@@ -263,3 +263,54 @@ export async function incrementUsage(
 
   return { ...before, usedValue: finalUsed, state: finalState };
 }
+
+/**
+ * Idempotent campaign quota reservation. The recipient row lock and the
+ * canonical commercial counter increment commit in one PostgreSQL transaction,
+ * so concurrent retries cannot double-count the same campaign recipient.
+ */
+export async function incrementUsageOnceForCampaignRecipient(
+  sb: Sb,
+  tenantId: string,
+  quotaCode: string,
+  opts: { propertyId?: string | null; recipientId: string; amount?: number },
+): Promise<QuotaStatus | null> {
+  const amount = opts.amount ?? 1;
+  const before = await checkQuota(sb, tenantId, quotaCode, opts.propertyId);
+  if (!before) return null;
+  const def = await findQuotaDefinition(sb, tenantId, quotaCode);
+  if (!def) return null;
+  const { start, end } = periodWindow(def.period);
+  const scopedProperty = def.scope === "property" ? (opts.propertyId ?? null) : null;
+  const newUsed = before.usedValue + amount;
+  const newState = deriveState(
+    newUsed,
+    { ...def, limit_value: before.limitValue },
+    before.hasOverride,
+  );
+  const { data, error } = await sb.rpc("wa_account_campaign_message_quota", {
+    _tenant_id: tenantId,
+    _property_id: scopedProperty,
+    _recipient_id: opts.recipientId,
+    _quota_definition_id: def.id,
+    _period_start: start.toISOString(),
+    _period_end: end.toISOString(),
+    _delta: amount,
+    _state: newState,
+    _blocked: before.state === "BLOCKED",
+  });
+  if (error) {
+    if (String(error.message ?? "").includes("quota_exceeded")) {
+      throw new QuotaExceededError(quotaCode, before);
+    }
+    throw new Error(error.message);
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  const finalUsed = Number(row?.used_value ?? newUsed);
+  const finalState = deriveState(
+    finalUsed,
+    { ...def, limit_value: before.limitValue },
+    before.hasOverride,
+  );
+  return { ...before, usedValue: finalUsed, state: finalState };
+}
