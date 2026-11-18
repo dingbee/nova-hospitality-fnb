@@ -57,6 +57,8 @@ describe("Meta WhatsApp channel health adapter", () => {
   });
 
   it("rejects incomplete or malformed provider configuration", () => {
-    expect(() => metaWhatsAppAdapter.validateConfig({ phoneNumberId: config.phoneNumberId })).toThrow();
+    expect(() =>
+      metaWhatsAppAdapter.validateConfig({ phoneNumberId: config.phoneNumberId }),
+    ).toThrow();
   });
 });
