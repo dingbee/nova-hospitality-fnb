@@ -1,11 +1,17 @@
 import { z } from "zod";
-import { checkPhoneNumberHealth, MetaGraphError } from "@/modules/messaging/providers/meta-cloud-api.server";
+import {
+  checkPhoneNumberHealth,
+  MetaGraphError,
+} from "@/modules/messaging/providers/meta-cloud-api.server";
 import type { ChannelAdapter, ChannelHealth } from "./channel-adapter.server";
 
 const configSchema = z.object({
   wabaId: z.string().regex(/^\d{3,32}$/),
   phoneNumberId: z.string().regex(/^\d{3,32}$/),
-  graphApiVersion: z.string().regex(/^v\d+\.\d+$/).default("v27.0"),
+  graphApiVersion: z
+    .string()
+    .regex(/^v\d+\.\d+$/)
+    .default("v27.0"),
 });
 
 export const metaWhatsAppAdapter: ChannelAdapter = {

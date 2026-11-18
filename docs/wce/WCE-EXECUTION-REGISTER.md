@@ -64,3 +64,8 @@ The WCE workflow is now present on both the WCE-02 base branch and continuation 
 ## Operating rule
 
 Software implementation and isolated CI do not authorize production release. Do not merge PR #195/#199, apply WCE migrations to production, change production credentials/data, or trigger manual Vercel deployments without explicit release authorization. WCE-03 through WCE-05 acceptance is green. Continue WCE-06 on a separate dependent branch; do not merge PR #195/#199 or promote production without explicit release authorization.
+## 18 November 2026 — Integration replay hardening
+
+- The recovered station-assignment RLS migrations (0090 and 0135) now drop only their three command-specific policies before recreating the verified least-privilege definitions. This makes clean replay safe when the same policies are already present in the baseline schema.
+- The repository-wide isolated CI replay now removes the 0087 UAT repair skip entry only in its disposable fixture-backed workspace. Normal local installs continue to skip this property-specific data repair.
+- No production database, credentials, provider dispatch or deployment was changed.
