@@ -104,15 +104,16 @@ export async function upsertChannelDefinition(
 
   const { data, error } = await supabaseAdmin
     .from("api_channel_definitions")
-    .upsert({
-      key: input.key,
+    .upsert(
+      {
+        key: input.key,
         name: input.name,
         description: input.description,
         provider_key: input.providerKey,
-      category: input.category,
-      enabled: input.enabled,
-      sort_order: input.sortOrder,
-      created_by: userId,
+        category: input.category,
+        enabled: input.enabled,
+        sort_order: input.sortOrder,
+        created_by: userId,
       },
       { onConflict: "key" },
     )
