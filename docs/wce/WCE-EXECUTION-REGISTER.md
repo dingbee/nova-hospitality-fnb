@@ -43,3 +43,9 @@
 ## Operating rule
 
 Software phase closure does not authorize production release. Continue with WCE-03 on a separate feature branch after WCE-02 evidence is preserved. Do not merge PR #195 or apply migration 0138 to production without a separate explicit release mandate.
+
+## 18 November 2026 — Integration replay hardening
+
+- The recovered station-assignment RLS migrations (0090 and 0135) now drop only their three command-specific policies before recreating the verified least-privilege definitions. This makes clean replay safe when the same policies are already present in the baseline schema.
+- The repository-wide isolated CI replay now removes the 0087 UAT repair skip entry only in its disposable fixture-backed workspace. Normal local installs continue to skip this property-specific data repair.
+- No production database, credentials, provider dispatch or deployment was changed.
