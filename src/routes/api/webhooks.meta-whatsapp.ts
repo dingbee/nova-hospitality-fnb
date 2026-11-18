@@ -41,12 +41,12 @@ export const Route = createFileRoute("/api/webhooks/meta-whatsapp")({
           return Response.json({ error: "webhook_not_configured" }, { status: 503 });
         }
 
-        if (Number(request.headers.get('content-length') ?? 0) > 262_144) {
-          return Response.json({ error: 'payload_too_large' }, { status: 413 });
+        if (Number(request.headers.get("content-length") ?? 0) > 262_144) {
+          return Response.json({ error: "payload_too_large" }, { status: 413 });
         }
         const rawBody = await request.text();
-        if (Buffer.byteLength(rawBody, 'utf8') > 262_144) {
-          return Response.json({ error: 'payload_too_large' }, { status: 413 });
+        if (Buffer.byteLength(rawBody, "utf8") > 262_144) {
+          return Response.json({ error: "payload_too_large" }, { status: 413 });
         }
         const signature = request.headers.get("x-hub-signature-256");
 
