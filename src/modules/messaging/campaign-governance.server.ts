@@ -794,6 +794,7 @@ export async function recordWhatsAppCampaignUsage(
   input: {
     tenantId: string;
     propertyId: string;
+    locationId?: string | null;
     campaignId?: string | null;
     guestCustomerId?: string | null;
     rateId?: string | null;
@@ -831,6 +832,7 @@ export async function recordWhatsAppCampaignUsage(
     .insert({
       tenant_id: input.tenantId,
       property_id: input.propertyId,
+      location_id: input.locationId ?? null,
       campaign_id: input.campaignId ?? null,
       guest_customer_id: input.guestCustomerId ?? null,
       rate_id: input.rateId ?? null,
