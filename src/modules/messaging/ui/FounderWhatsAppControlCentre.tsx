@@ -214,7 +214,10 @@ export function FounderWhatsAppControlCentre() {
               {usageUnpricedEntries.map(([key, count]) => {
                 const [component, currency] = key.split(":");
                 return (
-                  <li key={key + ":unpriced"} className="flex items-center justify-between gap-3 py-3">
+                  <li
+                    key={key + ":unpriced"}
+                    className="flex items-center justify-between gap-3 py-3"
+                  >
                     <span className="text-sm capitalize">
                       {component.replaceAll("_", " ")}{" "}
                       <span className="text-xs text-muted-foreground"> {currency}</span>

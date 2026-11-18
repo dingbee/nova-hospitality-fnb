@@ -118,7 +118,7 @@ export async function prepareWhatsAppCampaignRecipient(
     input.propertyId,
     input.campaignId,
   );
-  const sourceEventKey = campaign.trigger_type === "event" ? input.eventId?.trim() ?? null : null;
+  const sourceEventKey = campaign.trigger_type === "event" ? (input.eventId?.trim() ?? null) : null;
   const idempotencyKey = buildWhatsAppCampaignRecipientIdempotencyKey({
     campaignId: campaign.id,
     guestCustomerId: input.guestCustomerId,
@@ -626,10 +626,7 @@ export async function queueWhatsAppCampaignRecipient(
     .maybeSingle();
   if (recipientError || !recipient)
     throw new WhatsAppCampaignGovernanceError("campaign_recipient_not_found");
-  if (
-    campaign.trigger_type === "event" &&
-    recipient.source_event_key !== input.eventId
-  ) {
+  if (campaign.trigger_type === "event" && recipient.source_event_key !== input.eventId) {
     throw new WhatsAppCampaignGovernanceError("campaign_recipient_event_mismatch");
   }
   if (recipient.state === "queued" || recipient.state === "sent")
@@ -935,10 +932,7 @@ export async function accountWhatsAppCampaignMessageUsage(
 }
 
 /** Recovers provider-cost ledger rows when send succeeded but ledger persistence did not. */
-export async function reconcileWhatsAppCampaignUsage(
-  admin: Db,
-  options: { limit?: number } = {},
-) {
+export async function reconcileWhatsAppCampaignUsage(admin: Db, options: { limit?: number } = {}) {
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
   const { data, error } = await admin.rpc("wa_reconcile_campaign_usage", { _limit: limit });
   if (error) throw new WhatsAppCampaignGovernanceError("campaign_usage_reconciliation_failed");
