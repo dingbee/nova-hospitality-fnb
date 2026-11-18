@@ -131,7 +131,7 @@ export async function updateChannelConnection(
 }
 
 export async function testChannelConnectionForTenant(
-  sb: SupabaseClient<any, any, any>,
+  sb: SupabaseClient,
   userId: string,
   input: { tenantId: string; integrationId: string },
 ) {
