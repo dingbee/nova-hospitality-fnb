@@ -21,7 +21,8 @@ SET state = CASE p.code
   ELSE pe.state
 END,
 updated_at = now()
-FROM public.commercial_plans p, public.commercial_capabilities c
+FROM public.commercial_plans p,
+     public.commercial_capabilities c
 WHERE pe.plan_id = p.id
   AND pe.capability_id = c.id
   AND c.code = 'api_access';
@@ -32,7 +33,8 @@ SET state = CASE p.code
   ELSE 'unavailable'
 END,
 updated_at = now()
-FROM public.commercial_plans p, public.commercial_capabilities c
+FROM public.commercial_plans p,
+     public.commercial_capabilities c
 WHERE pe.plan_id = p.id
   AND pe.capability_id = c.id
   AND c.code = 'advanced_integrations';
@@ -49,7 +51,8 @@ SET state = CASE p.code
   ELSE 'unavailable'
 END,
 updated_at = now()
-FROM public.commercial_plans p, public.commercial_capabilities c
+FROM public.commercial_plans p,
+     public.commercial_capabilities c
 WHERE pe.plan_id = p.id
   AND pe.capability_id = c.id
   AND c.code = 'enterprise_governance';
