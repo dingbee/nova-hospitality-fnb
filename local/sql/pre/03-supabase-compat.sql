@@ -242,9 +242,14 @@ $$;
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.migration_transfer_audit (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_count integer,
+  target_count integer,
   note text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE public.migration_transfer_audit
+  ADD COLUMN IF NOT EXISTS source_count integer,
+  ADD COLUMN IF NOT EXISTS target_count integer;
 
 -- Cash payout / daily close / tender declaration / giveaway workflow
 -- functions: ME-03 found these revoked/granted by migration 0048 but
