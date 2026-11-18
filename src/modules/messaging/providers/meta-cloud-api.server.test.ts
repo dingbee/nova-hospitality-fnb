@@ -108,7 +108,8 @@ describe("Meta WhatsApp Cloud API foundation", () => {
   });
 
   it("lists phone numbers and checks phone-number health", async () => {
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ data: [{ id: "phone-456", quality_rating: "GREEN" }] }), {
           status: 200,
