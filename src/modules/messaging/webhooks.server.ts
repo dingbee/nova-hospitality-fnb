@@ -72,17 +72,17 @@ export async function ingestMetaWhatsAppWebhook(
 
     for (let changeIndex = 0; changeIndex < changes.length; changeIndex += 1) {
       const change = changes[changeIndex];
-      const value =
-        typeof change?.value === "object" && change.value !== null
-          ? change.value
-          : {};
+      const value = typeof change?.value === "object" && change.value !== null ? change.value : {};
       const phoneNumberId =
-        typeof value.metadata?.phone_number_id === "string"
-          ? value.metadata.phone_number_id
-          : null;
+        typeof value.metadata?.phone_number_id === "string" ? value.metadata.phone_number_id : null;
       const eventType = typeof change?.field === "string" ? change.field : "unknown";
 
-      if (!phoneNumberId || !wabaId || !/^\d{3,32}$/.test(phoneNumberId) || !/^\d{3,32}$/.test(wabaId)) {
+      if (
+        !phoneNumberId ||
+        !wabaId ||
+        !/^\d{3,32}$/.test(phoneNumberId) ||
+        !/^\d{3,32}$/.test(wabaId)
+      ) {
         ignored += 1;
         continue;
       }
@@ -90,7 +90,9 @@ export async function ingestMetaWhatsAppWebhook(
       const eventKey = sha256(`${bodyHash}:${entryIndex}:${changeIndex}`);
       const { data: binding, error: bindingError } = await admin
         .from("wa_phone_number_bindings")
-        .select("id, tenant_id, property_id, location_id, integration_id, waba_id, phone_number_id, status")
+        .select(
+          "id, tenant_id, property_id, location_id, integration_id, waba_id, phone_number_id, status",
+        )
         .eq("phone_number_id", phoneNumberId)
         .maybeSingle();
       if (bindingError) throw new MetaWebhookPersistenceError();

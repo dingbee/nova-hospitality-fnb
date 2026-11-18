@@ -19,12 +19,7 @@ type FacebookLoginResponse = {
 };
 
 type FacebookSdk = {
-  init(config: {
-    appId: string;
-    autoLogAppEvents: boolean;
-    xfbml: boolean;
-    version: string;
-  }): void;
+  init(config: { appId: string; autoLogAppEvents: boolean; xfbml: boolean; version: string }): void;
   login(
     callback: (response: FacebookLoginResponse) => void,
     options: {
@@ -167,7 +162,9 @@ export function startMetaEmbeddedSignup(
           handlers.onAuthorizationCode(code);
         } else {
           handlers.onError(
-            new Error("Meta Embedded Signup was cancelled or did not return an authorization code."),
+            new Error(
+              "Meta Embedded Signup was cancelled or did not return an authorization code.",
+            ),
           );
         }
       },

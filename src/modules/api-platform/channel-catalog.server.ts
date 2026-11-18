@@ -4,14 +4,17 @@ import { CHANNEL_PROVIDERS, getChannelProviderDefinition } from "./channel-catal
 import { CHANNEL_TYPES, type ChannelDefinition, type ChannelType } from "./channel-contracts";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
-type Sb = SupabaseClient<any, any, any>;
+type Sb = SupabaseClient;
 
 export type StoredChannelDefinition = ChannelDefinition & {
   enabled: boolean;
   sortOrder: number;
 };
 
-export async function listChannelDefinitions(sb: Sb, enabledOnly = true): Promise<StoredChannelDefinition[]> {
+export async function listChannelDefinitions(
+  sb: Sb,
+  enabledOnly = true,
+): Promise<StoredChannelDefinition[]> {
   let query = sb
     .from("api_channel_definitions")
     .select("key, name, description, provider_key, category, enabled, sort_order")
@@ -23,7 +26,7 @@ export async function listChannelDefinitions(sb: Sb, enabledOnly = true): Promis
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  return (data ?? []).map((row: any) => ({
+  return (data ?? []).map((row) => ({
     key: row.key,
     name: row.name,
     description: row.description,
@@ -34,7 +37,10 @@ export async function listChannelDefinitions(sb: Sb, enabledOnly = true): Promis
   }));
 }
 
-export async function getChannelDefinition(sb: Sb, key: string): Promise<StoredChannelDefinition | null> {
+export async function getChannelDefinition(
+  sb: Sb,
+  key: string,
+): Promise<StoredChannelDefinition | null> {
   const { data, error } = await sb
     .from("api_channel_definitions")
     .select("key, name, description, provider_key, category, enabled, sort_order")
@@ -56,7 +62,10 @@ export async function getChannelDefinition(sb: Sb, key: string): Promise<StoredC
   };
 }
 
-export async function listAllChannelDefinitionsForAdmin(sb: Sb, userId: string): Promise<StoredChannelDefinition[]> {
+export async function listAllChannelDefinitionsForAdmin(
+  sb: Sb,
+  userId: string,
+): Promise<StoredChannelDefinition[]> {
   await assertCommercialAdmin(sb, userId);
   const { data, error } = await supabaseAdmin
     .from("api_channel_definitions")
@@ -64,7 +73,7 @@ export async function listAllChannelDefinitionsForAdmin(sb: Sb, userId: string):
     .order("sort_order", { ascending: true })
     .order("name", { ascending: true });
   if (error) throw new Error(error.message);
-  return (data ?? []).map((row: any) => ({
+  return (data ?? []).map((row) => ({
     key: row.key,
     name: row.name,
     description: row.description,
@@ -95,16 +104,19 @@ export async function upsertChannelDefinition(
 
   const { data, error } = await supabaseAdmin
     .from("api_channel_definitions")
-    .upsert({
-      key: input.key,
-      name: input.name,
-      description: input.description,
-      provider_key: input.providerKey,
-      category: input.category,
-      enabled: input.enabled,
-      sort_order: input.sortOrder,
-      created_by: userId,
-    }, { onConflict: "key" })
+    .upsert(
+      {
+        key: input.key,
+        name: input.name,
+        description: input.description,
+        provider_key: input.providerKey,
+        category: input.category,
+        enabled: input.enabled,
+        sort_order: input.sortOrder,
+        created_by: userId,
+      },
+      { onConflict: "key" },
+    )
     .select("key, name, description, provider_key, category, enabled, sort_order")
     .single();
 
@@ -114,7 +126,7 @@ export async function upsertChannelDefinition(
 
 export async function listChannelProvidersForAdmin(sb: Sb, userId: string) {
   await assertCommercialAdmin(sb, userId);
-  return CHANNEL_PROVIDERS.filter((provider) => provider.key !== 'meta-whatsapp');
+  return CHANNEL_PROVIDERS.filter((provider) => provider.key !== "meta-whatsapp");
 }
 
 export function isChannelType(value: string): value is ChannelType {
