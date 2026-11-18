@@ -372,7 +372,10 @@ describe("stock transfer lifecycle — the exact reported P0 scenario", () => {
     expect(
       fake.movements.filter((movement) => movement.dedupe_key === `transfer:in:${lineId}`),
     ).toHaveLength(1);
-    expect(fake.movements.find((movement) => movement.dedupe_key === `transfer:in:${lineId}`)?.quantity).toBe(10);
+    expect(
+      fake.movements.find((movement) => movement.dedupe_key === `transfer:in:${lineId}`)
+        ?.quantity,
+    ).toBe(10);
     expect(fake.transferLines[lineId].received_quantity).toBe(10);
     expect(fake.transfers[created.id].status).toBe("partially_received");
     expect(fake.item.current_quantity).toBe(11);
@@ -406,7 +409,9 @@ describe("stock transfer lifecycle — the exact reported P0 scenario", () => {
     const outcomes = await Promise.allSettled([receive(8), receive(10)]);
     expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
     expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
-    const inbound = fake.movements.find((movement) => movement.dedupe_key === `transfer:in:${lineId}`);
+    const inbound = fake.movements.find(
+      (movement) => movement.dedupe_key === `transfer:in:${lineId}`,
+    );
     expect(inbound).toBeDefined();
     expect(fake.transferLines[lineId].received_quantity).toBe(inbound?.quantity);
     expect(fake.item.current_quantity).toBe(1 + Number(inbound?.quantity));
