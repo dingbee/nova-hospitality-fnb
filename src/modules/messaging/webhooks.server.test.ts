@@ -53,12 +53,13 @@ function makeAdmin(
 
 const body = JSON.stringify({
   object: "whatsapp_business_account",
-  entry: [{
+  entry: [
+    {
       id: binding.waba_id,
       changes: [
         {
-      field: "messages",
-      value: {
+          field: "messages",
+          value: {
             metadata: { phone_number_id: binding.phone_number_id },
             messages: [
               {
