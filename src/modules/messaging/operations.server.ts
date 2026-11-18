@@ -334,6 +334,7 @@ export async function getWhatsAppConversionReport(sb: Db, userId: string, input:
     sessionIds.has(order.guest_portal_session_id),
   );
   const paidOrders = linkedOrders.filter((order: any) => order.payment_state === "paid");
+  const convertedSessionIds = new Set(linkedOrders.map((order: any) => order.guest_portal_session_id));
   const revenue = new Map<string, number>();
   for (const order of paidOrders) {
     revenue.set(order.currency, (revenue.get(order.currency) ?? 0) + Number(order.total ?? 0));
@@ -343,7 +344,8 @@ export async function getWhatsAppConversionReport(sb: Db, userId: string, input:
     sessionsOpened: openedSessions.length,
     ordersPlaced: linkedOrders.length,
     ordersPaid: paidOrders.length,
-    sessionToOrderRate: openedSessions.length ? linkedOrders.length / openedSessions.length : 0,
+    sessionsWithOrders: convertedSessionIds.size,
+    sessionToOrderRate: openedSessions.length ? convertedSessionIds.size / openedSessions.length : 0,
     orderToPaidRate: linkedOrders.length ? paidOrders.length / linkedOrders.length : 0,
     paidRevenueByCurrency: [...revenue.entries()].map(([currency, amount]) => ({
       currency,
