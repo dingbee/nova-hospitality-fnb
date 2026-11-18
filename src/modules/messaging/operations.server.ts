@@ -290,10 +290,8 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
     campaignQuery = campaignQuery.eq("location_id", input.locationId);
     aiQuery = aiQuery.eq("location_id", input.locationId);
   }
-  const [
-    { data: campaignRows, error: campaignError },
-    { data: aiRows, error: aiError },
-  ] = await Promise.all([campaignQuery, aiQuery]);
+  const [{ data: campaignRows, error: campaignError }, { data: aiRows, error: aiError }] =
+    await Promise.all([campaignQuery, aiQuery]);
   if (campaignError || aiError) throw new Error("whatsapp_usage_report_unavailable");
   const entries = [
     ...(campaignRows ?? []).map((row: any) => ({
