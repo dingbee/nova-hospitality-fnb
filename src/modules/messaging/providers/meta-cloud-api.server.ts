@@ -38,7 +38,11 @@ export class MetaGraphError extends Error {
     status: number | null,
     code: number | null = null,
     subcode: number | null = null,
-    options: { fbtraceId?: string | null; isTransient?: boolean; retryAfterMs?: number | null } = {},
+    options: {
+      fbtraceId?: string | null;
+      isTransient?: boolean;
+      retryAfterMs?: number | null;
+    } = {},
   ) {
     super(message);
     this.name = "MetaGraphError";
@@ -47,8 +51,12 @@ export class MetaGraphError extends Error {
     this.subcode = subcode;
     this.fbtraceId = options.fbtraceId ?? null;
     this.retryAfterMs = options.retryAfterMs ?? null;
-    this.retryable = status === null || status === 429 || (status !== null && status >= 500)
-      || [4, 17, 32, 613].includes(code ?? -1) || options.isTransient === true;
+    this.retryable =
+      status === null ||
+      status === 429 ||
+      (status !== null && status >= 500) ||
+      [4, 17, 32, 613].includes(code ?? -1) ||
+      options.isTransient === true;
   }
 }
 
@@ -79,12 +87,16 @@ async function readGraphResponse<T>(response: Response): Promise<T> {
     body = null;
   }
 
-  const payload = typeof body === "object" && body !== null ? body as Record<string, unknown> : {};
+  const payload =
+    typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
   const error = typeof payload.error === "object" && payload.error !== null
-    ? payload.error as MetaGraphErrorInfo
+      ? (payload.error as MetaGraphErrorInfo)
     : {};
   if (!response.ok || payload.error) {
-    const message = typeof error.message === "string" ? error.message.slice(0, 500) : "Meta Graph API request failed.";
+    const message =
+      typeof error.message === "string"
+        ? error.message.slice(0, 500)
+        : "Meta Graph API request failed.";
     const retryAfter = response.headers.get("retry-after");
     const retryAfterSeconds = retryAfter && /^\d+(?:\.\d+)?$/.test(retryAfter) ? Number(retryAfter) : null;
     throw new MetaGraphError(
@@ -157,14 +169,22 @@ export async function exchangeEmbeddedSignupCode(
 
   let response: Response;
   try {
-    response = await fetch(url, { method: "GET", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+    response = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    });
   } catch {
     throw new MetaGraphError(
       "Meta authorization-code exchange failed due to a network or timeout error.",
       null,
     );
   }
-  const body = await readGraphResponse<{ access_token?: string; token_type?: string; expires_in?: number }>(response);
+  const body = await readGraphResponse<{
+    access_token?: string;
+    token_type?: string;
+    expires_in?: number;
+  }>(response);
   if (!body.access_token) throw new MetaGraphError("Meta did not return an access token.", response.status);
   return {
     accessToken: body.access_token,
@@ -195,7 +215,11 @@ export async function inspectAccessToken(
 
   let response: Response;
   try {
-    response = await fetch(url, { method: "GET", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+    response = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    });
   } catch {
     throw new MetaGraphError(
       "Meta token inspection failed due to a network or timeout error.",
@@ -229,7 +253,12 @@ export async function getWabaDetails(
 ): Promise<MetaWabaDetails> {
   const id = encodeURIComponent(required(credentials.wabaId, "WABA ID"));
   const query = new URLSearchParams({ fields: "id,name,currency,timezone_id,status" });
-  return graphRequest<MetaWabaDetails>(`${id}?${query.toString()}`, credentials.accessToken, {}, platform);
+  return graphRequest<MetaWabaDetails>(
+    `${id}?${query.toString()}`,
+    credentials.accessToken,
+    {},
+    platform,
+  );
 }
 
 export type MetaPhoneNumber = {
@@ -247,8 +276,16 @@ export async function listWabaPhoneNumbers(
   platform?: Pick<MetaPlatformConfig, "graphApiVersion">,
 ): Promise<MetaPhoneNumber[]> {
   const id = encodeURIComponent(required(credentials.wabaId, "WABA ID"));
-  const query = new URLSearchParams({ fields: "id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type,status" });
-  const body = await graphRequest<{ data?: MetaPhoneNumber[] }>(`${id}/phone_numbers?${query.toString()}`, credentials.accessToken, {}, platform);
+  const query = new URLSearchParams({
+    fields:
+      "id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type,status",
+  });
+  const body = await graphRequest<{ data?: MetaPhoneNumber[] }>(
+    `${id}/phone_numbers?${query.toString()}`,
+    credentials.accessToken,
+    {},
+    platform,
+  );
   return body.data ?? [];
 }
 
@@ -259,10 +296,15 @@ export async function registerVerifiedPhoneNumber(
 ): Promise<{ success: boolean }> {
   if (!/^\d{6}$/.test(pin)) throw new Error("WhatsApp phone registration PIN must contain exactly six digits.");
   const id = encodeURIComponent(required(credentials.phoneNumberId, "Phone number ID"));
-  return graphRequest<{ success: boolean }>(`${id}/register`, credentials.accessToken, {
+  return graphRequest<{ success: boolean }>(
+    `${id}/register`,
+    credentials.accessToken,
+    {
     method: "POST",
     body: JSON.stringify({ messaging_product: "whatsapp", pin }),
-  }, platform);
+    },
+    platform,
+  );
 }
 
 export async function subscribeWabaToApp(
@@ -270,10 +312,15 @@ export async function subscribeWabaToApp(
   platform?: Pick<MetaPlatformConfig, "graphApiVersion">,
 ): Promise<{ success: boolean }> {
   const id = encodeURIComponent(required(credentials.wabaId, "WABA ID"));
-  return graphRequest<{ success: boolean }>(`${id}/subscribed_apps`, credentials.accessToken, {
+  return graphRequest<{ success: boolean }>(
+    `${id}/subscribed_apps`,
+    credentials.accessToken,
+    {
     method: "POST",
-    body: JSON.stringify({}),
-  }, platform);
+      body: JSON.stringify({}),
+    },
+    platform,
+  );
 }
 
 export async function checkPhoneNumberHealth(
@@ -281,8 +328,16 @@ export async function checkPhoneNumberHealth(
   platform?: Pick<MetaPlatformConfig, "graphApiVersion">,
 ): Promise<MetaPhoneNumber> {
   const id = encodeURIComponent(required(credentials.phoneNumberId, "Phone number ID"));
-  const query = new URLSearchParams({ fields: "id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type" });
-  return graphRequest<MetaPhoneNumber>(`${id}?${query.toString()}`, credentials.accessToken, {}, platform);
+  const query = new URLSearchParams({
+    fields:
+      "id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type",
+  });
+  return graphRequest<MetaPhoneNumber>(
+    `${id}?${query.toString()}`,
+    credentials.accessToken,
+    {},
+    platform,
+  );
 }
 
 export type MetaSendTextResult = {
@@ -302,7 +357,10 @@ export async function sendTextMessage(
   const text = body.trim();
   if (!text || text.length > 4096) throw new Error("WhatsApp text message must contain 1–4096 characters.");
   const id = encodeURIComponent(required(credentials.phoneNumberId, "Phone number ID"));
-  return graphRequest<MetaSendTextResult>(`${id}/messages`, credentials.accessToken, {
+  return graphRequest<MetaSendTextResult>(
+    `${id}/messages`,
+    credentials.accessToken,
+    {
     method: "POST",
     body: JSON.stringify({
       messaging_product: "whatsapp",
@@ -310,8 +368,10 @@ export async function sendTextMessage(
       to: recipient,
       type: "text",
       text: { preview_url: false, body: text },
-    }),
-  }, platform);
+      }),
+    },
+    platform,
+  );
 }
 
 /** Meta's GET webhook challenge; returns the challenge only for a constant-time token match. */
