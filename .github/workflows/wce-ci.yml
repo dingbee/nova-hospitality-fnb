@@ -325,6 +325,5 @@ jobs:
                 RAISE EXCEPTION 'WCE-05 append-only consent trigger is missing';
               END IF;
             END IF;
-            END IF;
           END $verify$;
           SQL
