@@ -299,7 +299,11 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
 
 export async function getWhatsAppConversionReport(sb: Db, userId: string, input: TenantFilter) {
   const { propertyIds } = await tenantQueryScope(sb, userId, input);
-  let sessionsQuery = sb
+  // Guest Portal sessions are service-role-only in WCE-02. Authorize the
+  // tenant/property scope first, then perform an explicitly filtered aggregate
+  // read through the server admin client; raw session rows never leave here.
+  const analyticsDb = await serviceAdmin();
+  let sessionsQuery = analyticsDb
     .from("wa_guest_portal_sessions")
     .select(
       "id, tenant_id, property_id, location_id, conversation_id, acquisition_channel, open_count, opened_at, created_at, expires_at, revoked_at",
@@ -308,7 +312,7 @@ export async function getWhatsAppConversionReport(sb: Db, userId: string, input:
     .eq("acquisition_channel", "whatsapp")
     .order("created_at", { ascending: false })
     .limit(2000);
-  let ordersQuery = sb
+  let ordersQuery = analyticsDb
     .from("restaurant_orders")
     .select(
       "id, tenant_id, property_id, location_id, guest_portal_session_id, status, payment_state, total, currency, opened_at, closed_at",
