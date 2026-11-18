@@ -12,12 +12,13 @@ const baseEvent = {
   event_type: "messages",
   payload: {
     value: {
-      messages: [{
+      messages: [
+        {
           id: "wamid.inbound.1",
-        from: "255700000000",
-        timestamp: "1794850000",
-        type: "text",
-        text: { body: "Hello LexiBite" },
+          from: "255700000000",
+          timestamp: "1794850000",
+          type: "text",
+          text: { body: "Hello LexiBite" },
         },
       ],
     },
