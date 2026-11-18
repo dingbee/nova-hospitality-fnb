@@ -16,6 +16,7 @@ vi.mock("@/integrations/supabase/client.server", () => ({
 import {
   getFounderWhatsAppOverview,
   getWhatsAppConversionReport,
+  getWhatsAppUsageReport,
   listWhatsAppInbox,
   listWhatsAppGuestCRM,
 } from "./operations.server";
@@ -208,3 +209,66 @@ describe("WCE-08 WhatsApp-to-commerce conversion reconciliation", () => {
     });
   });
 });
+
+describe("WCE-08 WhatsApp usage attribution", () => {
+  it("combines provider ledger costs with WhatsApp-scoped concierge AI cost records", async () => {
+    vi.mocked(getTenantScope).mockResolvedValue({
+      tenantId: "tenant-1",
+      platformAdmin: false,
+      grants: [{ role: "owner", propertyId: "property-1" }],
+    });
+    const datasets: Record<string, unknown[]> = {
+      wa_campaign_usage_ledger: [
+        {
+          id: "meta-1",
+          usage_component: "meta_provider",
+          usage_event: "template_message",
+          quantity: 2,
+          amount: 0.1,
+          currency: "USD",
+          recorded_at: "2026-11-18T07:00:00.000Z",
+        },
+      ],
+      commercial_ai_usage_log: [
+        {
+          id: "ai-1",
+          workload_type: "ai_concierge.reply",
+          request_count: 3,
+          estimated_cost: 0.05,
+          currency: "USD",
+          occurred_at: "2026-11-18T07:01:00.000Z",
+        },
+      ],
+    };
+    const calls: Array<{ table: string; method: string; args: unknown[] }> = [];
+    const db = {
+      from: (table: string) => {
+        const builder: any = {
+          select: (...args: unknown[]) => { calls.push({ table, method: "select", args }); return builder; },
+          eq: (...args: unknown[]) => { calls.push({ table, method: "eq", args }); return builder; },
+          in: (...args: unknown[]) => { calls.push({ table, method: "in", args }); return builder; },
+          order: (...args: unknown[]) => { calls.push({ table, method: "order", args }); return builder; },
+          limit: (...args: unknown[]) => { calls.push({ table, method: "limit", args }); return builder; },
+          then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+            Promise.resolve({ data: datasets[table] ?? [], error: null }).then(resolve, reject),
+        };
+        return builder;
+      },
+    };
+    const result = await getWhatsAppUsageReport(db, "tenant-owner", {
+      tenantId: "tenant-1",
+      propertyId: "property-1",
+    });
+    expect(result.totals).toEqual([
+      { component: "meta_provider", currency: "USD", amount: 0.1, quantity: 2, entries: 1 },
+      { component: "ai", currency: "USD", amount: 0.05, quantity: 3, entries: 1 },
+    ]);
+    expect(calls).toContainEqual({
+      table: "commercial_ai_usage_log",
+      method: "eq",
+      args: ["source_channel", "whatsapp"],
+    });
+    expect(result.entries).toHaveLength(2);
+  });
+});
+
