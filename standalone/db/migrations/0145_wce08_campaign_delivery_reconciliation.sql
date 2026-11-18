@@ -64,7 +64,7 @@ BEGIN
   SET state = _recipient_state,
       dispatched_at = CASE
         WHEN _recipient_state IN ('sent', 'delivered', 'read')
-          THEN COALESCE(dispatched_at, NEW.sent_at, NEW.updated_at, now())
+          THEN COALESCE(dispatched_at, NEW.sent_at, now())
         ELSE dispatched_at
       END
   WHERE id = _recipient_id
