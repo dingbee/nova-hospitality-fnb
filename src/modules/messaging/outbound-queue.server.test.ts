@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- the mocked Supabase query builder mirrors the untyped server client boundary. */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/modules/api-platform/integrations.server", () => ({
   getIntegrationSecret: vi.fn().mockResolvedValue("tenant-token"),
 }));
@@ -14,9 +14,10 @@ vi.mock("./providers/meta-cloud-api.server", () => ({
     }
   },
   sendTextMessage: vi.fn().mockResolvedValue({ messages: [{ id: "wamid.sent.1" }] }),
+  sendTemplateMessage: vi.fn().mockResolvedValue({ messages: [{ id: "wamid.template.1" }] }),
 }));
 import { processPendingWhatsAppOutboundMessages } from "./outbound-queue.server";
-import { sendTextMessage } from "./providers/meta-cloud-api.server";
+import { sendTemplateMessage, sendTextMessage } from "./providers/meta-cloud-api.server";
 
 const queued = {
   id: "message-1",
@@ -25,11 +26,13 @@ const queued = {
   location_id: "location-1",
   conversation_id: "conversation-1",
   content: "Welcome",
+  message_type: "text",
+  payload: {},
   delivery_attempts: 1,
 };
-function fakeAdmin() {
+function fakeAdmin(outbound = queued) {
   const updates: Array<Record<string, unknown>> = [];
-  const rpc = vi.fn(async () => ({ data: [queued], error: null }));
+  const rpc = vi.fn(async () => ({ data: [outbound], error: null }));
   const from = vi.fn((table: string) => {
     const builder: any = {
       select: () => builder,
@@ -74,11 +77,74 @@ function fakeAdmin() {
   return { admin: { rpc, from }, updates };
 }
 
+const previousProviderDispatch = process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED;
+
 describe("WhatsApp outbound queue", () => {
+  beforeEach(() => {
+    process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED = "true";
+  });
+  afterEach(() => {
+    if (previousProviderDispatch === undefined) {
+      delete process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED;
+    } else {
+      process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED = previousProviderDispatch;
+    }
+  });
+  it("dispatches an approved template message through the same tenant-scoped outbox", async () => {
+    const templateMessage = {
+      ...queued,
+      id: "message-template-1",
+      content: "",
+      message_type: "template",
+      payload: {
+        template: {
+          name: "weekly_special",
+          language: "en",
+          components: [{ type: "body", parameters: [] }],
+        },
+        campaign_recipient_id: "recipient-1",
+      },
+    };
+    const { admin, updates } = fakeAdmin(templateMessage);
+    const result = await processPendingWhatsAppOutboundMessages(admin, {
+      workerId: "worker-template",
+    });
+    expect(result).toEqual({
+      claimed: 1,
+      sent: 1,
+      retried: 0,
+      failed: 0,
+      campaignReconciliationRequired: 0,
+      campaignDispatchDeferred: 0,
+      campaignDispatchSuppressed: 0,
+      providerDispatchDeferred: 0,
+    });
+    expect(sendTemplateMessage).toHaveBeenCalledWith(
+      { accessToken: "tenant-token", wabaId: "987654321", phoneNumberId: "123456789" },
+      "255700000000",
+      { name: "weekly_special", language: "en", components: [{ type: "body", parameters: [] }] },
+      {},
+    );
+    expect(updates[0]).toMatchObject({
+      provider_message_id: "wamid.template.1",
+      status: "sent",
+    });
+    expect(updates).toContainEqual({ state: "sent", dispatched_at: expect.any(String) });
+  });
+
   it("sends with the scoped tenant credential and records the provider message ID", async () => {
     const { admin, updates } = fakeAdmin();
     const result = await processPendingWhatsAppOutboundMessages(admin, { workerId: "worker-1" });
-    expect(result).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0 });
+    expect(result).toEqual({
+      claimed: 1,
+      sent: 1,
+      retried: 0,
+      failed: 0,
+      campaignReconciliationRequired: 0,
+      campaignDispatchDeferred: 0,
+      campaignDispatchSuppressed: 0,
+      providerDispatchDeferred: 0,
+    });
     expect(sendTextMessage).toHaveBeenCalledWith(
       { accessToken: "tenant-token", wabaId: "987654321", phoneNumberId: "123456789" },
       "255700000000",
@@ -89,6 +155,70 @@ describe("WhatsApp outbound queue", () => {
       provider_message_id: "wamid.sent.1",
       status: "sent",
       locked_by: null,
+    });
+  });
+  it("defers campaign messages without calling Meta unless the explicit dispatch gate is enabled", async () => {
+    const previous = process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED;
+    delete process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED;
+    vi.clearAllMocks();
+    const campaignMessage = {
+      ...queued,
+      id: "message-campaign-1",
+      message_type: "template",
+      payload: {
+        campaign_id: "campaign-1",
+        campaign_recipient_id: "recipient-1",
+        template: { name: "weekly_special", language: "en", components: [] },
+      },
+    };
+    const { admin, updates } = fakeAdmin(campaignMessage);
+    try {
+      const result = await processPendingWhatsAppOutboundMessages(admin, {
+        workerId: "worker-campaign",
+      });
+      expect(result).toEqual({
+        claimed: 1,
+        sent: 0,
+        retried: 0,
+        failed: 0,
+        campaignReconciliationRequired: 0,
+        campaignDispatchDeferred: 1,
+        campaignDispatchSuppressed: 0,
+        providerDispatchDeferred: 0,
+      });
+      expect(sendTemplateMessage).not.toHaveBeenCalled();
+      expect(updates[0]).toMatchObject({
+        locked_at: null,
+        locked_by: null,
+        last_error: "campaign_dispatch_disabled",
+      });
+    } finally {
+      if (previous === undefined) delete process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED;
+      else process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED = previous;
+    }
+  });
+  it("defers every provider message while the global dispatch gate is disabled", async () => {
+    delete process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED;
+    vi.clearAllMocks();
+    const { admin, updates } = fakeAdmin();
+    const result = await processPendingWhatsAppOutboundMessages(admin, {
+      workerId: "worker-provider-disabled",
+    });
+    expect(result).toEqual({
+      claimed: 1,
+      sent: 0,
+      retried: 0,
+      failed: 0,
+      campaignReconciliationRequired: 0,
+      campaignDispatchDeferred: 0,
+      campaignDispatchSuppressed: 0,
+      providerDispatchDeferred: 1,
+    });
+    expect(sendTextMessage).not.toHaveBeenCalled();
+    expect(updates[0]).toMatchObject({
+      locked_at: null,
+      locked_by: null,
+      last_error: "provider_dispatch_disabled",
     });
   });
 });

@@ -187,6 +187,51 @@ async function processStatuses(db: Db, value: Record<string, any>) {
   }
 }
 
+async function processTemplateStatusUpdate(
+  db: Db,
+  event: ClaimedEvent,
+  value: Record<string, any>,
+) {
+  if (!event.tenant_id || !event.property_id) throw new Error("template_status_scope_missing");
+  const raw = value.message_template_status_update;
+  const update = Array.isArray(raw) ? raw[0] : raw;
+  if (!update || typeof update.message_template_id !== "string" || typeof update.event !== "string")
+    throw new Error("template_status_update_invalid");
+
+  const providerStatus = update.event.toUpperCase();
+  const status =
+    providerStatus === "APPROVED"
+      ? "approved"
+      : providerStatus === "REJECTED"
+        ? "rejected"
+        : providerStatus === "PAUSED" || providerStatus === "DISABLED"
+          ? "paused"
+          : providerStatus === "PENDING"
+            ? "submitted"
+            : null;
+  if (!status) return;
+
+  const { data, error } = await db
+    .from("wa_message_templates")
+    .update({
+      status,
+      rejection_reason:
+        status === "rejected"
+          ? String(update.reason ?? "Meta rejected this template.").slice(0, 500)
+          : null,
+      reviewed_at: new Date().toISOString(),
+      synced_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("tenant_id", event.tenant_id)
+    .or("property_id.eq." + event.property_id + ",property_id.is.null")
+    .eq("meta_template_id", update.message_template_id)
+    .select("id")
+    .maybeSingle();
+  if (error) throw new Error("template_status_update_persistence_failed");
+  if (!data) throw new Error("template_status_target_not_found");
+}
+
 async function processEvent(db: Db, event: ClaimedEvent) {
   if (!event.binding_id || !event.tenant_id || !event.property_id || !event.location_id) {
     throw new Error("webhook_event_scope_missing");
@@ -198,9 +243,10 @@ async function processEvent(db: Db, event: ClaimedEvent) {
   if (event.event_type === "messages") {
     await processMessages(db, event, value);
     await processStatuses(db, value);
+  } else if (event.event_type === "message_template_status_update") {
+    await processTemplateStatusUpdate(db, event, value);
   }
-  // Other Meta account/template notifications are durably acknowledged here;
-  // their domain-specific handling is added by WCE-07.
+  // Other Meta account notifications remain durably acknowledged for WCE-07 handling.
 }
 
 async function completeEvent(db: Db, eventId: string, workerId: string) {

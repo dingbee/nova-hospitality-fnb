@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { processPendingMetaWebhookEvents } from "@/modules/messaging/webhook-queue.server";
 import { processPendingWhatsAppOutboundMessages } from "@/modules/messaging/outbound-queue.server";
+import { processDueWhatsAppCampaigns } from "@/modules/messaging/campaign-governance.server";
 
 function isAuthorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET ?? "";
@@ -26,12 +27,13 @@ async function dispatch(request: Request) {
       limit: 25,
       workerId: randomUUID(),
     });
+    const campaigns = await processDueWhatsAppCampaigns(supabaseAdmin, { limit: 10 });
     const outbound = await processPendingWhatsAppOutboundMessages(supabaseAdmin, {
       limit: 25,
       workerId: randomUUID(),
     });
     return Response.json(
-      { inbound, outbound },
+      { inbound, campaigns, outbound },
       {
         headers: { "Cache-Control": "no-store, private, max-age=0" },
       },

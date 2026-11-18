@@ -32,7 +32,11 @@ const baseEvent = {
 
 function makeDb(
   events: unknown[],
-  options: { messageInsertError?: { code: string } | null; statusResult?: boolean } = {},
+  options: {
+    messageInsertError?: { code: string } | null;
+    statusResult?: boolean;
+    templateUpdateFound?: boolean;
+  } = {},
 ) {
   const inserts: Array<{ table: string; row: Record<string, unknown> }> = [];
   const updates: Array<{ table: string; patch: Record<string, unknown> }> = [];
@@ -48,10 +52,17 @@ function makeDb(
     const builder: Record<string, any> = {
       select: vi.fn(() => builder),
       eq: vi.fn(() => builder),
+      or: vi.fn(() => builder),
       in: vi.fn(() => builder),
       order: vi.fn(() => builder),
       limit: vi.fn(() => builder),
-      maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+      maybeSingle: vi.fn(async () => ({
+        data:
+          table === "wa_message_templates" && options.templateUpdateFound
+            ? { id: "template-row-1" }
+            : null,
+        error: null,
+      })),
       single: vi.fn(async () => ({ data: { id: "conversation-1" }, error: null })),
       insert: vi.fn((row: Record<string, unknown>) => {
         inserts.push({ table, row });
@@ -127,6 +138,28 @@ describe("Meta WhatsApp durable webhook worker", () => {
       status: "retry",
       last_error: "event_processing_failed",
       locked_at: null,
+    });
+  });
+
+  it("reconciles Meta template approval webhooks into the scoped template registry", async () => {
+    const templateEvent = {
+      ...baseEvent,
+      event_type: "message_template_status_update",
+      payload: {
+        value: {
+          message_template_status_update: {
+            message_template_id: "meta-template-1",
+            event: "APPROVED",
+          },
+        },
+      },
+    };
+    const { db, updates } = makeDb([templateEvent], { templateUpdateFound: true });
+    const result = await processPendingMetaWebhookEvents(db, { workerId: "template-worker" });
+    expect(result).toEqual({ claimed: 1, processed: 1, retried: 0, deadLettered: 0 });
+    expect(updates.find((item) => item.table === "wa_message_templates")?.patch).toMatchObject({
+      status: "approved",
+      rejection_reason: null,
     });
   });
 

@@ -349,6 +349,69 @@ export async function checkPhoneNumberHealth(
   );
 }
 
+export type MetaMessageTemplateCategory = "MARKETING" | "UTILITY" | "AUTHENTICATION";
+export type MetaMessageTemplate = {
+  id?: string;
+  name: string;
+  status: string;
+  category: MetaMessageTemplateCategory;
+  language: string;
+  components?: Array<Record<string, unknown>>;
+};
+export type CreateMetaMessageTemplateInput = {
+  name: string;
+  language: string;
+  category: MetaMessageTemplateCategory;
+  components: Array<Record<string, unknown>>;
+};
+
+/** Creates a template in the tenant WABA; approval is asynchronous and reconciled from Meta status updates. */
+export async function createWabaMessageTemplate(
+  credentials: MetaTenantCredentials,
+  input: CreateMetaMessageTemplateInput,
+  platform?: Pick<MetaPlatformConfig, "graphApiVersion">,
+): Promise<{ id?: string; message_template_id?: string; status?: string; category?: string }> {
+  const name = input.name.trim();
+  if (!/^[a-z0-9_]{3,512}$/.test(name)) throw new Error("Meta template name is invalid.");
+  if (!/^[a-z]{2}([_-][A-Z]{2})?$/.test(input.language))
+    throw new Error("Meta template language is invalid.");
+  if (!Array.isArray(input.components) || input.components.length === 0)
+    throw new Error("Meta template requires at least one component.");
+  const id = encodeURIComponent(required(credentials.wabaId, "WABA ID"));
+  return graphRequest(
+    `${id}/message_templates`,
+    credentials.accessToken,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        language: input.language,
+        category: input.category,
+        components: input.components,
+      }),
+    },
+    platform,
+  );
+}
+
+/** Reads the provider-side template registry for reconciliation; it does not mutate tenant records. */
+export async function listWabaMessageTemplates(
+  credentials: MetaTenantCredentials,
+  platform?: Pick<MetaPlatformConfig, "graphApiVersion">,
+): Promise<MetaMessageTemplate[]> {
+  const id = encodeURIComponent(required(credentials.wabaId, "WABA ID"));
+  const query = new URLSearchParams({
+    fields: "id,name,status,category,language,components",
+    limit: "100",
+  });
+  const body = await graphRequest<{ data?: MetaMessageTemplate[] }>(
+    `${id}/message_templates?${query.toString()}`,
+    credentials.accessToken,
+    {},
+    platform,
+  );
+  return body.data ?? [];
+}
 export type MetaSendTextResult = {
   messaging_product: "whatsapp";
   contacts?: Array<{ input: string; wa_id: string }>;
@@ -379,6 +442,45 @@ export async function sendTextMessage(
         to: recipient,
         type: "text",
         text: { preview_url: false, body: text },
+      }),
+    },
+    platform,
+  );
+}
+
+export async function sendTemplateMessage(
+  credentials: MetaTenantCredentials,
+  recipientE164: string,
+  template: {
+    name: string;
+    language: string;
+    components?: Array<Record<string, unknown>>;
+  },
+  platform?: Pick<MetaPlatformConfig, "graphApiVersion">,
+): Promise<MetaSendTextResult> {
+  const recipient = recipientE164.replace(/[^\d]/g, "");
+  if (!/^\d{8,15}$/.test(recipient))
+    throw new Error("WhatsApp recipient must be an E.164 phone number.");
+  if (!/^[a-z0-9_]{3,512}$/.test(template.name))
+    throw new Error("WhatsApp template name is invalid.");
+  if (!/^[a-z]{2}([_-][A-Z]{2})?$/.test(template.language))
+    throw new Error("WhatsApp template language is invalid.");
+  const id = encodeURIComponent(required(credentials.phoneNumberId, "Phone number ID"));
+  return graphRequest<MetaSendTextResult>(
+    `${id}/messages`,
+    credentials.accessToken,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: recipient,
+        type: "template",
+        template: {
+          name: template.name,
+          language: { code: template.language },
+          components: template.components ?? [],
+        },
       }),
     },
     platform,
