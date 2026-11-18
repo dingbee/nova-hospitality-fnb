@@ -505,7 +505,8 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
       );
     }
     if (l.receivedQuantity > 0) {
-      await insertMovement(sb, userId, {
+      const dedupeKey = `transfer:in:${line.id}`;
+      const movementAttempt = await insertMovement(sb, userId, {
         tenantId: input.tenantId,
         propertyId: transfer.property_id,
         locationId: transfer.destination_location_id,
@@ -523,14 +524,21 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
         correlationId: transfer.id,
         batchId: line.batch_id,
         occurredAt: stamp,
-        dedupeKey: `transfer:in:${line.id}`,
+        dedupeKey,
       });
+      const movement =
+        movementAttempt ?? (await findMovementByDedupeKey(sb, input.tenantId, dedupeKey));
+      if (!movement || Math.abs(Number(movement.quantity) - l.receivedQuantity) > 1e-9) {
+        throw new Error(
+          "A prior receipt attempt used a different quantity; ledger reconciliation is required.",
+        );
+      }
     }
     const lineVariance = dispatched - total;
     variance += Math.abs(lineVariance) * Number(line.unit_cost ?? 0);
     if (total < dispatched - 1e-9) fullyReceived = false;
 
-    await sb
+    const { data: updatedLine, error: lineError } = await sb
       .from("restaurant_stock_transfer_lines")
       .update({
         received_quantity: l.receivedQuantity,
@@ -539,11 +547,35 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
         notes: l.notes ?? line.notes,
       })
       .eq("id", line.id)
-      .eq("tenant_id", input.tenantId);
+      .eq("tenant_id", input.tenantId)
+      .eq("received_quantity", Number(line.received_quantity ?? 0))
+      .eq("rejected_quantity", Number(line.rejected_quantity ?? 0))
+      .eq("damaged_quantity", Number(line.damaged_quantity ?? 0))
+      .select("id")
+      .maybeSingle();
+    if (lineError) throw new Error(lineError.message);
+    if (!updatedLine) {
+      const { data: latestLine, error: latestError } = await sb
+        .from("restaurant_stock_transfer_lines")
+        .select("received_quantity, rejected_quantity, damaged_quantity")
+        .eq("id", line.id)
+        .eq("tenant_id", input.tenantId)
+        .single();
+      if (latestError) throw new Error(latestError.message);
+      if (
+        Math.abs(Number(latestLine?.received_quantity ?? 0) - l.receivedQuantity) > 1e-9 ||
+        Math.abs(Number(latestLine?.rejected_quantity ?? 0) - l.rejectedQuantity) > 1e-9 ||
+        Math.abs(Number(latestLine?.damaged_quantity ?? 0) - l.damagedQuantity) > 1e-9
+      ) {
+        throw new Error(
+          "Concurrent receipt changed this line's quantities; reconciliation is required.",
+        );
+      }
+    }
   }
 
   const status = fullyReceived ? "completed" : "partially_received";
-  const { error } = await sb
+  const { data: updatedTransfer, error } = await sb
     .from("restaurant_stock_transfers")
     .update({
       status,
@@ -553,8 +585,23 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
       notes: input.notes ?? transfer.notes,
     })
     .eq("id", input.transferId)
-    .eq("tenant_id", input.tenantId);
+    .eq("tenant_id", input.tenantId)
+    .eq("status", transfer.status)
+    .select("id")
+    .maybeSingle();
   if (error) throw new Error(error.message);
+  if (!updatedTransfer) {
+    const { data: latestTransfer, error: latestError } = await sb
+      .from("restaurant_stock_transfers")
+      .select("status")
+      .eq("id", input.transferId)
+      .eq("tenant_id", input.tenantId)
+      .single();
+    if (latestError) throw new Error(latestError.message);
+    if (latestTransfer?.status !== status) {
+      throw new Error("Concurrent receipt changed the transfer status; reconciliation is required.");
+    }
+  }
 
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.inventory.transfer.received",
