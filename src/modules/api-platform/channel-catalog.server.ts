@@ -4,7 +4,7 @@ import { CHANNEL_PROVIDERS, getChannelProviderDefinition } from "./channel-catal
 import { CHANNEL_TYPES, type ChannelDefinition, type ChannelType } from "./channel-contracts";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
-type Sb = SupabaseClient<any, any, any>;
+type Sb = SupabaseClient;
 
 export type StoredChannelDefinition = ChannelDefinition & {
   enabled: boolean;
@@ -26,7 +26,7 @@ export async function listChannelDefinitions(
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  return (data ?? []).map((row: any) => ({
+  return (data ?? []).map((row) => ({
     key: row.key,
     name: row.name,
     description: row.description,
