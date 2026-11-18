@@ -37,7 +37,7 @@ export function PosReceiptDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+      <DialogContent data-pos-receipt-dialog className="max-h-[90vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Receipt {receipt.receipt_number}</DialogTitle>
           <DialogDescription>
