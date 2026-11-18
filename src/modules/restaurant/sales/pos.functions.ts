@@ -98,9 +98,11 @@ export const posReceiptFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => posReceiptSchema.parse(d))
   .handler(async ({ data, context }) => {
-    const mod = await import("./receipts.server");
     const actorId = await (await import("./pos-session.server")).resolvePosActor(context.supabase, context.userId, data.posSessionId, data.tenantId, undefined);
-    return data.reprint
-      ? mod.issueReceipt(context.supabase, actorId, data)
-      : mod.getReceipt(context.supabase, actorId, data);
+    if (data.reprint) {
+      const mod = await import("./receipts.server");
+      return mod.issueReceipt(context.supabase, actorId, data);
+    }
+    const mod = await import("./pos.server");
+    return mod.ensurePosReceipt(context.supabase, actorId, data);
   });
