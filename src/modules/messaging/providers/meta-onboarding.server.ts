@@ -44,9 +44,10 @@ function normalisePhoneAssets(config: Record<string, any>): Array<Record<string,
     return [{
       id: config.phoneNumberId,
       displayPhoneNumber: config.displayPhoneNumber ?? null,
-      verifiedName: config.verifiedName ?? null,
+        verifiedName: config.verifiedName ?? null,
       qualityRating: config.qualityRating ?? null,
-    }];
+      },
+    ];
   }
   return [];
 }
@@ -149,8 +150,7 @@ export async function completeMetaWhatsAppSignup(
     displayPhoneNumber: primaryPhone?.displayPhoneNumber ?? null,
     verifiedName: primaryPhone?.verifiedName ?? null,
     qualityRating: primaryPhone?.qualityRating ?? null,
-    graphApiVersion:
-      platform.graphApiVersion ?? process.env.META_GRAPH_API_VERSION ?? "v27.0",
+    graphApiVersion: platform.graphApiVersion ?? process.env.META_GRAPH_API_VERSION ?? "v27.0",
     metaAppId: platform.appId,
     tokenType: exchanged.tokenType,
     tokenExpiresAt: expiresAt?.toISOString() ?? null,
