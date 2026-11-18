@@ -57,7 +57,7 @@ function makeSb(options: {
                       wabaId: "123456789",
                       phoneNumbers: [
                         {
-              id: input.phoneNumberId,
+                          id: input.phoneNumberId,
                           displayPhoneNumber: "+255700000000",
               verifiedName: "Restaurant",
                           qualityRating: "GREEN",
