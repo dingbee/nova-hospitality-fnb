@@ -273,6 +273,7 @@ describe("WCE-08 WhatsApp usage attribution", () => {
     const result = await getWhatsAppUsageReport(db, "tenant-owner", {
       tenantId: "tenant-1",
       propertyId: "property-1",
+      locationId: "location-1",
     });
     expect(result.totals).toEqual([
       { component: "meta_provider", currency: "USD", amount: 0.1, quantity: 2, entries: 1 },
@@ -282,6 +283,16 @@ describe("WCE-08 WhatsApp usage attribution", () => {
       table: "commercial_ai_usage_log",
       method: "eq",
       args: ["source_channel", "whatsapp"],
+    });
+    expect(calls).toContainEqual({
+      table: "wa_campaign_usage_ledger",
+      method: "eq",
+      args: ["location_id", "location-1"],
+    });
+    expect(calls).toContainEqual({
+      table: "commercial_ai_usage_log",
+      method: "eq",
+      args: ["location_id", "location-1"],
     });
     expect(result.entries).toHaveLength(2);
   });
