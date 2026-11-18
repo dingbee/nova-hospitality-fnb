@@ -61,7 +61,8 @@ export class MetaGraphError extends Error {
 }
 
 function graphVersion(config?: Pick<MetaPlatformConfig, "graphApiVersion">): string {
-  const candidate = config?.graphApiVersion ?? process.env.META_GRAPH_API_VERSION ?? DEFAULT_META_GRAPH_API_VERSION;
+  const candidate =
+    config?.graphApiVersion ?? process.env.META_GRAPH_API_VERSION ?? DEFAULT_META_GRAPH_API_VERSION;
   if (!/^v\d+\.\d+$/.test(candidate)) {
     throw new Error("META_GRAPH_API_VERSION must use the format vNN.NN.");
   }
@@ -89,16 +90,18 @@ async function readGraphResponse<T>(response: Response): Promise<T> {
 
   const payload =
     typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
-  const error = typeof payload.error === "object" && payload.error !== null
+  const error =
+    typeof payload.error === "object" && payload.error !== null
       ? (payload.error as MetaGraphErrorInfo)
-    : {};
+      : {};
   if (!response.ok || payload.error) {
     const message =
       typeof error.message === "string"
         ? error.message.slice(0, 500)
         : "Meta Graph API request failed.";
     const retryAfter = response.headers.get("retry-after");
-    const retryAfterSeconds = retryAfter && /^\d+(?:\.\d+)?$/.test(retryAfter) ? Number(retryAfter) : null;
+    const retryAfterSeconds =
+      retryAfter && /^\d+(?:\.\d+)?$/.test(retryAfter) ? Number(retryAfter) : null;
     throw new MetaGraphError(
       message,
       response.status,
@@ -107,11 +110,13 @@ async function readGraphResponse<T>(response: Response): Promise<T> {
       {
         fbtraceId: typeof error.fbtrace_id === "string" ? error.fbtrace_id : null,
         isTransient: error.is_transient === true,
-        retryAfterMs: retryAfterSeconds === null ? null : Math.max(0, Math.round(retryAfterSeconds * 1000)),
+        retryAfterMs:
+          retryAfterSeconds === null ? null : Math.max(0, Math.round(retryAfterSeconds * 1000)),
       },
     );
   }
-  if (body === null) throw new MetaGraphError("Meta Graph API returned an invalid JSON response.", response.status);
+  if (body === null)
+    throw new MetaGraphError("Meta Graph API returned an invalid JSON response.", response.status);
   return body as T;
 }
 
@@ -185,7 +190,8 @@ export async function exchangeEmbeddedSignupCode(
     token_type?: string;
     expires_in?: number;
   }>(response);
-  if (!body.access_token) throw new MetaGraphError("Meta did not return an access token.", response.status);
+  if (!body.access_token)
+    throw new MetaGraphError("Meta did not return an access token.", response.status);
   return {
     accessToken: body.access_token,
     tokenType: body.token_type ?? "bearer",
@@ -227,7 +233,8 @@ export async function inspectAccessToken(
     );
   }
   const body = await readGraphResponse<{ data?: MetaTokenInspection }>(response);
-  if (!body.data) throw new MetaGraphError("Meta token inspection returned no token data.", response.status);
+  if (!body.data)
+    throw new MetaGraphError("Meta token inspection returned no token data.", response.status);
   return body.data;
 }
 
@@ -236,7 +243,8 @@ export function assertRequiredWhatsAppPermissions(token: MetaTokenInspection): v
   const scopes = new Set(token.scopes ?? []);
   const requiredScopes = ["whatsapp_business_management", "whatsapp_business_messaging"];
   const missing = requiredScopes.filter((scope) => !scopes.has(scope));
-  if (missing.length) throw new Error(`Meta token is missing required permissions: ${missing.join(", ")}.`);
+  if (missing.length)
+    throw new Error(`Meta token is missing required permissions: ${missing.join(", ")}.`);
 }
 
 export type MetaWabaDetails = {
@@ -294,13 +302,14 @@ export async function registerVerifiedPhoneNumber(
   pin: string,
   platform?: Pick<MetaPlatformConfig, "graphApiVersion">,
 ): Promise<{ success: boolean }> {
-  if (!/^\d{6}$/.test(pin)) throw new Error("WhatsApp phone registration PIN must contain exactly six digits.");
+  if (!/^\d{6}$/.test(pin))
+    throw new Error("WhatsApp phone registration PIN must contain exactly six digits.");
   const id = encodeURIComponent(required(credentials.phoneNumberId, "Phone number ID"));
   return graphRequest<{ success: boolean }>(
     `${id}/register`,
     credentials.accessToken,
     {
-    method: "POST",
+      method: "POST",
       body: JSON.stringify({ messaging_product: "whatsapp", pin }),
     },
     platform,
@@ -316,7 +325,7 @@ export async function subscribeWabaToApp(
     `${id}/subscribed_apps`,
     credentials.accessToken,
     {
-    method: "POST",
+      method: "POST",
       body: JSON.stringify({}),
     },
     platform,
@@ -353,21 +362,23 @@ export async function sendTextMessage(
   platform?: Pick<MetaPlatformConfig, "graphApiVersion">,
 ): Promise<MetaSendTextResult> {
   const recipient = recipientE164.replace(/[^\d]/g, "");
-  if (!/^\d{8,15}$/.test(recipient)) throw new Error("WhatsApp recipient must be an E.164 phone number.");
+  if (!/^\d{8,15}$/.test(recipient))
+    throw new Error("WhatsApp recipient must be an E.164 phone number.");
   const text = body.trim();
-  if (!text || text.length > 4096) throw new Error("WhatsApp text message must contain 1–4096 characters.");
+  if (!text || text.length > 4096)
+    throw new Error("WhatsApp text message must contain 1–4096 characters.");
   const id = encodeURIComponent(required(credentials.phoneNumberId, "Phone number ID"));
   return graphRequest<MetaSendTextResult>(
     `${id}/messages`,
     credentials.accessToken,
     {
-    method: "POST",
-    body: JSON.stringify({
+      method: "POST",
+      body: JSON.stringify({
         messaging_product: "whatsapp",
         recipient_type: "individual",
-      to: recipient,
+        to: recipient,
         type: "text",
-      text: { preview_url: false, body: text },
+        text: { preview_url: false, body: text },
       }),
     },
     platform,
@@ -395,7 +406,8 @@ export function verifyWebhookSignature(
   signatureHeader: string | null | undefined,
   appSecret: string,
 ): boolean {
-  if (!signatureHeader || !/^sha256=[a-f0-9]{64}$/i.test(signatureHeader) || !appSecret) return false;
+  if (!signatureHeader || !/^sha256=[a-f0-9]{64}$/i.test(signatureHeader) || !appSecret)
+    return false;
   const expected = createHmac("sha256", appSecret).update(rawBody).digest();
   const supplied = Buffer.from(signatureHeader.slice("sha256=".length), "hex");
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
