@@ -82,7 +82,14 @@ export function ReceiptDeliveryPanel({
       void history.refetch();
       if (rec.status === "failed") toast.error(rec.failureReason ?? "Delivery failed.");
       else if (rec.status === "shared") {
-        window.open(whatsAppShareUrl(rec.recipient, buildReceiptMessage({ receiptNumber, total, link: rec.shareUrl })), "_blank", "noopener");
+        window.open(
+          whatsAppShareUrl(
+            rec.recipient,
+            buildReceiptMessage({ receiptNumber, total, link: rec.shareUrl }),
+          ),
+          "_blank",
+          "noopener",
+        );
         toast.message("WhatsApp opened for sharing — this is not a confirmed delivery.");
       } else if (method === "secure_link" && rec.shareUrl) {
         await navigator.clipboard?.writeText(rec.shareUrl).catch(() => undefined);
@@ -99,7 +106,7 @@ export function ReceiptDeliveryPanel({
   const phoneOk = Boolean(normalizePhone(phone));
 
   return (
-    <>
+    <div className="receipt-delivery-panel space-y-4 border-t pt-3">
       <style>{`
         @media print {
           @page { margin: 0; size: 80mm auto; }
@@ -116,7 +123,16 @@ export function ReceiptDeliveryPanel({
         <StatusChip tone="success">Issued</StatusChip>
         <StatusChip tone="success">Paid</StatusChip>
         {Object.values(last).map((r) => (
-          <StatusChip key={r.id} tone={r.status === "failed" ? "danger" : r.status === "shared" ? "warning" : "success"}>
+          <StatusChip
+            key={r.id}
+            tone={
+              r.status === "failed"
+                ? "danger"
+                : r.status === "shared"
+                  ? "warning"
+                  : "success"
+            }
+          >
             {r.status === "failed"
               ? `${labelFor(r.method)} failed`
               : r.status === "shared"
@@ -221,7 +237,6 @@ export function ReceiptDeliveryPanel({
         </div>
       )}
     </div>
-    </>
   );
 }
 
