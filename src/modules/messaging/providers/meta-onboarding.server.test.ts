@@ -120,7 +120,7 @@ describe("Meta Embedded Signup server completion", () => {
     );
     expect(mocks.assertEntitled).toHaveBeenCalledWith(sb, input.tenantId, "advanced_integrations", {
       propertyId: input.propertyId,
-    );
+    });
     expect(mocks.registerVerifiedPhoneNumber).toHaveBeenCalledWith(
       expect.objectContaining({ accessToken: "meta-access-token" }),
       input.registrationPin,
