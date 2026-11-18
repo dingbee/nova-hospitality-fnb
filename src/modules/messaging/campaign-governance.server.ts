@@ -935,12 +935,11 @@ export async function accountWhatsAppCampaignMessageUsage(
   recipientId: string,
   amount = 1,
 ) {
-  return incrementUsageOnceForCampaignRecipient(
-    admin,
-    tenantId,
-    "whatsapp_campaign_messages",
-    { propertyId, recipientId, amount },
-  );
+  return incrementUsageOnceForCampaignRecipient(admin, tenantId, "whatsapp_campaign_messages", {
+    propertyId,
+    recipientId,
+    amount,
+  });
 }
 
 /** Recovers provider-cost ledger rows when send succeeded but ledger persistence did not. */
