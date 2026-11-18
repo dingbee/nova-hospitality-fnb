@@ -1,10 +1,9 @@
 import type { ChannelProviderKey } from "../channel-contracts";
 import type { ChannelAdapter } from "./channel-adapter.server";
 import { orderingCoAdapter } from "./ordering-co.server";
+import { metaWhatsAppAdapter } from "./meta-whatsapp.server";
 
-const CHANNEL_ADAPTERS: readonly ChannelAdapter[] = [
-  orderingCoAdapter,
-];
+const CHANNEL_ADAPTERS: readonly ChannelAdapter[] = [orderingCoAdapter, metaWhatsAppAdapter];
 
 export function getChannelAdapter(providerKey: ChannelProviderKey): ChannelAdapter {
   const adapter = CHANNEL_ADAPTERS.find((item) => item.providerKey === providerKey);

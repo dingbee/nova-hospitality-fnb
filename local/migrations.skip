@@ -12,3 +12,4 @@
 
 20260721144859_b10a8bc5-70f4-451d-9560-c7a3011c4128.sql  # property-specific room unit data (hard-coded room UUIDs)
 20260806142337_0c977466-741b-4cd6-bc22-892f03edb5bd.sql  # demo/test booking data for one hosted property
+0087_repair_bar_station_routing.sql  # UAT-only catalogue/order-line repair requires the Coca-Cola KILI-029 demo tenant fixture

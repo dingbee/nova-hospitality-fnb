@@ -4,7 +4,10 @@ import { normaliseChannelConfig } from "./channel-registry.server";
 
 describe("universal channel registry", () => {
   it("registers providers without creating product-specific provider keys", () => {
-    expect(CHANNEL_PROVIDERS.map((provider) => provider.key)).toEqual(["ordering.co"]);
+    expect(CHANNEL_PROVIDERS.map((provider) => provider.key)).toEqual([
+      "ordering.co",
+      "meta-whatsapp",
+    ]);
     expect(getChannelProviderDefinition("piki")).toBeNull();
   });
 
