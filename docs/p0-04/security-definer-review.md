@@ -51,8 +51,9 @@ The generated inventory recorded:
 
 - Isolated PostgreSQL 17 full migration replay passed.
 - RLS and composite tenant-integrity adversarial fixture passed. The fixture also asserts that a duplicate tenant-scoped stock-movement dedupe key is rejected by the database unique constraint.
-- Full repository regression passed on the preceding green CI head: 241 test files / 2,607 tests.
+- Final full repository regression passed on CI run #2179: 242 test files / 2,611 tests.
 - Transfer lifecycle tests cover simultaneous dispatch and receipt retries, compare-and-set line/transfer transitions, and rejection of concurrent receipt retries that disagree on quantity. The inbound movement ledger remains unique per tenant/transfer line.
+- CI run #2179 completed successfully on head `05eba24de4b9539f284d325c8c5e490ee165afd6`: typecheck, changed-source lint, full migration replay, P0-04 PostgreSQL adversarial fixture, changed-path tests, full repository tests, and remaining repository integration gates all passed.
 - Inventory Agent is entitlement-gated; action/verification sweeps require `intelligence.read`; the canonical action executor rechecks decision scope, entitlement, approved action state and `purchase.request` before creating a draft purchase request. It cannot approve decisions, create purchase orders directly, or mutate stock.
 - Negative Inventory Agent authorization tests were added and are included in the final CI run.
 
