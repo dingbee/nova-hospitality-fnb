@@ -276,6 +276,27 @@ jobs:
                 RAISE EXCEPTION 'WCE-08 idempotent campaign quota RPC grants are not service-role-only';
               END IF;
               IF NOT EXISTS (
+                SELECT 1 FROM pg_proc p
+                JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public'
+                  AND p.proname = 'wa_account_campaign_message_quota'
+                  AND p.prosecdef
+                  AND 'search_path=public, pg_temp' = ANY (p.proconfig)
+                  AND position('pg_advisory_xact_lock' IN pg_get_functiondef(p.oid)) > 0
+              ) OR NOT EXISTS (
+                SELECT 1 FROM pg_attribute
+                WHERE attrelid = 'public.wa_campaign_recipients'::regclass
+                  AND attname = 'quota_accounted_definition_id'
+                  AND NOT attisdropped
+              ) OR NOT EXISTS (
+                SELECT 1 FROM pg_attribute
+                WHERE attrelid = 'public.wa_campaign_recipients'::regclass
+                  AND attname = 'quota_accounted_period_start'
+                  AND NOT attisdropped
+              ) THEN
+                RAISE EXCEPTION 'WCE-08 atomic campaign quota reservation is incomplete';
+              END IF;
+              IF NOT EXISTS (
                 SELECT 1 FROM pg_attribute
                 WHERE attrelid = 'public.wa_campaign_recipients'::regclass
                   AND attname = 'source_event_key'
