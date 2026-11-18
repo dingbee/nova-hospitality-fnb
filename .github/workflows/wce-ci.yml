@@ -363,5 +363,19 @@ jobs:
             ) THEN
               RAISE EXCEPTION 'WCE-08 AI usage channel attribution schema is missing';
             END IF;
+
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_attribute
+              WHERE attrelid = 'public.wa_campaign_usage_ledger'::regclass
+                AND attname = 'location_id'
+                AND NOT attisdropped
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_indexes
+              WHERE schemaname = 'public'
+                AND tablename = 'wa_campaign_usage_ledger'
+                AND indexname = 'wa_campaign_usage_location_period_idx'
+            ) THEN
+              RAISE EXCEPTION 'WCE-08 outlet-level campaign usage attribution schema is missing';
+            END IF;
           END $verify$;
           SQL
