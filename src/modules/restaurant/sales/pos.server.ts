@@ -829,6 +829,87 @@ export async function takePosPayment(sb: Sb, userId: string, input: PosPaymentIn
 }
 
 /**
+ * Finalizes a fully settled POS bill and returns its immutable receipt.
+ *
+ * This is the recovery path for a payment that persisted but whose automatic
+ * close/receipt handoff did not finish (for example, a transient inventory
+ * movement failure). It deliberately re-runs the canonical close transition;
+ * it never writes `status = closed` directly or bypasses stock/cost posting.
+ */
+export async function ensurePosReceipt(
+  sb: Sb,
+  userId: string,
+  input: { tenantId: string; orderId: string },
+) {
+  const { data: order, error: orderError } = await sb
+    .from("restaurant_orders")
+    .select("id, status, payment_state, total, paid_total, property_id, location_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .maybeSingle();
+  if (orderError) throw new Error(orderError.message);
+  if (!order) throw new Error("Order not found.");
+  if (["cancelled", "voided"].includes(String(order.status))) {
+    throw new Error("This order is cancelled and cannot receive a receipt.");
+  }
+
+  const paymentState = String(order.payment_state ?? "");
+  const nonCashSettled = ["comped", "room_charged"].includes(paymentState);
+  const fullyPaid =
+    paymentState === "paid" &&
+    Number(order.paid_total ?? 0) + 0.005 >= Number(order.total ?? 0);
+  if (!nonCashSettled && !fullyPaid) {
+    throw new Error("The bill is not fully settled. Record the outstanding payment before printing a receipt.");
+  }
+
+  const tenantScope = await getTenantScope(sb, userId, input.tenantId);
+  await assertCapability(
+    sb,
+    userId,
+    input.tenantId,
+    "sales.manage",
+    { propertyId: order.property_id ?? null, locationId: order.location_id ?? null },
+    tenantScope,
+  );
+
+  if (order.status !== "closed") {
+    await transitionOrder(
+      sb,
+      userId,
+      { tenantId: input.tenantId, orderId: input.orderId, status: "closed" },
+      tenantScope,
+    );
+  }
+
+  const receipts = await import("./receipts.server");
+  let receipt = await receipts.getReceipt(
+    sb,
+    userId,
+    { tenantId: input.tenantId, orderId: input.orderId },
+    tenantScope,
+  );
+  // transitionOrder intentionally treats receipt issuance as a separately
+  // recoverable side effect. Complete that side effect if the close succeeded
+  // but receipt creation did not.
+  if (!receipt) {
+    await receipts.issueReceipt(
+      sb,
+      userId,
+      { tenantId: input.tenantId, orderId: input.orderId, reprint: false },
+      tenantScope,
+    );
+    receipt = await receipts.getReceipt(
+      sb,
+      userId,
+      { tenantId: input.tenantId, orderId: input.orderId },
+      tenantScope,
+    );
+  }
+  if (!receipt) throw new Error("The bill is closed, but receipt issuance did not complete. Retry receipt issuance.");
+  return receipt;
+}
+
+/**
  * The same recording+idempotency+recalc core as takePosPayment, for a
  * caller with no staff session — the self-order payment surface. No
  * assertCapability (there is no restaurant_members row for a guest), no
