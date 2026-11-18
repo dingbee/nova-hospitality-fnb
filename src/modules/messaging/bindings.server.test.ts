@@ -17,10 +17,7 @@ vi.mock("@/modules/commercial/audit.server", () => ({
   writeCommercialAudit: mocks.writeCommercialAudit,
 }));
 
-import {
-  bindMetaWhatsAppPhoneNumber,
-  disableMetaWhatsAppIntegration,
-} from "./bindings.server";
+import { bindMetaWhatsAppPhoneNumber, disableMetaWhatsAppIntegration } from "./bindings.server";
 
 const input = {
   tenantId: "11111111-1111-4111-8111-111111111111",
@@ -34,7 +31,8 @@ function makeSb(options: {
   integration?: Record<string, any> | null;
   location?: Record<string, any> | null;
   binding?: Record<string, any> | null;
-} = {}) {
+  } = {},
+) {
   const inserts: Array<{ table: string; row: Record<string, unknown> }> = [];
   const updates: Array<{ table: string; patch: Record<string, unknown> }> = [];
   const from = vi.fn((table: string) => {
@@ -43,32 +41,48 @@ function makeSb(options: {
       eq: vi.fn(() => builder),
       order: vi.fn(() => builder),
       maybeSingle: vi.fn(async () => {
-        if (table === "api_integrations") return { data: options.integration === undefined ? {
-          id: input.integrationId,
-          tenant_id: input.tenantId,
-          property_id: input.propertyId,
-          provider: "meta-whatsapp",
-          channel_key: "whatsapp",
-          integration_type: "channel",
+        if (table === "api_integrations")
+          return {
+            data:
+              options.integration === undefined
+                ? {
+                    id: input.integrationId,
+                    tenant_id: input.tenantId,
+                    property_id: input.propertyId,
+                    provider: "meta-whatsapp",
+                    channel_key: "whatsapp",
+                    integration_type: "channel",
           status: "active",
           config: {
-            wabaId: "123456789",
-            phoneNumbers: [{
+                      wabaId: "123456789",
+                      phoneNumbers: [
+                        {
               id: input.phoneNumberId,
-              displayPhoneNumber: "+255700000000",
+                          displayPhoneNumber: "+255700000000",
               verifiedName: "Restaurant",
-              qualityRating: "GREEN",
-            }],
-          },
-        } : options.integration, error: null };
-        if (table === "restaurant_locations") return { data: options.location === undefined ? {
+                          qualityRating: "GREEN",
+                        },
+                      ],
+                    },
+                  }
+                : options.integration,
+            error: null,
+          };
+        if (table === "restaurant_locations")
+          return {
+            data:
+              options.location === undefined
+                ? {
           id: input.locationId,
-          tenant_id: input.tenantId,
-          property_id: input.propertyId,
-          location_type: "outlet",
-          is_storage: false,
-          status: "active",
-        } : options.location, error: null };
+                    tenant_id: input.tenantId,
+                    property_id: input.propertyId,
+                    location_type: "outlet",
+                    is_storage: false,
+                    status: "active",
+                  }
+                : options.location,
+            error: null,
+          };
         return { data: options.binding ?? null, error: null };
       }),
       insert: vi.fn((row: Record<string, unknown>) => {
@@ -176,7 +190,10 @@ describe("Meta WhatsApp receiving-number bindings", () => {
     expect(updates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ table: "api_integrations", patch: { status: "disabled" } }),
-        expect.objectContaining({ table: "wa_phone_number_bindings", patch: { status: "disabled" } }),
+        expect.objectContaining({
+          table: "wa_phone_number_bindings",
+          patch: { status: "disabled" },
+        }),
       ]),
     );
   });
