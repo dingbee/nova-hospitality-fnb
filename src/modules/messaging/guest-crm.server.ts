@@ -382,6 +382,7 @@ export async function queueWhatsAppOrderStatusNotification(
         tenantId: order.tenant_id,
         propertyId: order.property_id,
         eventKey: "order.status." + input.status.toLowerCase(),
+        eventId: order.id + ":" + input.status.toLowerCase(),
         guestCustomerId: order.guest_customer_id,
       });
     } catch {

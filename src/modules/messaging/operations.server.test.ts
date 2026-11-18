@@ -234,9 +234,19 @@ describe("WCE-08 WhatsApp usage attribution", () => {
           id: "ai-1",
           workload_type: "ai_concierge.reply",
           request_count: 3,
-          estimated_cost: 0.05,
+          estimated_cost: 0,
+          estimated_cost_known: false,
           currency: "USD",
           occurred_at: "2026-11-18T07:01:00.000Z",
+        },
+        {
+          id: "ai-2",
+          workload_type: "ai_concierge.reply",
+          request_count: 1,
+          estimated_cost: 0.04,
+          estimated_cost_known: true,
+          currency: "USD",
+          occurred_at: "2026-11-18T07:02:00.000Z",
         },
       ],
     };
@@ -276,8 +286,24 @@ describe("WCE-08 WhatsApp usage attribution", () => {
       locationId: "location-1",
     });
     expect(result.totals).toEqual([
-      { component: "meta_provider", currency: "USD", amount: 0.1, quantity: 2, entries: 1 },
-      { component: "ai", currency: "USD", amount: 0.05, quantity: 3, entries: 1 },
+      {
+        component: "meta_provider",
+        currency: "USD",
+        amount: 0.1,
+        quantity: 2,
+        entries: 1,
+        unpricedEntries: 0,
+        costComplete: true,
+      },
+      {
+        component: "ai",
+        currency: "USD",
+        amount: 0.04,
+        quantity: 4,
+        entries: 2,
+        unpricedEntries: 1,
+        costComplete: false,
+      },
     ]);
     expect(calls).toContainEqual({
       table: "commercial_ai_usage_log",
@@ -294,6 +320,10 @@ describe("WCE-08 WhatsApp usage attribution", () => {
       method: "eq",
       args: ["location_id", "location-1"],
     });
-    expect(result.entries).toHaveLength(2);
+    expect(result.entries).toHaveLength(3);
+    expect(result.entries.find((entry: any) => entry.id === "ai-1")).toMatchObject({
+      amount: null,
+      costKnown: false,
+    });
   });
 });

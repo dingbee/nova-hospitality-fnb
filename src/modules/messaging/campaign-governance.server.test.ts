@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- mocked Supabase builder is intentionally untyped. */
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildWhatsAppCampaignRecipientIdempotencyKey,
   recordWhatsAppCampaignUsage,
   resolveEffectiveMetaMessageRate,
 } from "./campaign-governance.server";
@@ -20,6 +21,41 @@ function usageDb(result: { data?: unknown; error?: { code?: string } | null }) {
   });
   return { admin: { from }, inserted };
 }
+
+describe("WCE-06 campaign recipient idempotency", () => {
+  it("deduplicates retries of one event but permits a later event for the same guest", () => {
+    const first = buildWhatsAppCampaignRecipientIdempotencyKey({
+      campaignId: "campaign-1",
+      guestCustomerId: "guest-1",
+      triggerType: "event",
+      eventId: "order-1:paid",
+    });
+    const retry = buildWhatsAppCampaignRecipientIdempotencyKey({
+      campaignId: "campaign-1",
+      guestCustomerId: "guest-1",
+      triggerType: "event",
+      eventId: "order-1:paid",
+    });
+    const nextEvent = buildWhatsAppCampaignRecipientIdempotencyKey({
+      campaignId: "campaign-1",
+      guestCustomerId: "guest-1",
+      triggerType: "event",
+      eventId: "order-2:paid",
+    });
+    expect(retry).toBe(first);
+    expect(nextEvent).not.toBe(first);
+  });
+
+  it("requires a stable source event identifier for event campaigns", () => {
+    expect(() =>
+      buildWhatsAppCampaignRecipientIdempotencyKey({
+        campaignId: "campaign-1",
+        guestCustomerId: "guest-1",
+        triggerType: "event",
+      }),
+    ).toThrow("campaign_event_id_required");
+  });
+});
 
 describe("WCE-06 campaign usage evidence", () => {
   it("persists a reproducible cost snapshot with independent cost attribution", async () => {

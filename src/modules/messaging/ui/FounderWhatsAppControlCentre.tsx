@@ -53,6 +53,7 @@ export function FounderWhatsAppControlCentre() {
   const rejected = data.webhookHealth.rejected ?? 0;
   const failedMessages = data.messageHealth.failed ?? 0;
   const usageEntries = Object.entries(data.usage ?? {}) as Array<[string, number]>;
+  const usageUnpricedEntries = Object.entries(data.usageUnpriced ?? {}) as Array<[string, number]>;
 
   return (
     <div className="space-y-4">
@@ -191,7 +192,7 @@ export function FounderWhatsAppControlCentre() {
           title="Usage and cost attribution"
           description="WCE-06 append-only usage ledger, kept separate by component and currency."
         >
-          {usageEntries.length === 0 ? (
+          {usageEntries.length === 0 && usageUnpricedEntries.length === 0 ? (
             <EmptyState
               title="No usage ledger entries"
               description="Provider, LexiBite commercial and AI usage evidence will appear here."
@@ -207,6 +208,18 @@ export function FounderWhatsAppControlCentre() {
                       <span className="text-xs text-muted-foreground"> {currency}</span>
                     </span>
                     <strong className="text-sm">{amount(value, currency)}</strong>
+                  </li>
+                );
+              })}
+              {usageUnpricedEntries.map(([key, count]) => {
+                const [component, currency] = key.split(":");
+                return (
+                  <li key={key + ":unpriced"} className="flex items-center justify-between gap-3 py-3">
+                    <span className="text-sm capitalize">
+                      {component.replaceAll("_", " ")}{" "}
+                      <span className="text-xs text-muted-foreground"> {currency}</span>
+                    </span>
+                    <strong className="text-sm">{count} unpriced usage record(s)</strong>
                   </li>
                 );
               })}

@@ -106,3 +106,11 @@ These additions are not yet certified until the latest exact-head CI and migrati
 ## 8. Exit criteria
 
 WCE-08 closes only when all WCE phases have exact-head green verification, all required end-to-end scenarios pass, tenant/founder boundaries are proven, usage and conversion reconcile to canonical sources, and no unresolved P0/P1 findings remain. If an external Meta prerequisite is unavailable, record it as a release dependency; do not fabricate a pass.
+
+## 9. Additional end-to-end hardening
+
+- Event-triggered campaigns remain active after each guest-scoped event and use a stable source-event identity in recipient and outbox idempotency. Repeated delivery of the same order/status event is deduplicated; a later event for the same guest can be evaluated independently.
+- Provider-cost reconciliation has a bounded, service-role-only PostgreSQL RPC. It recovers missing Meta usage ledger rows from successful canonical outbound messages using the original rate snapshot and provider message ID as the idempotency key.
+- AI usage records explicitly distinguish priced estimates from unpriced requests. Reports do not present an absent AI cost estimate as a zero-cost event.
+- The internal dispatcher invokes bounded provider-cost reconciliation after outbound processing. No provider send is enabled by this change.
+- Repository-wide operating instructions prohibit Vercel deployment, preview deployment, promotion, alias/domain changes and rollback unless the user explicitly authorizes that specific action and target environment.

@@ -66,8 +66,12 @@ export async function assertAiCapability(
   }
 }
 
-/** Call after the provider responds (success or failure) to record real usage for cost visibility and margin management. */
+/** Record usage and explicitly distinguish priced estimates from unpriced requests. */
 export async function recordAiUsage(sb: Sb, usage: AiUsageInput): Promise<void> {
+  const estimatedCostKnown =
+    typeof usage.estimatedCost === "number" &&
+    Number.isFinite(usage.estimatedCost) &&
+    usage.estimatedCost >= 0;
   const { error } = await sb.from("commercial_ai_usage_log").insert({
     tenant_id: usage.tenantId,
     property_id: usage.propertyId ?? null,
@@ -81,7 +85,8 @@ export async function recordAiUsage(sb: Sb, usage: AiUsageInput): Promise<void> 
     request_count: usage.requestCount ?? 1,
     input_usage: usage.inputUsage ?? 0,
     output_usage: usage.outputUsage ?? 0,
-    estimated_cost: usage.estimatedCost ?? 0,
+    estimated_cost: estimatedCostKnown ? usage.estimatedCost : 0,
+    estimated_cost_known: estimatedCostKnown,
     currency: usage.currency ?? "USD",
   });
   if (error) console.warn("[commercial] AI usage log not recorded", error.message);

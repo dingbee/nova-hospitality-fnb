@@ -3,7 +3,7 @@
 **Programme:** LexiBite WhatsApp Commerce & Engagement  
 **Dependency:** WCE-06 campaign governance and commercial controls  
 **Implementation branch:** `wce/wce-07-operations-analytics`  
-**Status:** INITIAL IMPLEMENTATION PRESENT — exact-head acceptance pending  
+**Status:** IMPLEMENTATION VERIFIED — exact-head CI #458 PASS; integrated hardening continues in WCE-08  
 **Production promotion / DB writes / credential changes:** NOT AUTHORIZED
 
 ## 1. Objective
@@ -105,3 +105,11 @@ WCE-07 closes only when founder/tenant surfaces are implemented, access boundari
 - No conversational ordering system.
 - No tenant visibility into founder-only integration, security, consolidated revenue or global provider pricing.
 - No production credential mutation, DB migration, live Meta campaign dispatch, provider billing, deployment or promotion.
+
+## Exact-head verification
+
+WCE-07 branch head `c7bdc305f024a1b77874d99beeedaca8b0ff2a93` passed exact-head WCE CI run #458: changed-source lint, targeted WCE tests, full repository tests, strict typecheck, production build/route generation and PostgreSQL 17 clean migration replay. This is software verification only; it does not authorize merge, Vercel deployment, production migration or live Meta dispatch.
+
+## AI cost reporting integrity
+
+AI request counts remain sourced from the canonical commercial AI usage ledger. A cost amount is reported only when the provider/costing path supplies an explicit estimate. Records without a cost estimate are counted as unpriced; they are never presented as zero-cost requests.

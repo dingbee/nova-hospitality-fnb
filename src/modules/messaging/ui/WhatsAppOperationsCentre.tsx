@@ -733,9 +733,16 @@ export function WhatsAppOperationsCentre() {
                         <p className="font-medium">{item.component.replaceAll("_", " ")}</p>
                         <p className="text-xs text-muted-foreground">
                           {item.quantity} unit(s) {item.entries} ledger entry(s)
+                          {item.unpricedEntries > 0 ? ` · ${item.unpricedEntries} unpriced` : ""}
                         </p>
                       </div>
-                      <strong>{money(item.amount, item.currency)}</strong>
+                      <strong>
+                        {item.unpricedEntries > 0
+                          ? item.amount > 0
+                            ? `Known: ${money(item.amount, item.currency)}`
+                            : "Cost not configured"
+                          : money(item.amount, item.currency)}
+                      </strong>
                     </li>
                   ))}
                 </ul>

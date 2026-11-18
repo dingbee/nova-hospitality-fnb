@@ -2,7 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { processPendingMetaWebhookEvents } from "@/modules/messaging/webhook-queue.server";
 import { processPendingWhatsAppOutboundMessages } from "@/modules/messaging/outbound-queue.server";
-import { processDueWhatsAppCampaigns } from "@/modules/messaging/campaign-governance.server";
+import {
+  processDueWhatsAppCampaigns,
+  reconcileWhatsAppCampaignUsage,
+} from "@/modules/messaging/campaign-governance.server";
 
 function isAuthorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET ?? "";
@@ -32,8 +35,11 @@ async function dispatch(request: Request) {
       limit: 25,
       workerId: randomUUID(),
     });
+    const campaignUsageReconciliation = await reconcileWhatsAppCampaignUsage(supabaseAdmin, {
+      limit: 100,
+    });
     return Response.json(
-      { inbound, campaigns, outbound },
+      { inbound, campaigns, outbound, campaignUsageReconciliation },
       {
         headers: { "Cache-Control": "no-store, private, max-age=0" },
       },

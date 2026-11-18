@@ -275,7 +275,7 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
   let aiQuery = sb
     .from("commercial_ai_usage_log")
     .select(
-      "id, tenant_id, property_id, location_id, workload_type, request_count, estimated_cost, currency, occurred_at",
+      "id, tenant_id, property_id, location_id, workload_type, request_count, estimated_cost, estimated_cost_known, currency, occurred_at",
     )
     .eq("tenant_id", input.tenantId)
     .eq("source_channel", "whatsapp")
@@ -296,6 +296,7 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
   const entries = [
     ...(campaignRows ?? []).map((row: any) => ({
       ...row,
+      costKnown: true,
       source: "wa_campaign_usage_ledger",
     })),
     ...(aiRows ?? []).map((row: any) => ({
@@ -307,7 +308,8 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
       usage_event: row.workload_type,
       quantity: row.request_count,
       unit_price: null,
-      amount: row.estimated_cost,
+      amount: row.estimated_cost_known === true ? row.estimated_cost : null,
+      costKnown: row.estimated_cost_known === true,
       currency: row.currency,
       recorded_at: row.occurred_at,
       source: "commercial_ai_usage_log",
@@ -315,7 +317,15 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
   ];
   const totals = new Map<
     string,
-    { component: string; currency: string; amount: number; quantity: number; entries: number }
+    {
+      component: string;
+      currency: string;
+      amount: number;
+      quantity: number;
+      entries: number;
+      unpricedEntries: number;
+      costComplete: boolean;
+    }
   >();
   for (const row of entries) {
     const key = row.usage_component + ":" + row.currency;
@@ -325,8 +335,15 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
       amount: 0,
       quantity: 0,
       entries: 0,
+      unpricedEntries: 0,
+      costComplete: true,
     };
-    current.amount += Number(row.amount ?? 0);
+    if (row.costKnown === false) {
+      current.unpricedEntries++;
+      current.costComplete = false;
+    } else {
+      current.amount += Number(row.amount ?? 0);
+    }
     current.quantity += Number(row.quantity ?? 0);
     current.entries++;
     totals.set(key, current);
@@ -445,7 +462,7 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
     admin
       .from("commercial_ai_usage_log")
       .select(
-        "tenant_id, property_id, source_channel, workload_type, request_count, estimated_cost, currency, occurred_at",
+        "tenant_id, property_id, source_channel, workload_type, request_count, estimated_cost, estimated_cost_known, currency, occurred_at",
       )
       .eq("source_channel", "whatsapp")
       .eq("workload_type", "ai_concierge.reply")
@@ -516,13 +533,19 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
       component: "ai",
       currency: row.currency,
       amount: row.estimated_cost,
+      costKnown: row.estimated_cost_known === true,
     })),
   ];
-  const usageSummary = usageRows.reduce((acc: Record<string, number>, row: any) => {
+  const usageSummary: Record<string, number> = {};
+  const usageUnpriced: Record<string, number> = {};
+  for (const row of usageRows) {
     const key = row.component + ":" + row.currency;
-    acc[key] = (acc[key] ?? 0) + Number(row.amount ?? 0);
-    return acc;
-  }, {});
+    if (row.costKnown === false) {
+      usageUnpriced[key] = (usageUnpriced[key] ?? 0) + 1;
+    } else {
+      usageSummary[key] = (usageSummary[key] ?? 0) + Number(row.amount ?? 0);
+    }
+  }
   return {
     bindings: (bindings ?? []).map((row: any) => ({
       ...row,
@@ -542,6 +565,7 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
       failed: (messages ?? []).filter((row: any) => row.status === "failed").length,
     },
     usage: usageSummary,
+    usageUnpriced,
     invoiceSummary,
   };
 }
