@@ -101,7 +101,19 @@ export function ReceiptDeliveryPanel({
   const phoneOk = Boolean(normalizePhone(phone));
 
   return (
-    <div className="space-y-4 border-t pt-3">
+    <>
+      <style>{`
+        @media print {
+          @page { margin: 0; size: 80mm auto; }
+          body * { visibility: hidden !important; }
+          [data-pos-receipt-dialog], [data-pos-receipt-dialog] * { visibility: visible !important; }
+          [data-pos-receipt-dialog] { position: fixed !important; inset: 0 auto auto 0 !important; width: 80mm !important; max-width: 80mm !important; max-height: none !important; overflow: visible !important; padding: 4mm !important; border: 0 !important; box-shadow: none !important; background: #fff !important; color: #000 !important; transform: none !important; }
+          [data-pos-receipt-dialog] * { color: #000 !important; background: #fff !important; }
+          [data-pos-receipt-dialog] .receipt-delivery-panel,
+          [data-pos-receipt-dialog] button { display: none !important; }
+        }
+      `}</style>
+      <div className="receipt-delivery-panel space-y-4 border-t pt-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <StatusChip tone="success">Issued</StatusChip>
         <StatusChip tone="success">Paid</StatusChip>
@@ -191,7 +203,7 @@ export function ReceiptDeliveryPanel({
           className="min-h-11"
           disabled={busy !== null}
           onClick={() => {
-            onPrint?.();
+            window.print();
             void send("print");
           }}
         >
@@ -210,7 +222,8 @@ export function ReceiptDeliveryPanel({
           ))}
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
 
