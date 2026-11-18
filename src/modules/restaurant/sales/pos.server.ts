@@ -859,8 +859,7 @@ export async function ensurePosReceipt(
   const paymentState = String(order.payment_state ?? "");
   const nonCashSettled = ["comped", "room_charged"].includes(paymentState);
   const fullyPaid =
-    paymentState === "paid" &&
-    Number(order.paid_total ?? 0) + 0.01 >= Number(order.total ?? 0);
+    paymentState === "paid" && Number(order.paid_total ?? 0) + 0.01 >= Number(order.total ?? 0);
   if (!nonCashSettled && !fullyPaid) {
     throw new Error(
       "The bill is not fully settled. Record the outstanding payment before printing a receipt.",
