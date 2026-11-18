@@ -435,6 +435,89 @@ export async function closeActiveGuestSession(
   }
 }
 
+/**
+ * Guest-only composition gate. Staff POS continues to use the full sellable
+ * catalogue; this projection includes only menu items with at least one
+ * ingredient in either the versioned recipe graph or legacy direct
+ * composition. Nested sub-recipes are traversed so a parent recipe made
+ * from a sub-recipe with ingredients remains guest-visible.
+ */
+async function guestItemsWithIngredients(sb: Sb, tenantId: string, items: any[]) {
+  if (items.length === 0) return items;
+  const menuItemIds = [...new Set(items.map((item) => item.id).filter(Boolean))] as string[];
+  const [productsRes, componentsRes] = await Promise.all([
+    sb.from("restaurant_products")
+      .select("menu_item_id, recipe_id, active")
+      .eq("tenant_id", tenantId)
+      .eq("active", true)
+      .in("menu_item_id", menuItemIds),
+    sb.from("restaurant_recipe_components")
+      .select("menu_item_id, inventory_item_id, component_menu_item_id")
+      .eq("tenant_id", tenantId)
+      .in("menu_item_id", menuItemIds),
+  ]);
+  if (productsRes.error) throw new Error(productsRes.error.message);
+  if (componentsRes.error) throw new Error(componentsRes.error.message);
+
+  const composed = new Set<string>();
+  for (const row of (componentsRes.data ?? []) as any[]) {
+    if (row.menu_item_id && (row.inventory_item_id || row.component_menu_item_id))
+      composed.add(row.menu_item_id);
+  }
+
+  const recipeByMenuItem = new Map<string, string>();
+  const pending = new Set<string>();
+  for (const product of (productsRes.data ?? []) as any[]) {
+    if (!product.menu_item_id || !product.recipe_id) continue;
+    recipeByMenuItem.set(product.menu_item_id, product.recipe_id);
+    pending.add(product.recipe_id);
+  }
+
+  const recipesWithIngredients = new Set<string>();
+  const visited = new Set<string>();
+  const childRecipesByParent = new Map<string, Set<string>>();
+  while (pending.size > 0) {
+    const batch = [...pending].filter((id) => !visited.has(id));
+    pending.clear();
+    if (batch.length === 0) break;
+    for (const id of batch) visited.add(id);
+    const { data: lines, error } = await sb
+      .from("restaurant_recipe_lines")
+      .select("recipe_id, inventory_item_id, sub_recipe_id")
+      .eq("tenant_id", tenantId)
+      .in("recipe_id", batch);
+    if (error) throw new Error(error.message);
+    for (const line of (lines ?? []) as any[]) {
+      if (line.inventory_item_id) recipesWithIngredients.add(line.recipe_id);
+      if (line.sub_recipe_id) {
+        pending.add(line.sub_recipe_id);
+        const parents = childRecipesByParent.get(line.sub_recipe_id) ?? new Set<string>();
+        parents.add(line.recipe_id);
+        childRecipesByParent.set(line.sub_recipe_id, parents);
+      }
+    }
+  }
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [child, parents] of childRecipesByParent) {
+      if (!recipesWithIngredients.has(child)) continue;
+      for (const parent of parents) {
+        if (!recipesWithIngredients.has(parent)) {
+          recipesWithIngredients.add(parent);
+          changed = true;
+        }
+      }
+    }
+  }
+
+  for (const [menuItemId, recipeId] of recipeByMenuItem) {
+    if (recipesWithIngredients.has(recipeId)) composed.add(menuItemId);
+  }
+  return items.filter((item) => composed.has(item.id));
+}
+
 /** The public menu for the table's own tenant/location — nothing else is reachable from a table id. */
 export async function guestMenu(sb: Sb, tableId: string) {
   const table = await resolveGuestTableContext(sb, tableId);
@@ -450,7 +533,11 @@ export async function guestMenu(sb: Sb, tableId: string) {
     // A guest never sees an item staff have marked unavailable, or one the
     // pricing engine has no active price for — a price it would only refuse
     // at submission is never worth putting in front of a guest to tap.
-    items: catalog.items.filter((i: any) => i.available !== false && i.priceConfigured !== false),
+    items: await guestItemsWithIngredients(
+      sb,
+      table.tenantId,
+      catalog.items.filter((i: any) => i.available !== false && i.priceConfigured !== false),
+    ),
   };
 }
 
@@ -535,11 +622,12 @@ export async function submitGuestOrder(
     propertyId: table.propertyId ?? undefined,
     locationId: table.locationId ?? undefined,
   });
-  const sellableIds = new Set(
-    (catalog.items as any[])
-      .filter((i) => i.available !== false && i.priceConfigured !== false)
-      .map((i) => i.id as string),
+  const guestVisibleItems = await guestItemsWithIngredients(
+    sb,
+    table.tenantId,
+    (catalog.items as any[]).filter((i) => i.available !== false && i.priceConfigured !== false),
   );
+  const sellableIds = new Set(guestVisibleItems.map((i: any) => i.id as string));
 
   const { valid, rejected } = pickGuestOrderableLines(sellableIds, input.lines);
   if (rejected.length > 0) {
