@@ -6,6 +6,13 @@ import {
   getTenantScope,
 } from "@/modules/restaurant/core/access.server";
 import { assertCommercialAdmin } from "@/modules/commercial/access.server";
+
+const { supabaseAdminMock } = vi.hoisted(() => ({
+  supabaseAdminMock: { from: vi.fn() },
+}));
+vi.mock("@/integrations/supabase/client.server", () => ({
+  supabaseAdmin: supabaseAdminMock,
+}));
 import {
   getFounderWhatsAppOverview,
   getWhatsAppConversionReport,
@@ -162,10 +169,13 @@ describe("WCE-08 WhatsApp-to-commerce conversion reconciliation", () => {
         return builder;
       },
     };
-    const result = await getWhatsAppConversionReport(db, "tenant-owner", {
+    supabaseAdminMock.from.mockImplementation(db.from);
+    const authDb = { from: vi.fn() };
+    const result = await getWhatsAppConversionReport(authDb, "tenant-owner", {
       tenantId: "tenant-1",
       propertyId: "property-1",
     });
+    expect(authDb.from).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       sessionsCreated: 2,
       sessionsOpened: 1,
