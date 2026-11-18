@@ -301,7 +301,7 @@ export async function registerVerifiedPhoneNumber(
     credentials.accessToken,
     {
     method: "POST",
-    body: JSON.stringify({ messaging_product: "whatsapp", pin }),
+      body: JSON.stringify({ messaging_product: "whatsapp", pin }),
     },
     platform,
   );
@@ -364,9 +364,9 @@ export async function sendTextMessage(
     method: "POST",
     body: JSON.stringify({
       messaging_product: "whatsapp",
-      recipient_type: "individual",
+        recipient_type: "individual",
       to: recipient,
-      type: "text",
+        type: "text",
       text: { preview_url: false, body: text },
       }),
     },
