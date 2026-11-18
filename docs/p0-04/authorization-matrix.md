@@ -72,6 +72,13 @@ The following is the canonical application capability map. It is not a statement
 - The isolated PostgreSQL adversarial test now checks property-user denial, tenant-owner central-store read/write, cross-tenant central-store denial, transfer authorization and inactive-location rejection.
 - Invoice recording no longer auto-runs the three-way match; a separate authorized user must perform reconciliation.
 
-## Verification still required
+## Verification evidence — 2026-11-18
 
-The matrix must be exercised through real server-function calls and isolated PostgreSQL identities. Static capability membership is not a passing security test. Transfer partial-receipt idempotency/concurrency and full RLS adversarial coverage remain outstanding until their persisted tests pass.
+- Full repository migration chain replay passed on isolated PostgreSQL 17.
+- PostgreSQL adversarial checks passed for property-only central-store denial, tenant-wide owner access, cross-tenant central-store isolation, inactive-location transfer rejection, and tenant-composite transfer-line foreign keys.
+- Application transfer lifecycle tests passed for dispatch/receipt accounting, idempotent retries, and simultaneous dispatch retries with a single ledger movement.
+- Full repository regression passed: 241 test files and 2,607 tests.
+- Inventory Agent is explicitly entitlement-gated, then requires `intelligence.read` for execution/verification sweeps. The executor re-checks decision scope, entitlement, action approval state, and `purchase.request` capability before creating only a draft purchase request. It cannot approve the decision, create a PO, or mutate stock.
+- Additional negative tests now verify that missing Inventory Agent entitlement or `intelligence.read` capability stops execution before decision/action discovery.
+
+The CI-generated SECURITY DEFINER inventory is retained as evidence. It is not, by itself, a completed manual review or certification sign-off. The final sign-off must record reviewed function families, any accepted findings, and any required remediations.
