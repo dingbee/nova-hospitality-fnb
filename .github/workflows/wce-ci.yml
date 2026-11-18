@@ -263,6 +263,68 @@ jobs:
                 OR NOT has_function_privilege('service_role', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text,text)', 'EXECUTE') THEN
                 RAISE EXCEPTION 'WCE-06 recipient preparation RPC grants are not service-role-only';
               END IF;
+
+              IF has_table_privilege('anon', 'public.wa_meta_message_rates', 'SELECT')
+                OR has_table_privilege('authenticated', 'public.wa_meta_message_rates', 'SELECT')
+                OR has_table_privilege('anon', 'public.wa_meta_message_rates', 'INSERT')
+                OR has_table_privilege('authenticated', 'public.wa_meta_message_rates', 'INSERT') THEN
+                RAISE EXCEPTION 'WCE-06 global Meta rate card is exposed to tenant/public roles';
+              END IF;
+
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger t
+                JOIN pg_class c ON c.oid = t.tgrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                  AND c.relname = 'wa_campaign_usage_ledger'
+                  AND t.tgname = 'wa_campaign_usage_ledger_immutable_guard'
+                  AND NOT t.tgisinternal
+              ) THEN
+                RAISE EXCEPTION 'WCE-06 append-only usage ledger trigger is missing';
+              END IF;
+
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_policies
+                WHERE schemaname = 'public'
+                  AND tablename = 'wa_campaigns'
+                  AND policyname = 'wa_campaigns_read_scoped'
+              ) OR NOT EXISTS (
+                SELECT 1 FROM pg_policies
+                WHERE schemaname = 'public'
+                  AND tablename = 'wa_campaign_recipients'
+                  AND policyname = 'wa_campaign_recipients_read_scoped'
+              ) OR NOT EXISTS (
+                SELECT 1 FROM pg_policies
+                WHERE schemaname = 'public'
+                  AND tablename = 'wa_campaign_usage_ledger'
+                  AND policyname = 'wa_campaign_usage_read_scoped'
+              ) THEN
+                RAISE EXCEPTION 'WCE-06 tenant-scoped campaign/recipient/usage policies are missing';
+              END IF;
+            END IF;
+
+            IF to_regclass('public.wa_guest_portal_sessions') IS NOT NULL THEN
+              IF NOT (
+                SELECT c.relrowsecurity FROM pg_class c
+                WHERE c.oid = 'public.wa_guest_portal_sessions'::regclass
+              ) THEN
+                RAISE EXCEPTION 'WCE-02 guest portal session RLS is disabled';
+              END IF;
+            END IF;
+
+            IF to_regclass('public.restaurant_guest_customer_consents') IS NOT NULL THEN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger t
+                JOIN pg_class c ON c.oid = t.tgrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                  AND c.relname = 'restaurant_guest_customer_consents'
+                  AND t.tgname = 'restaurant_guest_customer_consent_immutable_guard'
+                  AND NOT t.tgisinternal
+              ) THEN
+                RAISE EXCEPTION 'WCE-05 append-only consent trigger is missing';
+              END IF;
+            END IF;
             END IF;
           END $verify$;
           SQL
