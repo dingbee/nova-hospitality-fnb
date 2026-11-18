@@ -416,6 +416,34 @@ describe("stock transfer lifecycle — the exact reported P0 scenario", () => {
     expect(fake.movements).toHaveLength(1);
   });
 
+  it("serializes simultaneous dispatch retries — one ledger movement only", async () => {
+    const fake = makeFakeSupabase({ itemQuantity: 16 });
+    const created = await createTransfer(fake.supabase, USER, {
+      tenantId: TENANT,
+      sourceLocationId: SOURCE,
+      destinationLocationId: DEST,
+      requiresApproval: false,
+      submit: true,
+      lines: [{ inventoryItemId: ITEM, requestedQuantity: 15 }],
+    } as any);
+    const lineId = Object.keys(fake.transferLines)[0];
+    const attempt = () =>
+      dispatchTransfer(fake.supabase, USER, {
+        tenantId: TENANT,
+        transferId: created.id,
+        lines: [{ lineId, dispatchedQuantity: 15 }],
+      } as any);
+
+    // Both callers start from the same approved transfer snapshot. The
+    // database dedupe key and line compare-and-set must prevent double issue.
+    const outcomes = await Promise.allSettled([attempt(), attempt()]);
+    expect(outcomes.some((outcome) => outcome.status === "fulfilled")).toBe(true);
+    expect(fake.movements.filter((movement) => movement.dedupe_key === `transfer:out:${lineId}`)).toHaveLength(1);
+    expect(fake.item.current_quantity).toBe(1);
+    expect(fake.transferLines[lineId].dispatched_quantity).toBe(15);
+    expect(fake.transfers[created.id].status).toBe("dispatched");
+  });
+
   it("rejects transfer creation and dispatch when a referenced location is inactive", async () => {
     const fake = makeFakeSupabase({ itemQuantity: 16 });
     const created = await createTransfer(fake.supabase, USER, {
