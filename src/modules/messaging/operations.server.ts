@@ -264,7 +264,7 @@ export async function getWhatsAppCampaignWorkspace(sb: Db, userId: string, input
 
 export async function getWhatsAppUsageReport(sb: Db, userId: string, input: TenantFilter) {
   const { propertyIds } = await tenantQueryScope(sb, userId, input, "profitability.manage");
-  let query = sb
+  let campaignQuery = sb
     .from("wa_campaign_usage_ledger")
     .select(
       "id, tenant_id, property_id, campaign_id, usage_component, usage_event, quantity, unit_price, amount, currency, market_code, template_category, rate_snapshot, recorded_at",
@@ -272,15 +272,54 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
     .eq("tenant_id", input.tenantId)
     .order("recorded_at", { ascending: false })
     .limit(2000);
-  query = applyPropertyScope(query, propertyIds);
-  query = applyDateRange(query, input, "recorded_at");
-  const { data, error } = await query;
-  if (error) throw new Error("whatsapp_usage_report_unavailable");
+  let aiQuery = sb
+    .from("commercial_ai_usage_log")
+    .select(
+      "id, tenant_id, property_id, location_id, workload_type, request_count, estimated_cost, currency, occurred_at",
+    )
+    .eq("tenant_id", input.tenantId)
+    .eq("source_channel", "whatsapp")
+    .eq("workload_type", "ai_concierge.reply")
+    .order("occurred_at", { ascending: false })
+    .limit(2000);
+  campaignQuery = applyPropertyScope(campaignQuery, propertyIds);
+  aiQuery = applyPropertyScope(aiQuery, propertyIds);
+  campaignQuery = applyDateRange(campaignQuery, input, "recorded_at");
+  aiQuery = applyDateRange(aiQuery, input, "occurred_at");
+  if (input.locationId) {
+    campaignQuery = campaignQuery.eq("location_id", input.locationId);
+    aiQuery = aiQuery.eq("location_id", input.locationId);
+  }
+  const [
+    { data: campaignRows, error: campaignError },
+    { data: aiRows, error: aiError },
+  ] = await Promise.all([campaignQuery, aiQuery]);
+  if (campaignError || aiError) throw new Error("whatsapp_usage_report_unavailable");
+  const entries = [
+    ...(campaignRows ?? []).map((row: any) => ({
+      ...row,
+      source: "wa_campaign_usage_ledger",
+    })),
+    ...(aiRows ?? []).map((row: any) => ({
+      id: row.id,
+      tenant_id: row.tenant_id,
+      property_id: row.property_id,
+      location_id: row.location_id,
+      usage_component: "ai",
+      usage_event: row.workload_type,
+      quantity: row.request_count,
+      unit_price: null,
+      amount: row.estimated_cost,
+      currency: row.currency,
+      recorded_at: row.occurred_at,
+      source: "commercial_ai_usage_log",
+    })),
+  ];
   const totals = new Map<
     string,
     { component: string; currency: string; amount: number; quantity: number; entries: number }
   >();
-  for (const row of data ?? []) {
+  for (const row of entries) {
     const key = row.usage_component + ":" + row.currency;
     const current = totals.get(key) ?? {
       component: row.usage_component,
@@ -294,7 +333,7 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
     current.entries++;
     totals.set(key, current);
   }
-  return { entries: data ?? [], totals: [...totals.values()] };
+  return { entries, totals: [...totals.values()] };
 }
 
 export async function getWhatsAppConversionReport(sb: Db, userId: string, input: TenantFilter) {
