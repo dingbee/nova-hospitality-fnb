@@ -143,6 +143,9 @@ jobs:
           cp standalone/db/migrations/*.sql "$replay_migrations/"
           cp standalone/db/verification/fixtures/p0-01-uat-bar-station-replay-fixture.sql \
             "$replay_migrations/0086zz_p0-01_uat_bar_station_fixture.sql"
+          # This isolated replay includes the fixture required by the historical UAT-only repair.
+          # Remove its local-install skip entry only inside this disposable CI workspace.
+          sed -i '/^0087_repair_bar_station_routing\.sql[[:space:]]/d' local/migrations.skip
           export NOVA_MIGRATIONS_DIR="$replay_migrations"
 
           ./local/scripts/init-db.sh
@@ -287,6 +290,9 @@ jobs:
           cp standalone/db/migrations/0088_commercial_capability_activation_reconciliation.sql "$replay_migrations/"
           cp standalone/db/verification/fixtures/p0-01-uat-bar-station-replay-fixture.sql \
             "$replay_migrations/0086zz_p0-01_uat_bar_station_fixture.sql"
+          # This isolated replay includes the fixture required by the historical UAT-only repair.
+          # Remove its local-install skip entry only inside this disposable CI workspace.
+          sed -i '/^0087_repair_bar_station_routing\.sql[[:space:]]/d' local/migrations.skip
           export NOVA_MIGRATIONS_DIR="$replay_migrations"
 
           ./local/scripts/init-db.sh
