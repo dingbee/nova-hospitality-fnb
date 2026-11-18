@@ -41,11 +41,12 @@ function getPlatformConfig(): MetaPlatformConfig {
 function normalisePhoneAssets(config: Record<string, any>): Array<Record<string, unknown>> {
   if (Array.isArray(config.phoneNumbers)) return config.phoneNumbers;
   if (typeof config.phoneNumberId === "string") {
-    return [{
-      id: config.phoneNumberId,
-      displayPhoneNumber: config.displayPhoneNumber ?? null,
+    return [
+      {
+        id: config.phoneNumberId,
+        displayPhoneNumber: config.displayPhoneNumber ?? null,
         verifiedName: config.verifiedName ?? null,
-      qualityRating: config.qualityRating ?? null,
+        qualityRating: config.qualityRating ?? null,
       },
     ];
   }
