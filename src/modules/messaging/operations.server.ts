@@ -267,7 +267,7 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
   let campaignQuery = sb
     .from("wa_campaign_usage_ledger")
     .select(
-      "id, tenant_id, property_id, campaign_id, usage_component, usage_event, quantity, unit_price, amount, currency, market_code, template_category, rate_snapshot, recorded_at",
+      "id, tenant_id, property_id, location_id, campaign_id, usage_component, usage_event, quantity, unit_price, amount, currency, market_code, template_category, rate_snapshot, recorded_at",
     )
     .eq("tenant_id", input.tenantId)
     .order("recorded_at", { ascending: false })
@@ -286,7 +286,10 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
   aiQuery = applyPropertyScope(aiQuery, propertyIds);
   campaignQuery = applyDateRange(campaignQuery, input, "recorded_at");
   aiQuery = applyDateRange(aiQuery, input, "occurred_at");
-  if (input.locationId) aiQuery = aiQuery.eq("location_id", input.locationId);
+  if (input.locationId) {
+    campaignQuery = campaignQuery.eq("location_id", input.locationId);
+    aiQuery = aiQuery.eq("location_id", input.locationId);
+  }
   const [
     { data: campaignRows, error: campaignError },
     { data: aiRows, error: aiError },
@@ -437,7 +440,7 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
       .limit(1000),
     admin
       .from("wa_campaign_usage_ledger")
-      .select("tenant_id, property_id, usage_component, amount, currency, recorded_at")
+      .select("tenant_id, property_id, location_id, usage_component, amount, currency, recorded_at")
       .order("recorded_at", { ascending: false })
       .limit(2000),
     admin
