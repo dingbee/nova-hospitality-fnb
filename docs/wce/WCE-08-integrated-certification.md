@@ -84,7 +84,17 @@ Certify the complete WCE platform as one governed, tenant-safe system. WCE-08 is
 - Tenant/property commercial configuration and subscription entitlements.
 - These external dependencies do not justify bypassing software gates. UAT must use test credentials/mocks and keep provider dispatch and billing disabled.
 
-## 6. Release constraints
+## 6. Integrated implementation evidence
+
+The WCE-08 branch now includes a delivery reconciliation migration that links campaign recipients to canonical outbound messages with a tenant-scoped foreign key and synchronizes recipient state from the canonical `wa_messages.status` lifecycle. The trigger is SECURITY DEFINER with a fixed search path and is covered by PostgreSQL replay assertions.
+
+The WCE-07 conversion report uses the privileged server-side aggregate reader only after tenant/property membership and capability checks. It returns aggregate counts and revenue by currency, not raw Guest Portal session rows. Session-to-order conversion is based on distinct converted sessions, so multiple orders from one session do not inflate the conversion rate.
+
+A repository deployment guardrail is recorded at `docs/operations/DEPLOYMENT_AUTHORIZATION_GUARDRAIL.md`. CI and local build verification are permitted; Vercel deployment, promotion, release, merge and production cutover remain explicit-authorization actions.
+
+These additions are not yet certified until the latest exact-head CI and migration replay complete successfully.
+
+## 7. Release constraints
 
 - No production database migrations or writes.
 - No production credential mutation or provider rebind.
@@ -92,6 +102,6 @@ Certify the complete WCE platform as one governed, tenant-safe system. WCE-08 is
 - No deployment, promotion, PR merge or production cutover without explicit release authorization.
 - WCE-08 certification is evidence of software readiness only; it is not production authorization.
 
-## 7. Exit criteria
+## 8. Exit criteria
 
 WCE-08 closes only when all WCE phases have exact-head green verification, all required end-to-end scenarios pass, tenant/founder boundaries are proven, usage and conversion reconcile to canonical sources, and no unresolved P0/P1 findings remain. If an external Meta prerequisite is unavailable, record it as a release dependency; do not fabricate a pass.
