@@ -251,8 +251,11 @@ export function DeliveryRow({ attempt }: { attempt: DeliveryRecord }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2 text-xs">
       <span className="min-w-0">
-        <span className="font-medium">{labelFor(attempt.method)}</span> · attempt {attempt.attempt} ·{" "}
-          {attempt.recipient ?? "—"}
+        <span className="font-medium">{labelFor(attempt.method)}</span>
+        {" · attempt "}
+        {attempt.attempt}
+        {" · "}
+        {attempt.recipient ?? "—"}
         <span className="block text-muted-foreground">
           {String(attempt.requestedAt).replace("T", " ").slice(0, 16)}
           {attempt.providerReference ? ` · ref ${attempt.providerReference}` : ""}
