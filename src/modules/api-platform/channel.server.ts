@@ -13,7 +13,11 @@ import { getChannelAdapter } from "./adapters/index.server";
 import { registerIntegration, updateIntegration } from "./integrations.server";
 import { testChannelConnection, persistChannelHealth } from "./channel-connectors.server";
 
-export async function listChannelConnections(sb: SupabaseClient, userId: string, input: { tenantId: string }) {
+export async function listChannelConnections(
+  sb: SupabaseClient,
+  userId: string,
+  input: { tenantId: string },
+) {
   await assertCapability(sb, userId, input.tenantId, "tenant.manage");
   const { data, error } = await sb
     .from("api_integrations")
