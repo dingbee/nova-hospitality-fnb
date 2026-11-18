@@ -290,10 +290,9 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
   const [
     { data: campaignRows, error: campaignError },
     { data: aiRows, error: aiError },
-  ] = await Promise.all([campaignQuery, aiQuery]);
-  if (campaignError || aiError) throw new Error("whatsapp_usage_report_unavailable");
+  ] = awa{ data: campaignRows, error: campaignError }, { data: aiRows, error: aiError }] =r("whatsapp_usage_report_unavailable");
   const entries = [
-    ...(campaignRows ?? []).map((row: any) => ({
+   ..(campaignRows ?? []).map((row: any) => ({
       ...row,
       source: "wa_campaign_usage_ledger",
     })),
@@ -446,16 +445,19 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
       .select("tenant_id, property_id, source_channel, workload_type, request_count, estimated_cost, currency, occurred_at")
       .eq("source_channel", "whatsapp")
       .eq("workload_type", "ai_concierge.reply")
-      .order("occurred_at", { ascending: false })
-      .limit(2000),
-  ]);
-  if (bindingError || integrationError || webhookError || messageError || usageError || aiUsageError) {
+      .order("
+        "tenant_id, property_id, source_channel, workload_type, request_count, estimated_cost, currency, occurred_at",
+      okError || messageError || usageError || aiUsageError) {
     throw new Error("founder_whatsapp_overview_unavailable");
   }
-  const tenantIds = [
-    ...new Set([
-      ...(bindings ?? []).map((row: any) => row.tenant_id),
-      ...(integrations ?? []).map((row: any) => row.tenant_id),
+  cons
+    bindingError ||
+    integrationError ||
+    webhookError ||
+    messageError ||
+    usageError ||
+    aiUsageError
+       ...(integrations ?? []).map((row: any) => row.tenant_id),
       ...(aiUsage ?? []).map((row: any) => row.tenant_id),
     ]),
   ];
