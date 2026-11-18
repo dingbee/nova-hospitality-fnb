@@ -496,7 +496,9 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
   const { data: quotaCounters, error: quotaCounterError } = quotaDefinitionIds.length
     ? await admin
         .from("commercial_usage_counters")
-        .select("tenant_id, property_id, quota_definition_id, period_start, period_end, used_value, state")
+        .select(
+          "tenant_id, property_id, quota_definition_id, period_start, period_end, used_value, state",
+        )
         .in("quota_definition_id", quotaDefinitionIds)
         .gt("period_end", new Date().toISOString())
         .order("period_start", { ascending: false })

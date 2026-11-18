@@ -283,7 +283,17 @@ export function FounderWhatsAppControlCentre() {
               </thead>
               <tbody className="divide-y">
                 {data.lexibiteQuotaUsage.map((row: any, index: number) => (
-                  <tr key={row.tenant_id + ":" + row.property_id + ":" + row.quota_definition_id + ":" + index}>
+                  <tr
+                    key={
+                      row.tenant_id +
+                      ":" +
+                      row.property_id +
+                      ":" +
+                      row.quota_definition_id +
+                      ":" +
+                      index
+                    }
+                  >
                     <td className="py-2 pr-3">{row.tenant?.name ?? row.tenant_id}</td>
                     <td className="py-2 pr-3 text-xs">{row.property_id ?? "Tenant-wide"}</td>
                     <td className="py-2 pr-3 font-medium">
@@ -292,7 +302,9 @@ export function FounderWhatsAppControlCentre() {
                     <td className="py-2 pr-3 text-xs">
                       {new Date(row.period_start).toLocaleDateString()} – {new Date(row.period_end).toLocaleDateString()}
                     </td>
-                    <td className="py-2"><StatusChip>{row.state}</StatusChip></td>
+                    <td className="py-2">
+                      <StatusChip>{row.state}</StatusChip>
+                    </td>
                   </tr>
                 ))}
               </tbody>
