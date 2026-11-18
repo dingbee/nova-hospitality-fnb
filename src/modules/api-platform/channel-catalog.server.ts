@@ -107,7 +107,7 @@ export async function upsertChannelDefinition(
     .upsert({
       key: input.key,
         name: input.name,
-      description: input.description,
+        description: input.description,
         provider_key: input.providerKey,
       category: input.category,
       enabled: input.enabled,
