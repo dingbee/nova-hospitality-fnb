@@ -31,21 +31,19 @@ function makeAdmin(
     const query = {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi
-        .fn()
-        .mockResolvedValue(
+      maybeSingle: vi.fn().mockResolvedValue(
         table === "wa_phone_number_bindings"
           ? { data: options.binding === undefined ? binding : options.binding, error: null }
-            : {
-                data: {
-                  id: binding.integration_id,
-                  status: options.integrationStatus ?? "active",
-                  provider: "meta-whatsapp",
-                  channel_key: "whatsapp",
-                  integration_type: "channel",
-                },
-                error: null,
+          : {
+              data: {
+                id: binding.integration_id,
+                status: options.integrationStatus ?? "active",
+                provider: "meta-whatsapp",
+                channel_key: "whatsapp",
+                integration_type: "channel",
               },
+              error: null,
+            },
       ),
     };
     return query;
