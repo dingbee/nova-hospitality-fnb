@@ -114,3 +114,7 @@ WCE-08 closes only when all WCE phases have exact-head green verification, all r
 - AI usage records explicitly distinguish priced estimates from unpriced requests. Reports do not present an absent AI cost estimate as a zero-cost event.
 - The internal dispatcher invokes bounded provider-cost reconciliation after outbound processing. No provider send is enabled by this change.
 - Repository-wide operating instructions prohibit Vercel deployment, preview deployment, promotion, alias/domain changes and rollback unless the user explicitly authorizes that specific action and target environment.
+
+## Commercial usage reconciliation
+
+The integrated operations workspace reports LexiBite campaign-message quota separately from Meta provider charges and AI estimated costs. The founder control centre exposes current-period tenant/property quota consumption from the existing commercial usage counters; no parallel quota or billing ledger is introduced.

@@ -113,3 +113,7 @@ WCE-07 branch head `c7bdc305f024a1b77874d99beeedaca8b0ff2a93` passed exact-head 
 ## AI cost reporting integrity
 
 AI request counts remain sourced from the canonical commercial AI usage ledger. A cost amount is reported only when the provider/costing path supplies an explicit estimate. Records without a cost estimate are counted as unpriced; they are never presented as zero-cost requests.
+
+## Commercial usage visibility
+
+Tenant reporting now separates Meta provider cost and AI cost from the current-period LexiBite campaign-message quota counter. Founder reporting aggregates active-period quota consumption by tenant/property from the existing commercial usage counters. Quota units are not misrepresented as monetary cost.

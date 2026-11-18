@@ -6,6 +6,7 @@ import {
   getTenantScope,
 } from "@/modules/restaurant/core/access.server";
 import { assertCommercialAdmin } from "@/modules/commercial/access.server";
+import { checkQuota } from "@/modules/commercial/quota.server";
 
 const { supabaseAdminMock } = vi.hoisted(() => ({
   supabaseAdminMock: { from: vi.fn() },
@@ -34,6 +35,20 @@ vi.mock("@/modules/restaurant/core/access.server", () => ({
 
 vi.mock("@/modules/commercial/access.server", () => ({
   assertCommercialAdmin: vi.fn(),
+}));
+
+vi.mock("@/modules/commercial/quota.server", () => ({
+  checkQuota: vi.fn(async () => ({
+    quotaCode: "whatsapp_campaign_messages",
+    unit: "messages",
+    limitValue: 500,
+    usedValue: 120,
+    period: "monthly",
+    periodStart: "2026-11-01T00:00:00.000Z",
+    periodEnd: "2026-12-01T00:00:00.000Z",
+    state: "NORMAL",
+    hasOverride: false,
+  })),
 }));
 
 describe("WhatsApp operations authorization", () => {
@@ -305,6 +320,18 @@ describe("WCE-08 WhatsApp usage attribution", () => {
         costComplete: false,
       },
     ]);
+    expect(result.lexibiteQuota).toMatchObject({
+      usedValue: 120,
+      limitValue: 500,
+      unit: "messages",
+      state: "NORMAL",
+    });
+    expect(checkQuota).toHaveBeenCalledWith(
+      db,
+      "tenant-1",
+      "whatsapp_campaign_messages",
+      "property-1",
+    );
     expect(calls).toContainEqual({
       table: "commercial_ai_usage_log",
       method: "eq",

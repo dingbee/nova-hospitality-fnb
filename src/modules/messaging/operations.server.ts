@@ -6,6 +6,7 @@ import {
   getTenantScope,
 } from "@/modules/restaurant/core/access.server";
 import { assertCommercialAdmin } from "@/modules/commercial/access.server";
+import { checkQuota } from "@/modules/commercial/quota.server";
 
 type Db = any;
 
@@ -348,7 +349,13 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
     current.entries++;
     totals.set(key, current);
   }
-  return { entries, totals: [...totals.values()] };
+  const lexibiteQuota = await checkQuota(
+    sb,
+    input.tenantId,
+    "whatsapp_campaign_messages",
+    input.propertyId,
+  );
+  return { entries, totals: [...totals.values()], lexibiteQuota };
 }
 
 export async function getWhatsAppConversionReport(sb: Db, userId: string, input: TenantFilter) {
@@ -479,11 +486,30 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
   ) {
     throw new Error("founder_whatsapp_overview_unavailable");
   }
+  const { data: quotaDefinitions, error: quotaDefinitionError } = await admin
+    .from("commercial_quota_definitions")
+    .select("id, code, unit, period, scope")
+    .eq("code", "whatsapp_campaign_messages")
+    .limit(50);
+  if (quotaDefinitionError) throw new Error("founder_whatsapp_quota_definitions_unavailable");
+  const quotaDefinitionIds = (quotaDefinitions ?? []).map((row: any) => row.id);
+  const { data: quotaCounters, error: quotaCounterError } = quotaDefinitionIds.length
+    ? await admin
+        .from("commercial_usage_counters")
+        .select("tenant_id, property_id, quota_definition_id, period_start, period_end, used_value, state")
+        .in("quota_definition_id", quotaDefinitionIds)
+        .gt("period_end", new Date().toISOString())
+        .order("period_start", { ascending: false })
+        .limit(1000)
+    : { data: [], error: null };
+  if (quotaCounterError) throw new Error("founder_whatsapp_quota_usage_unavailable");
+  const quotaDefinitionMap = new Map((quotaDefinitions ?? []).map((row: any) => [row.id, row]));
   const tenantIds = [
     ...new Set([
       ...(bindings ?? []).map((row: any) => row.tenant_id),
       ...(integrations ?? []).map((row: any) => row.tenant_id),
       ...(aiUsage ?? []).map((row: any) => row.tenant_id),
+      ...(quotaCounters ?? []).map((row: any) => row.tenant_id),
     ]),
   ];
   const { data: tenants, error: tenantError } = tenantIds.length
@@ -567,6 +593,11 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
     },
     usage: usageSummary,
     usageUnpriced,
+    lexibiteQuotaUsage: (quotaCounters ?? []).map((row: any) => ({
+      ...row,
+      quota: quotaDefinitionMap.get(row.quota_definition_id) ?? null,
+      tenant: tenantMap.get(row.tenant_id) ?? null,
+    })),
     invoiceSummary,
   };
 }
