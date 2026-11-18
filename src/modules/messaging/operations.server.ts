@@ -410,6 +410,7 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
     { data: webhookEvents, error: webhookError },
     { data: messages, error: messageError },
     { data: usage, error: usageError },
+    { data: aiUsage, error: aiUsageError },
   ] = await Promise.all([
     admin
       .from("wa_phone_number_bindings")
@@ -443,14 +444,22 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
       .select("tenant_id, property_id, usage_component, amount, currency, recorded_at")
       .order("recorded_at", { ascending: false })
       .limit(2000),
+    admin
+      .from("commercial_ai_usage_log")
+      .select("tenant_id, property_id, source_channel, workload_type, request_count, estimated_cost, currency, occurred_at")
+      .eq("source_channel", "whatsapp")
+      .eq("workload_type", "ai_concierge.reply")
+      .order("occurred_at", { ascending: false })
+      .limit(2000),
   ]);
-  if (bindingError || integrationError || webhookError || messageError || usageError) {
+  if (bindingError || integrationError || webhookError || messageError || usageError || aiUsageError) {
     throw new Error("founder_whatsapp_overview_unavailable");
   }
   const tenantIds = [
     ...new Set([
       ...(bindings ?? []).map((row: any) => row.tenant_id),
       ...(integrations ?? []).map((row: any) => row.tenant_id),
+      ...(aiUsage ?? []).map((row: any) => row.tenant_id),
     ]),
   ];
   const { data: tenants, error: tenantError } = tenantIds.length
@@ -508,8 +517,19 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
       byStatus: countBy(messages ?? [], "status"),
       failed: (messages ?? []).filter((row: any) => row.status === "failed").length,
     },
-    usage: (usage ?? []).reduce((acc: Record<string, number>, row: any) => {
-      const key = row.usage_component + ":" + row.currency;
+    usage: [
+      ...(usage ?? []).map((row: any) => ({
+        component: row.usage_component,
+        currency: row.currency,
+        amount: row.amount,
+      })),
+      ...(aiUsage ?? []).map((row: any) => ({
+        component: "ai",
+        currency: row.currency,
+        amount: row.estimated_cost,
+      })),
+    ].reduce((acc: Record<string, number>, row: any) => {
+      const key = row.component + ":" + row.currency;
       acc[key] = (acc[key] ?? 0) + Number(row.amount ?? 0);
       return acc;
     }, {}),
