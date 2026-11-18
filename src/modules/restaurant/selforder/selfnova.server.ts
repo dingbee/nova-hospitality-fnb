@@ -336,6 +336,12 @@ export async function askNova(
       model: result.model ?? "unknown",
       provider: "openai",
       workloadType: "ai_concierge.reply",
+      sourceChannel:
+        input.guestPortalScope || input.guestPortalToken
+          ? "whatsapp"
+          : input.tableId
+            ? "table"
+            : "guest_portal",
       inputUsage: result.inputTokens,
       outputUsage: result.outputTokens,
     });
