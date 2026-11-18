@@ -3,6 +3,9 @@
 -- Restores the exact least-privilege station-assignment write policy split.
 -- Source of truth: supabase_migrations.schema_migrations.statements.
 drop policy if exists "member station assignments write" on public.restaurant_member_station_assignments;
+drop policy if exists "member station assignments insert" on public.restaurant_member_station_assignments;
+drop policy if exists "member station assignments update" on public.restaurant_member_station_assignments;
+drop policy if exists "member station assignments delete" on public.restaurant_member_station_assignments;
 
 create policy "member station assignments insert"
 on public.restaurant_member_station_assignments
