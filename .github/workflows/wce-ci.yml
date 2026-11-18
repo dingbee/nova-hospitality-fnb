@@ -325,5 +325,29 @@ jobs:
                 RAISE EXCEPTION 'WCE-05 append-only consent trigger is missing';
               END IF;
             END IF;
+
+            IF to_regclass('public.wa_campaign_recipients') IS NOT NULL THEN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger t
+                JOIN pg_class c ON c.oid = t.tgrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_proc p ON p.oid = t.tgfoid
+                WHERE n.nspname = 'public'
+                  AND c.relname = 'wa_messages'
+                  AND t.tgname = 'wa_messages_campaign_delivery_reconcile'
+                  AND NOT t.tgisinternal
+                  AND p.prosecdef
+                  AND 'search_path=public, pg_temp' = ANY (p.proconfig)
+              ) THEN
+                RAISE EXCEPTION 'WCE-08 campaign delivery reconciliation trigger is missing or unsafe';
+              END IF;
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'public.wa_campaign_recipients'::regclass
+                  AND conname = 'wa_campaign_recipients_message_scope_fkey'
+              ) THEN
+                RAISE EXCEPTION 'WCE-08 campaign recipient message tenant-scope FK is missing';
+              END IF;
+            END IF;
           END $verify$;
           SQL
