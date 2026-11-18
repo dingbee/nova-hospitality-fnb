@@ -65,8 +65,9 @@ export function PosReceiptDialog({
           }
           [data-pos-receipt-dialog] button,
           [data-pos-receipt-dialog] input,
-          [data-pos-receipt-dialog] label,
-          @page { margin: 0; size: 80mm auto; }
+          [data-pos-receipt-dialog] label { visibility: hidden !important; }
+        }
+        @page { margin: 0; size: 80mm auto; }
         }
       `}</style>
       <Dialog open onOpenChange={(o) => !o && onClose()}>
