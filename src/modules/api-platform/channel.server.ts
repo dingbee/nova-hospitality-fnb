@@ -13,7 +13,7 @@ import { getChannelAdapter } from "./adapters/index.server";
 import { registerIntegration, updateIntegration } from "./integrations.server";
 import { testChannelConnection, persistChannelHealth } from "./channel-connectors.server";
 
-export async function listChannelConnections(sb: any, userId: string, input: { tenantId: string }) {
+export async function listChannelConnections(sb: SupabaseClient, userId: string, input: { tenantId: string }) {
   await assertCapability(sb, userId, input.tenantId, "tenant.manage");
   const { data, error } = await sb
     .from("api_integrations")
@@ -25,7 +25,7 @@ export async function listChannelConnections(sb: any, userId: string, input: { t
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(error.message);
-  return (data ?? []).map((row: any) => ({
+  return (data ?? []).map((row) => ({
     id: row.id,
     tenantId: input.tenantId,
     propertyId: row.property_id,
@@ -42,7 +42,7 @@ export async function listChannelConnections(sb: any, userId: string, input: { t
 }
 
 export async function createChannelConnection(
-  sb: any,
+  sb: SupabaseClient,
   userId: string,
   input: CreateChannelConnectionInput,
 ) {
@@ -75,7 +75,7 @@ export async function createChannelConnection(
 }
 
 export async function updateChannelConnection(
-  sb: any,
+  sb: SupabaseClient,
   userId: string,
   input: UpdateChannelConnectionInput,
 ) {
