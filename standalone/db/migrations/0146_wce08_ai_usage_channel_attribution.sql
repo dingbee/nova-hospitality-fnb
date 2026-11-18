@@ -21,4 +21,17 @@ $wce$;
 CREATE INDEX IF NOT EXISTS commercial_ai_usage_log_channel_period_idx
   ON public.commercial_ai_usage_log (tenant_id, property_id, source_channel, occurred_at DESC);
 
+ALTER TABLE public.wa_campaign_usage_ledger
+  ADD COLUMN IF NOT EXISTS location_id uuid;
+
+UPDATE public.wa_campaign_usage_ledger usage
+SET location_id = campaigns.location_id
+FROM public.wa_campaigns campaigns
+WHERE usage.campaign_id = campaigns.id
+  AND usage.tenant_id = campaigns.tenant_id
+  AND usage.location_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS wa_campaign_usage_location_period_idx
+  ON public.wa_campaign_usage_ledger (tenant_id, location_id, recorded_at DESC);
+
 NOTIFY pgrst, 'reload schema';
