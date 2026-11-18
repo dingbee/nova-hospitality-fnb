@@ -143,10 +143,7 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
         if (op === "update") {
           const id = filters.id as string;
           const current = transfers[id];
-          if (
-            filters.status !== undefined &&
-            current?.status !== filters.status
-          ) {
+          if (filters.status !== undefined && current?.status !== filters.status) {
             return { data: null, error: null };
           }
           transfers[id] = { ...current, ...payload };
@@ -373,8 +370,7 @@ describe("stock transfer lifecycle — the exact reported P0 scenario", () => {
       fake.movements.filter((movement) => movement.dedupe_key === `transfer:in:${lineId}`),
     ).toHaveLength(1);
     expect(
-      fake.movements.find((movement) => movement.dedupe_key === `transfer:in:${lineId}`)
-        ?.quantity,
+      fake.movements.find((movement) => movement.dedupe_key === `transfer:in:${lineId}`)?.quantity,
     ).toBe(10);
     expect(fake.transferLines[lineId].received_quantity).toBe(10);
     expect(fake.transfers[created.id].status).toBe("partially_received");
