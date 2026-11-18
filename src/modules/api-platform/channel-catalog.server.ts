@@ -73,7 +73,7 @@ export async function listAllChannelDefinitionsForAdmin(
     .order("sort_order", { ascending: true })
     .order("name", { ascending: true });
   if (error) throw new Error(error.message);
-  return (data ?? []).map((row: any) => ({
+  return (data ?? []).map((row) => ({
     key: row.key,
     name: row.name,
     description: row.description,
