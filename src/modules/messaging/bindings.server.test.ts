@@ -27,10 +27,11 @@ const input = {
   phoneNumberId: "987654321",
 };
 
-function makeSb(options: {
-  integration?: Record<string, any> | null;
-  location?: Record<string, any> | null;
-  binding?: Record<string, any> | null;
+function makeSb(
+  options: {
+    integration?: Record<string, any> | null;
+    location?: Record<string, any> | null;
+    binding?: Record<string, any> | null;
   } = {},
 ) {
   const inserts: Array<{ table: string; row: Record<string, unknown> }> = [];
@@ -52,14 +53,14 @@ function makeSb(options: {
                     provider: "meta-whatsapp",
                     channel_key: "whatsapp",
                     integration_type: "channel",
-          status: "active",
-          config: {
+                    status: "active",
+                    config: {
                       wabaId: "123456789",
                       phoneNumbers: [
                         {
                           id: input.phoneNumberId,
                           displayPhoneNumber: "+255700000000",
-              verifiedName: "Restaurant",
+                          verifiedName: "Restaurant",
                           qualityRating: "GREEN",
                         },
                       ],
@@ -73,7 +74,7 @@ function makeSb(options: {
             data:
               options.location === undefined
                 ? {
-          id: input.locationId,
+                    id: input.locationId,
                     tenant_id: input.tenantId,
                     property_id: input.propertyId,
                     location_type: "outlet",
