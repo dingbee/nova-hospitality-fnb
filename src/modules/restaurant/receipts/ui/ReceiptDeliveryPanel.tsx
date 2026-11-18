@@ -164,7 +164,11 @@ export function ReceiptDeliveryPanel({
             onClick={() => send("email", email)}
           >
             <Mail className="mr-1 size-4" />
-            {busy === "email" ? "Sending…" : last["email"]?.status === "failed" ? "Retry email" : "Send email"}
+            {busy === "email"
+              ? "Sending…"
+              : last["email"]?.status === "failed"
+                ? "Retry email"
+                : "Send email"}
           </Button>
           {last["email"]?.status === "failed" && (
             <p className="flex items-start gap-1 text-xs text-destructive">
@@ -199,7 +203,11 @@ export function ReceiptDeliveryPanel({
             onClick={() => send("whatsapp", phone)}
           >
             <MessageCircle className="mr-1 size-4" />
-            {busy === "whatsapp" ? "Working…" : whatsappConfigured ? "Send on WhatsApp" : "Open WhatsApp"}
+            {busy === "whatsapp"
+              ? "Working…"
+              : whatsappConfigured
+                ? "Send on WhatsApp"
+                : "Open WhatsApp"}
           </Button>
           <p className="text-xs text-muted-foreground">
             {whatsappConfigured
@@ -222,7 +230,12 @@ export function ReceiptDeliveryPanel({
         >
           <Printer className="mr-1 size-4" /> Print
         </Button>
-        <Button variant="ghost" className="min-h-11" disabled={busy !== null} onClick={() => send("secure_link")}>
+        <Button
+          variant="ghost"
+          className="min-h-11"
+          disabled={busy !== null}
+          onClick={() => send("secure_link")}
+        >
           <Link2 className="mr-1 size-4" /> Copy secure link
         </Button>
       </div>
@@ -252,7 +265,15 @@ export function DeliveryRow({ attempt }: { attempt: DeliveryRecord }) {
         </span>
       </span>
       <StatusChip
-        tone={attempt.status === "failed" ? "danger" : attempt.status === "shared" ? "warning" : attempt.status === "pending" ? "neutral" : "success"}
+        tone={
+          attempt.status === "failed"
+            ? "danger"
+            : attempt.status === "shared"
+              ? "warning"
+              : attempt.status === "pending"
+                ? "neutral"
+                : "success"
+        }
       >
         {attempt.status === "shared" ? "opened for sharing" : attempt.status}
       </StatusChip>
