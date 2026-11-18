@@ -300,7 +300,8 @@ export function FounderWhatsAppControlCentre() {
                       {Number(row.used_value).toLocaleString()} {row.quota?.unit ?? "units"}
                     </td>
                     <td className="py-2 pr-3 text-xs">
-                      {new Date(row.period_start).toLocaleDateString()}{" – "}
+                      {new Date(row.period_start).toLocaleDateString()}
+                      {" – "}
                       {new Date(row.period_end).toLocaleDateString()}
                     </td>
                     <td className="py-2">
