@@ -135,6 +135,12 @@ A failing test is evidence.
 
 Do not delete or weaken tests to obtain a green result.
 
+## Deployment authorization — mandatory across all projects
+
+Never initiate a Vercel deployment of any kind (preview, staging or production), redeployment, promotion, alias/domain change, rollback or cutover unless the user explicitly authorizes that specific action and target environment.
+
+This is a standing rule across all repositories, products, connected Vercel projects and ongoing workstreams—not merely the current task. A successful build, green CI, merged PR, convenient preview, or apparent next step is not deployment authorization. Do not use Vercel deployment tools or trigger deployment through Git/merge automation. Local builds, CI, isolated database replay and non-production code changes are permitted. Stop before deployment and obtain explicit authorization.
+
 ## Change discipline
 
 For every task report:

@@ -714,8 +714,23 @@ export function WhatsAppOperationsCentre() {
             </SectionCard>
             <SectionCard
               title="Usage and cost attribution"
-              description="Append-only WCE-06 ledger, kept separate by component and currency."
+              description="Meta and AI monetary costs are separate from LexiBite commercial quota consumption."
             >
+              {usage.data?.lexibiteQuota ? (
+                <div className="mb-4 rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-medium">LexiBite campaign quota · current period</span>
+                    <strong>
+                      {usage.data.lexibiteQuota.usedValue} / {usage.data.lexibiteQuota.limitValue}{" "}
+                      {usage.data.lexibiteQuota.unit}
+                    </strong>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {usage.data.lexibiteQuota.period} · {usage.data.lexibiteQuota.state} ·{" "}
+                    {formatDate(usage.data.lexibiteQuota.periodEnd)}
+                  </p>
+                </div>
+              ) : null}
               {usageTotals.length === 0 ? (
                 <EmptyState
                   title="No usage ledger entries"
@@ -733,9 +748,16 @@ export function WhatsAppOperationsCentre() {
                         <p className="font-medium">{item.component.replaceAll("_", " ")}</p>
                         <p className="text-xs text-muted-foreground">
                           {item.quantity} unit(s) {item.entries} ledger entry(s)
+                          {item.unpricedEntries > 0 ? ` · ${item.unpricedEntries} unpriced` : ""}
                         </p>
                       </div>
-                      <strong>{money(item.amount, item.currency)}</strong>
+                      <strong>
+                        {item.unpricedEntries > 0
+                          ? item.amount > 0
+                            ? `Known: ${money(item.amount, item.currency)}`
+                            : "Cost not configured"
+                          : money(item.amount, item.currency)}
+                      </strong>
                     </li>
                   ))}
                 </ul>

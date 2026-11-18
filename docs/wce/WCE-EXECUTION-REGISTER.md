@@ -69,3 +69,8 @@ Software implementation and isolated CI do not authorize production release. Do 
 - The recovered station-assignment RLS migrations (0090 and 0135) now drop only their three command-specific policies before recreating the verified least-privilege definitions. This makes clean replay safe when the same policies are already present in the baseline schema.
 - The repository-wide isolated CI replay now removes the 0087 UAT repair skip entry only in its disposable fixture-backed workspace. Normal local installs continue to skip this property-specific data repair.
 - No production database, credentials, provider dispatch or deployment was changed.
+## 18 November 2026 — Integration replay hardening
+
+- The recovered station-assignment RLS migrations (0090 and 0135) now drop only their three command-specific policies before recreating the verified least-privilege definitions. This makes clean replay safe when the same policies are already present in the baseline schema.
+- The repository-wide isolated CI replay now removes the 0087 UAT repair skip entry only in its disposable fixture-backed workspace. Normal local installs continue to skip this property-specific data repair.
+- No production database, credentials, provider dispatch or deployment was changed.

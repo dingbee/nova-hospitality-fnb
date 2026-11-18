@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- the mocked Supabase query builder mirrors the untyped server client boundary. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { hasWhatsAppGuestMarketingConsent } from "./guest-crm.server";
 vi.mock("@/modules/api-platform/integrations.server", () => ({
   getIntegrationSecret: vi.fn().mockResolvedValue("tenant-token"),
 }));
@@ -15,6 +16,14 @@ vi.mock("./providers/meta-cloud-api.server", () => ({
   },
   sendTextMessage: vi.fn().mockResolvedValue({ messages: [{ id: "wamid.sent.1" }] }),
   sendTemplateMessage: vi.fn().mockResolvedValue({ messages: [{ id: "wamid.template.1" }] }),
+}));
+
+vi.mock("@/modules/commercial/resolver.server", () => ({
+  assertEntitled: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("./guest-crm.server", () => ({
+  hasWhatsAppGuestMarketingConsent: vi.fn().mockResolvedValue(true),
 }));
 import { processPendingWhatsAppOutboundMessages } from "./outbound-queue.server";
 import { sendTemplateMessage, sendTextMessage } from "./providers/meta-cloud-api.server";
@@ -53,6 +62,31 @@ function fakeAdmin(outbound = queued) {
             },
             error: null,
           };
+        if (table === "wa_campaigns") {
+          return {
+            data: {
+              id: "campaign-1",
+              status: "ready",
+              trigger_type: "scheduled",
+              template_id: "template-1",
+              market_code: "TZ",
+            },
+            error: null,
+          };
+        }
+        if (table === "wa_message_templates") {
+          return {
+            data: {
+              id: "template-1",
+              status: "approved",
+              category: "marketing",
+              template_name: "campaign_offer",
+              language: "en",
+              components: [],
+            },
+            error: null,
+          };
+        }
         return {
           data: {
             id: "integration-1",
@@ -220,5 +254,65 @@ describe("WhatsApp outbound queue", () => {
       locked_by: null,
       last_error: "provider_dispatch_disabled",
     });
+  });
+  it("suppresses queued marketing sends when consent was revoked before dispatch", async () => {
+    const previousCampaignGate = process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED;
+    process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED = "true";
+    process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED = "true";
+    vi.clearAllMocks();
+    vi.mocked(hasWhatsAppGuestMarketingConsent).mockResolvedValueOnce(false);
+
+    const campaignMessage = {
+      ...queued,
+      id: "message-campaign-consent",
+      message_type: "template",
+      content: "",
+      payload: {
+        campaign_id: "campaign-1",
+        campaign_recipient_id: "recipient-1",
+        guest_customer_id: "guest-1",
+        template: { name: "campaign_offer", language: "en", components: [] },
+        campaign_usage: {
+          rate_id: "rate-1",
+          market_code: "TZ",
+          template_category: "marketing",
+          unit_price: 0.05,
+          currency: "USD",
+        },
+      },
+    };
+    const { admin, updates } = fakeAdmin(campaignMessage);
+    try {
+      const result = await processPendingWhatsAppOutboundMessages(admin, {
+        workerId: "worker-consent-revoked",
+      });
+      expect(result).toMatchObject({
+        claimed: 1,
+        sent: 0,
+        failed: 0,
+        campaignDispatchSuppressed: 1,
+        providerDispatchDeferred: 0,
+      });
+      expect(hasWhatsAppGuestMarketingConsent).toHaveBeenCalledWith(admin, "tenant-1", "guest-1");
+      expect(sendTemplateMessage).not.toHaveBeenCalled();
+      expect(updates).toContainEqual(
+        expect.objectContaining({
+          status: "failed",
+          last_error: "marketing_consent_revoked",
+        }),
+      );
+      expect(updates).toContainEqual(
+        expect.objectContaining({
+          state: "suppressed",
+          suppression_reason: "marketing_consent_revoked",
+        }),
+      );
+    } finally {
+      if (previousCampaignGate === undefined) {
+        delete process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED;
+      } else {
+        process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED = previousCampaignGate;
+      }
+    }
   });
 });

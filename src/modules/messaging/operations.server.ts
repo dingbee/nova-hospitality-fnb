@@ -6,6 +6,7 @@ import {
   getTenantScope,
 } from "@/modules/restaurant/core/access.server";
 import { assertCommercialAdmin } from "@/modules/commercial/access.server";
+import { checkQuota } from "@/modules/commercial/quota.server";
 
 type Db = any;
 
@@ -264,23 +265,70 @@ export async function getWhatsAppCampaignWorkspace(sb: Db, userId: string, input
 
 export async function getWhatsAppUsageReport(sb: Db, userId: string, input: TenantFilter) {
   const { propertyIds } = await tenantQueryScope(sb, userId, input, "profitability.manage");
-  let query = sb
+  let campaignQuery = sb
     .from("wa_campaign_usage_ledger")
     .select(
-      "id, tenant_id, property_id, campaign_id, usage_component, usage_event, quantity, unit_price, amount, currency, market_code, template_category, rate_snapshot, recorded_at",
+      "id, tenant_id, property_id, location_id, campaign_id, usage_component, usage_event, quantity, unit_price, amount, currency, market_code, template_category, rate_snapshot, recorded_at",
     )
     .eq("tenant_id", input.tenantId)
     .order("recorded_at", { ascending: false })
     .limit(2000);
-  query = applyPropertyScope(query, propertyIds);
-  query = applyDateRange(query, input, "recorded_at");
-  const { data, error } = await query;
-  if (error) throw new Error("whatsapp_usage_report_unavailable");
+  let aiQuery = sb
+    .from("commercial_ai_usage_log")
+    .select(
+      "id, tenant_id, property_id, location_id, workload_type, request_count, estimated_cost, estimated_cost_known, currency, occurred_at",
+    )
+    .eq("tenant_id", input.tenantId)
+    .eq("source_channel", "whatsapp")
+    .eq("workload_type", "ai_concierge.reply")
+    .order("occurred_at", { ascending: false })
+    .limit(2000);
+  campaignQuery = applyPropertyScope(campaignQuery, propertyIds);
+  aiQuery = applyPropertyScope(aiQuery, propertyIds);
+  campaignQuery = applyDateRange(campaignQuery, input, "recorded_at");
+  aiQuery = applyDateRange(aiQuery, input, "occurred_at");
+  if (input.locationId) {
+    campaignQuery = campaignQuery.eq("location_id", input.locationId);
+    aiQuery = aiQuery.eq("location_id", input.locationId);
+  }
+  const [{ data: campaignRows, error: campaignError }, { data: aiRows, error: aiError }] =
+    await Promise.all([campaignQuery, aiQuery]);
+  if (campaignError || aiError) throw new Error("whatsapp_usage_report_unavailable");
+  const entries = [
+    ...(campaignRows ?? []).map((row: any) => ({
+      ...row,
+      costKnown: true,
+      source: "wa_campaign_usage_ledger",
+    })),
+    ...(aiRows ?? []).map((row: any) => ({
+      id: row.id,
+      tenant_id: row.tenant_id,
+      property_id: row.property_id,
+      location_id: row.location_id,
+      usage_component: "ai",
+      usage_event: row.workload_type,
+      quantity: row.request_count,
+      unit_price: null,
+      amount: row.estimated_cost_known === true ? row.estimated_cost : null,
+      costKnown: row.estimated_cost_known === true,
+      currency: row.currency,
+      recorded_at: row.occurred_at,
+      source: "commercial_ai_usage_log",
+    })),
+  ];
   const totals = new Map<
     string,
-    { component: string; currency: string; amount: number; quantity: number; entries: number }
+    {
+      component: string;
+      currency: string;
+      amount: number;
+      quantity: number;
+      entries: number;
+      unpricedEntries: number;
+      costComplete: boolean;
+    }
   >();
-  for (const row of data ?? []) {
+  for (const row of entries) {
     const key = row.usage_component + ":" + row.currency;
     const current = totals.get(key) ?? {
       component: row.usage_component,
@@ -288,13 +336,26 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
       amount: 0,
       quantity: 0,
       entries: 0,
+      unpricedEntries: 0,
+      costComplete: true,
     };
-    current.amount += Number(row.amount ?? 0);
+    if (row.costKnown === false) {
+      current.unpricedEntries++;
+      current.costComplete = false;
+    } else {
+      current.amount += Number(row.amount ?? 0);
+    }
     current.quantity += Number(row.quantity ?? 0);
     current.entries++;
     totals.set(key, current);
   }
-  return { entries: data ?? [], totals: [...totals.values()] };
+  const lexibiteQuota = await checkQuota(
+    sb,
+    input.tenantId,
+    "whatsapp_campaign_messages",
+    input.propertyId,
+  );
+  return { entries, totals: [...totals.values()], lexibiteQuota };
 }
 
 export async function getWhatsAppConversionReport(sb: Db, userId: string, input: TenantFilter) {
@@ -371,6 +432,7 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
     { data: webhookEvents, error: webhookError },
     { data: messages, error: messageError },
     { data: usage, error: usageError },
+    { data: aiUsage, error: aiUsageError },
   ] = await Promise.all([
     admin
       .from("wa_phone_number_bindings")
@@ -401,17 +463,55 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
       .limit(1000),
     admin
       .from("wa_campaign_usage_ledger")
-      .select("tenant_id, property_id, usage_component, amount, currency, recorded_at")
+      .select("tenant_id, property_id, location_id, usage_component, amount, currency, recorded_at")
       .order("recorded_at", { ascending: false })
       .limit(2000),
+    admin
+      .from("commercial_ai_usage_log")
+      .select(
+        "tenant_id, property_id, source_channel, workload_type, request_count, estimated_cost, estimated_cost_known, currency, occurred_at",
+      )
+      .eq("source_channel", "whatsapp")
+      .eq("workload_type", "ai_concierge.reply")
+      .order("occurred_at", { ascending: false })
+      .limit(2000),
   ]);
-  if (bindingError || integrationError || webhookError || messageError || usageError) {
+  if (
+    bindingError ||
+    integrationError ||
+    webhookError ||
+    messageError ||
+    usageError ||
+    aiUsageError
+  ) {
     throw new Error("founder_whatsapp_overview_unavailable");
   }
+  const { data: quotaDefinitions, error: quotaDefinitionError } = await admin
+    .from("commercial_quota_definitions")
+    .select("id, code, unit, period, scope")
+    .eq("code", "whatsapp_campaign_messages")
+    .limit(50);
+  if (quotaDefinitionError) throw new Error("founder_whatsapp_quota_definitions_unavailable");
+  const quotaDefinitionIds = (quotaDefinitions ?? []).map((row: any) => row.id);
+  const { data: quotaCounters, error: quotaCounterError } = quotaDefinitionIds.length
+    ? await admin
+        .from("commercial_usage_counters")
+        .select(
+          "tenant_id, property_id, quota_definition_id, period_start, period_end, used_value, state",
+        )
+        .in("quota_definition_id", quotaDefinitionIds)
+        .gt("period_end", new Date().toISOString())
+        .order("period_start", { ascending: false })
+        .limit(1000)
+    : { data: [], error: null };
+  if (quotaCounterError) throw new Error("founder_whatsapp_quota_usage_unavailable");
+  const quotaDefinitionMap = new Map((quotaDefinitions ?? []).map((row: any) => [row.id, row]));
   const tenantIds = [
     ...new Set([
       ...(bindings ?? []).map((row: any) => row.tenant_id),
       ...(integrations ?? []).map((row: any) => row.tenant_id),
+      ...(aiUsage ?? []).map((row: any) => row.tenant_id),
+      ...(quotaCounters ?? []).map((row: any) => row.tenant_id),
     ]),
   ];
   const { data: tenants, error: tenantError } = tenantIds.length
@@ -451,6 +551,30 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
     count: invoices.length,
     byCurrency: [...invoiceTotals.values()],
   };
+  const usageRows = [
+    ...(usage ?? []).map((row: any) => ({
+      component: row.usage_component,
+      currency: row.currency,
+      amount: row.amount,
+      costKnown: true,
+    })),
+    ...(aiUsage ?? []).map((row: any) => ({
+      component: "ai",
+      currency: row.currency,
+      amount: row.estimated_cost,
+      costKnown: row.estimated_cost_known === true,
+    })),
+  ];
+  const usageSummary: Record<string, number> = {};
+  const usageUnpriced: Record<string, number> = {};
+  for (const row of usageRows) {
+    const key = row.component + ":" + row.currency;
+    if (row.costKnown === false) {
+      usageUnpriced[key] = (usageUnpriced[key] ?? 0) + 1;
+    } else {
+      usageSummary[key] = (usageSummary[key] ?? 0) + Number(row.amount ?? 0);
+    }
+  }
   return {
     bindings: (bindings ?? []).map((row: any) => ({
       ...row,
@@ -469,11 +593,13 @@ export async function getFounderWhatsAppOverview(sb: Db, userId: string) {
       byStatus: countBy(messages ?? [], "status"),
       failed: (messages ?? []).filter((row: any) => row.status === "failed").length,
     },
-    usage: (usage ?? []).reduce((acc: Record<string, number>, row: any) => {
-      const key = row.usage_component + ":" + row.currency;
-      acc[key] = (acc[key] ?? 0) + Number(row.amount ?? 0);
-      return acc;
-    }, {}),
+    usage: usageSummary,
+    usageUnpriced,
+    lexibiteQuotaUsage: (quotaCounters ?? []).map((row: any) => ({
+      ...row,
+      quota: quotaDefinitionMap.get(row.quota_definition_id) ?? null,
+      tenant: tenantMap.get(row.tenant_id) ?? null,
+    })),
     invoiceSummary,
   };
 }

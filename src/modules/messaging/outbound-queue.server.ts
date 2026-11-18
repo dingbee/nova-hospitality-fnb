@@ -238,6 +238,7 @@ export async function processPendingWhatsAppOutboundMessages(
           await recordWhatsAppCampaignUsage(admin, {
             tenantId: message.tenant_id,
             propertyId: message.property_id,
+            locationId: message.location_id,
             campaignId: String(message.payload.campaign_id),
             guestCustomerId:
               typeof message.payload.guest_customer_id === "string"

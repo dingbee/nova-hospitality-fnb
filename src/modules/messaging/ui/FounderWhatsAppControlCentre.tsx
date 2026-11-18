@@ -53,6 +53,7 @@ export function FounderWhatsAppControlCentre() {
   const rejected = data.webhookHealth.rejected ?? 0;
   const failedMessages = data.messageHealth.failed ?? 0;
   const usageEntries = Object.entries(data.usage ?? {}) as Array<[string, number]>;
+  const usageUnpricedEntries = Object.entries(data.usageUnpriced ?? {}) as Array<[string, number]>;
 
   return (
     <div className="space-y-4">
@@ -191,7 +192,7 @@ export function FounderWhatsAppControlCentre() {
           title="Usage and cost attribution"
           description="WCE-06 append-only usage ledger, kept separate by component and currency."
         >
-          {usageEntries.length === 0 ? (
+          {usageEntries.length === 0 && usageUnpricedEntries.length === 0 ? (
             <EmptyState
               title="No usage ledger entries"
               description="Provider, LexiBite commercial and AI usage evidence will appear here."
@@ -207,6 +208,21 @@ export function FounderWhatsAppControlCentre() {
                       <span className="text-xs text-muted-foreground"> {currency}</span>
                     </span>
                     <strong className="text-sm">{amount(value, currency)}</strong>
+                  </li>
+                );
+              })}
+              {usageUnpricedEntries.map(([key, count]) => {
+                const [component, currency] = key.split(":");
+                return (
+                  <li
+                    key={key + ":unpriced"}
+                    className="flex items-center justify-between gap-3 py-3"
+                  >
+                    <span className="text-sm capitalize">
+                      {component.replaceAll("_", " ")}{" "}
+                      <span className="text-xs text-muted-foreground"> {currency}</span>
+                    </span>
+                    <strong className="text-sm">{count} unpriced usage record(s)</strong>
                   </li>
                 );
               })}
@@ -242,6 +258,62 @@ export function FounderWhatsAppControlCentre() {
           )}
         </SectionCard>
       </div>
+
+      <SectionCard
+        title="LexiBite commercial quota consumption"
+        description="Current-period WhatsApp campaign-message usage from the existing commercial quota counters."
+      >
+        {(data.lexibiteQuotaUsage ?? []).length === 0 ? (
+          <EmptyState
+            title="No campaign quota counters"
+            description="No active-period WhatsApp campaign quota usage is recorded."
+            icon={CreditCard}
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead className="text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="py-2 pr-3">Tenant</th>
+                  <th className="py-2 pr-3">Property</th>
+                  <th className="py-2 pr-3">Consumption</th>
+                  <th className="py-2 pr-3">Quota period</th>
+                  <th className="py-2">State</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {data.lexibiteQuotaUsage.map((row: any, index: number) => (
+                  <tr
+                    key={
+                      row.tenant_id +
+                      ":" +
+                      row.property_id +
+                      ":" +
+                      row.quota_definition_id +
+                      ":" +
+                      index
+                    }
+                  >
+                    <td className="py-2 pr-3">{row.tenant?.name ?? row.tenant_id}</td>
+                    <td className="py-2 pr-3 text-xs">{row.property_id ?? "Tenant-wide"}</td>
+                    <td className="py-2 pr-3 font-medium">
+                      {Number(row.used_value).toLocaleString()} {row.quota?.unit ?? "units"}
+                    </td>
+                    <td className="py-2 pr-3 text-xs">
+                      {new Date(row.period_start).toLocaleDateString()}
+                      {" – "}
+                      {new Date(row.period_end).toLocaleDateString()}
+                    </td>
+                    <td className="py-2">
+                      <StatusChip>{row.state}</StatusChip>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SectionCard>
 
       <SectionCard
         title="Security posture"
