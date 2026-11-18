@@ -179,6 +179,27 @@ INSERT INTO public.restaurant_stock_transfer_lines
 VALUES
   ('a6000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'a5000000-0000-4000-8000-000000000001', 'a3000000-0000-4000-8000-000000000001', 'a4000000-0000-4000-8000-000000000001', 1);
 
+-- The movement ledger's tenant-scoped unique dedupe key is the database
+-- concurrency backstop for simultaneous application retries.
+INSERT INTO public.restaurant_stock_movements
+  (id, tenant_id, inventory_item_id, location_id, movement_type, quantity, dedupe_key, reason)
+VALUES
+  ('a7000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'a3000000-0000-4000-8000-000000000001', 'a2000000-0000-4000-8000-000000000001', 'adjustment', 0, 'p0-04-transfer-retry-proof', 'P0-04 idempotency fixture');
+
+DO $movement_dedupe$
+BEGIN
+  BEGIN
+    INSERT INTO public.restaurant_stock_movements
+      (id, tenant_id, inventory_item_id, location_id, movement_type, quantity, dedupe_key, reason)
+    VALUES
+      ('a7000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000001', 'a3000000-0000-4000-8000-000000000001', 'a2000000-0000-4000-8000-000000000001', 'adjustment', 0, 'p0-04-transfer-retry-proof', 'P0-04 duplicate retry fixture');
+    RAISE EXCEPTION 'P0-04 FAIL: duplicate transfer movement dedupe key was accepted';
+  EXCEPTION WHEN unique_violation THEN
+    RAISE NOTICE 'P0-04 PASS: movement dedupe key rejects duplicate retry writes';
+  END;
+END;
+$movement_dedupe$;
+
 DO $p0_04$
 BEGIN
   BEGIN
