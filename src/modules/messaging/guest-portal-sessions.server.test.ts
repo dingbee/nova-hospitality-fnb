@@ -71,7 +71,10 @@ function makeAdmin(overrides: Record<string, unknown> = {}) {
     };
     return builder;
   });
-  const rpc = vi.fn(async (..._args: unknown[]): Promise<{ data: unknown; error: unknown }> => ({ data: true, error: null }));
+  const rpc = vi.fn(async (..._args: unknown[]): Promise<{ data: unknown; error: unknown }> => ({
+    data: true,
+    error: null,
+  }));
   return { admin: { from, rpc }, inserted, rpc };
 }
 
@@ -131,17 +134,18 @@ describe("WhatsApp Guest Portal session security", () => {
     const { admin, rpc } = makeAdmin();
     rpc.mockResolvedValueOnce({
       data: [{
-        session_id: "session-1",
+          session_id: "session-1",
         tenant_id: scope.tenantId,
         property_id: scope.propertyId,
         location_id: scope.locationId,
         binding_id: scope.bindingId,
-        conversation_id: scope.conversationId,
+          conversation_id: scope.conversationId,
         currency: "TZS",
         menu_context: {},
         expires_at: "2026-11-16T21:00:00.000Z",
         scope: "menu_browse",
-      }],
+        },
+      ],
       error: null,
     });
 
