@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { processPendingMetaWebhookEvents } from "@/modules/messaging/webhook-queue.server";
+import { processPendingWhatsAppOutboundMessages } from "@/modules/messaging/outbound-queue.server";
 
 function isAuthorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET ?? "";
@@ -21,13 +22,20 @@ async function dispatch(request: Request) {
 
   try {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const result = await processPendingMetaWebhookEvents(supabaseAdmin, {
+    const inbound = await processPendingMetaWebhookEvents(supabaseAdmin, {
       limit: 25,
       workerId: randomUUID(),
     });
-    return Response.json(result, {
-      headers: { "Cache-Control": "no-store, private, max-age=0" },
+    const outbound = await processPendingWhatsAppOutboundMessages(supabaseAdmin, {
+      limit: 25,
+      workerId: randomUUID(),
     });
+    return Response.json(
+      { inbound, outbound },
+      {
+        headers: { "Cache-Control": "no-store, private, max-age=0" },
+      },
+    );
   } catch {
     return Response.json({ error: "webhook_dispatch_failed" }, { status: 503 });
   }

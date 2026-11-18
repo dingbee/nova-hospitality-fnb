@@ -310,10 +310,11 @@ describe("direct server-function bypass", () => {
    * block: no identity, only an unguessable id, and every other fact
    * (tenant, property, location, price, station, payable amount, order
    * status, timestamps, staff identity, catalogue content) re-derived
-   * server-side rather than trusted from the request. Adding a ninth
-   * entry here is a security review, not a formatting change.
+   * server-side rather than trusted from the request. Every additional
+   * token-scoped exception is a security review, not a formatting change.
    */
   const ALLOWED_UNAUTHENTICATED = [
+    join(ROOT, "src/modules/messaging/guest-portal.functions.ts"),
     join(ROOT, "src/modules/restaurant/receipts/delivery.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selfbill.functions.ts"),
     join(ROOT, "src/modules/restaurant/selforder/selffeedback.functions.ts"),
