@@ -18,7 +18,8 @@ const baseEvent = {
         timestamp: "1794850000",
         type: "text",
         text: { body: "Hello LexiBite" },
-      }],
+        },
+      ],
     },
   },
   attempt_count: 1,
@@ -107,7 +108,11 @@ describe("Meta WhatsApp durable webhook worker", () => {
   it("retries a delivery status that arrives before its outbound message exists", async () => {
     const statusEvent = {
       ...baseEvent,
-      payload: { value: { statuses: [{ id: "wamid.outbound.1", status: "delivered", timestamp: "1794850000" }] } },
+      payload: {
+        value: {
+          statuses: [{ id: "wamid.outbound.1", status: "delivered", timestamp: "1794850000" }],
+        },
+      },
     };
     const { db, updates } = makeDb([statusEvent], { statusResult: false });
 
@@ -124,7 +129,11 @@ describe("Meta WhatsApp durable webhook worker", () => {
   it("moves an event to dead letter after its maximum attempts", async () => {
     const exhausted = {
       ...baseEvent,
-      payload: { value: { statuses: [{ id: "wamid.outbound.1", status: "delivered", timestamp: "1794850000" }] } },
+      payload: {
+        value: {
+          statuses: [{ id: "wamid.outbound.1", status: "delivered", timestamp: "1794850000" }],
+        },
+      },
       attempt_count: 8,
       max_attempts: 8,
     };
