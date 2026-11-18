@@ -26,9 +26,16 @@ function timestamp(value: unknown): string {
 }
 
 function messageType(value: unknown): string {
-  return ["text", "image", "audio", "video", "document", "location", "interactive", "template"].includes(
-    String(value),
-  )
+  return [
+    "text",
+    "image",
+    "audio",
+    "video",
+    "document",
+    "location",
+    "interactive",
+    "template",
+  ].includes(String(value))
     ? String(value)
     : "unknown";
 }
@@ -243,7 +250,13 @@ export async function requeueMetaWebhookDeadLetter(
     .select("id, tenant_id, property_id, status")
     .eq("id", eventId)
     .maybeSingle();
-  if (lookupError || !event || event.status !== "dead_letter" || !event.tenant_id || !event.property_id) {
+  if (
+    lookupError ||
+    !event ||
+    event.status !== "dead_letter" ||
+    !event.tenant_id ||
+    !event.property_id
+  ) {
     throw new Error("Dead-letter event is unavailable for requeue.");
   }
 
@@ -275,7 +288,6 @@ export async function requeueMetaWebhookDeadLetter(
   return { eventId, status: "pending" as const };
 }
 
-
 /** Release a poison event after explicit operator review; this unblocks later phone events. */
 export async function rejectMetaWebhookDeadLetter(
   admin: Db,
@@ -284,7 +296,10 @@ export async function rejectMetaWebhookDeadLetter(
   eventId: string,
   rawReason: string,
 ) {
-  const reason = rawReason.trim().replace(/[\\r\\n\\t]+/g, " ").slice(0, 200);
+  const reason = rawReason
+    .trim()
+    .replace(/[\\r\\n\\t]+/g, " ")
+    .slice(0, 200);
   if (reason.length < 10) throw new Error("A review reason of at least 10 characters is required.");
 
   const { data: event, error: lookupError } = await admin
@@ -292,7 +307,13 @@ export async function rejectMetaWebhookDeadLetter(
     .select("id, tenant_id, property_id, status")
     .eq("id", eventId)
     .maybeSingle();
-  if (lookupError || !event || event.status !== "dead_letter" || !event.tenant_id || !event.property_id) {
+  if (
+    lookupError ||
+    !event ||
+    event.status !== "dead_letter" ||
+    !event.tenant_id ||
+    !event.property_id
+  ) {
     throw new Error("Dead-letter event is unavailable for operator rejection.");
   }
 
