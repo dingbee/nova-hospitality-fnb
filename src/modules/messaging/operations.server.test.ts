@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- fake Supabase query builder in the integration test. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   assertCapability,
@@ -80,27 +81,76 @@ describe("WCE-08 WhatsApp-to-commerce conversion reconciliation", () => {
   it("counts converted sessions rather than orders when one session places multiple orders", async () => {
     const datasets: Record<string, unknown[]> = {
       wa_guest_portal_sessions: [
-        { id: "session-1", opened_at: "2026-11-18T07:00:00.000Z", created_at: "2026-11-18T06:59:00.000Z" },
+        {
+          id: "session-1",
+          opened_at: "2026-11-18T07:00:00.000Z",
+          created_at: "2026-11-18T06:59:00.000Z",
+        },
         { id: "session-2", opened_at: null, created_at: "2026-11-18T07:10:00.000Z" },
       ],
       restaurant_orders: [
-        { id: "order-1", guest_portal_session_id: "session-1", payment_state: "paid", total: 100, currency: "TZS", opened_at: "2026-11-18T07:05:00.000Z" },
-        { id: "order-2", guest_portal_session_id: "session-1", payment_state: "pending", total: 50, currency: "TZS", opened_at: "2026-11-18T07:06:00.000Z" },
-        { id: "order-3", guest_portal_session_id: "session-2", payment_state: "paid", total: 999, currency: "TZS", opened_at: "2026-11-18T07:11:00.000Z" },
+        {
+          id: "order-1",
+          guest_portal_session_id: "session-1",
+          payment_state: "paid",
+          total: 100,
+          currency: "TZS",
+          opened_at: "2026-11-18T07:05:00.000Z",
+        },
+        {
+          id: "order-2",
+          guest_portal_session_id: "session-1",
+          payment_state: "pending",
+          total: 50,
+          currency: "TZS",
+          opened_at: "2026-11-18T07:06:00.000Z",
+        },
+        {
+          id: "order-3",
+          guest_portal_session_id: "session-2",
+          payment_state: "paid",
+          total: 999,
+          currency: "TZS",
+          opened_at: "2026-11-18T07:11:00.000Z",
+        },
       ],
     };
     const queryCalls: Array<{ table: string; method: string; args: unknown[] }> = [];
     const db = {
       from: (table: string) => {
         const builder: any = {
-          select: (...args: unknown[]) => { queryCalls.push({ table, method: "select", args }); return builder; },
-          eq: (...args: unknown[]) => { queryCalls.push({ table, method: "eq", args }); return builder; },
-          not: (...args: unknown[]) => { queryCalls.push({ table, method: "not", args }); return builder; },
-          order: (...args: unknown[]) => { queryCalls.push({ table, method: "order", args }); return builder; },
-          limit: (...args: unknown[]) => { queryCalls.push({ table, method: "limit", args }); return builder; },
-          in: (...args: unknown[]) => { queryCalls.push({ table, method: "in", args }); return builder; },
-          gte: (...args: unknown[]) => { queryCalls.push({ table, method: "gte", args }); return builder; },
-          lte: (...args: unknown[]) => { queryCalls.push({ table, method: "lte", args }); return builder; },
+          select: (...args: unknown[]) => {
+            queryCalls.push({ table, method: "select", args });
+            return builder;
+          },
+          eq: (...args: unknown[]) => {
+            queryCalls.push({ table, method: "eq", args });
+            return builder;
+          },
+          not: (...args: unknown[]) => {
+            queryCalls.push({ table, method: "not", args });
+            return builder;
+          },
+          order: (...args: unknown[]) => {
+            queryCalls.push({ table, method: "order", args });
+            return builder;
+          },
+          limit: (...args: unknown[]) => {
+            queryCalls.push({ table, method: "limit", args });
+            return builder;
+          },
+          in: (...args: unknown[]) => {
+            queryCalls.push({ table, method: "in", args });
+            return builder;
+          },
+          gte: (...args: unknown[]) => {
+            queryCalls.push({ table, method: "gte", args });
+            return builder;
+          },
+          lte: (...args: unknown[]) => {
+            queryCalls.push({ table, method: "lte", args });
+            return builder;
+          },
           then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
             Promise.resolve({ data: datasets[table] ?? [], error: null }).then(resolve, reject),
         };
@@ -121,10 +171,25 @@ describe("WCE-08 WhatsApp-to-commerce conversion reconciliation", () => {
       orderToPaidRate: 0.5,
       paidRevenueByCurrency: [{ currency: "TZS", amount: 100 }],
     });
-    expect(queryCalls).toContainEqual({ table: "wa_guest_portal_sessions", method: "eq", args: ["tenant_id", "tenant-1"] });
-    expect(queryCalls).toContainEqual({ table: "restaurant_orders", method: "eq", args: ["tenant_id", "tenant-1"] });
-    expect(queryCalls).toContainEqual({ table: "wa_guest_portal_sessions", method: "in", args: ["property_id", ["property-1"]] });
-    expect(queryCalls).toContainEqual({ table: "restaurant_orders", method: "in", args: ["property_id", ["property-1"]] });
+    expect(queryCalls).toContainEqual({
+      table: "wa_guest_portal_sessions",
+      method: "eq",
+      args: ["tenant_id", "tenant-1"],
+    });
+    expect(queryCalls).toContainEqual({
+      table: "restaurant_orders",
+      method: "eq",
+      args: ["tenant_id", "tenant-1"],
+    });
+    expect(queryCalls).toContainEqual({
+      table: "wa_guest_portal_sessions",
+      method: "in",
+      args: ["property_id", ["property-1"]],
+    });
+    expect(queryCalls).toContainEqual({
+      table: "restaurant_orders",
+      method: "in",
+      args: ["property_id", ["property-1"]],
+    });
   });
 });
-
