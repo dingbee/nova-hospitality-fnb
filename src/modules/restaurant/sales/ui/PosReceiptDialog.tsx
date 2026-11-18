@@ -21,13 +21,11 @@ export function PosReceiptDialog({
   receipt,
   onClose,
   onReprint,
-  onPrint,
   tenantId,
 }: {
   receipt: any | null;
   onClose: () => void;
   onReprint?: () => void;
-  onPrint?: () => void;
   tenantId?: string;
 }) {
   if (!receipt) return null;
@@ -38,41 +36,8 @@ export function PosReceiptDialog({
   );
 
   return (
-    <>
-      <style>{`
-        @media print {
-          body * { visibility: hidden !important; }
-          [data-pos-receipt-dialog] {
-            visibility: visible !important;
-            position: fixed !important;
-            inset: 0 auto auto 0 !important;
-            width: 80mm !important;
-            max-width: 80mm !important;
-            max-height: none !important;
-            overflow: visible !important;
-            transform: none !important;
-            border: 0 !important;
-            padding: 4mm !important;
-            box-shadow: none !important;
-            background: #fff !important;
-            color: #000 !important;
-          }
-          [data-pos-receipt-print-root], [data-pos-receipt-print-root] * {
-            visibility: visible !important;
-            color: #000 !important;
-            background: #fff !important;
-            box-shadow: none !important;
-          }
-          [data-pos-receipt-dialog] button,
-          [data-pos-receipt-dialog] input,
-          [data-pos-receipt-dialog] label { visibility: hidden !important; }
-        }
-        @page { margin: 0; size: 80mm auto; }
-        }
-      `}</style>
-      <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent data-pos-receipt-dialog className="max-h-[90vh] overflow-y-auto sm:max-w-md">
-        <div data-pos-receipt-print-root>
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Receipt {receipt.receipt_number}</DialogTitle>
           <DialogDescription>
@@ -160,8 +125,6 @@ export function PosReceiptDialog({
           </div>
         </div>
 
-        </div>
-
         {tenantId && (
           <ReceiptDeliveryPanel
             tenantId={tenantId}
@@ -169,7 +132,6 @@ export function PosReceiptDialog({
             orderId={receipt.order_id}
             receiptNumber={receipt.receipt_number}
             total={money(Number(receipt.total ?? 0), currency)}
-            onPrint={onPrint}
           />
         )}
 
@@ -184,8 +146,7 @@ export function PosReceiptDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
-      </Dialog>
-    </>
+    </Dialog>
   );
 }
 
