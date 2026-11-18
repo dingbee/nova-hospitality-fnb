@@ -451,7 +451,9 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
       .single();
     if (latestError) throw new Error(latestError.message);
     if (latestTransfer?.status !== "dispatched") {
-      throw new Error("Concurrent dispatch changed the transfer status; reconciliation is required.");
+      throw new Error(
+        "Concurrent dispatch changed the transfer status; reconciliation is required.",
+      );
     }
   }
 
@@ -614,7 +616,9 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
       .single();
     if (latestError) throw new Error(latestError.message);
     if (latestTransfer?.status !== status) {
-      throw new Error("Concurrent receipt changed the transfer status; reconciliation is required.");
+      throw new Error(
+        "Concurrent receipt changed the transfer status; reconciliation is required.",
+      );
     }
   }
 
