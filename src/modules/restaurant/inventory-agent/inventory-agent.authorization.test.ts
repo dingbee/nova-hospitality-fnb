@@ -17,21 +17,15 @@ vi.mock("@/modules/commercial/resolver.server", () => ({
 }));
 
 vi.mock("../decisions/decisions.server", () => ({
-  runRestaurantDecisionPass: (...args: unknown[]) =>
-    mocks.runRestaurantDecisionPass(...args),
+  runRestaurantDecisionPass: (...args: unknown[]) => mocks.runRestaurantDecisionPass(...args),
 }));
 
 vi.mock("../decisions/actions.server", () => ({
-  executeRestaurantAction: (...args: unknown[]) =>
-    mocks.executeRestaurantAction(...args),
-  verifyRestaurantAction: (...args: unknown[]) =>
-    mocks.verifyRestaurantAction(...args),
+  executeRestaurantAction: (...args: unknown[]) => mocks.executeRestaurantAction(...args),
+  verifyRestaurantAction: (...args: unknown[]) => mocks.verifyRestaurantAction(...args),
 }));
 
-import {
-  executeApprovedInventoryAgentActions,
-  runInventoryAgent,
-} from "./inventory-agent.server";
+import { executeApprovedInventoryAgentActions, runInventoryAgent } from "./inventory-agent.server";
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
@@ -44,21 +38,17 @@ describe("Inventory Agent authorization boundary", () => {
   });
 
   it("stops before decision discovery when the commercial entitlement is absent", async () => {
-    mocks.assertEntitled.mockRejectedValueOnce(
-      new Error("inventory_agent entitlement required"),
-    );
+    mocks.assertEntitled.mockRejectedValueOnce(new Error("inventory_agent entitlement required"));
 
-    await expect(
-      runInventoryAgent(SB, USER, { tenantId: TENANT }),
-    ).rejects.toThrow(/inventory_agent entitlement required/i);
+    await expect(runInventoryAgent(SB, USER, { tenantId: TENANT })).rejects.toThrow(
+      /inventory_agent entitlement required/i,
+    );
 
     expect(mocks.runRestaurantDecisionPass).not.toHaveBeenCalled();
   });
 
   it("stops before action discovery when intelligence.read is absent", async () => {
-    mocks.assertCapability.mockRejectedValueOnce(
-      new Error("intelligence.read required"),
-    );
+    mocks.assertCapability.mockRejectedValueOnce(new Error("intelligence.read required"));
 
     await expect(
       executeApprovedInventoryAgentActions(SB, USER, { tenantId: TENANT }),
