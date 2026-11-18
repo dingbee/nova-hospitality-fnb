@@ -3,7 +3,10 @@ import { assertEntitled } from "@/modules/commercial/resolver.server";
 import { writeCommercialAudit } from "@/modules/commercial/audit.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { UpdateChannelConnectionInput, CreateChannelConnectionInput } from "./channel-contracts";
+import type {
+  UpdateChannelConnectionInput,
+  CreateChannelConnectionInput,
+} from "./channel-contracts";
 import { assertChannelProvider } from "./channel-registry.server";
 import { getChannelDefinition } from "./channel-catalog.server";
 import { getChannelAdapter } from "./adapters/index.server";
@@ -14,7 +17,9 @@ export async function listChannelConnections(sb: any, userId: string, input: { t
   await assertCapability(sb, userId, input.tenantId, "tenant.manage");
   const { data, error } = await sb
     .from("api_integrations")
-    .select("id, provider, integration_type, channel_key, label, status, config, property_id, last_error, last_synced_at, created_at, updated_at")
+    .select(
+      "id, provider, integration_type, channel_key, label, status, config, property_id, last_error, last_synced_at, created_at, updated_at",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("integration_type", "channel")
     .order("created_at", { ascending: false });
@@ -36,7 +41,11 @@ export async function listChannelConnections(sb: any, userId: string, input: { t
   }));
 }
 
-export async function createChannelConnection(sb: any, userId: string, input: CreateChannelConnectionInput) {
+export async function createChannelConnection(
+  sb: any,
+  userId: string,
+  input: CreateChannelConnectionInput,
+) {
   await assertCapability(sb, userId, input.tenantId, "tenant.manage", {
     propertyId: input.propertyId ?? undefined,
   });
@@ -46,8 +55,8 @@ export async function createChannelConnection(sb: any, userId: string, input: Cr
 
   const channel = await getChannelDefinition(sb, input.channelKey);
   if (!channel) throw new Error(`Unsupported channel: ${input.channelKey}`);
-  if (channel.providerKey === 'meta-whatsapp') {
-    throw new Error('WhatsApp must be connected through Meta Embedded Signup.');
+  if (channel.providerKey === "meta-whatsapp") {
+    throw new Error("WhatsApp must be connected through Meta Embedded Signup.");
   }
   const provider = assertChannelProvider(channel.providerKey);
   const adapter = getChannelAdapter(provider.key);
@@ -65,7 +74,11 @@ export async function createChannelConnection(sb: any, userId: string, input: Cr
   });
 }
 
-export async function updateChannelConnection(sb: any, userId: string, input: UpdateChannelConnectionInput) {
+export async function updateChannelConnection(
+  sb: any,
+  userId: string,
+  input: UpdateChannelConnectionInput,
+) {
   await assertCapability(sb, userId, input.tenantId, "tenant.manage", {
     propertyId: input.propertyId ?? undefined,
   });
@@ -82,8 +95,10 @@ export async function updateChannelConnection(sb: any, userId: string, input: Up
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!existing) throw new Error("Channel connection not found.");
-  if (existing.provider === 'meta-whatsapp') {
-    throw new Error('WhatsApp credentials and phone assets must be changed through Meta Embedded Signup.');
+  if (existing.provider === "meta-whatsapp") {
+    throw new Error(
+      "WhatsApp credentials and phone assets must be changed through Meta Embedded Signup.",
+    );
   }
 
   if (existing.channel_key) {
