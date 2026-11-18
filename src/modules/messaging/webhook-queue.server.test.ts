@@ -13,7 +13,7 @@ const baseEvent = {
   payload: {
     value: {
       messages: [{
-        id: "wamid.inbound.1",
+          id: "wamid.inbound.1",
         from: "255700000000",
         timestamp: "1794850000",
         type: "text",
