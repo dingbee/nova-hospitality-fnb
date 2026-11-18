@@ -96,7 +96,10 @@ GRANT EXECUTE ON FUNCTION public.restaurant_increment_quota_usage(uuid, uuid, uu
   TO authenticated, service_role;
 
 ALTER TABLE public.wa_campaign_recipients
-  ADD COLUMN IF NOT EXISTS quota_accounted_at timestamptz;
+  ADD COLUMN IF NOT EXISTS quota_accounted_at timestamptz,
+  ADD COLUMN IF NOT EXISTS quota_accounted_definition_id uuid,
+  ADD COLUMN IF NOT EXISTS quota_accounted_period_start timestamptz,
+  ADD COLUMN IF NOT EXISTS quota_accounted_property_id uuid;
 
 CREATE OR REPLACE FUNCTION public.wa_account_campaign_message_quota(
   _tenant_id uuid,
@@ -114,6 +117,9 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   _accounted_at timestamptz;
+  _accounted_definition_id uuid;
+  _accounted_period_start timestamptz;
+  _accounted_property_id uuid;
   _current_used numeric := 0;
   _counter_used numeric;
   _counter_state text;
@@ -159,7 +165,7 @@ BEGIN
     AND o.effective_from <= now()
     AND (o.effective_until IS NULL OR o.effective_until > now())
     AND (o.tenant_id IS NULL OR o.tenant_id = _tenant_id)
-  ORDER BY (o.tenant_id = _tenant_id) DESC
+  ORDER BY (o.tenant_id = _tenant_id) DESC NULLS LAST
   LIMIT 1;
   _has_override := FOUND;
   _bypass := coalesce((_override_payload ->> 'bypass')::boolean, false);
@@ -177,8 +183,14 @@ BEGIN
     )
   );
 
-  SELECT r.quota_accounted_at
-  INTO _accounted_at
+  SELECT r.quota_accounted_at,
+         r.quota_accounted_definition_id,
+         r.quota_accounted_period_start,
+         r.quota_accounted_property_id
+  INTO _accounted_at,
+       _accounted_definition_id,
+       _accounted_period_start,
+       _accounted_property_id
   FROM public.wa_campaign_recipients r
   JOIN public.wa_campaigns c
     ON c.id = r.campaign_id
@@ -196,11 +208,14 @@ BEGIN
     INTO _counter_used, _counter_state
     FROM public.commercial_usage_counters counter
     WHERE counter.tenant_id = _tenant_id
-      AND counter.quota_definition_id = _quota_definition_id
-      AND counter.period_start = _period_start
+      AND counter.quota_definition_id = coalesce(_accounted_definition_id, _quota_definition_id)
+      AND counter.period_start = coalesce(_accounted_period_start, _period_start)
       AND (
-        (_property_id IS NULL AND counter.property_id IS NULL)
-        OR (_property_id IS NOT NULL AND counter.property_id = _property_id)
+        (coalesce(_accounted_property_id, _property_id) IS NULL AND counter.property_id IS NULL)
+        OR (
+          coalesce(_accounted_property_id, _property_id) IS NOT NULL
+          AND counter.property_id = coalesce(_accounted_property_id, _property_id)
+        )
       );
     IF NOT FOUND THEN
       RAISE EXCEPTION 'campaign quota reservation exists without its commercial counter';
@@ -259,7 +274,10 @@ BEGIN
   ) q;
 
   UPDATE public.wa_campaign_recipients
-  SET quota_accounted_at = now()
+  SET quota_accounted_at = now(),
+      quota_accounted_definition_id = _quota_definition_id,
+      quota_accounted_period_start = _period_start,
+      quota_accounted_property_id = _property_id
   WHERE id = _recipient_id
     AND tenant_id = _tenant_id
     AND quota_accounted_at IS NULL;
