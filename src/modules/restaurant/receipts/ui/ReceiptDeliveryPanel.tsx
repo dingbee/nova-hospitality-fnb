@@ -282,5 +282,11 @@ export function DeliveryRow({ attempt }: { attempt: DeliveryRecord }) {
 }
 
 function labelFor(method: string) {
-  return method === "secure_link" ? "Secure link" : method === "whatsapp" ? "WhatsApp" : method === "email" ? "Email" : "Print";
+  return method === "secure_link"
+    ? "Secure link"
+    : method === "whatsapp"
+      ? "WhatsApp"
+      : method === "email"
+        ? "Email"
+        : "Print";
 }
