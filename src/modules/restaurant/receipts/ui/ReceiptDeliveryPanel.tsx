@@ -37,14 +37,12 @@ export function ReceiptDeliveryPanel({
   orderId,
   receiptNumber,
   total,
-  onPrint,
 }: {
   tenantId: string;
   receiptId?: string;
   orderId?: string;
   receiptNumber: string;
   total: string;
-  onPrint?: () => void;
 }) {
   const request = useServerFn(requestReceiptDeliveryFn);
   const listFn = useServerFn(listReceiptDeliveriesFn);
@@ -222,7 +220,7 @@ export function ReceiptDeliveryPanel({
           ))}
         </div>
       )}
-      </div>
+    </div>
     </>
   );
 }
