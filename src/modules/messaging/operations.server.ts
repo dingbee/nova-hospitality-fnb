@@ -286,10 +286,7 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
   aiQuery = applyPropertyScope(aiQuery, propertyIds);
   campaignQuery = applyDateRange(campaignQuery, input, "recorded_at");
   aiQuery = applyDateRange(aiQuery, input, "occurred_at");
-  if (input.locationId) {
-    campaignQuery = campaignQuery.eq("location_id", input.locationId);
-    aiQuery = aiQuery.eq("location_id", input.locationId);
-  }
+  if (input.locationId) aiQuery = aiQuery.eq("location_id", input.locationId);
   const [
     { data: campaignRows, error: campaignError },
     { data: aiRows, error: aiError },
