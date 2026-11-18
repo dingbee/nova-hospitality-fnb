@@ -371,8 +371,10 @@ describe("previewNovaExecution — read-only, never writes", () => {
     expect(preview.lines).toEqual([
       expect.objectContaining({ inventoryItemId: ITEM, quantity: 3, availableQuantity: 0 }),
     ]);
-    expect(preview.sourceLocationName).toMatch(/^Main Store(?: · Property · Service outlet)?$/);
-    expect(preview.destinationLocationName).toMatch(/^Kitchen(?: · Property · Service outlet)?$/);
+    expect(preview.sourceLocationName).toContain("Main Store");
+    expect(preview.sourceLocationName).toContain("Tenant central store");
+    expect(preview.destinationLocationName).toContain("Kitchen");
+    expect(preview.destinationLocationName).toContain("Tenant central store");
     expect(fake.movements).toHaveLength(0);
     expect(fake.transfers[created.id].status).toBe("draft"); // untouched
   });
