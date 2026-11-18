@@ -76,9 +76,9 @@ The following is the canonical application capability map. It is not a statement
 
 - Full repository migration chain replay passed on isolated PostgreSQL 17.
 - PostgreSQL adversarial checks passed for property-only central-store denial, tenant-wide owner access, cross-tenant central-store isolation, inactive-location transfer rejection, and tenant-composite transfer-line foreign keys.
-- Application transfer lifecycle tests passed for dispatch/receipt accounting, idempotent retries, and simultaneous dispatch retries with a single ledger movement.
-- Full repository regression passed: 241 test files and 2,607 tests.
+- Application transfer lifecycle tests passed for dispatch/receipt accounting, simultaneous dispatch and receipt retries, conflicting receipt quantity rejection, and compare-and-set transfer/line transitions.
+- Full repository regression passed: 242 test files and 2,611 tests (CI run #2179).
 - Inventory Agent is explicitly entitlement-gated, then requires `intelligence.read` for execution/verification sweeps. The executor re-checks decision scope, entitlement, action approval state, and `purchase.request` capability before creating only a draft purchase request. It cannot approve the decision, create a PO, or mutate stock.
 - Additional negative tests now verify that missing Inventory Agent entitlement or `intelligence.read` capability stops execution before decision/action discovery.
 
-The CI-generated SECURITY DEFINER inventory is retained as evidence. It is not, by itself, a completed manual review or certification sign-off. The final sign-off must record reviewed function families, any accepted findings, and any required remediations.
+The SECURITY DEFINER inventory and scoped review are recorded in `docs/p0-04/security-definer-review.md`. No P0-04 blocker remains in the reviewed central-store, transfer, RBAC identity-binding, or inventory/procurement authorization paths. A separate P1 follow-up is recorded for discount/comp RPC property scoping; that family is outside P0-04's central-store/transfer boundary.
