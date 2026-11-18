@@ -293,9 +293,10 @@ export async function getWhatsAppUsageReport(sb: Db, userId: string, input: Tena
   const [
     { data: campaignRows, error: campaignError },
     { data: aiRows, error: aiError },
-  ] = awa{ data: campaignRows, error: campaignError }, { data: aiRows, error: aiError }] =r("whatsapp_usage_report_unavailable");
+  ] = await Promise.all([campaignQuery, aiQuery]);
+  if (campaignError || aiError) throw new Error("whatsapp_usage_report_unavailable");
   const entries = [
-   ..(campaignRows ?? []).map((row: any) => ({
+    ...(campaignRows ?? []).map((row: any) => ({
       ...row,
       source: "wa_campaign_usage_ledger",
     })),
