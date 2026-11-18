@@ -349,5 +349,19 @@ jobs:
                 RAISE EXCEPTION 'WCE-08 campaign recipient message tenant-scope FK is missing';
               END IF;
             END IF;
+
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_attribute
+              WHERE attrelid = 'public.commercial_ai_usage_log'::regclass
+                AND attname = 'source_channel'
+                AND NOT attisdropped
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_indexes
+              WHERE schemaname = 'public'
+                AND tablename = 'commercial_ai_usage_log'
+                AND indexname = 'commercial_ai_usage_log_channel_period_idx'
+            ) THEN
+              RAISE EXCEPTION 'WCE-08 AI usage channel attribution schema is missing';
+            END IF;
           END $verify$;
           SQL
