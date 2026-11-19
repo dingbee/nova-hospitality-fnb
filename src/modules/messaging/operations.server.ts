@@ -209,7 +209,7 @@ export async function listWhatsAppGuestCRM(sb: Db, userId: string, input: Tenant
     if (!latest.has(key)) latest.set(key, consent);
   }
   const guestRows = guests ?? [];
-  const guestIds = guestRows.map((guest: any) => guest.id);
+  const guestIds: string[] = guestRows.map((guest: any) => String(guest.id));
   const loyaltyQuery = guestIds.length
     ? sb
         .from("restaurant_guest_loyalty_ledger")
