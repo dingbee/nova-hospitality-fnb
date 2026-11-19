@@ -208,9 +208,10 @@ export function WhatsAppOperationsCentre() {
   const usageTotals = (usage.data?.totals ?? []) as any[];
   const conv = conversion.data as any;
   const active = conversations.find((row) => row.id === conversationId);
-  const campaignAudience = customers.filter((guest) =>
-    guest.marketingConsent?.state === "granted" &&
-    (!campaignLanguage || guest.preferred_language === campaignLanguage),
+  const campaignAudience = customers.filter(
+    (guest) =>
+      guest.marketingConsent?.state === "granted" &&
+      (!campaignLanguage || guest.preferred_language === campaignLanguage),
   );
   const campaignSuppressed = customers.length - campaignAudience.length;
 
@@ -387,45 +388,82 @@ export function WhatsAppOperationsCentre() {
                       <Fragment key={guest.id}>
                         <tr>
                           <td className="py-2 pr-3">
-                            <button type="button" className="text-left font-medium text-primary hover:underline" onClick={() => setSelectedGuestId(selectedGuestId === guest.id ? undefined : guest.id)}>
+                            <button
+                              type="button"
+                              className="text-left font-medium text-primary hover:underline"
+                              onClick={() =>
+                                setSelectedGuestId(selectedGuestId === guest.id ? undefined : guest.id)
+                              }
+                            >
                               {guest.display_name || "Guest"}
                             </button>
                             <div className="text-xs text-muted-foreground">{guest.phone_e164}</div>
                           </td>
                           <td className="py-2 pr-3 uppercase">{guest.preferred_language}</td>
-                          <td className="py-2 pr-3"><StatusChip>{guest.status}</StatusChip></td>
                           <td className="py-2 pr-3">
-                            <StatusChip tone={guest.marketingConsent?.state === "granted" ? "success" : "warning"}>
+                            <StatusChip>{guest.status}</StatusChip>
+                          </td>
+                          <td className="py-2 pr-3">
+                            <StatusChip
+                              tone={
+                                guest.marketingConsent?.state === "granted" ? "success" : "warning"
+                              }
+                            >
                               {guest.marketingConsent?.state ?? "not recorded"}
                             </StatusChip>
                           </td>
-                          <td className="py-2 pr-3"><StatusChip>{guest.serviceUpdatesConsent?.state ?? "not recorded"}</StatusChip></td>
-                          <td className="py-2 text-xs text-muted-foreground">{formatDate(guest.last_seen_at)}</td>
+                          <td className="py-2 pr-3">
+                            <StatusChip>
+                              {guest.serviceUpdatesConsent?.state ?? "not recorded"}
+                            </StatusChip>
+                          </td>
+                          <td className="py-2 text-xs text-muted-foreground">
+                            {formatDate(guest.last_seen_at)}
+                          </td>
                         </tr>
                         {selectedGuestId === guest.id ? (
                           <tr key={guest.id + "-history"} className="bg-muted/30">
                             <td colSpan={6} className="p-3">
                               <div className="grid gap-3 md:grid-cols-[1fr_auto]">
                                 <div>
-                                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent order history</p>
+                                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Recent order history
+                                  </p>
                                   {(guest.recentOrders ?? []).length ? (
                                     <ul className="space-y-2">
                                       {guest.recentOrders.map((order: any) => (
-                                        <li key={order.orderNumber} className="rounded-md border bg-background p-2">
+                                        <li
+                                          key={order.orderNumber}
+                                          className="rounded-md border bg-background p-2"
+                                        >
                                           <div className="flex flex-wrap justify-between gap-2 text-sm">
-                                            <span className="font-medium">#{order.orderNumber} · {order.status}</span>
+                                            <span className="font-medium">
+                                              #{order.orderNumber} · {order.status}
+                                            </span>
                                             <span>{money(order.total, order.currency)}</span>
                                           </div>
-                                          <p className="mt-1 text-xs text-muted-foreground">{order.orderType} · {formatDate(order.openedAt)}</p>
-                                          <p className="mt-1 text-xs">{order.items.map((item: any) => item.quantity + " × " + item.name).join(", ") || "No item details"}</p>
+                                          <p className="mt-1 text-xs text-muted-foreground">
+                                            {order.orderType} · {formatDate(order.openedAt)}
+                                          </p>
+                                          <p className="mt-1 text-xs">
+                                            {order.items
+                                              .map((item: any) => item.quantity + " × " + item.name)
+                                              .join(", ") || "No item details"}
+                                          </p>
                                         </li>
                                       ))}
                                     </ul>
-                                  ) : <p className="text-sm text-muted-foreground">No linked orders recorded.</p>}
+                                  ) : (
+                                    <p className="text-sm text-muted-foreground">
+                                      No linked orders recorded.
+                                    </p>
+                                  )}
                                 </div>
                                 <div className="rounded-md border bg-background p-3">
                                   <p className="text-xs text-muted-foreground">Loyalty balance</p>
-                                  <p className="text-2xl font-semibold tabular-nums">{Number(guest.loyaltyPointsBalance ?? 0).toLocaleString()}</p>
+                                  <p className="text-2xl font-semibold tabular-nums">
+                                    {Number(guest.loyaltyPointsBalance ?? 0).toLocaleString()}
+                                  </p>
                                   <p className="text-xs text-muted-foreground">points</p>
                                 </div>
                               </div>
@@ -449,7 +487,6 @@ export function WhatsAppOperationsCentre() {
             >
               <form
                 className="mb-4 grid gap-2 rounded-lg border p-3"
-
                 onSubmit={(event) => {
                   event.preventDefault();
                   createTemplate.mutate();
@@ -490,7 +527,10 @@ export function WhatsAppOperationsCentre() {
                   maxLength={1024}
                   required
                 />
-                <p className="text-xs text-muted-foreground sm:col-span-3">Draft body is saved as a WhatsApp BODY component. Provider submission and approval remain separately governed.</p>
+                <p className="text-xs text-muted-foreground sm:col-span-3">
+                  Draft body is saved as a WhatsApp BODY component. Provider submission and
+                  approval remain separately governed.
+                </p>
                 <button
                   className="h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50 sm:col-span-3"
                   disabled={createTemplate.isPending || !propertyId || !templateBody.trim()}
@@ -637,14 +677,19 @@ export function WhatsAppOperationsCentre() {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <p className="text-sm font-medium">Audience eligibility preview</p>
-                      <p className="text-xs text-muted-foreground">Current property-scoped CRM snapshot; marketing consent is mandatory.</p>
+                      <p className="text-xs text-muted-foreground">
+                        Current property-scoped CRM snapshot; marketing consent is mandatory.
+                      </p>
                     </div>
                     <div className="text-right">
                       <p className="text-xl font-semibold tabular-nums">{campaignAudience.length}</p>
                       <p className="text-xs text-muted-foreground">eligible guests</p>
                     </div>
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">{campaignSuppressed} excluded by consent or language filter. Final recipient eligibility is rechecked by server-side campaign governance at preparation time.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {campaignSuppressed} excluded by consent or language filter. Final recipient
+                    eligibility is rechecked by server-side campaign governance at preparation time.
+                  </p>
                 </div>
                 <input
                   type="number"
