@@ -8,7 +8,6 @@ import {
 import { assertCommercialAdmin } from "@/modules/commercial/access.server";
 import { checkQuota } from "@/modules/commercial/quota.server";
 
-import { getWhatsAppGuestCustomerHistory } from "./guest-crm.server";
 
 type Db = any;
 
