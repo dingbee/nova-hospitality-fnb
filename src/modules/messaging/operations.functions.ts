@@ -86,6 +86,7 @@ const templateDraftSchema = tenantFilterSchema.extend({
   category: z.enum(["marketing", "utility", "authentication"]),
   components: z
     .array(z.record(z.string(), z.unknown()))
+    .min(1)
     .superRefine((components, context) => {
       const bodyComponents = components.filter((component) => component.type === "BODY");
       if (bodyComponents.length !== 1) {
@@ -101,8 +102,7 @@ const templateDraftSchema = tenantFilterSchema.extend({
           message: "WhatsApp BODY text must be 1–1024 characters with valid numbered placeholders.",
         });
       }
-    })
-    .optional(),
+    }),
 });
 
 export const createWhatsAppTemplateDraftFn = createServerFn({ method: "POST" })
