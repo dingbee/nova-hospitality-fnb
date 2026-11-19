@@ -407,6 +407,7 @@ describe("WCE-08 guest CRM history and template authoring", () => {
       })),
     ];
     const ranges: Array<[number, number]> = [];
+    const loyaltyScopeCalls: Array<[string, unknown]> = [];
     const datasets: Record<string, unknown[]> = {
       restaurant_guest_customers: [
         { id: "guest-a", display_name: "Guest A" },
@@ -422,8 +423,14 @@ describe("WCE-08 guest CRM history and template authoring", () => {
         let end = Number.MAX_SAFE_INTEGER;
         const builder: any = {
           select: () => builder,
-          eq: () => builder,
-          in: () => builder,
+          eq: (column: string, value: unknown) => {
+            if (table === "restaurant_guest_loyalty_ledger") loyaltyScopeCalls.push([column, value]);
+            return builder;
+          },
+          in: (column: string, value: unknown) => {
+            if (table === "restaurant_guest_loyalty_ledger") loyaltyScopeCalls.push([column, value]);
+            return builder;
+          },
           or: () => builder,
           order: () => builder,
           limit: () => builder,
@@ -455,5 +462,8 @@ describe("WCE-08 guest CRM history and template authoring", () => {
       [0, 499],
       [500, 999],
     ]);
+    expect(loyaltyScopeCalls).toContainEqual(["eq", "tenant_id"]);
+    expect(loyaltyScopeCalls).toContainEqual(["eq", "property_id"]);
+    expect(loyaltyScopeCalls).toContainEqual(["eq", "property-1"]);
   });
 });
