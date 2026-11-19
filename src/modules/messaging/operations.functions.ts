@@ -89,8 +89,8 @@ const templateDraftSchema = tenantFilterSchema.extend({
         typeof bodyText !== "string" ||
         bodyText.trim().length === 0 ||
         bodyText.length > 1024 ||
-        /\\{\\{/.test(bodyText.replace(/\\{\\{[1-9]\\d*\\}\\}/g, "")) ||
-        /\\}\\}/.test(bodyText.replace(/\\{\\{[1-9]\\d*\\}\\}/g, ""))
+        /\{\{/.test(bodyText.replace(/\{\{[1-9]\\d*\\}\\}/g, "")) ||
+        /\}\}//.test(bodyText.replace(/\{\{[1-9]\\d*\\}\\}/g, ""))
       ) {
         context.addIssue({
           code: "custom",
