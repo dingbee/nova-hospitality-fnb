@@ -126,10 +126,11 @@ describe("WhatsApp marketing consent verification", () => {
         }),
       };
       const admin = { from: vi.fn(() => builder) };
-      const result = await hasWhatsAppGuestMarketingConsent(admin, "tenant-1", "guest-1");
+      const result = await hasWhatsAppGuestMarketingConsent(admin, "tenant-1", "guest-1", "property-1");
       expect(result).toBe(state === "granted");
       expect(calls).toContainEqual(["tenant_id", "tenant-1"]);
       expect(calls).toContainEqual(["guest_customer_id", "guest-1"]);
+      expect(calls).toContainEqual(["property_id", "property-1"]);
       expect(calls).toContainEqual(["channel", "whatsapp"]);
       expect(calls).toContainEqual(["purpose", "marketing"]);
     },
