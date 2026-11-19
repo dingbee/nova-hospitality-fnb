@@ -210,19 +210,78 @@ export async function listWhatsAppGuestCRM(sb: Db, userId: string, input: Tenant
     const key = consent.guest_customer_id + ":" + consent.purpose;
     if (!latest.has(key)) latest.set(key, consent);
   }
-  const enrichedGuests = await Promise.all(
-    (guests ?? []).map(async (guest: any) => {
-      const history = await getWhatsAppGuestCustomerHistory(sb, input.tenantId, guest.id);
-      return {
-        ...guest,
-        marketingConsent: latest.get(guest.id + ":marketing") ?? null,
-        serviceUpdatesConsent: latest.get(guest.id + ":service_updates") ?? null,
-        recentOrders: history.recentOrders,
-        loyaltyPointsBalance: history.loyaltyPointsBalance,
-      };
-    }),
-  );
-  return enrichedGuests;
+  const guestRows = guests ?? [];
+  const guestIds = guestRows.map((guest: any) => guest.id);
+  const [{ data: orders, error: orderError }, { data: loyaltyRows, error: loyaltyError }] =
+    guestIds.length
+      ? await Promise.all([
+          (() => {
+            let ordersQuery = sb
+              .from("restaurant_orders")
+              .select(
+                "id, guest_customer_id, property_id, order_number, order_type, status, total, currency, opened_at, closed_at",
+              )
+              .eq("tenant_id", input.tenantId)
+              .in("guest_customer_id", guestIds)
+              .order("opened_at", { ascending: false })
+              .limit(guestIds.length * 10);
+            if (input.propertyId) ordersQuery = ordersQuery.eq("property_id", input.propertyId);
+            else if (propertyIds !== null) ordersQuery = ordersQuery.in("property_id", propertyIds);
+            return ordersQuery;
+          })(),
+          sb
+            .from("restaurant_guest_loyalty_ledger")
+            .select("guest_customer_id, points_delta")
+            .eq("tenant_id", input.tenantId)
+            .in("guest_customer_id", guestIds),
+        ])
+      : [{ data: [], error: null }, { data: [], error: null }];
+  if (orderError || loyaltyError) throw new Error("whatsapp_guest_history_unavailable");
+  const orderRows = orders ?? [];
+  const orderIds = orderRows.map((order: any) => order.id);
+  const { data: orderItems, error: itemError } = orderIds.length
+    ? await sb
+        .from("restaurant_order_items")
+        .select("order_id, description, quantity")
+        .eq("tenant_id", input.tenantId)
+        .in("order_id", orderIds)
+    : { data: [], error: null };
+  if (itemError) throw new Error("whatsapp_guest_order_items_unavailable");
+  const itemsByOrder = new Map<string, Array<{ name: string; quantity: number }>>();
+  for (const item of orderItems ?? []) {
+    const items = itemsByOrder.get(item.order_id) ?? [];
+    items.push({ name: String(item.description ?? ""), quantity: Number(item.quantity ?? 0) });
+    itemsByOrder.set(item.order_id, items);
+  }
+  const ordersByGuest = new Map<string, any[]>();
+  for (const order of orderRows) {
+    const guestOrders = ordersByGuest.get(order.guest_customer_id) ?? [];
+    if (guestOrders.length < 10) guestOrders.push(order);
+    ordersByGuest.set(order.guest_customer_id, guestOrders);
+  }
+  const loyaltyByGuest = new Map<string, number>();
+  for (const entry of loyaltyRows ?? []) {
+    loyaltyByGuest.set(
+      entry.guest_customer_id,
+      (loyaltyByGuest.get(entry.guest_customer_id) ?? 0) + Number(entry.points_delta ?? 0),
+    );
+  }
+  return guestRows.map((guest: any) => ({
+    ...guest,
+    marketingConsent: latest.get(guest.id + ":marketing") ?? null,
+    serviceUpdatesConsent: latest.get(guest.id + ":service_updates") ?? null,
+    recentOrders: (ordersByGuest.get(guest.id) ?? []).map((order: any) => ({
+      orderNumber: order.order_number,
+      orderType: order.order_type,
+      status: order.status,
+      total: Number(order.total ?? 0),
+      currency: order.currency,
+      openedAt: order.opened_at,
+      closedAt: order.closed_at,
+      items: itemsByOrder.get(order.id) ?? [],
+    })),
+    loyaltyPointsBalance: loyaltyByGuest.get(guest.id) ?? 0,
+  }));
 }
 
 export async function getWhatsAppCampaignWorkspace(sb: Db, userId: string, input: TenantFilter) {
