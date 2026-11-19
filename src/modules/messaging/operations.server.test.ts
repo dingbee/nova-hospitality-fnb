@@ -462,8 +462,8 @@ describe("WCE-08 guest CRM history and template authoring", () => {
       [0, 499],
       [500, 999],
     ]);
-    expect(loyaltyScopeCalls).toContainEqual(["eq", "tenant_id"]);
-    expect(loyaltyScopeCalls).toContainEqual(["eq", "property_id"]);
-    expect(loyaltyScopeCalls).toContainEqual(["eq", "property-1"]);
+    expect(loyaltyScopeCalls).toContainEqual(["tenant_id", "tenant-1"]);
+    expect(loyaltyScopeCalls).toContainEqual(["guest_customer_id", ["guest-a", "guest-b"]]);
+    expect(loyaltyScopeCalls).toContainEqual(["property_id", "property-1"]);
   });
 });
