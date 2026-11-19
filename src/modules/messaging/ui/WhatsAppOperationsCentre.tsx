@@ -134,9 +134,7 @@ export function WhatsAppOperationsCentre() {
           templateName,
           language: templateLanguage,
           category: templateCategory,
-          components: templateBody.trim()
-            ? [{ type: "BODY", text: templateBody.trim() }]
-            : [],
+          components: templateBody.trim() ? [{ type: "BODY", text: templateBody.trim() }] : [],
         },
       }),
     successMessage: "Draft template created",
@@ -392,7 +390,9 @@ export function WhatsAppOperationsCentre() {
                               type="button"
                               className="text-left font-medium text-primary hover:underline"
                               onClick={() =>
-                                setSelectedGuestId(selectedGuestId === guest.id ? undefined : guest.id)
+                                setSelectedGuestId(
+                                  selectedGuestId === guest.id ? undefined : guest.id,
+                                )
                               }
                             >
                               {guest.display_name || "Guest"}
@@ -528,8 +528,8 @@ export function WhatsAppOperationsCentre() {
                   required
                 />
                 <p className="text-xs text-muted-foreground sm:col-span-3">
-                  Draft body is saved as a WhatsApp BODY component. Provider submission and
-                  approval remain separately governed.
+                  Draft body is saved as a WhatsApp BODY component. Provider submission and approval
+                  remain separately governed.
                 </p>
                 <button
                   className="h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50 sm:col-span-3"
@@ -682,7 +682,9 @@ export function WhatsAppOperationsCentre() {
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-xl font-semibold tabular-nums">{campaignAudience.length}</p>
+                      <p className="text-xl font-semibold tabular-nums">
+                        {campaignAudience.length}
+                      </p>
                       <p className="text-xs text-muted-foreground">eligible guests</p>
                     </div>
                   </div>
