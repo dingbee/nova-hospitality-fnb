@@ -701,8 +701,8 @@ export function WhatsAppOperationsCentre() {
                     {campaignPreviewReady
                       ? `${campaignSuppressed} excluded from this CRM sample by status, contactability, consent or language.`
                       : "Select an approved template to calculate a consent-aware CRM preview."}{" "}
-                    Final recipient eligibility is independently recalculated by server-side campaign
-                    governance.
+                    Final recipient eligibility is independently recalculated by server-side
+                    campaign governance.
                   </p>
                 </div>
                 <input
