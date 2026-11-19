@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- server function rows are untyped at this UI boundary. */
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
@@ -384,8 +384,8 @@ export function WhatsAppOperationsCentre() {
                   </thead>
                   <tbody className="divide-y">
                     {customers.map((guest) => (
-                      <>
-                        <tr key={guest.id}>
+                      <Fragment key={guest.id}>
+                        <tr>
                           <td className="py-2 pr-3">
                             <button type="button" className="text-left font-medium text-primary hover:underline" onClick={() => setSelectedGuestId(selectedGuestId === guest.id ? undefined : guest.id)}>
                               {guest.display_name || "Guest"}
@@ -432,7 +432,7 @@ export function WhatsAppOperationsCentre() {
                             </td>
                           </tr>
                         ) : null}
-                      </>
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
