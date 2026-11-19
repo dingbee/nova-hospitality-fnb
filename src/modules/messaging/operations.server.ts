@@ -8,6 +8,8 @@ import {
 import { assertCommercialAdmin } from "@/modules/commercial/access.server";
 import { checkQuota } from "@/modules/commercial/quota.server";
 
+import { getWhatsAppGuestCustomerHistory } from "./guest-crm.server";
+
 type Db = any;
 
 type TenantFilter = {
@@ -208,11 +210,19 @@ export async function listWhatsAppGuestCRM(sb: Db, userId: string, input: Tenant
     const key = consent.guest_customer_id + ":" + consent.purpose;
     if (!latest.has(key)) latest.set(key, consent);
   }
-  return (guests ?? []).map((guest: any) => ({
-    ...guest,
-    marketingConsent: latest.get(guest.id + ":marketing") ?? null,
-    serviceUpdatesConsent: latest.get(guest.id + ":service_updates") ?? null,
-  }));
+  const enrichedGuests = await Promise.all(
+    (guests ?? []).map(async (guest: any) => {
+      const history = await getWhatsAppGuestCustomerHistory(sb, input.tenantId, guest.id);
+      return {
+        ...guest,
+        marketingConsent: latest.get(guest.id + ":marketing") ?? null,
+        serviceUpdatesConsent: latest.get(guest.id + ":service_updates") ?? null,
+        recentOrders: history.recentOrders,
+        loyaltyPointsBalance: history.loyaltyPointsBalance,
+      };
+    }),
+  );
+  return enrichedGuests;
 }
 
 export async function getWhatsAppCampaignWorkspace(sb: Db, userId: string, input: TenantFilter) {
