@@ -220,9 +220,7 @@ export function WhatsAppOperationsCentre() {
             guest.marketingConsent?.state === "granted"),
       )
     : [];
-  const campaignSuppressed = campaignPreviewReady
-    ? customers.length - campaignAudience.length
-    : 0;
+  const campaignSuppressed = campaignPreviewReady ? customers.length - campaignAudience.length : 0;
 
   return (
     <div className="space-y-4">
@@ -702,7 +700,9 @@ export function WhatsAppOperationsCentre() {
                   <p className="mt-1 text-xs text-muted-foreground">
                     {campaignPreviewReady
                       ? `${campaignSuppressed} excluded from this CRM sample by status, contactability, consent or language.`
-                      : "Select an approved template to calculate a consent-aware CRM preview."} Final recipient eligibility is independently recalculated by server-side campaign governance.
+                      : "Select an approved template to calculate a consent-aware CRM preview."}{" "}
+                    Final recipient eligibility is independently recalculated by server-side campaign
+                    governance.
                   </p>
                 </div>
                 <input
