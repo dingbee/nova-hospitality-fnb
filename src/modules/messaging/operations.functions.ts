@@ -73,7 +73,32 @@ const templateDraftSchema = tenantFilterSchema.extend({
   templateName: z.string().regex(/^[a-z0-9_]{3,512}$/),
   language: z.string().regex(/^[a-z]{2}([_-][A-Z]{2})?$/),
   category: z.enum(["marketing", "utility", "authentication"]),
-  components: z.array(z.record(z.string(), z.unknown())).optional(),
+  components: z
+    .array(z.record(z.string(), z.unknown()))
+    .superRefine((components, context) => {
+      const bodyComponents = components.filter((component) => component.type === "BODY");
+      if (bodyComponents.length !== 1) {
+        context.addIssue({
+          code: "custom",
+          message: "Exactly one WhatsApp BODY component is required.",
+        });
+        return;
+      }
+      const bodyText = bodyComponents[0].text;
+      if (
+        typeof bodyText !== "string" ||
+        bodyText.trim().length === 0 ||
+        bodyText.length > 1024 ||
+        /\\{\\{/.test(bodyText.replace(/\\{\\{[1-9]\\d*\\}\\}/g, "")) ||
+        /\\}\\}/.test(bodyText.replace(/\\{\\{[1-9]\\d*\\}\\}/g, ""))
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "WhatsApp BODY text must be 1–1024 characters with valid numbered placeholders.",
+        });
+      }
+    })
+    .optional(),
 });
 
 export const createWhatsAppTemplateDraftFn = createServerFn({ method: "POST" })
