@@ -207,7 +207,7 @@ export function WhatsAppOperationsCentre() {
   const conv = conversion.data as any;
   const active = conversations.find((row) => row.id === conversationId);
   const selectedCampaignTemplate = templates.find(
-    (template) => template.id === campaignTemplateId,
+    (template) => template.id === campaignTemplateId && template.status === "approved",
   );
   const campaignPreviewReady = Boolean(selectedCampaignTemplate);
   const campaignAudience = campaignPreviewReady
