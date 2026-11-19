@@ -37,14 +37,12 @@ export function ReceiptDeliveryPanel({
   orderId,
   receiptNumber,
   total,
-  onPrint,
 }: {
   tenantId: string;
   receiptId?: string;
   orderId?: string;
   receiptNumber: string;
   total: string;
-  onPrint?: () => void;
 }) {
   const request = useServerFn(requestReceiptDeliveryFn);
   const listFn = useServerFn(listReceiptDeliveriesFn);
@@ -84,7 +82,14 @@ export function ReceiptDeliveryPanel({
       void history.refetch();
       if (rec.status === "failed") toast.error(rec.failureReason ?? "Delivery failed.");
       else if (rec.status === "shared") {
-        window.open(whatsAppShareUrl(rec.recipient, buildReceiptMessage({ receiptNumber, total, link: rec.shareUrl })), "_blank", "noopener");
+        window.open(
+          whatsAppShareUrl(
+            rec.recipient,
+            buildReceiptMessage({ receiptNumber, total, link: rec.shareUrl }),
+          ),
+          "_blank",
+          "noopener",
+        );
         toast.message("WhatsApp opened for sharing — this is not a confirmed delivery.");
       } else if (method === "secure_link" && rec.shareUrl) {
         await navigator.clipboard?.writeText(rec.shareUrl).catch(() => undefined);
@@ -101,12 +106,26 @@ export function ReceiptDeliveryPanel({
   const phoneOk = Boolean(normalizePhone(phone));
 
   return (
-    <div className="space-y-4 border-t pt-3">
+    <div className="receipt-delivery-panel space-y-4 border-t pt-3">
+      <style>{`
+        @media print {
+          @page { margin: 0; size: 80mm auto; }
+          body * { visibility: hidden !important; }
+          [data-pos-receipt-dialog], [data-pos-receipt-dialog] * { visibility: visible !important; }
+          [data-pos-receipt-dialog] { position: fixed !important; inset: 0 auto auto 0 !important; width: 80mm !important; max-width: 80mm !important; max-height: none !important; overflow: visible !important; padding: 4mm !important; border: 0 !important; box-shadow: none !important; background: #fff !important; color: #000 !important; transform: none !important; }
+          [data-pos-receipt-dialog] * { color: #000 !important; background: #fff !important; }
+          [data-pos-receipt-dialog] .receipt-delivery-panel,
+          [data-pos-receipt-dialog] button { display: none !important; }
+        }
+      `}</style>
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <StatusChip tone="success">Issued</StatusChip>
         <StatusChip tone="success">Paid</StatusChip>
         {Object.values(last).map((r) => (
-          <StatusChip key={r.id} tone={r.status === "failed" ? "danger" : r.status === "shared" ? "warning" : "success"}>
+          <StatusChip
+            key={r.id}
+            tone={r.status === "failed" ? "danger" : r.status === "shared" ? "warning" : "success"}
+          >
             {r.status === "failed"
               ? `${labelFor(r.method)} failed`
               : r.status === "shared"
@@ -139,7 +158,11 @@ export function ReceiptDeliveryPanel({
             onClick={() => send("email", email)}
           >
             <Mail className="mr-1 size-4" />
-            {busy === "email" ? "Sending…" : last["email"]?.status === "failed" ? "Retry email" : "Send email"}
+            {busy === "email"
+              ? "Sending…"
+              : last["email"]?.status === "failed"
+                ? "Retry email"
+                : "Send email"}
           </Button>
           {last["email"]?.status === "failed" && (
             <p className="flex items-start gap-1 text-xs text-destructive">
@@ -148,7 +171,8 @@ export function ReceiptDeliveryPanel({
           )}
           {last["email"]?.status === "sent" && (
             <p className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Check className="size-3" /> Accepted by the mail provider · {last["email"]?.recipient}
+              <Check className="size-3" /> Accepted by the mail provider ·{" "}
+              {last["email"]?.recipient}
             </p>
           )}
         </div>
@@ -174,7 +198,11 @@ export function ReceiptDeliveryPanel({
             onClick={() => send("whatsapp", phone)}
           >
             <MessageCircle className="mr-1 size-4" />
-            {busy === "whatsapp" ? "Working…" : whatsappConfigured ? "Send on WhatsApp" : "Open WhatsApp"}
+            {busy === "whatsapp"
+              ? "Working…"
+              : whatsappConfigured
+                ? "Send on WhatsApp"
+                : "Open WhatsApp"}
           </Button>
           <p className="text-xs text-muted-foreground">
             {whatsappConfigured
@@ -191,13 +219,18 @@ export function ReceiptDeliveryPanel({
           className="min-h-11"
           disabled={busy !== null}
           onClick={() => {
-            onPrint?.();
+            window.print();
             void send("print");
           }}
         >
           <Printer className="mr-1 size-4" /> Print
         </Button>
-        <Button variant="ghost" className="min-h-11" disabled={busy !== null} onClick={() => send("secure_link")}>
+        <Button
+          variant="ghost"
+          className="min-h-11"
+          disabled={busy !== null}
+          onClick={() => send("secure_link")}
+        >
           <Link2 className="mr-1 size-4" /> Copy secure link
         </Button>
       </div>
@@ -218,7 +251,10 @@ export function DeliveryRow({ attempt }: { attempt: DeliveryRecord }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2 text-xs">
       <span className="min-w-0">
-        <span className="font-medium">{labelFor(attempt.method)}</span> · attempt {attempt.attempt} ·{" "}
+        <span className="font-medium">{labelFor(attempt.method)}</span>
+        {" · attempt "}
+        {attempt.attempt}
+        {" · "}
         {attempt.recipient ?? "—"}
         <span className="block text-muted-foreground">
           {String(attempt.requestedAt).replace("T", " ").slice(0, 16)}
@@ -227,7 +263,15 @@ export function DeliveryRow({ attempt }: { attempt: DeliveryRecord }) {
         </span>
       </span>
       <StatusChip
-        tone={attempt.status === "failed" ? "danger" : attempt.status === "shared" ? "warning" : attempt.status === "pending" ? "neutral" : "success"}
+        tone={
+          attempt.status === "failed"
+            ? "danger"
+            : attempt.status === "shared"
+              ? "warning"
+              : attempt.status === "pending"
+                ? "neutral"
+                : "success"
+        }
       >
         {attempt.status === "shared" ? "opened for sharing" : attempt.status}
       </StatusChip>
@@ -236,5 +280,11 @@ export function DeliveryRow({ attempt }: { attempt: DeliveryRecord }) {
 }
 
 function labelFor(method: string) {
-  return method === "secure_link" ? "Secure link" : method === "whatsapp" ? "WhatsApp" : method === "email" ? "Email" : "Print";
+  return method === "secure_link"
+    ? "Secure link"
+    : method === "whatsapp"
+      ? "WhatsApp"
+      : method === "email"
+        ? "Email"
+        : "Print";
 }

@@ -594,17 +594,20 @@ export async function voidPosLine(sb: Sb, userId: string, input: VoidPosLineInpu
   // Only an un-fired line can safely unwind its stock movements. Once a line
   // has reached a production/service state, consumption remains in the ledger:
   // reversing it would put already-prepared/served goods back into inventory.
-  const stockDisposition = ["fired", "sent", "preparing", "ready", "served"].includes(String(item.status))
+  const stockDisposition = ["fired", "sent", "preparing", "ready", "served"].includes(
+    String(item.status),
+  )
     ? "preserve_consumption"
     : "reverse_unprepared";
-  const reversal = stockDisposition === "reverse_unprepared"
-    ? await reverseMovementsForOrderItem(sb, userId, {
-        tenantId: input.tenantId,
-        orderItemId: item.id,
-        reason: `Line void: ${input.reason}`,
-        reasonCode: REASON_CODES.saleReversal,
-      })
-    : { reversed: 0, alreadyReversed: 0, costRestored: 0, movementIds: [] as string[] };
+  const reversal =
+    stockDisposition === "reverse_unprepared"
+      ? await reverseMovementsForOrderItem(sb, userId, {
+          tenantId: input.tenantId,
+          orderItemId: item.id,
+          reason: `Line void: ${input.reason}`,
+          reasonCode: REASON_CODES.saleReversal,
+        })
+      : { reversed: 0, alreadyReversed: 0, costRestored: 0, movementIds: [] as string[] };
 
   const { error } = await sb
     .from("restaurant_order_items")
@@ -826,6 +829,92 @@ export async function takePosPayment(sb: Sb, userId: string, input: PosPaymentIn
   }
 
   return { order: totals, settled, duplicate: Boolean(duplicate), receipt };
+}
+
+/**
+ * Finalizes a fully settled POS bill and returns its immutable receipt.
+ *
+ * This is the recovery path for a payment that persisted but whose automatic
+ * close/receipt handoff did not finish (for example, a transient inventory
+ * movement failure). It deliberately re-runs the canonical close transition;
+ * it never writes `status = closed` directly or bypasses stock/cost posting.
+ */
+export async function ensurePosReceipt(
+  sb: Sb,
+  userId: string,
+  input: { tenantId: string; orderId: string },
+) {
+  const { data: order, error: orderError } = await sb
+    .from("restaurant_orders")
+    .select("id, status, payment_state, total, paid_total, property_id, location_id")
+    .eq("tenant_id", input.tenantId)
+    .eq("id", input.orderId)
+    .maybeSingle();
+  if (orderError) throw new Error(orderError.message);
+  if (!order) throw new Error("Order not found.");
+  if (["cancelled", "voided"].includes(String(order.status))) {
+    throw new Error("This order is cancelled and cannot receive a receipt.");
+  }
+
+  const paymentState = String(order.payment_state ?? "");
+  const nonCashSettled = ["comped", "room_charged"].includes(paymentState);
+  const fullyPaid =
+    paymentState === "paid" && Number(order.paid_total ?? 0) + 0.01 >= Number(order.total ?? 0);
+  if (!nonCashSettled && !fullyPaid) {
+    throw new Error(
+      "The bill is not fully settled. Record the outstanding payment before printing a receipt.",
+    );
+  }
+
+  const tenantScope = await getTenantScope(sb, userId, input.tenantId);
+  await assertCapability(
+    sb,
+    userId,
+    input.tenantId,
+    "sales.manage",
+    { propertyId: order.property_id ?? null, locationId: order.location_id ?? null },
+    tenantScope,
+  );
+
+  if (order.status !== "closed") {
+    await transitionOrder(
+      sb,
+      userId,
+      { tenantId: input.tenantId, orderId: input.orderId, status: "closed" },
+      tenantScope,
+    );
+  }
+
+  const receipts = await import("./receipts.server");
+  let receipt = await receipts.getReceipt(
+    sb,
+    userId,
+    { tenantId: input.tenantId, orderId: input.orderId },
+    tenantScope,
+  );
+  // transitionOrder intentionally treats receipt issuance as a separately
+  // recoverable side effect. Complete that side effect if the close succeeded
+  // but receipt creation did not.
+  if (!receipt) {
+    await receipts.issueReceipt(
+      sb,
+      userId,
+      { tenantId: input.tenantId, orderId: input.orderId, reprint: false },
+      tenantScope,
+    );
+    receipt = await receipts.getReceipt(
+      sb,
+      userId,
+      { tenantId: input.tenantId, orderId: input.orderId },
+      tenantScope,
+    );
+  }
+  if (!receipt) {
+    throw new Error(
+      "The bill is closed, but receipt issuance did not complete. Retry receipt issuance.",
+    );
+  }
+  return receipt;
 }
 
 /**
