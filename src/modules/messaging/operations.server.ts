@@ -700,12 +700,13 @@ export function validateWhatsAppTemplateDraftComponents(
   const bodyComponents = components.filter((component) => component?.type === "BODY");
   if (bodyComponents.length !== 1) throw new Error("whatsapp_template_body_required");
   const bodyText = bodyComponents[0].text;
+  if (typeof bodyText !== "string") throw new Error("whatsapp_template_body_invalid");
+  const unmatchedPlaceholders = bodyText.replace(/\{\{[1-9][0-9]*\}\}/g, "");
   if (
-    typeof bodyText !== "string" ||
     bodyText.trim().length === 0 ||
     bodyText.length > 1024 ||
-    /\{\{/.test(bodyText.replace(/\{\{[1-9]\\d*\\}\\}/g, "")) ||
-    /\}\}//.test(bodyText.replace(/\{\{[1-9]\\d*\\}\\}/g, ""))
+    unmatchedPlaceholders.includes("{{") ||
+    unmatchedPlaceholders.includes("}}")
   ) {
     throw new Error("whatsapp_template_body_invalid");
   }
