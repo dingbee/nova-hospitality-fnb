@@ -1,12 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { CommercialCentre } from "@/modules/commercial/ui/CommercialCentre";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_authenticated/admin/commercial")({
-  head: () => ({
-    meta: [
-      { title: "Commercial Centre — LexiBite" },
-      { name: "robots", content: "noindex,nofollow" },
-    ],
-  }),
-  component: CommercialCentre,
+  component: Outlet,
 });
