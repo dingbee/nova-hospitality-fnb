@@ -258,11 +258,189 @@ jobs:
               ) THEN
                 RAISE EXCEPTION 'WCE-06 atomic recipient preparation RPC missing or unsafe';
               END IF;
-              IF has_function_privilege('anon', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text,text)', 'EXECUTE')
-                OR has_function_privilege('authenticated', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text,text)', 'EXECUTE')
-                OR NOT has_function_privilege('service_role', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text,text)', 'EXECUTE') THEN
+              IF has_function_privilege('anon', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text,text,text)', 'EXECUTE')
+                OR has_function_privilege('authenticated', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text,text,text)', 'EXECUTE')
+                OR NOT has_function_privilege('service_role', 'public.wa_prepare_campaign_recipient(uuid,uuid,uuid,uuid,text,text,text)', 'EXECUTE') THEN
                 RAISE EXCEPTION 'WCE-06 recipient preparation RPC grants are not service-role-only';
               END IF;
+              IF position('auth.role()' IN pg_get_functiondef(
+                'public.restaurant_increment_quota_usage(uuid,uuid,uuid,timestamptz,timestamptz,integer,text)'::regprocedure
+              )) = 0 OR position('service_role' IN pg_get_functiondef(
+                'public.restaurant_increment_quota_usage(uuid,uuid,uuid,timestamptz,timestamptz,integer,text)'::regprocedure
+              )) = 0 THEN
+                RAISE EXCEPTION 'WCE-06 service-role quota accounting path is not enabled';
+              END IF;
+              IF has_function_privilege('anon', 'public.wa_account_campaign_message_quota(uuid,uuid,uuid,uuid,timestamptz,timestamptz,integer)', 'EXECUTE')
+                OR has_function_privilege('authenticated', 'public.wa_account_campaign_message_quota(uuid,uuid,uuid,uuid,timestamptz,timestamptz,integer)', 'EXECUTE')
+                OR NOT has_function_privilege('service_role', 'public.wa_account_campaign_message_quota(uuid,uuid,uuid,uuid,timestamptz,timestamptz,integer)', 'EXECUTE') THEN
+                RAISE EXCEPTION 'WCE-08 idempotent campaign quota RPC grants are not service-role-only';
+              END IF;
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_proc p
+                JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public'
+                  AND p.proname = 'wa_account_campaign_message_quota'
+                  AND p.prosecdef
+                  AND 'search_path=public, pg_temp' = ANY (p.proconfig)
+                  AND position('pg_advisory_xact_lock' IN pg_get_functiondef(p.oid)) > 0
+              ) OR NOT EXISTS (
+                SELECT 1 FROM pg_attribute
+                WHERE attrelid = 'public.wa_campaign_recipients'::regclass
+                  AND attname = 'quota_accounted_definition_id'
+                  AND NOT attisdropped
+              ) OR NOT EXISTS (
+                SELECT 1 FROM pg_attribute
+                WHERE attrelid = 'public.wa_campaign_recipients'::regclass
+                  AND attname = 'quota_accounted_period_start'
+                  AND NOT attisdropped
+              ) THEN
+                RAISE EXCEPTION 'WCE-08 atomic campaign quota reservation is incomplete';
+              END IF;
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_attribute
+                WHERE attrelid = 'public.wa_campaign_recipients'::regclass
+                  AND attname = 'source_event_key'
+                  AND NOT attisdropped
+              ) OR EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'public.wa_campaign_recipients'::regclass
+                  AND conname = 'wa_campaign_recipients_campaign_guest_uq'
+              ) THEN
+                RAISE EXCEPTION 'WCE event recipient idempotency is not keyed by source event';
+              END IF;
+
+              IF has_table_privilege('anon', 'public.wa_meta_message_rates', 'SELECT')
+                OR has_table_privilege('authenticated', 'public.wa_meta_message_rates', 'SELECT')
+                OR has_table_privilege('anon', 'public.wa_meta_message_rates', 'INSERT')
+                OR has_table_privilege('authenticated', 'public.wa_meta_message_rates', 'INSERT') THEN
+                RAISE EXCEPTION 'WCE-06 global Meta rate card is exposed to tenant/public roles';
+              END IF;
+
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger t
+                JOIN pg_class c ON c.oid = t.tgrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                  AND c.relname = 'wa_campaign_usage_ledger'
+                  AND t.tgname = 'wa_campaign_usage_ledger_immutable_guard'
+                  AND NOT t.tgisinternal
+              ) THEN
+                RAISE EXCEPTION 'WCE-06 append-only usage ledger trigger is missing';
+              END IF;
+
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_policies
+                WHERE schemaname = 'public'
+                  AND tablename = 'wa_campaigns'
+                  AND policyname = 'wa_campaigns_read_scoped'
+              ) OR NOT EXISTS (
+                SELECT 1 FROM pg_policies
+                WHERE schemaname = 'public'
+                  AND tablename = 'wa_campaign_recipients'
+                  AND policyname = 'wa_campaign_recipients_read_scoped'
+              ) OR NOT EXISTS (
+                SELECT 1 FROM pg_policies
+                WHERE schemaname = 'public'
+                  AND tablename = 'wa_campaign_usage_ledger'
+                  AND policyname = 'wa_campaign_usage_read_scoped'
+              ) THEN
+                RAISE EXCEPTION 'WCE-06 tenant-scoped campaign/recipient/usage policies are missing';
+              END IF;
+            END IF;
+
+            IF to_regclass('public.wa_guest_portal_sessions') IS NOT NULL THEN
+              IF NOT (
+                SELECT c.relrowsecurity FROM pg_class c
+                WHERE c.oid = 'public.wa_guest_portal_sessions'::regclass
+              ) THEN
+                RAISE EXCEPTION 'WCE-02 guest portal session RLS is disabled';
+              END IF;
+            END IF;
+
+            IF to_regclass('public.restaurant_guest_customer_consents') IS NOT NULL THEN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger t
+                JOIN pg_class c ON c.oid = t.tgrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                  AND c.relname = 'restaurant_guest_customer_consents'
+                  AND t.tgname = 'restaurant_guest_customer_consent_immutable_guard'
+                  AND NOT t.tgisinternal
+              ) THEN
+                RAISE EXCEPTION 'WCE-05 append-only consent trigger is missing';
+              END IF;
+            END IF;
+
+            IF to_regclass('public.wa_campaign_recipients') IS NOT NULL THEN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_proc p
+                JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public'
+                  AND p.proname = 'wa_reconcile_campaign_usage'
+                  AND p.prosecdef
+                  AND 'search_path=public, pg_temp' = ANY (p.proconfig)
+              ) THEN
+                RAISE EXCEPTION 'WCE-08 provider usage reconciliation RPC is missing or unsafe';
+              END IF;
+              IF has_function_privilege('anon', 'public.wa_reconcile_campaign_usage(integer)', 'EXECUTE')
+                OR has_function_privilege('authenticated', 'public.wa_reconcile_campaign_usage(integer)', 'EXECUTE')
+                OR NOT has_function_privilege('service_role', 'public.wa_reconcile_campaign_usage(integer)', 'EXECUTE') THEN
+                RAISE EXCEPTION 'WCE-08 usage reconciliation RPC grants are not service-role-only';
+              END IF;
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger t
+                JOIN pg_class c ON c.oid = t.tgrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_proc p ON p.oid = t.tgfoid
+                WHERE n.nspname = 'public'
+                  AND c.relname = 'wa_messages'
+                  AND t.tgname = 'wa_messages_campaign_delivery_reconcile'
+                  AND NOT t.tgisinternal
+                  AND p.prosecdef
+                  AND 'search_path=public, pg_temp' = ANY (p.proconfig)
+              ) THEN
+                RAISE EXCEPTION 'WCE-08 campaign delivery reconciliation trigger is missing or unsafe';
+              END IF;
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'public.wa_campaign_recipients'::regclass
+                  AND conname = 'wa_campaign_recipients_message_scope_fkey'
+              ) THEN
+                RAISE EXCEPTION 'WCE-08 campaign recipient message tenant-scope FK is missing';
+              END IF;
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_attribute
+              WHERE attrelid = 'public.commercial_ai_usage_log'::regclass
+                AND attname = 'source_channel'
+                AND NOT attisdropped
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_attribute
+              WHERE attrelid = 'public.commercial_ai_usage_log'::regclass
+                AND attname = 'estimated_cost_known'
+                AND NOT attisdropped
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_indexes
+              WHERE schemaname = 'public'
+                AND tablename = 'commercial_ai_usage_log'
+                AND indexname = 'commercial_ai_usage_log_channel_period_idx'
+            ) THEN
+              RAISE EXCEPTION 'WCE-08 AI usage channel attribution schema is missing';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_attribute
+              WHERE attrelid = 'public.wa_campaign_usage_ledger'::regclass
+                AND attname = 'location_id'
+                AND NOT attisdropped
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_indexes
+              WHERE schemaname = 'public'
+                AND tablename = 'wa_campaign_usage_ledger'
+                AND indexname = 'wa_campaign_usage_location_period_idx'
+            ) THEN
+              RAISE EXCEPTION 'WCE-08 outlet-level campaign usage attribution schema is missing';
             END IF;
           END $verify$;
           SQL

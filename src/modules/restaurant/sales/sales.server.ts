@@ -14,6 +14,7 @@ import type {
   OrderLineInput,
   RecordPaymentInput,
   TransitionOrderInput,
+  RestaurantOrderType,
   listOrdersSchema,
   listServicePeriodsSchema,
   listTablesSchema,
@@ -23,7 +24,10 @@ import type {
 import { assertCapability, assertTenantRead, type TenantScope } from "../core/access.server";
 import { resolveOrderScope } from "./orderScope.server";
 import { emitRestaurantEvent } from "../events/emit.server";
-import { consumeForOrderItem, consumeOperationalConsumablesForOrder } from "../inventory/movements.server";
+import {
+  consumeForOrderItem,
+  consumeOperationalConsumablesForOrder,
+} from "../inventory/movements.server";
 import { activeRecipeForMenuItem } from "../products/recipes.server";
 import { consumeForRecipeSale } from "../products/consumption.server";
 import { currentFxRate, loadRuleSet, quoteWithRuleSet } from "../pricing/resolution.server";
@@ -576,7 +580,7 @@ export async function recalcOrder(sb: Sb, tenantId: string, orderId: string) {
   // Complimentary lines remain real production/stock costs, but are not
   // payable guest revenue. Keep them in cost_total while excluding them from
   // every commercial amount shown on the bill.
-  const chargeable = live.filter((i) => !Boolean(i.is_comp));
+  const chargeable = live.filter((i) => !i.is_comp);
   const subtotal = chargeable.reduce(
     (s, i) => s + Number(i.quantity ?? 0) * Number(i.unit_price ?? 0),
     0,
@@ -739,9 +743,10 @@ export async function createGuestOrder(
     tenantId: string;
     propertyId: string | null;
     locationId: string | null;
-    tableId: string;
+    tableId: string | null;
     guestName?: string | null;
     currency: string;
+    orderType?: RestaurantOrderType;
     lines: SalesLineInput[];
     /**
      * GEP3 — the same (tenant_id, client_request_id) partial-unique index
@@ -766,6 +771,9 @@ export async function createGuestOrder(
      * (selfsession.server.ts) to read back.
      */
     guestSessionId?: string | null;
+    /** One-time WhatsApp Guest Portal session provenance for non-table orders. */
+    guestPortalSessionId?: string | null;
+    guestCustomerId?: string | null;
   },
 ) {
   const { data: order, error } = await sb
@@ -774,9 +782,9 @@ export async function createGuestOrder(
       tenant_id: input.tenantId,
       property_id: input.propertyId,
       location_id: input.locationId,
-      table_id: input.tableId,
+      table_id: input.tableId ?? null,
       order_number: reference("ORD"),
-      order_type: "dine_in",
+      order_type: input.orderType ?? "dine_in",
       status: "open",
       guest_count: 1,
       guest_name: input.guestName ?? null,
@@ -786,6 +794,8 @@ export async function createGuestOrder(
       created_by: null,
       client_request_id: input.clientRequestId ?? null,
       guest_session_id: input.guestSessionId ?? null,
+      guest_portal_session_id: input.guestPortalSessionId ?? null,
+      guest_customer_id: input.guestCustomerId ?? null,
     })
     .select("id, order_number, currency")
     .single();
@@ -831,7 +841,7 @@ export async function createGuestOrder(
       currency: input.currency,
       propertyId: input.propertyId,
       locationId: input.locationId,
-      orderType: "dine_in",
+      orderType: input.orderType ?? "dine_in",
       exchangeRate,
       // This is the guest ordering path: no staff principal authorized these
       // lines, so their discount and modifier price fields are never
@@ -853,11 +863,13 @@ export async function createGuestOrder(
     throw err;
   }
 
-  await sb
-    .from("restaurant_tables")
-    .update({ status: "occupied" })
-    .eq("id", input.tableId)
-    .eq("tenant_id", input.tenantId);
+  if (input.tableId) {
+    await sb
+      .from("restaurant_tables")
+      .update({ status: "occupied" })
+      .eq("id", input.tableId)
+      .eq("tenant_id", input.tenantId);
+  }
 
   // Not routed through emitRestaurantEvent/recordEvent: that path requires a
   // real staff principal (assertIntelRead(supabase, userId)) and there is
@@ -1024,6 +1036,18 @@ export async function transitionOrder(
         payload: { order_number: order.order_number, reason: input.reason ?? null },
       });
     }
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const { queueWhatsAppOrderStatusNotification } =
+        await import("@/modules/messaging/guest-crm.server");
+      await queueWhatsAppOrderStatusNotification(supabaseAdmin, {
+        tenantId: input.tenantId,
+        orderId: input.orderId,
+        status: input.status,
+      });
+    } catch (error) {
+      console.warn("[whatsapp] order status notification deferred", (error as Error).message);
+    }
     return updated;
   }
 
@@ -1177,6 +1201,26 @@ export async function transitionOrder(
       );
     } catch (err) {
       console.warn("[restaurant-os] receipt not issued", (err as Error).message);
+    }
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const guestCrm = await import("@/modules/messaging/guest-crm.server");
+    try {
+      await guestCrm.awardGuestLoyaltyForCompletedOrder(
+        supabaseAdmin,
+        input.tenantId,
+        input.orderId,
+      );
+    } catch (error) {
+      console.warn("[whatsapp] guest loyalty accrual deferred", (error as Error).message);
+    }
+    try {
+      await guestCrm.queueWhatsAppOrderStatusNotification(supabaseAdmin, {
+        tenantId: input.tenantId,
+        orderId: input.orderId,
+        status: input.status,
+      });
+    } catch (error) {
+      console.warn("[whatsapp] guest order notification deferred", (error as Error).message);
     }
     return { ...updated, cost_total: Number(actualCost.toFixed(4)) };
   }
