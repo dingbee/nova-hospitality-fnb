@@ -224,10 +224,7 @@ export async function listWhatsAppGuestCRM(sb: Db, userId: string, input: Tenant
     const pageSize = 500;
     let offset = 0;
     let hasMore = true;
-    while (
-      hasMore &&
-      guestIds.some((guestId) => (ordersByGuest.get(guestId)?.length ?? 0) < 10)
-    ) {
+    while (hasMore && guestIds.some((guestId) => (ordersByGuest.get(guestId)?.length ?? 0) < 10)) {
       let ordersQuery = sb
         .from("restaurant_orders")
         .select(
