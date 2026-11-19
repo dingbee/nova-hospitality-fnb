@@ -20,6 +20,7 @@ import {
   getWhatsAppUsageReport,
   listWhatsAppInbox,
   listWhatsAppGuestCRM,
+  validateWhatsAppTemplateDraftComponents,
 } from "./operations.server";
 
 vi.mock("@/modules/restaurant/core/access.server", () => ({
@@ -352,5 +353,104 @@ describe("WCE-08 WhatsApp usage attribution", () => {
       amount: null,
       costKnown: false,
     });
+  });
+});
+
+
+describe("WCE-08 guest CRM history and template authoring", () => {
+  it("validates one BODY component and rejects malformed template placeholders", () => {
+    expect(
+      validateWhatsAppTemplateDraftComponents([
+        { type: "BODY", text: "Hello {{1}}, your order is ready." },
+      ]),
+    ).toEqual([{ type: "BODY", text: "Hello {{1}}, your order is ready." }]);
+    expect(() =>
+      validateWhatsAppTemplateDraftComponents([{ type: "BODY", text: "Hello {{name}}" }]),
+    ).toThrow("whatsapp_template_body_invalid");
+    expect(() =>
+      validateWhatsAppTemplateDraftComponents([{ type: "FOOTER", text: "No body" }]),
+    ).toThrow("whatsapp_template_body_required");
+    expect(() =>
+      validateWhatsAppTemplateDraftComponents([{ type: "BODY", text: "x".repeat(1025) }]),
+    ).toThrow("whatsapp_template_body_invalid");
+  });
+
+  it("retrieves ten recent orders per guest even when one guest dominates the newest global page", async () => {
+    vi.mocked(getTenantScope).mockResolvedValue({
+      tenantId: "tenant-1",
+      platformAdmin: false,
+      grants: [{ role: "owner", propertyId: "property-1" }],
+    });
+    const orders = [
+      ...Array.from({ length: 500 }, (_, index) => ({
+        id: "guest-a-order-" + index,
+        guest_customer_id: "guest-a",
+        property_id: "property-1",
+        order_number: "A-" + index,
+        order_type: "dine_in",
+        status: "closed",
+        total: 100,
+        currency: "TZS",
+        opened_at: new Date(Date.UTC(2026, 10, 19, 12, 0, 0) - index * 1000).toISOString(),
+        closed_at: null,
+      })),
+      ...Array.from({ length: 10 }, (_, index) => ({
+        id: "guest-b-order-" + index,
+        guest_customer_id: "guest-b",
+        property_id: "property-1",
+        order_number: "B-" + index,
+        order_type: "takeaway",
+        status: "closed",
+        total: 200,
+        currency: "TZS",
+        opened_at: new Date(Date.UTC(2026, 10, 18, 12, 0, 0) - index * 1000).toISOString(),
+        closed_at: null,
+      })),
+    ];
+    const ranges: Array<[number, number]> = [];
+    const datasets: Record<string, unknown[]> = {
+      restaurant_guest_customers: [
+        { id: "guest-a", display_name: "Guest A" },
+        { id: "guest-b", display_name: "Guest B" },
+      ],
+      restaurant_guest_customer_consents: [],
+      restaurant_guest_loyalty_ledger: [],
+      restaurant_order_items: [],
+    };
+    const db = {
+      from: (table: string) => {
+        let start = 0;
+        let end = Number.MAX_SAFE_INTEGER;
+        const builder: any = {
+          select: () => builder,
+          eq: () => builder,
+          in: () => builder,
+          or: () => builder,
+          order: () => builder,
+          limit: () => builder,
+          range: (from: number, to: number) => {
+            start = from;
+            end = to;
+            ranges.push([from, to]);
+            return builder;
+          },
+          then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+            Promise.resolve({
+              data: table === "restaurant_orders"
+                ? orders.slice(start, end + 1)
+                : datasets[table] ?? [],
+              error: null,
+            }).then(resolve, reject),
+        };
+        return builder;
+      },
+    };
+    const result = await listWhatsAppGuestCRM(db, "tenant-owner", {
+      tenantId: "tenant-1",
+      propertyId: "property-1",
+    });
+    expect(result.find((guest: any) => guest.id === "guest-a")?.recentOrders).toHaveLength(10);
+    expect(result.find((guest: any) => guest.id === "guest-b")?.recentOrders).toHaveLength(10);
+    expect(ranges).toEqual([[0, 499], [500, 999]]);
   });
 });
