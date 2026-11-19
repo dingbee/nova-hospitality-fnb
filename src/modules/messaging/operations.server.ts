@@ -193,17 +193,20 @@ export async function listWhatsAppGuestCRM(sb: Db, userId: string, input: Tenant
   if (error) throw new Error("whatsapp_guest_crm_unavailable");
   const ids = (guests ?? []).map((guest: any) => guest.id);
   const { data: consents, error: consentError } = ids.length
-    ? await sb
-        .from("restaurant_guest_customer_consents")
-        .select(
-          "id, guest_customer_id, property_id, channel, purpose, state, evidence_source, recorded_at",
-        )
-        .eq("tenant_id", input.tenantId)
-        .in("guest_customer_id", ids)
+    ? await (async () => {
+        let query = sb
+          .from("restaurant_guest_customer_consents")
+          .select(
+            "id, guest_customer_id, property_id, channel, purpose, state, evidence_source, recorded_at",
+          )
+          .eq("tenant_id", input.tenantId)
+          .in("guest_customer_id", ids);
         // Consent is property-owned; a property CRM must not inherit another
         // property's latest opt-in or opt-out state.
-        .eq("property_id", input.propertyId ?? null)
-        .order("recorded_at", { ascending: false })
+        if (input.propertyId) query = query.eq("property_id", input.propertyId);
+        else if (propertyIds !== null) query = query.in("property_id", propertyIds);
+        return query.order("recorded_at", { ascending: false });
+      })()
     : { data: [], error: null };
   if (consentError) throw new Error("whatsapp_guest_consent_unavailable");
   const latest = new Map<string, any>();
