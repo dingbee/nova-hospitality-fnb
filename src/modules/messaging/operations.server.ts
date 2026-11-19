@@ -200,6 +200,9 @@ export async function listWhatsAppGuestCRM(sb: Db, userId: string, input: Tenant
         )
         .eq("tenant_id", input.tenantId)
         .in("guest_customer_id", ids)
+        // Consent is property-owned; a property CRM must not inherit another
+        // property's latest opt-in or opt-out state.
+        .eq("property_id", input.propertyId ?? null)
         .order("recorded_at", { ascending: false })
     : { data: [], error: null };
   if (consentError) throw new Error("whatsapp_guest_consent_unavailable");
