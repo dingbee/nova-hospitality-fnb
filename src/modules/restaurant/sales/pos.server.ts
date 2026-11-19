@@ -26,6 +26,7 @@ import { emitRestaurantEvent } from "../events/emit.server";
 import { cancelKitchenTicketItemsForOrderItems } from "../kitchen/kitchen.server";
 import { reverseMovementsForOrderItem } from "../inventory/reversal.server";
 import { REASON_CODES } from "../inventory/policy";
+import { resolveMenuAvailability } from "../menu/availability.server";
 import {
   createOrder,
   insertLines,
@@ -243,7 +244,7 @@ export async function posCatalog(
 export async function fetchSellableCatalog(
   sb: Sb,
   tenantId: string,
-  input: { propertyId?: string; locationId?: string; menuId?: string } = {},
+  input: { propertyId?: string; locationId?: string; menuId?: string; orderType?: string } = {},
 ) {
   let menuQuery = sb
     .from("restaurant_menus")
@@ -284,7 +285,7 @@ export async function fetchSellableCatalog(
       ? sb
           .from("restaurant_menu_items")
           .select(
-            "id, menu_id, category_id, name, description, price, currency, available, tags, allergens, sort_order, image_url",
+            "id, menu_id, category_id, name, description, price, currency, available, lifecycle_status, unavailable_reason, tags, allergens, sort_order, image_url",
           )
           .eq("tenant_id", tenantId)
           .in("menu_id", menuIdsToUse)
@@ -292,9 +293,8 @@ export async function fetchSellableCatalog(
       : Promise.resolve({ data: [] }),
     sb
       .from("restaurant_products")
-      .select("id, name, menu_item_id, station_id, price, product_type, active")
-      .eq("tenant_id", tenantId)
-      .eq("active", true),
+      .select("id, name, menu_item_id, station_id, price, product_type, active, recipe_id")
+      .eq("tenant_id", tenantId),
     sb
       .from("restaurant_product_variants")
       .select("id, product_id, name, price, price_is_delta, active, sort_order")
@@ -342,6 +342,10 @@ export async function fetchSellableCatalog(
   const menuItemIds = ((items ?? []) as any[]).map((i) => i.id);
   const rules = await loadRuleSet(sb, tenantId, { menuItemIds });
   const priceAt = new Date();
+  const availability = await resolveMenuAvailability(sb, tenantId, items ?? [], products ?? [], {
+    propertyId: input.propertyId,
+    locationId: input.locationId,
+  });
 
   return {
     menus: menus ?? [],
@@ -352,26 +356,36 @@ export async function fetchSellableCatalog(
     modifierGroups: groupList,
     items: ((items ?? []) as any[]).map((i) => {
       const product = productByMenuItem.get(i.id) ?? null;
-      const groupIds = product
-        ? ((links ?? []) as any[]).filter((l) => l.product_id === product.id).map((l) => l.group_id)
-        : [];
+      const groupIds =
+        product?.active !== false && product
+          ? ((links ?? []) as any[])
+              .filter((l) => l.product_id === product.id)
+              .map((l) => l.group_id)
+          : [];
+      const stock = availability.get(i.id);
       const resolved = resolveDisplayPrice(rules, {
         at: priceAt,
         propertyId: input.propertyId ?? null,
         locationId: input.locationId ?? null,
         productId: product?.id ?? null,
         menuItemId: i.id,
-        orderType: "dine_in",
-        channel: "dine_in",
+        orderType: input.orderType ?? "dine_in",
+        channel: input.orderType ?? "dine_in",
         quantity: 1,
       });
       return {
         ...i,
+        available: stock?.available ?? i.available,
+        sellable: Boolean(stock?.available) && resolved !== null,
+        availability_reasons: stock?.reasons ?? [],
+        inventory_ready: stock?.inventoryReady ?? null,
+        available_quantity: stock?.availableQuantity ?? null,
         product_id: product?.id ?? null,
         station_id: product?.station_id ?? null,
-        variants: product
-          ? ((variants ?? []) as any[]).filter((v) => v.product_id === product.id)
-          : [],
+        variants:
+          product?.active !== false && product
+            ? ((variants ?? []) as any[]).filter((v) => v.product_id === product.id)
+            : [],
         modifier_group_ids: groupIds,
         // No `?? i.price` fallback here on purpose: i.price is the menu
         // item's own base/display field, never an authoritative Pricing

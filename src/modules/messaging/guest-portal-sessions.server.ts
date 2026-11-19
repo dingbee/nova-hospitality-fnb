@@ -144,7 +144,7 @@ export async function createWhatsAppGuestPortalSession(
       conversation_id: input.conversationId,
       created_by_event_id: input.createdByEventId,
       token_hash: tokenHash,
-      scope: "menu_browse",
+      scope: "guest_commerce",
       acquisition_channel: "whatsapp",
       currency: property.currency,
       menu_context: input.menuContext ?? {},
@@ -162,7 +162,7 @@ export async function createWhatsAppGuestPortalSession(
     portalUrl,
     expiresAt,
     currency: property.currency,
-    scope: "menu_browse" as const,
+    scope: "guest_commerce" as const,
   };
 }
 

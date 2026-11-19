@@ -3,12 +3,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assertRequiredWhatsAppPermissions,
   checkPhoneNumberHealth,
+  createWabaMessageTemplate,
   exchangeEmbeddedSignupCode,
   getWabaDetails,
   inspectAccessToken,
   listWabaPhoneNumbers,
+  listWabaMessageTemplates,
   registerVerifiedPhoneNumber,
   sendTextMessage,
+  sendTemplateMessage,
   subscribeWabaToApp,
   verifyWebhookChallenge,
   verifyWebhookSignature,
@@ -155,6 +158,70 @@ describe("Meta WhatsApp Cloud API foundation", () => {
     expect(String((fetchMock.mock.calls[0] as [URL])[0])).toContain("/waba-123/subscribed_apps");
   });
 
+  it("creates a WABA template and reads its approval status", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            message_template_id: "template-1",
+            status: "PENDING",
+            category: "MARKETING",
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "template-1",
+                name: "weekly_special",
+                status: "APPROVED",
+                category: "MARKETING",
+                language: "en",
+                components: [],
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      createWabaMessageTemplate(credentials, {
+        name: "weekly_special",
+        language: "en",
+        category: "MARKETING",
+        components: [{ type: "BODY", text: "This week's special is {{1}}" }],
+      }),
+    ).resolves.toMatchObject({ message_template_id: "template-1", status: "PENDING" });
+    await expect(listWabaMessageTemplates(credentials)).resolves.toMatchObject([
+      { id: "template-1", name: "weekly_special", status: "APPROVED" },
+    ]);
+    const [createUrl, createInit] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(String(createUrl)).toContain("/waba-123/message_templates");
+    expect(JSON.parse(String(createInit.body))).toMatchObject({
+      name: "weekly_special",
+      category: "MARKETING",
+    });
+  });
+
+  it("rejects malformed template definitions before calling Meta", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      createWabaMessageTemplate(credentials, {
+        name: "Bad Template",
+        language: "en",
+        category: "MARKETING",
+        components: [{ type: "BODY", text: "Hello" }],
+      }),
+    ).rejects.toThrow(/template name/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("sends a text message using the tenant phone-number ID", async () => {
     const fetchMock = vi
       .fn()
@@ -173,6 +240,32 @@ describe("Meta WhatsApp Cloud API foundation", () => {
     expect(JSON.parse(String(init.body))).toMatchObject({
       messaging_product: "whatsapp",
       to: "255700000000",
+    });
+  });
+
+  it("sends an approved WhatsApp template using the tenant phone-number ID", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          messaging_product: "whatsapp",
+          messages: [{ id: "wamid.template.1" }],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      sendTemplateMessage(credentials, "+255 700 000 000", {
+        name: "weekly_special",
+        language: "en",
+        components: [{ type: "body", parameters: [{ type: "text", text: "Friday" }] }],
+      }),
+    ).resolves.toMatchObject({ messages: [{ id: "wamid.template.1" }] });
+    const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(String(url)).toContain("/phone-456/messages");
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      type: "template",
+      template: { name: "weekly_special", language: { code: "en" } },
     });
   });
 

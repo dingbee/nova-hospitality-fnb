@@ -1,0 +1,364 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- privileged Supabase rows are validated at this boundary. */
+import { randomUUID } from "node:crypto";
+import { getIntegrationSecret } from "@/modules/api-platform/integrations.server";
+import { assertEntitled } from "@/modules/commercial/resolver.server";
+import { hasWhatsAppGuestMarketingConsent } from "./guest-crm.server";
+import { recordWhatsAppCampaignUsage } from "./campaign-governance.server";
+import {
+  MetaGraphError,
+  sendTemplateMessage,
+  sendTextMessage,
+} from "./providers/meta-cloud-api.server";
+
+type Db = any;
+
+class CampaignDispatchBlockedError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = "CampaignDispatchBlockedError";
+  }
+}
+type Outbound = {
+  id: string;
+  tenant_id: string;
+  property_id: string;
+  location_id: string;
+  conversation_id: string;
+  content: string;
+  message_type: string;
+  payload: Record<string, any>;
+  delivery_attempts: number;
+};
+
+export async function processPendingWhatsAppOutboundMessages(
+  admin: Db,
+  options: { limit?: number; workerId?: string } = {},
+) {
+  const workerId = options.workerId ?? randomUUID();
+  const limit = Math.min(Math.max(options.limit ?? 20, 1), 50);
+  const { data, error } = await admin.rpc("wa_claim_outbound_messages", {
+    _limit: limit,
+    _lease_seconds: 90,
+    _worker_id: workerId,
+  });
+  if (error) throw new Error("whatsapp_outbox_claim_failed");
+  const messages = Array.isArray(data) ? (data as Outbound[]) : [];
+  let sent = 0;
+  let retried = 0;
+  let failed = 0;
+  let campaignReconciliationRequired = 0;
+  let campaignDispatchDeferred = 0;
+  let providerDispatchDeferred = 0;
+  let campaignDispatchSuppressed = 0;
+
+  for (const message of messages) {
+    const campaignId = message.payload?.campaign_id;
+    const campaignRecipientId = message.payload?.campaign_recipient_id;
+    if (process.env.LEXIBITE_WHATSAPP_DISPATCH_ENABLED !== "true") {
+      const { error: releaseError } = await admin
+        .from("wa_messages")
+        .update({
+          locked_at: null,
+          locked_by: null,
+          next_attempt_at: new Date(Date.now() + 60_000).toISOString(),
+          last_error: "provider_dispatch_disabled",
+        })
+        .eq("id", message.id)
+        .eq("status", "queued")
+        .eq("locked_by", workerId);
+      if (releaseError) throw new Error("whatsapp_provider_dispatch_release_failed");
+      providerDispatchDeferred++;
+      continue;
+    }
+    if (
+      typeof campaignId === "string" &&
+      process.env.LEXIBITE_WHATSAPP_CAMPAIGN_DISPATCH_ENABLED !== "true"
+    ) {
+      const { error: releaseError } = await admin
+        .from("wa_messages")
+        .update({
+          locked_at: null,
+          locked_by: null,
+          next_attempt_at: new Date(Date.now() + 60_000).toISOString(),
+          last_error: "campaign_dispatch_disabled",
+        })
+        .eq("id", message.id)
+        .eq("status", "queued")
+        .eq("locked_by", workerId);
+      if (releaseError) throw new Error("whatsapp_campaign_dispatch_release_failed");
+      campaignDispatchDeferred++;
+      continue;
+    }
+    try {
+      if (typeof campaignId === "string") {
+        try {
+          await assertEntitled(admin, message.tenant_id, "whatsapp_campaigns", {
+            propertyId: message.property_id,
+          });
+        } catch {
+          throw new CampaignDispatchBlockedError("campaign_entitlement_unavailable");
+        }
+        const { data: campaign, error: campaignError } = await admin
+          .from("wa_campaigns")
+          .select("id, status, template_id")
+          .eq("id", campaignId)
+          .eq("tenant_id", message.tenant_id)
+          .eq("property_id", message.property_id)
+          .maybeSingle();
+        if (
+          campaignError ||
+          !campaign ||
+          ["paused", "cancelled", "suspended"].includes(String(campaign.status))
+        ) {
+          throw new CampaignDispatchBlockedError("campaign_not_dispatchable");
+        }
+        const { data: template, error: templateError } = await admin
+          .from("wa_message_templates")
+          .select("status, category")
+          .eq("id", campaign.template_id)
+          .eq("tenant_id", message.tenant_id)
+          .maybeSingle();
+        if (templateError || !template || template.status !== "approved") {
+          throw new CampaignDispatchBlockedError("campaign_template_not_approved");
+        }
+        const guestCustomerId = message.payload?.guest_customer_id;
+        if (
+          template.category === "marketing" &&
+          (typeof guestCustomerId !== "string" ||
+            !(await hasWhatsAppGuestMarketingConsent(admin, message.tenant_id, guestCustomerId)))
+        ) {
+          throw new CampaignDispatchBlockedError("marketing_consent_revoked");
+        }
+      }
+      const { data: conversation, error: conversationError } = await admin
+        .from("wa_conversations")
+        .select("binding_id, wa_user_id, status")
+        .eq("id", message.conversation_id)
+        .eq("tenant_id", message.tenant_id)
+        .eq("property_id", message.property_id)
+        .eq("location_id", message.location_id)
+        .maybeSingle();
+      if (
+        conversationError ||
+        !conversation ||
+        !["open", "human_handoff"].includes(conversation.status)
+      ) {
+        throw new Error("whatsapp_outbox_conversation_unavailable");
+      }
+
+      const { data: binding, error: bindingError } = await admin
+        .from("wa_phone_number_bindings")
+        .select("id, phone_number_id, integration_id, status")
+        .eq("id", conversation.binding_id)
+        .eq("tenant_id", message.tenant_id)
+        .eq("property_id", message.property_id)
+        .eq("location_id", message.location_id)
+        .maybeSingle();
+      if (bindingError || !binding || binding.status !== "active")
+        throw new Error("whatsapp_outbox_binding_unavailable");
+
+      const { data: integration, error: integrationError } = await admin
+        .from("api_integrations")
+        .select("id, status, config, provider, channel_key, integration_type")
+        .eq("id", binding.integration_id)
+        .eq("tenant_id", message.tenant_id)
+        .eq("property_id", message.property_id)
+        .maybeSingle();
+      if (
+        integrationError ||
+        !integration ||
+        integration.status !== "active" ||
+        integration.provider !== "meta-whatsapp" ||
+        integration.channel_key !== "whatsapp" ||
+        integration.integration_type !== "channel"
+      )
+        throw new Error("whatsapp_outbox_integration_unavailable");
+
+      const token = await getIntegrationSecret(admin, message.tenant_id, integration.id);
+      if (!token) throw new Error("whatsapp_outbox_credential_unavailable");
+      if (
+        message.message_type === "template" &&
+        typeof message.payload?.campaign_id === "string" &&
+        !message.payload?.campaign_usage
+      )
+        throw new Error("whatsapp_campaign_usage_snapshot_missing");
+      const providerCredentials = {
+        accessToken: token,
+        wabaId: String(integration.config?.wabaId ?? ""),
+        phoneNumberId: binding.phone_number_id,
+      };
+      const providerOptions = { graphApiVersion: integration.config?.graphApiVersion };
+      const template = message.payload?.template;
+      const result =
+        message.message_type === "template" && template
+          ? await sendTemplateMessage(
+              providerCredentials,
+              conversation.wa_user_id,
+              {
+                name: String(template.name ?? ""),
+                language: String(template.language ?? ""),
+                components: Array.isArray(template.components) ? template.components : [],
+              },
+              providerOptions,
+            )
+          : message.message_type === "text"
+            ? await sendTextMessage(
+                providerCredentials,
+                conversation.wa_user_id,
+                message.content,
+                providerOptions,
+              )
+            : (() => {
+                throw new Error("whatsapp_outbox_message_type_unsupported");
+              })();
+      const providerMessageId = result.messages?.[0]?.id;
+      if (!providerMessageId) throw new Error("whatsapp_outbox_provider_id_missing");
+
+      const { error: updateError } = await admin
+        .from("wa_messages")
+        .update({
+          provider_message_id: providerMessageId,
+          status: "sent",
+          sent_at: new Date().toISOString(),
+          locked_at: null,
+          locked_by: null,
+          last_error: null,
+        })
+        .eq("id", message.id)
+        .eq("status", "queued")
+        .eq("locked_by", workerId);
+      if (updateError) throw new Error("whatsapp_outbox_sent_state_failed");
+      const campaignUsage = message.payload?.campaign_usage;
+      if (
+        message.message_type === "template" &&
+        typeof message.payload?.campaign_id === "string" &&
+        campaignUsage
+      ) {
+        try {
+          await recordWhatsAppCampaignUsage(admin, {
+            tenantId: message.tenant_id,
+            propertyId: message.property_id,
+            locationId: message.location_id,
+            campaignId: String(message.payload.campaign_id),
+            guestCustomerId:
+              typeof message.payload.guest_customer_id === "string"
+                ? message.payload.guest_customer_id
+                : null,
+            rateId: typeof campaignUsage.rate_id === "string" ? campaignUsage.rate_id : null,
+            usageComponent: "meta_provider",
+            usageEvent: "whatsapp_template_message",
+            marketCode: String(campaignUsage.market_code ?? ""),
+            templateCategory: campaignUsage.template_category,
+            quantity: 1,
+            unitPrice: Number(campaignUsage.unit_price),
+            currency: String(campaignUsage.currency ?? ""),
+            idempotencyKey: "meta-provider:" + providerMessageId,
+            providerReference: providerMessageId,
+            metadata: {
+              templateName: message.payload?.template?.name ?? null,
+              messageId: message.id,
+            },
+          });
+        } catch {
+          campaignReconciliationRequired++;
+        }
+      }
+      if (typeof campaignRecipientId === "string") {
+        const { error: campaignUpdateError } = await admin
+          .from("wa_campaign_recipients")
+          .update({ state: "sent", dispatched_at: new Date().toISOString() })
+          .eq("id", campaignRecipientId)
+          .eq("tenant_id", message.tenant_id);
+        if (campaignUpdateError) campaignReconciliationRequired++;
+      }
+      const notificationEventId = message.payload?.order_notification_event_id;
+      if (typeof notificationEventId === "string") {
+        await admin
+          .from("wa_order_notification_events")
+          .update({ notification_state: "sent", updated_at: new Date().toISOString() })
+          .eq("id", notificationEventId)
+          .eq("tenant_id", message.tenant_id);
+      }
+      sent++;
+    } catch (error) {
+      if (error instanceof CampaignDispatchBlockedError) {
+        await admin
+          .from("wa_messages")
+          .update({
+            status: "failed",
+            locked_at: null,
+            locked_by: null,
+            last_error: error.reason,
+          })
+          .eq("id", message.id)
+          .eq("status", "queued")
+          .eq("locked_by", workerId);
+        if (typeof campaignRecipientId === "string") {
+          await admin
+            .from("wa_campaign_recipients")
+            .update({ state: "suppressed", suppression_reason: error.reason })
+            .eq("id", campaignRecipientId)
+            .eq("tenant_id", message.tenant_id);
+        }
+        campaignDispatchSuppressed++;
+        continue;
+      }
+      // Only an explicit Meta rate-limit response is automatically retried.
+      // Network/5xx outcomes are ambiguous: mark failed for operator review
+      // rather than risk sending a duplicate message after provider acceptance.
+      const retryable = error instanceof MetaGraphError && error.status === 429;
+      const delay =
+        error instanceof MetaGraphError && error.retryAfterMs !== null
+          ? Math.min(3600, Math.ceil(error.retryAfterMs / 1000))
+          : Math.min(3600, 5 * 2 ** Math.min(message.delivery_attempts - 1, 10));
+      const { error: stateError } = await admin
+        .from("wa_messages")
+        .update({
+          status: retryable && message.delivery_attempts < 8 ? "queued" : "failed",
+          next_attempt_at: new Date(Date.now() + delay * 1000).toISOString(),
+          locked_at: null,
+          locked_by: null,
+          last_error: retryable ? "provider_rate_limited" : "delivery_requires_operator_review",
+        })
+        .eq("id", message.id)
+        .eq("status", "queued")
+        .eq("locked_by", workerId);
+      if (stateError) throw new Error("whatsapp_outbox_failure_state_failed");
+      if (
+        typeof campaignRecipientId === "string" &&
+        !(retryable && message.delivery_attempts < 8)
+      ) {
+        await admin
+          .from("wa_campaign_recipients")
+          .update({ state: "failed" })
+          .eq("id", campaignRecipientId)
+          .eq("tenant_id", message.tenant_id);
+      }
+      const notificationEventId = message.payload?.order_notification_event_id;
+      if (
+        typeof notificationEventId === "string" &&
+        !(retryable && message.delivery_attempts < 8)
+      ) {
+        const notificationState =
+          error instanceof MetaGraphError && error.code === 131047 ? "deferred_template" : "failed";
+        await admin
+          .from("wa_order_notification_events")
+          .update({ notification_state: notificationState, updated_at: new Date().toISOString() })
+          .eq("id", notificationEventId)
+          .eq("tenant_id", message.tenant_id);
+      }
+      if (retryable && message.delivery_attempts < 8) retried++;
+      else failed++;
+    }
+  }
+  return {
+    claimed: messages.length,
+    sent,
+    retried,
+    failed,
+    campaignReconciliationRequired,
+    campaignDispatchDeferred,
+    campaignDispatchSuppressed,
+    providerDispatchDeferred,
+  };
+}

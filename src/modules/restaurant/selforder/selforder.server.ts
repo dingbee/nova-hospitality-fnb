@@ -27,7 +27,10 @@ import { fetchSellableCatalog } from "../sales/pos.server";
 import { createGuestOrder, recalcOrder, type SalesLineInput } from "../sales/sales.server";
 import { fireGuestOrder } from "../kitchen/kitchen.server";
 import { resolveGuestPaymentTiming, type GuestPaymentTiming } from "../payments/payment-timing";
-import { resolveServiceConfiguration, type ResolvedServiceConfiguration } from "../operations/service-config";
+import {
+  resolveServiceConfiguration,
+  type ResolvedServiceConfiguration,
+} from "../operations/service-config";
 import type { GuestLineInput } from "./selforder.contracts";
 
 type Sb = any;
@@ -227,7 +230,11 @@ export async function ensureGuestTableSession(sb: Sb, tableId: string) {
         .eq("id", staleSession.id)
         .eq("status", "active");
     }
-    return { hasOpenOrders: false, activeOrderId: null as string | null, paymentTiming: table.guestPaymentTiming };
+    return {
+      hasOpenOrders: false,
+      activeOrderId: null as string | null,
+      paymentTiming: table.guestPaymentTiming,
+    };
   }
 
   let session: { id: string } | null = null;
@@ -549,6 +556,15 @@ export async function submitGuestOrder(
   }
   if (valid.length === 0) {
     throw new Error("The order has no orderable items.");
+  }
+  const stockExceeded = valid.some((line) => {
+    const item = (catalog.items as any[]).find((candidate) => candidate.id === line.menuItemId);
+    return item?.available_quantity != null && line.quantity > Number(item.available_quantity);
+  });
+  if (stockExceeded) {
+    throw new Error(
+      "The requested quantity exceeds current available stock. Update the basket and try again.",
+    );
   }
 
   // unitPrice/discount/modifiers[].priceDelta are carried through here only
