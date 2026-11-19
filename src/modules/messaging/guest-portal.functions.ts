@@ -7,6 +7,31 @@ const guestPortalMenuSchema = z.object({
   token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
 });
 
+/**
+ * Guest commerce only exposes dishes with at least one configured ingredient.
+ * The canonical menu-item recipe model is restaurant_recipe_components;
+ * component rows count only when they resolve to an inventory item or a
+ * component menu item and carry a positive quantity. This is deliberately
+ * scoped to the guest channel and never mutates catalogue data.
+ */
+async function getIngredientBackedMenuItemIds(sb: any, tenantId: string, menuItemIds: string[]) {
+  const ids = [...new Set(menuItemIds)];
+  if (!ids.length) return new Set<string>();
+  const { data, error } = await sb
+    .from("restaurant_recipe_components")
+    .select("menu_item_id, inventory_item_id, component_menu_item_id, quantity")
+    .eq("tenant_id", tenantId)
+    .in("menu_item_id", ids);
+  if (error) throw new Error("Guest menu ingredient configuration could not be verified.");
+  return new Set(
+    (data ?? [])
+      .filter((row: any) =>
+        Number(row.quantity) > 0 && Boolean(row.inventory_item_id || row.component_menu_item_id),
+      )
+      .map((row: any) => row.menu_item_id as string),
+  );
+}
+
 /** Browse-only WhatsApp landing page. Scope is derived exclusively from the one-time bearer session. */
 export const guestPortalMenuFn = createServerFn({ method: "GET" })
   .inputValidator((value: unknown) => guestPortalMenuSchema.parse(value))
@@ -69,6 +94,11 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
     }
 
     if (conversationError) throw new Error("Guest CRM context could not be resolved.");
+    const ingredientBackedIds = await getIngredientBackedMenuItemIds(
+      supabaseAdmin,
+      session.tenantId,
+      catalog.items.map((item: any) => item.id),
+    );
     const guestCustomerId = conversation?.guest_customer_id as string | null;
     const [{ data: guestCustomer }, loyaltyPointsBalance] = guestCustomerId
       ? await Promise.all([
@@ -115,7 +145,9 @@ export const guestPortalMenuFn = createServerFn({ method: "GET" })
         })),
       })),
       items: catalog.items
-        .filter((item: any) => item.priceConfigured !== false && item.price !== null)
+        .filter((item: any) =>
+          ingredientBackedIds.has(item.id) && item.priceConfigured !== false && item.price !== null,
+        )
         .map((item: any) => ({
           id: item.id,
           name: item.name,
@@ -182,9 +214,16 @@ export const submitGuestCommerceOrderFn = createServerFn({ method: "POST" })
     if (tenantError || !tenant || tenant.status !== "active")
       throw new Error("The restaurant is not currently accepting orders.");
 
+    const ingredientBackedIds = await getIngredientBackedMenuItemIds(
+      supabaseAdmin,
+      session.tenantId,
+      catalog.items.map((item: any) => item.id),
+    );
     const sellableIds = new Set(
       catalog.items
-        .filter((item: any) => item.available !== false && item.priceConfigured !== false)
+        .filter((item: any) =>
+          ingredientBackedIds.has(item.id) && item.available !== false && item.priceConfigured !== false,
+        )
         .map((item: any) => item.id as string),
     );
     const { valid, rejected } = pickGuestOrderableLines(sellableIds, data.lines);
