@@ -218,6 +218,10 @@ function GuestOrderPage() {
     queryFn: () => menuFn({ data: { tableId } }),
     retry: false,
     networkMode: "always",
+    // Keep an already-open guest ordering screen in sync with catalogue
+    // changes made by staff, including newly activated modifier options.
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
   });
 
   const [categoryId, setCategoryId] = useState<string | null>(null);
