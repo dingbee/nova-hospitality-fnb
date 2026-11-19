@@ -408,6 +408,7 @@ describe("WCE-08 guest CRM history and template authoring", () => {
     ];
     const ranges: Array<[number, number]> = [];
     const loyaltyScopeCalls: Array<[string, unknown]> = [];
+    const consentScopeCalls: Array<[string, unknown]> = [];
     const datasets: Record<string, unknown[]> = {
       restaurant_guest_customers: [
         { id: "guest-a", display_name: "Guest A" },
@@ -425,6 +426,7 @@ describe("WCE-08 guest CRM history and template authoring", () => {
           select: () => builder,
           eq: (column: string, value: unknown) => {
             if (table === "restaurant_guest_loyalty_ledger") loyaltyScopeCalls.push([column, value]);
+            if (table === "restaurant_guest_customer_consents") consentScopeCalls.push([column, value]);
             return builder;
           },
           in: (column: string, value: unknown) => {
@@ -465,5 +467,7 @@ describe("WCE-08 guest CRM history and template authoring", () => {
     expect(loyaltyScopeCalls).toContainEqual(["tenant_id", "tenant-1"]);
     expect(loyaltyScopeCalls).toContainEqual(["guest_customer_id", ["guest-a", "guest-b"]]);
     expect(loyaltyScopeCalls).toContainEqual(["property_id", "property-1"]);
+    expect(consentScopeCalls).toContainEqual(["tenant_id", "tenant-1"]);
+    expect(consentScopeCalls).toContainEqual(["property_id", "property-1"]);
   });
 });
