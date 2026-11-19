@@ -293,7 +293,7 @@ describe("WhatsApp outbound queue", () => {
         campaignDispatchSuppressed: 1,
         providerDispatchDeferred: 0,
       });
-      expect(hasWhatsAppGuestMarketingConsent).toHaveBeenCalledWith(admin, "tenant-1", "guest-1");
+      expect(hasWhatsAppGuestMarketingConsent).toHaveBeenCalledWith(admin, "tenant-1", "guest-1", "property-1");
       expect(sendTemplateMessage).not.toHaveBeenCalled();
       expect(updates).toContainEqual(
         expect.objectContaining({
