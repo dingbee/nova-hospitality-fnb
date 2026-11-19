@@ -210,35 +210,56 @@ export async function listWhatsAppGuestCRM(sb: Db, userId: string, input: Tenant
   }
   const guestRows = guests ?? [];
   const guestIds = guestRows.map((guest: any) => guest.id);
-  const [{ data: orders, error: orderError }, { data: loyaltyRows, error: loyaltyError }] =
-    guestIds.length
-      ? await Promise.all([
-          (() => {
-            let ordersQuery = sb
-              .from("restaurant_orders")
-              .select(
-                "id, guest_customer_id, property_id, order_number, order_type, status, total, currency, opened_at, closed_at",
-              )
-              .eq("tenant_id", input.tenantId)
-              .in("guest_customer_id", guestIds)
-              .order("opened_at", { ascending: false })
-              .limit(guestIds.length * 10);
-            if (input.propertyId) ordersQuery = ordersQuery.eq("property_id", input.propertyId);
-            else if (propertyIds !== null) ordersQuery = ordersQuery.in("property_id", propertyIds);
-            return ordersQuery;
-          })(),
-          sb
-            .from("restaurant_guest_loyalty_ledger")
-            .select("guest_customer_id, points_delta")
-            .eq("tenant_id", input.tenantId)
-            .in("guest_customer_id", guestIds),
-        ])
-      : [
-          { data: [], error: null },
-          { data: [], error: null },
-        ];
+  const loyaltyQuery = guestIds.length
+    ? sb
+        .from("restaurant_guest_loyalty_ledger")
+        .select("guest_customer_id, points_delta")
+        .eq("tenant_id", input.tenantId)
+        .in("guest_customer_id", guestIds)
+    : Promise.resolve({ data: [], error: null });
+  const orderRows: any[] = [];
+  const ordersByGuest = new Map<string, any[]>();
+  let orderError: any = null;
+  if (guestIds.length) {
+    const pageSize = 500;
+    let offset = 0;
+    let hasMore = true;
+    while (
+      hasMore &&
+      guestIds.some((guestId) => (ordersByGuest.get(guestId)?.length ?? 0) < 10)
+    ) {
+      let ordersQuery = sb
+        .from("restaurant_orders")
+        .select(
+          "id, guest_customer_id, property_id, order_number, order_type, status, total, currency, opened_at, closed_at",
+        )
+        .eq("tenant_id", input.tenantId)
+        .in("guest_customer_id", guestIds)
+        .order("opened_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(offset, offset + pageSize - 1);
+      if (input.propertyId) ordersQuery = ordersQuery.eq("property_id", input.propertyId);
+      else if (propertyIds !== null) ordersQuery = ordersQuery.in("property_id", propertyIds);
+      const page = await ordersQuery;
+      if (page.error) {
+        orderError = page.error;
+        break;
+      }
+      const rows = page.data ?? [];
+      for (const order of rows) {
+        const guestOrders = ordersByGuest.get(order.guest_customer_id) ?? [];
+        if (guestOrders.length < 10) {
+          guestOrders.push(order);
+          ordersByGuest.set(order.guest_customer_id, guestOrders);
+          orderRows.push(order);
+        }
+      }
+      hasMore = rows.length === pageSize;
+      offset += pageSize;
+    }
+  }
+  const { data: loyaltyRows, error: loyaltyError } = await loyaltyQuery;
   if (orderError || loyaltyError) throw new Error("whatsapp_guest_history_unavailable");
-  const orderRows = orders ?? [];
   const orderIds = orderRows.map((order: any) => order.id);
   const { data: orderItems, error: itemError } = orderIds.length
     ? await sb
@@ -253,12 +274,6 @@ export async function listWhatsAppGuestCRM(sb: Db, userId: string, input: Tenant
     const items = itemsByOrder.get(item.order_id) ?? [];
     items.push({ name: String(item.description ?? ""), quantity: Number(item.quantity ?? 0) });
     itemsByOrder.set(item.order_id, items);
-  }
-  const ordersByGuest = new Map<string, any[]>();
-  for (const order of orderRows) {
-    const guestOrders = ordersByGuest.get(order.guest_customer_id) ?? [];
-    if (guestOrders.length < 10) guestOrders.push(order);
-    ordersByGuest.set(order.guest_customer_id, guestOrders);
   }
   const loyaltyByGuest = new Map<string, number>();
   for (const entry of loyaltyRows ?? []) {
@@ -678,6 +693,24 @@ async function serviceAdmin() {
   return (await import("@/integrations/supabase/client.server")).supabaseAdmin;
 }
 
+export function validateWhatsAppTemplateDraftComponents(
+  components: Array<Record<string, unknown>> | undefined,
+): Array<Record<string, unknown>> {
+  if (!Array.isArray(components)) throw new Error("whatsapp_template_body_required");
+  const bodyComponents = components.filter((component) => component?.type === "BODY");
+  if (bodyComponents.length !== 1) throw new Error("whatsapp_template_body_required");
+  const bodyText = bodyComponents[0].text;
+  if (
+    typeof bodyText !== "string" ||
+    bodyText.trim().length === 0 ||
+    bodyText.length > 1024 ||
+    /\\{\\{(?![1-9]\\d*\\}\\})|(?<!\\{\\{[1-9]\\d*)\\}\\}/.test(bodyText)
+  ) {
+    throw new Error("whatsapp_template_body_invalid");
+  }
+  return components;
+}
+
 export async function createWhatsAppTemplateDraft(
   sb: Db,
   userId: string,
@@ -689,6 +722,16 @@ export async function createWhatsAppTemplateDraft(
   },
 ) {
   await tenantQueryScope(sb, userId, input, "guest.context.manage");
+  if (!/^[a-z0-9_]{3,512}$/.test(input.templateName.trim())) {
+    throw new Error("whatsapp_template_name_invalid");
+  }
+  if (!/^[a-z]{2}([_-][A-Z]{2})?$/.test(input.language)) {
+    throw new Error("whatsapp_template_language_invalid");
+  }
+  if (!["marketing", "utility", "authentication"].includes(input.category)) {
+    throw new Error("whatsapp_template_category_invalid");
+  }
+  const components = validateWhatsAppTemplateDraftComponents(input.components);
   const admin = await serviceAdmin();
   const { data, error } = await admin
     .from("wa_message_templates")
@@ -698,7 +741,7 @@ export async function createWhatsAppTemplateDraft(
       template_name: input.templateName.trim(),
       language: input.language,
       category: input.category,
-      components: input.components ?? [],
+      components,
       status: "draft",
       created_by: userId,
     })
