@@ -356,7 +356,6 @@ describe("WCE-08 WhatsApp usage attribution", () => {
   });
 });
 
-
 describe("WCE-08 guest CRM history and template authoring", () => {
   it("validates one BODY component and rejects malformed template placeholders", () => {
     expect(
@@ -436,9 +435,10 @@ describe("WCE-08 guest CRM history and template authoring", () => {
           },
           then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
             Promise.resolve({
-              data: table === "restaurant_orders"
-                ? orders.slice(start, end + 1)
-                : datasets[table] ?? [],
+              data:
+                table === "restaurant_orders"
+                  ? orders.slice(start, end + 1)
+                  : (datasets[table] ?? []),
               error: null,
             }).then(resolve, reject),
         };
@@ -451,6 +451,9 @@ describe("WCE-08 guest CRM history and template authoring", () => {
     });
     expect(result.find((guest: any) => guest.id === "guest-a")?.recentOrders).toHaveLength(10);
     expect(result.find((guest: any) => guest.id === "guest-b")?.recentOrders).toHaveLength(10);
-    expect(ranges).toEqual([[0, 499], [500, 999]]);
+    expect(ranges).toEqual([
+      [0, 499],
+      [500, 999],
+    ]);
   });
 });
