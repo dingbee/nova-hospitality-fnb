@@ -107,29 +107,31 @@ describe("Guest loyalty accrual", () => {
   });
 });
 
-
 describe("WhatsApp marketing consent verification", () => {
-  it.each(["granted", "revoked", null])("uses the latest WhatsApp marketing consent state: %s", async (state) => {
-    const calls: Array<[string, unknown]> = [];
-    const builder: any = {
-      select: () => builder,
-      eq: (column: string, value: unknown) => {
-        calls.push([column, value]);
-        return builder;
-      },
-      order: () => builder,
-      limit: () => builder,
-      maybeSingle: async () => ({
-        data: state ? { state } : null,
-        error: null,
-      }),
-    };
-    const admin = { from: vi.fn(() => builder) };
-    const result = await hasWhatsAppGuestMarketingConsent(admin, "tenant-1", "guest-1");
-    expect(result).toBe(state === "granted");
-    expect(calls).toContainEqual(["tenant_id", "tenant-1"]);
-    expect(calls).toContainEqual(["guest_customer_id", "guest-1"]);
-    expect(calls).toContainEqual(["channel", "whatsapp"]);
-    expect(calls).toContainEqual(["purpose", "marketing"]);
-  });
+  it.each(["granted", "revoked", null])(
+    "uses the latest WhatsApp marketing consent state: %s",
+    async (state) => {
+      const calls: Array<[string, unknown]> = [];
+      const builder: any = {
+        select: () => builder,
+        eq: (column: string, value: unknown) => {
+          calls.push([column, value]);
+          return builder;
+        },
+        order: () => builder,
+        limit: () => builder,
+        maybeSingle: async () => ({
+          data: state ? { state } : null,
+          error: null,
+        }),
+      };
+      const admin = { from: vi.fn(() => builder) };
+      const result = await hasWhatsAppGuestMarketingConsent(admin, "tenant-1", "guest-1");
+      expect(result).toBe(state === "granted");
+      expect(calls).toContainEqual(["tenant_id", "tenant-1"]);
+      expect(calls).toContainEqual(["guest_customer_id", "guest-1"]);
+      expect(calls).toContainEqual(["channel", "whatsapp"]);
+      expect(calls).toContainEqual(["purpose", "marketing"]);
+    },
+  );
 });
