@@ -69,6 +69,17 @@ export const getFounderWhatsAppOverviewFn = createServerFn({ method: "POST" })
     return mod.getFounderWhatsAppOverview(context.supabase, context.userId);
   });
 
+function isValidWhatsAppTemplateBodyText(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const unmatchedPlaceholders = value.replace(/\{\{[1-9][0-9]*\}\}/g, "");
+  return (
+    value.trim().length > 0 &&
+    value.length <= 1024 &&
+    !unmatchedPlaceholders.includes("{{") &&
+    !unmatchedPlaceholders.includes("}}")
+  );
+}
+
 const templateDraftSchema = tenantFilterSchema.extend({
   templateName: z.string().regex(/^[a-z0-9_]{3,512}$/),
   language: z.string().regex(/^[a-z]{2}([_-][A-Z]{2})?$/),
@@ -84,14 +95,7 @@ const templateDraftSchema = tenantFilterSchema.extend({
         });
         return;
       }
-      const bodyText = bodyComponents[0].text;
-      if (
-        typeof bodyText !== "string" ||
-        bodyText.trim().length === 0 ||
-        bodyText.length > 1024 ||
-        /\{\{/.test(bodyText.replace(/\{\{[1-9]\\d*\\}\\}/g, "")) ||
-        /\}\}//.test(bodyText.replace(/\{\{[1-9]\\d*\\}\\}/g, ""))
-      ) {
+      if (!isValidWhatsAppTemplateBodyText(bodyComponents[0].text)) {
         context.addIssue({
           code: "custom",
           message: "WhatsApp BODY text must be 1–1024 characters with valid numbered placeholders.",
