@@ -206,12 +206,23 @@ export function WhatsAppOperationsCentre() {
   const usageTotals = (usage.data?.totals ?? []) as any[];
   const conv = conversion.data as any;
   const active = conversations.find((row) => row.id === conversationId);
-  const campaignAudience = customers.filter(
-    (guest) =>
-      guest.marketingConsent?.state === "granted" &&
-      (!campaignLanguage || guest.preferred_language === campaignLanguage),
+  const selectedCampaignTemplate = templates.find(
+    (template) => template.id === campaignTemplateId,
   );
-  const campaignSuppressed = customers.length - campaignAudience.length;
+  const campaignPreviewReady = Boolean(selectedCampaignTemplate);
+  const campaignAudience = campaignPreviewReady
+    ? customers.filter(
+        (guest) =>
+          guest.status === "active" &&
+          Boolean(guest.whatsapp_user_id) &&
+          (!campaignLanguage || guest.preferred_language === campaignLanguage) &&
+          (selectedCampaignTemplate.category !== "marketing" ||
+            guest.marketingConsent?.state === "granted"),
+      )
+    : [];
+  const campaignSuppressed = campaignPreviewReady
+    ? customers.length - campaignAudience.length
+    : 0;
 
   return (
     <div className="space-y-4">
@@ -678,19 +689,20 @@ export function WhatsAppOperationsCentre() {
                     <div>
                       <p className="text-sm font-medium">Audience eligibility preview</p>
                       <p className="text-xs text-muted-foreground">
-                        Current property-scoped CRM snapshot; marketing consent is mandatory.
+                        Property-scoped CRM sample; server governance calculates final eligibility.
                       </p>
                     </div>
                     <div className="text-right">
                       <p className="text-xl font-semibold tabular-nums">
                         {campaignAudience.length}
                       </p>
-                      <p className="text-xs text-muted-foreground">eligible guests</p>
+                      <p className="text-xs text-muted-foreground">preview matches</p>
                     </div>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {campaignSuppressed} excluded by consent or language filter. Final recipient
-                    eligibility is rechecked by server-side campaign governance at preparation time.
+                    {campaignPreviewReady
+                      ? `${campaignSuppressed} excluded from this CRM sample by status, contactability, consent or language.`
+                      : "Select an approved template to calculate a consent-aware CRM preview."} Final recipient eligibility is independently recalculated by server-side campaign governance.
                   </p>
                 </div>
                 <input
