@@ -8,7 +8,6 @@ import {
 import { assertCommercialAdmin } from "@/modules/commercial/access.server";
 import { checkQuota } from "@/modules/commercial/quota.server";
 
-
 type Db = any;
 
 type TenantFilter = {
@@ -234,7 +233,10 @@ export async function listWhatsAppGuestCRM(sb: Db, userId: string, input: Tenant
             .eq("tenant_id", input.tenantId)
             .in("guest_customer_id", guestIds),
         ])
-      : [{ data: [], error: null }, { data: [], error: null }];
+      : [
+          { data: [], error: null },
+          { data: [], error: null },
+        ];
   if (orderError || loyaltyError) throw new Error("whatsapp_guest_history_unavailable");
   const orderRows = orders ?? [];
   const orderIds = orderRows.map((order: any) => order.id);
