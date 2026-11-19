@@ -59,6 +59,7 @@ export function WhatsAppOperationsCentre() {
   const [templateCategory, setTemplateCategory] = useState<
     "marketing" | "utility" | "authentication"
   >("utility");
+  const [templateBody, setTemplateBody] = useState("");
   const [campaignName, setCampaignName] = useState("");
   const [campaignTemplateId, setCampaignTemplateId] = useState("");
   const [campaignLocationId, setCampaignLocationId] = useState("");
@@ -133,11 +134,15 @@ export function WhatsAppOperationsCentre() {
           templateName,
           language: templateLanguage,
           category: templateCategory,
+          components: templateBody.trim()
+            ? [{ type: "BODY", text: templateBody.trim() }]
+            : [],
         },
       }),
     successMessage: "Draft template created",
     onSuccess: () => {
       setTemplateName("");
+      setTemplateBody("");
       invalidateWorkspace();
     },
   });
@@ -443,7 +448,8 @@ export function WhatsAppOperationsCentre() {
               description="Create tenant-scoped drafts and review provider approval state. Meta submission remains disabled in UAT."
             >
               <form
-                className="mb-4 grid gap-2 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_100px_140px_auto]"
+                className="mb-4 grid gap-2 rounded-lg border p-3"
+
                 onSubmit={(event) => {
                   event.preventDefault();
                   createTemplate.mutate();
@@ -476,11 +482,20 @@ export function WhatsAppOperationsCentre() {
                   <option value="marketing">Marketing</option>
                   <option value="authentication">Authentication</option>
                 </select>
+                <textarea
+                  className="min-h-24 rounded-md border bg-background px-3 py-2 text-sm sm:col-span-3"
+                  placeholder="Template body text. Use {{1}}, {{2}} for approved variable placeholders."
+                  value={templateBody}
+                  onChange={(event) => setTemplateBody(event.target.value)}
+                  maxLength={1024}
+                  required
+                />
+                <p className="text-xs text-muted-foreground sm:col-span-3">Draft body is saved as a WhatsApp BODY component. Provider submission and approval remain separately governed.</p>
                 <button
-                  className="h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50"
-                  disabled={createTemplate.isPending || !propertyId}
+                  className="h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50 sm:col-span-3"
+                  disabled={createTemplate.isPending || !propertyId || !templateBody.trim()}
                 >
-                  Create draft
+                  Create template draft
                 </button>
               </form>
               {templates.length === 0 ? (
