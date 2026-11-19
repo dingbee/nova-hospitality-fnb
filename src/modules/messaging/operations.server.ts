@@ -210,13 +210,19 @@ export async function listWhatsAppGuestCRM(sb: Db, userId: string, input: Tenant
   }
   const guestRows = guests ?? [];
   const guestIds: string[] = guestRows.map((guest: any) => String(guest.id));
-  const loyaltyQuery = guestIds.length
+  let loyaltyQuery = guestIds.length
     ? sb
         .from("restaurant_guest_loyalty_ledger")
         .select("guest_customer_id, points_delta")
         .eq("tenant_id", input.tenantId)
         .in("guest_customer_id", guestIds)
     : Promise.resolve({ data: [], error: null });
+  // Loyalty entries are property-owned. Never expose a guest's balance from
+  // another property to a property-scoped CRM reader.
+  if (input.propertyId) loyaltyQuery = loyaltyQuery.eq("property_id", input.propertyId);
+  else if (propertyIds !== null && guestIds.length) {
+    loyaltyQuery = loyaltyQuery.in("property_id", propertyIds);
+  }
   const orderRows: any[] = [];
   const ordersByGuest = new Map<string, any[]>();
   let orderError: any = null;
