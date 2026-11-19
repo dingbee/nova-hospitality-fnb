@@ -210,19 +210,20 @@ export async function listWhatsAppGuestCRM(sb: Db, userId: string, input: Tenant
   }
   const guestRows = guests ?? [];
   const guestIds: string[] = guestRows.map((guest: any) => String(guest.id));
-  let loyaltyQuery = guestIds.length
-    ? sb
-        .from("restaurant_guest_loyalty_ledger")
-        .select("guest_customer_id, points_delta")
-        .eq("tenant_id", input.tenantId)
-        .in("guest_customer_id", guestIds)
+  const loyaltyQuery = guestIds.length
+    ? (() => {
+        let query = sb
+          .from("restaurant_guest_loyalty_ledger")
+          .select("guest_customer_id, points_delta")
+          .eq("tenant_id", input.tenantId)
+          .in("guest_customer_id", guestIds);
+        // Loyalty entries are property-owned. Never expose a guest's balance
+        // from another property to a property-scoped CRM reader.
+        if (input.propertyId) query = query.eq("property_id", input.propertyId);
+        else if (propertyIds !== null) query = query.in("property_id", propertyIds);
+        return query;
+      })()
     : Promise.resolve({ data: [], error: null });
-  // Loyalty entries are property-owned. Never expose a guest's balance from
-  // another property to a property-scoped CRM reader.
-  if (input.propertyId) loyaltyQuery = loyaltyQuery.eq("property_id", input.propertyId);
-  else if (propertyIds !== null && guestIds.length) {
-    loyaltyQuery = loyaltyQuery.in("property_id", propertyIds);
-  }
   const orderRows: any[] = [];
   const ordersByGuest = new Map<string, any[]>();
   let orderError: any = null;
