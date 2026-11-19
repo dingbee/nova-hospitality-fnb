@@ -899,9 +899,9 @@ function ProductRecipeCentre() {
               <AttachModifierGroupsPanel
                 tenantId={tenantId!}
                 productId={(productDetail.data as any).product.id}
-                attachedGroupIds={((productDetail.data as any).modifierGroups ?? []).map(
-                  (g: any) => g.group_id,
-                )}
+                attachedGroupIds={
+                  ((productDetail.data as any).modifierGroupIds ?? []) as string[]
+                }
               />
             </div>
           ) : null}
