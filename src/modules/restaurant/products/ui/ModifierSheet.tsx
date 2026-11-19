@@ -10,6 +10,7 @@ import { EntitySheet, Field, FieldRow, SearchSelect } from "@/modules/restaurant
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { upsertRestaurantModifierFn } from "../catalog.functions";
 import { listRestaurantInventoryFn } from "@/modules/restaurant/inventory/inventory.functions";
+import { listRestaurantRecipesFn } from "../catalog.functions";
 import { MODIFIER_EFFECTS } from "../contracts";
 
 interface ModifierSheetProps {
@@ -24,11 +25,13 @@ export function ModifierSheet({ open, onOpenChange, tenantId, groupId, modifier 
   const qc = useQueryClient();
   const upsertFn = useServerFn(upsertRestaurantModifierFn);
   const inventoryFn = useServerFn(listRestaurantInventoryFn);
+  const recipesFn = useServerFn(listRestaurantRecipesFn);
 
   const [name, setName] = useState("");
   const [priceDelta, setPriceDelta] = useState("0");
   const [effect, setEffect] = useState<(typeof MODIFIER_EFFECTS)[number]>("none");
   const [inventoryItemId, setInventoryItemId] = useState<string | null>(null);
+  const [recipeId, setRecipeId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState("0");
   const [active, setActive] = useState(true);
 
@@ -38,6 +41,7 @@ export function ModifierSheet({ open, onOpenChange, tenantId, groupId, modifier 
     setPriceDelta(String(modifier?.price_delta ?? 0));
     setEffect(modifier?.effect ?? "none");
     setInventoryItemId(modifier?.inventory_item_id ?? null);
+    setRecipeId(modifier?.recipe_id ?? null);
     setQuantity(String(modifier?.quantity ?? 0));
     setActive(modifier?.active ?? true);
   }, [open, modifier]);
@@ -46,6 +50,12 @@ export function ModifierSheet({ open, onOpenChange, tenantId, groupId, modifier 
     queryKey: ["restaurant.inventory.items", tenantId],
     queryFn: () => inventoryFn({ data: { tenantId, lowOnly: false, limit: 500 } }),
     enabled: open && effect === "inventory",
+  });
+
+  const recipes = useQuery({
+    queryKey: ["restaurant.recipes", tenantId, "modifier"],
+    queryFn: () => recipesFn({ data: { tenantId, latestOnly: true, limit: 200 } }),
+    enabled: open && effect === "recipe",
   });
 
   const save = useAdminMutation({
@@ -59,6 +69,7 @@ export function ModifierSheet({ open, onOpenChange, tenantId, groupId, modifier 
           priceDelta: Number(priceDelta) || 0,
           effect,
           inventoryItemId: effect === "inventory" ? inventoryItemId ?? undefined : undefined,
+          recipeId: effect === "recipe" ? recipeId ?? undefined : undefined,
           quantity: Number(quantity) || 0,
           active,
         },
@@ -79,7 +90,7 @@ export function ModifierSheet({ open, onOpenChange, tenantId, groupId, modifier 
       submitLabel={modifier?.id ? "Save changes" : "Create modifier"}
       onSubmit={() => save.mutate(undefined)}
       pending={save.isPending}
-      disabled={!name}
+      disabled={!name || (effect === "inventory" && !inventoryItemId) || (effect === "recipe" && !recipeId)}
     >
       <FieldRow>
         <Field label="Name" required>
@@ -100,6 +111,20 @@ export function ModifierSheet({ open, onOpenChange, tenantId, groupId, modifier 
           ))}
         </select>
       </Field>
+      {effect === "recipe" ? (
+        <Field label="Recipe" required>
+          <SearchSelect
+            options={((recipes.data ?? []) as any[]).map((r) => ({
+              value: r.id,
+              label: r.name,
+              hint: `${r.code ?? ""}${r.status ? ` · ${r.status}` : ""}`,
+            }))}
+            value={recipeId}
+            onChange={setRecipeId}
+            placeholder="Select recipe"
+          />
+        </Field>
+      ) : null}
       {effect === "inventory" ? (
         <FieldRow>
           <Field label="Inventory item">
