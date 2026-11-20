@@ -7,7 +7,12 @@
  * against a fake Supabase client, not a stub of the checks themselves —
  * exactly the same methodology decision.server.test.ts uses for I2/I3.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { assertEntitled } from "@/modules/commercial/resolver.server";
+
+vi.mock("@/modules/commercial/resolver.server", () => ({
+  assertEntitled: vi.fn().mockResolvedValue(undefined),
+}));
 import { executeRestaurantAction, verifyRestaurantAction } from "./actions.server";
 
 // Registers the restaurant provider + its tenant scope checker as a side
@@ -27,6 +32,8 @@ function findingFacts(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     hasSupplier: true,
     unreliableSupplier: false,
+    currentQuantity: 5,
+    reorderPoint: 10,
     estimatedCost: 45000,
     leadTimeDays: 3,
     inventoryItemId: INVENTORY_ITEM_ID,
@@ -44,6 +51,7 @@ function decisionRow(overrides: Partial<Record<string, unknown>> = {}) {
     tenant_id: TENANT_A,
     module: "restaurant",
     decision_key: "restaurant.tenant.finding.purchasing",
+    status: "approved",
     property_id: null,
     location_id: null,
     context: {
@@ -94,6 +102,7 @@ function makeFakeSupabase(opts: {
   existingRequestByCorrelation?: Record<string, any> | null;
   existingRequests?: Array<Record<string, any>>;
   existingItems?: Array<Record<string, any>>;
+  inventoryItem?: Record<string, any> | null;
   failRequestInsert?: boolean;
   failLineInsert?: boolean;
   failEventInsert?: boolean;
@@ -118,6 +127,17 @@ function makeFakeSupabase(opts: {
     ...(opts.existingRequests ?? []).map((r) => ({ ...r })),
   ];
   const items: Record<string, any>[] = (opts.existingItems ?? []).map((i) => ({ ...i }));
+  const decisionFacts = (opts.decision?.context as any)?.finding?.facts as
+    Record<string, unknown> | undefined;
+  const inventoryItem = opts.inventoryItem ?? {
+    id: INVENTORY_ITEM_ID,
+    tenant_id: TENANT_A,
+    property_id: null,
+    location_id: null,
+    current_quantity:
+      typeof decisionFacts?.currentQuantity === "number" ? decisionFacts.currentQuantity : 5,
+    status: "active",
+  };
   const priceReviews: Record<string, any>[] = (opts.existingPriceReviews ?? []).map((r) => ({
     ...r,
   }));
@@ -187,6 +207,11 @@ function makeFakeSupabase(opts: {
         if (table === "restaurant_members") {
           const rows = opts.restaurantMembers.filter((m) => matchesFilters(m, filters));
           return { data: rows, error: null };
+        }
+        if (table === "restaurant_inventory_items") {
+          const match =
+            inventoryItem && matchesFilters(inventoryItem, filters) ? inventoryItem : null;
+          return { data: match, error: match ? null : { message: "not found" } };
         }
         if (table === "restaurant_purchase_requests") {
           const matches = requests.filter((r) => matchesFilters(r, filters));
@@ -1049,6 +1074,9 @@ describe("restaurant.inventory.replenish_review — I5", () => {
       status: "executed",
       executionResult: "procurement_request_created",
       procurementRequestStatus: "draft",
+    });
+    expect(assertEntitled).toHaveBeenCalledWith(fake.supabase, TENANT_A, "inventory_agent", {
+      propertyId: null,
     });
     const lineInsert = fake.calls.find(
       (c) => c.table === "restaurant_purchase_request_items" && c.op === "insert",
