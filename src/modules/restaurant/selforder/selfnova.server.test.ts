@@ -2,6 +2,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { askNova } from "./selfnova.server";
 
+// Guest-only ingredient gate (guest-composition.server.ts) has its own
+// dedicated suite (guest-composition.server.test.ts). This file's subject is
+// a different contract, so the gate is a pass-through here unless a test
+// explicitly narrows it via guestComposedIds.
+const guestComposedIds = vi.hoisted(() => ({ exclude: new Set<string>() }));
+vi.mock("./guest-composition.server", () => ({
+  ingredientBackedMenuItemIds: async (_sb: unknown, _tenantId: string, ids: string[]) =>
+    new Set(ids.filter((id) => !guestComposedIds.exclude.has(id))),
+  filterGuestComposedItems: async (_sb: unknown, _tenantId: string, items: Array<{ id: string }>) =>
+    items.filter((item) => !guestComposedIds.exclude.has(item.id)),
+}));
+
 /**
  * Every other test in this file injects a scripted `ai` caller directly
  * into askNova's third parameter, which bypasses the module's own

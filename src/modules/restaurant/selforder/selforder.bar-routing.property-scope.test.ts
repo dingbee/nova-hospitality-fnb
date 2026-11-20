@@ -23,10 +23,22 @@
  * station — i.e. the ticket the guest chain created is actually visible to
  * the Bar Workspace.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { submitGuestOrder } from "./selforder.server";
 import { resolveBarScope } from "../bar/bar.server";
 import type { GuestLineInput } from "./selforder.contracts";
+
+// Guest-only ingredient gate (guest-composition.server.ts) has its own
+// dedicated suite (guest-composition.server.test.ts). This file's subject is
+// a different contract, so the gate is a pass-through here unless a test
+// explicitly narrows it via guestComposedIds.
+const guestComposedIds = vi.hoisted(() => ({ exclude: new Set<string>() }));
+vi.mock("./guest-composition.server", () => ({
+  ingredientBackedMenuItemIds: async (_sb: unknown, _tenantId: string, ids: string[]) =>
+    new Set(ids.filter((id) => !guestComposedIds.exclude.has(id))),
+  filterGuestComposedItems: async (_sb: unknown, _tenantId: string, items: Array<{ id: string }>) =>
+    items.filter((item) => !guestComposedIds.exclude.has(item.id)),
+}));
 
 const TENANT = "tenant-1";
 const PROPERTY_A = "property-a";

@@ -24,6 +24,7 @@
  * never require re-proving a live session (see selforder-recovery.ts).
  */
 import { fetchSellableCatalog } from "../sales/pos.server";
+import { filterGuestComposedItems } from "./guest-composition.server";
 import { createGuestOrder, recalcOrder, type SalesLineInput } from "../sales/sales.server";
 import { fireGuestOrder } from "../kitchen/kitchen.server";
 import { resolveGuestPaymentTiming, type GuestPaymentTiming } from "../payments/payment-timing";
@@ -457,7 +458,13 @@ export async function guestMenu(sb: Sb, tableId: string) {
     // A guest never sees an item staff have marked unavailable, or one the
     // pricing engine has no active price for — a price it would only refuse
     // at submission is never worth putting in front of a guest to tap.
-    items: catalog.items.filter((i: any) => i.available !== false && i.priceConfigured !== false),
+    // Items without configured ingredients are hidden from guests only
+    // (see guest-composition.server.ts); staff POS is unaffected.
+    items: await filterGuestComposedItems(
+      sb,
+      table.tenantId,
+      catalog.items.filter((i: any) => i.available !== false && i.priceConfigured !== false),
+    ),
   };
 }
 
@@ -542,11 +549,14 @@ export async function submitGuestOrder(
     propertyId: table.propertyId ?? undefined,
     locationId: table.locationId ?? undefined,
   });
-  const sellableIds = new Set(
-    (catalog.items as any[])
-      .filter((i) => i.available !== false && i.priceConfigured !== false)
-      .map((i) => i.id as string),
+  // Same guest-only composition gate as guestMenu, enforced again server-side
+  // so a crafted submission cannot order an item the menu would hide.
+  const guestOrderable = await filterGuestComposedItems(
+    sb,
+    table.tenantId,
+    (catalog.items as any[]).filter((i) => i.available !== false && i.priceConfigured !== false),
   );
+  const sellableIds = new Set(guestOrderable.map((i: any) => i.id as string));
 
   const { valid, rejected } = pickGuestOrderableLines(sellableIds, input.lines);
   if (rejected.length > 0) {
