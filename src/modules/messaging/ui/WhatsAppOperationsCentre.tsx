@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- server function rows are untyped at this UI boundary. */
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
@@ -53,11 +53,13 @@ export function WhatsAppOperationsCentre() {
   const propertyId = ws.data?.activePropertyId ?? undefined;
   const [locationId, setLocationId] = useState<string | undefined>();
   const [conversationId, setConversationId] = useState<string | undefined>();
+  const [selectedGuestId, setSelectedGuestId] = useState<string | undefined>();
   const [templateName, setTemplateName] = useState("");
   const [templateLanguage, setTemplateLanguage] = useState("en");
   const [templateCategory, setTemplateCategory] = useState<
     "marketing" | "utility" | "authentication"
   >("utility");
+  const [templateBody, setTemplateBody] = useState("");
   const [campaignName, setCampaignName] = useState("");
   const [campaignTemplateId, setCampaignTemplateId] = useState("");
   const [campaignLocationId, setCampaignLocationId] = useState("");
@@ -132,11 +134,13 @@ export function WhatsAppOperationsCentre() {
           templateName,
           language: templateLanguage,
           category: templateCategory,
+          components: templateBody.trim() ? [{ type: "BODY", text: templateBody.trim() }] : [],
         },
       }),
     successMessage: "Draft template created",
     onSuccess: () => {
       setTemplateName("");
+      setTemplateBody("");
       invalidateWorkspace();
     },
   });
@@ -202,6 +206,21 @@ export function WhatsAppOperationsCentre() {
   const usageTotals = (usage.data?.totals ?? []) as any[];
   const conv = conversion.data as any;
   const active = conversations.find((row) => row.id === conversationId);
+  const selectedCampaignTemplate = templates.find(
+    (template) => template.id === campaignTemplateId && template.status === "approved",
+  );
+  const campaignPreviewReady = Boolean(selectedCampaignTemplate);
+  const campaignAudience = campaignPreviewReady
+    ? customers.filter(
+        (guest) =>
+          guest.status === "active" &&
+          Boolean(guest.whatsapp_user_id) &&
+          (!campaignLanguage || guest.preferred_language === campaignLanguage) &&
+          (selectedCampaignTemplate.category !== "marketing" ||
+            guest.marketingConsent?.state === "granted"),
+      )
+    : [];
+  const campaignSuppressed = campaignPreviewReady ? customers.length - campaignAudience.length : 0;
 
   return (
     <div className="space-y-4">
@@ -373,33 +392,94 @@ export function WhatsAppOperationsCentre() {
                   </thead>
                   <tbody className="divide-y">
                     {customers.map((guest) => (
-                      <tr key={guest.id}>
-                        <td className="py-2 pr-3">
-                          <div className="font-medium">{guest.display_name || "Guest"}</div>
-                          <div className="text-xs text-muted-foreground">{guest.phone_e164}</div>
-                        </td>
-                        <td className="py-2 pr-3 uppercase">{guest.preferred_language}</td>
-                        <td className="py-2 pr-3">
-                          <StatusChip>{guest.status}</StatusChip>
-                        </td>
-                        <td className="py-2 pr-3">
-                          <StatusChip
-                            tone={
-                              guest.marketingConsent?.state === "granted" ? "success" : "warning"
-                            }
-                          >
-                            {guest.marketingConsent?.state ?? "not recorded"}
-                          </StatusChip>
-                        </td>
-                        <td className="py-2 pr-3">
-                          <StatusChip>
-                            {guest.serviceUpdatesConsent?.state ?? "not recorded"}
-                          </StatusChip>
-                        </td>
-                        <td className="py-2 text-xs text-muted-foreground">
-                          {formatDate(guest.last_seen_at)}
-                        </td>
-                      </tr>
+                      <Fragment key={guest.id}>
+                        <tr>
+                          <td className="py-2 pr-3">
+                            <button
+                              type="button"
+                              className="text-left font-medium text-primary hover:underline"
+                              onClick={() =>
+                                setSelectedGuestId(
+                                  selectedGuestId === guest.id ? undefined : guest.id,
+                                )
+                              }
+                            >
+                              {guest.display_name || "Guest"}
+                            </button>
+                            <div className="text-xs text-muted-foreground">{guest.phone_e164}</div>
+                          </td>
+                          <td className="py-2 pr-3 uppercase">{guest.preferred_language}</td>
+                          <td className="py-2 pr-3">
+                            <StatusChip>{guest.status}</StatusChip>
+                          </td>
+                          <td className="py-2 pr-3">
+                            <StatusChip
+                              tone={
+                                guest.marketingConsent?.state === "granted" ? "success" : "warning"
+                              }
+                            >
+                              {guest.marketingConsent?.state ?? "not recorded"}
+                            </StatusChip>
+                          </td>
+                          <td className="py-2 pr-3">
+                            <StatusChip>
+                              {guest.serviceUpdatesConsent?.state ?? "not recorded"}
+                            </StatusChip>
+                          </td>
+                          <td className="py-2 text-xs text-muted-foreground">
+                            {formatDate(guest.last_seen_at)}
+                          </td>
+                        </tr>
+                        {selectedGuestId === guest.id ? (
+                          <tr key={guest.id + "-history"} className="bg-muted/30">
+                            <td colSpan={6} className="p-3">
+                              <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                                <div>
+                                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Recent order history
+                                  </p>
+                                  {(guest.recentOrders ?? []).length ? (
+                                    <ul className="space-y-2">
+                                      {guest.recentOrders.map((order: any) => (
+                                        <li
+                                          key={order.orderNumber}
+                                          className="rounded-md border bg-background p-2"
+                                        >
+                                          <div className="flex flex-wrap justify-between gap-2 text-sm">
+                                            <span className="font-medium">
+                                              #{order.orderNumber} · {order.status}
+                                            </span>
+                                            <span>{money(order.total, order.currency)}</span>
+                                          </div>
+                                          <p className="mt-1 text-xs text-muted-foreground">
+                                            {order.orderType} · {formatDate(order.openedAt)}
+                                          </p>
+                                          <p className="mt-1 text-xs">
+                                            {order.items
+                                              .map((item: any) => item.quantity + " × " + item.name)
+                                              .join(", ") || "No item details"}
+                                          </p>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  ) : (
+                                    <p className="text-sm text-muted-foreground">
+                                      No linked orders recorded.
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="rounded-md border bg-background p-3">
+                                  <p className="text-xs text-muted-foreground">Loyalty balance</p>
+                                  <p className="text-2xl font-semibold tabular-nums">
+                                    {Number(guest.loyaltyPointsBalance ?? 0).toLocaleString()}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">points</p>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -415,7 +495,7 @@ export function WhatsAppOperationsCentre() {
               description="Create tenant-scoped drafts and review provider approval state. Meta submission remains disabled in UAT."
             >
               <form
-                className="mb-4 grid gap-2 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_100px_140px_auto]"
+                className="mb-4 grid gap-2 rounded-lg border p-3"
                 onSubmit={(event) => {
                   event.preventDefault();
                   createTemplate.mutate();
@@ -448,11 +528,23 @@ export function WhatsAppOperationsCentre() {
                   <option value="marketing">Marketing</option>
                   <option value="authentication">Authentication</option>
                 </select>
+                <textarea
+                  className="min-h-24 rounded-md border bg-background px-3 py-2 text-sm sm:col-span-3"
+                  placeholder="Template body text. Use {{1}}, {{2}} for approved variable placeholders."
+                  value={templateBody}
+                  onChange={(event) => setTemplateBody(event.target.value)}
+                  maxLength={1024}
+                  required
+                />
+                <p className="text-xs text-muted-foreground sm:col-span-3">
+                  Draft body is saved as a WhatsApp BODY component. Provider submission and approval
+                  remain separately governed.
+                </p>
                 <button
-                  className="h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50"
-                  disabled={createTemplate.isPending || !propertyId}
+                  className="h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50 sm:col-span-3"
+                  disabled={createTemplate.isPending || !propertyId || !templateBody.trim()}
                 >
-                  Create draft
+                  Create template draft
                 </button>
               </form>
               {templates.length === 0 ? (
@@ -590,6 +682,29 @@ export function WhatsAppOperationsCentre() {
                   <option value="en">English guests</option>
                   <option value="sw">Swahili guests</option>
                 </select>
+                <div className="rounded-md border bg-muted/30 p-3 sm:col-span-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-medium">Audience eligibility preview</p>
+                      <p className="text-xs text-muted-foreground">
+                        Property-scoped CRM sample; server governance calculates final eligibility.
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xl font-semibold tabular-nums">
+                        {campaignAudience.length}
+                      </p>
+                      <p className="text-xs text-muted-foreground">preview matches</p>
+                    </div>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {campaignPreviewReady
+                      ? `${campaignSuppressed} excluded from this CRM sample by status, contactability, consent or language.`
+                      : "Select an approved template to calculate a consent-aware CRM preview."}{" "}
+                    Final recipient eligibility is independently recalculated by server-side
+                    campaign governance.
+                  </p>
+                </div>
                 <input
                   type="number"
                   min="0"

@@ -189,6 +189,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Verify WCE property-scoped marketing consent and template constraint on the full replay
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/test-wce08-property-scoped-marketing-consent.sql
+
       - name: Scoped GTM and changed-path functional tests
         run: |
           bunx vitest run \

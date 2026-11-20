@@ -655,7 +655,12 @@ export async function queueWhatsAppCampaignRecipient(
   }
   if (
     template.category === "marketing" &&
-    !(await hasWhatsAppGuestMarketingConsent(admin, input.tenantId, recipient.guest_customer_id))
+    !(await hasWhatsAppGuestMarketingConsent(
+      admin,
+      input.tenantId,
+      recipient.guest_customer_id,
+      input.propertyId,
+    ))
   ) {
     await admin
       .from("wa_campaign_recipients")
