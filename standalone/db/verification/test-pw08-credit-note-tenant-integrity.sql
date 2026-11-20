@@ -173,3 +173,54 @@ END;
 $pw08_invoice_maker$;
 
 ROLLBACK;
+
+-- 0154z: supplier-invoice maker-checker is enforced in the database, so a
+-- recorder cannot bypass matchSupplierInvoice / setInvoicePaymentStatus by
+-- updating the row directly through the API.
+BEGIN;
+INSERT INTO public.restaurant_tenants (id, slug, name)
+VALUES ('f0000000-0000-4000-8000-0000000000dd', 'pw08-mc', 'PW-08 Maker Checker');
+INSERT INTO public.restaurant_members (tenant_id, property_id, user_id, role) VALUES
+  ('f0000000-0000-4000-8000-0000000000dd', NULL, 'f9000000-0000-4000-8000-0000000000d1', 'accountant'),
+  ('f0000000-0000-4000-8000-0000000000dd', NULL, 'f9000000-0000-4000-8000-0000000000d2', 'accountant');
+INSERT INTO public.restaurant_suppliers (id, tenant_id, name)
+VALUES ('f3000000-0000-4000-8000-0000000000dd', 'f0000000-0000-4000-8000-0000000000dd', 'MC supplier');
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', 'f9000000-0000-4000-8000-0000000000d1', 'role', 'authenticated')::text, true);
+INSERT INTO public.restaurant_supplier_invoices
+  (id, tenant_id, document_number, supplier_invoice_number, supplier_id, recorded_by, total, subtotal)
+VALUES ('f6000000-0000-4000-8000-0000000000dd', 'f0000000-0000-4000-8000-0000000000dd', 'MC-INV', 'MC-1',
+        'f3000000-0000-4000-8000-0000000000dd', 'f9000000-0000-4000-8000-0000000000d1', 300, 300);
+DO $mc_maker$
+BEGIN
+  UPDATE public.restaurant_supplier_invoices SET payment_status = 'disputed'
+  WHERE id = 'f6000000-0000-4000-8000-0000000000dd';
+  RAISE NOTICE 'PW-08 PASS: recorder may still mark own invoice disputed';
+  BEGIN
+    UPDATE public.restaurant_supplier_invoices SET match_status = 'matched'
+    WHERE id = 'f6000000-0000-4000-8000-0000000000dd';
+    RAISE EXCEPTION 'PW-08 FAIL: recorder matched own invoice directly';
+  EXCEPTION WHEN insufficient_privilege THEN
+    RAISE NOTICE 'PW-08 PASS: recorder cannot match own invoice via direct update';
+  END;
+  BEGIN
+    UPDATE public.restaurant_supplier_invoices SET payment_status = 'paid', amount_paid = 300
+    WHERE id = 'f6000000-0000-4000-8000-0000000000dd';
+    RAISE EXCEPTION 'PW-08 FAIL: recorder settled own invoice directly';
+  EXCEPTION WHEN insufficient_privilege THEN
+    RAISE NOTICE 'PW-08 PASS: recorder cannot settle own invoice via direct update';
+  END;
+END;
+$mc_maker$;
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', 'f9000000-0000-4000-8000-0000000000d2', 'role', 'authenticated')::text, true);
+DO $mc_checker$
+BEGIN
+  UPDATE public.restaurant_supplier_invoices SET match_status = 'matched', payment_status = 'paid', amount_paid = 300
+  WHERE id = 'f6000000-0000-4000-8000-0000000000dd';
+  IF NOT FOUND THEN RAISE EXCEPTION 'PW-08 FAIL: checker could not reconcile/settle'; END IF;
+  RAISE NOTICE 'PW-08 PASS: independent checker can reconcile and settle';
+END;
+$mc_checker$;
+ROLLBACK;
