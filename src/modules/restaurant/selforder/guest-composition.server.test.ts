@@ -227,3 +227,31 @@ describe("filterGuestComposedItems", () => {
     ]);
   });
 });
+
+describe("ingredientBackedMenuItemIds — bounded IN lists", () => {
+  it("queries large catalogues in batches and still resolves every configured item", async () => {
+    const n = 250;
+    const ids = Array.from({ length: n }, (_, i) => `m${i}`);
+    const inSizes: number[] = [];
+    const rows = {
+      restaurant_products: ids.map((id) => product(id, "r1")),
+      restaurant_recipes: [recipe("r1")],
+      restaurant_recipe_lines: [line("r1", { inventory_item_id: "inv-1" })],
+    };
+    const base = fakeSb(rows);
+    const sb = {
+      from(table: string) {
+        const b = base.from(table);
+        const originalIn = b.in;
+        b.in = (col: string, vals: unknown[]) => {
+          inSizes.push(vals.length);
+          return originalIn(col, vals);
+        };
+        return b;
+      },
+    };
+    const configured = await ingredientBackedMenuItemIds(sb, T, ids);
+    expect(configured.size).toBe(n);
+    expect(Math.max(...inSizes)).toBeLessThanOrEqual(100);
+  });
+});

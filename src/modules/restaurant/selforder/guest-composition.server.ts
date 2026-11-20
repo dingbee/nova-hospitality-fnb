@@ -30,6 +30,23 @@ type Sb = any;
 
 const ERROR = "Guest menu ingredient configuration could not be verified.";
 
+/**
+ * PostgREST encodes IN lists in the request URL; a large catalogue would
+ * exceed gateway URL limits and, because this gate fails closed, hide the
+ * whole guest menu. Every id list is therefore queried in bounded batches.
+ */
+export const GUEST_COMPOSITION_ID_BATCH = 100;
+
+async function selectIn(build: (ids: string[]) => any, ids: string[]): Promise<any[]> {
+  const rows: any[] = [];
+  for (let offset = 0; offset < ids.length; offset += GUEST_COMPOSITION_ID_BATCH) {
+    const { data, error } = await build(ids.slice(offset, offset + GUEST_COMPOSITION_ID_BATCH));
+    if (error) throw new Error(ERROR);
+    rows.push(...((data ?? []) as any[]));
+  }
+  return rows;
+}
+
 function positive(quantity: unknown) {
   const n = Number(quantity);
   return Number.isFinite(n) && n > 0;
@@ -45,52 +62,65 @@ export async function ingredientBackedMenuItemIds(
   const configured = new Set<string>();
   if (ids.length === 0) return configured;
 
-  const [productsRes, componentsRes] = await Promise.all([
-    sb
-      .from("restaurant_products")
-      .select("menu_item_id, recipe_id, active")
-      .eq("tenant_id", tenantId)
-      .eq("active", true)
-      .in("menu_item_id", ids),
-    sb
-      .from("restaurant_recipe_components")
-      .select("menu_item_id, inventory_item_id, quantity")
-      .eq("tenant_id", tenantId)
-      .in("menu_item_id", ids),
+  const [products, components] = await Promise.all([
+    selectIn(
+      (batch) =>
+        sb
+          .from("restaurant_products")
+          .select("menu_item_id, recipe_id, active")
+          .eq("tenant_id", tenantId)
+          .eq("active", true)
+          .in("menu_item_id", batch),
+      ids,
+    ),
+    selectIn(
+      (batch) =>
+        sb
+          .from("restaurant_recipe_components")
+          .select("menu_item_id, inventory_item_id, quantity")
+          .eq("tenant_id", tenantId)
+          .in("menu_item_id", batch),
+      ids,
+    ),
   ]);
-  if (productsRes.error || componentsRes.error) throw new Error(ERROR);
 
-  for (const row of (componentsRes.data ?? []) as any[]) {
+  for (const row of components) {
     if (row.menu_item_id && row.inventory_item_id && positive(row.quantity))
       configured.add(row.menu_item_id);
   }
 
   // Pinned recipe per menu item, then follow its lineage to the active version.
   const pinnedByMenuItem = new Map<string, string>();
-  for (const p of (productsRes.data ?? []) as any[]) {
+  for (const p of products) {
     if (p.menu_item_id && p.recipe_id && !pinnedByMenuItem.has(p.menu_item_id))
       pinnedByMenuItem.set(p.menu_item_id, p.recipe_id);
   }
   if (pinnedByMenuItem.size === 0) return configured;
 
   const pinnedIds = [...new Set(pinnedByMenuItem.values())];
-  const pinnedRes = await sb
-    .from("restaurant_recipes")
-    .select("id, lineage_id, version, status")
-    .eq("tenant_id", tenantId)
-    .in("id", pinnedIds);
-  if (pinnedRes.error) throw new Error(ERROR);
-  const pinned = new Map<string, any>(((pinnedRes.data ?? []) as any[]).map((r) => [r.id, r]));
+  const pinnedRows = await selectIn(
+    (batch) =>
+      sb
+        .from("restaurant_recipes")
+        .select("id, lineage_id, version, status")
+        .eq("tenant_id", tenantId)
+        .in("id", batch),
+    pinnedIds,
+  );
+  const pinned = new Map<string, any>(pinnedRows.map((r) => [r.id, r]));
   const lineages = [...new Set([...pinned.values()].map((r) => r.lineage_id ?? r.id))];
-  const activeRes = await sb
-    .from("restaurant_recipes")
-    .select("id, lineage_id, version, status")
-    .eq("tenant_id", tenantId)
-    .eq("status", "active")
-    .in("lineage_id", lineages);
-  if (activeRes.error) throw new Error(ERROR);
+  const activeRows = await selectIn(
+    (batch) =>
+      sb
+        .from("restaurant_recipes")
+        .select("id, lineage_id, version, status")
+        .eq("tenant_id", tenantId)
+        .eq("status", "active")
+        .in("lineage_id", batch),
+    lineages,
+  );
   const activeByLineage = new Map<string, any>();
-  for (const r of (activeRes.data ?? []) as any[]) {
+  for (const r of activeRows) {
     const key = r.lineage_id ?? r.id;
     const current = activeByLineage.get(key);
     if (!current || Number(r.version ?? 1) > Number(current.version ?? 1))
@@ -114,14 +144,17 @@ export async function ingredientBackedMenuItemIds(
   let frontier = [...new Set(recipeByMenuItem.values())];
   while (frontier.length > 0) {
     for (const id of frontier) visited.add(id);
-    const { data: lines, error } = await sb
-      .from("restaurant_recipe_lines")
-      .select("recipe_id, inventory_item_id, sub_recipe_id, quantity")
-      .eq("tenant_id", tenantId)
-      .in("recipe_id", frontier);
-    if (error) throw new Error(ERROR);
+    const lines = await selectIn(
+      (batch) =>
+        sb
+          .from("restaurant_recipe_lines")
+          .select("recipe_id, inventory_item_id, sub_recipe_id, quantity")
+          .eq("tenant_id", tenantId)
+          .in("recipe_id", batch),
+      frontier,
+    );
     const next = new Set<string>();
-    for (const line of (lines ?? []) as any[]) {
+    for (const line of lines) {
       if (line.inventory_item_id && positive(line.quantity)) withIngredients.add(line.recipe_id);
       if (line.sub_recipe_id && positive(line.quantity)) {
         const parents = parentsOf.get(line.sub_recipe_id) ?? new Set<string>();
