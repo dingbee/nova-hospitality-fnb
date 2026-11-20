@@ -1,5 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import {
+  createOperationalExpenseCategoryInputSchema,
+  createOperationalExpenseInputSchema,
+} from "./costing.contracts";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   computeRecipeCostSchema,
@@ -110,20 +114,7 @@ export const listOperationalExpenseCategoriesFn = createServerFn({ method: "POST
   });
 export const createOperationalExpenseFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) =>
-    z
-      .object({
-        tenantId: z.string().uuid(),
-        propertyId: z.string().uuid().nullable().optional(),
-        locationId: z.string().uuid().nullable().optional(),
-        categoryId: z.string().uuid(),
-        description: z.string().trim().min(2).max(240),
-        amount: z.number().positive().finite(),
-        currency: z.string().regex(/^[A-Z]{3}$/),
-        incurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      })
-      .parse(d),
-  )
+  .inputValidator((d: unknown) => createOperationalExpenseInputSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./costing.server");
     return mod.createOperationalExpense(context.supabase, context.userId, data);
@@ -171,15 +162,7 @@ export const allocateOperationalExpenseDirectFn = createServerFn({ method: "POST
 
 export const createOperationalExpenseCategoryFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) =>
-    z
-      .object({
-        tenantId: z.string().uuid(),
-        name: z.string().trim().min(2).max(80),
-        categoryKey: z.string().regex(/^[a-z][a-z0-9_]{1,63}$/),
-      })
-      .parse(d),
-  )
+  .inputValidator((d: unknown) => createOperationalExpenseCategoryInputSchema.parse(d))
   .handler(async ({ data, context }) => {
     const mod = await import("./costing.server");
     return mod.createOperationalExpenseCategory(context.supabase, context.userId, data);
@@ -253,8 +236,8 @@ export const allocateOperationalExpenseByRuleFn = createServerFn({ method: "POST
 const costReconciliationInput = z.object({
   tenantId: z.string().uuid(),
   propertyId: z.string().uuid(),
-  periodStart: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
-  periodEnd: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 export const runCostReconciliationFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -272,11 +255,11 @@ export const listCostReconciliationDashboardFn = createServerFn({ method: "POST"
         propertyId: z.string().uuid().optional(),
         periodStart: z
           .string()
-          .regex(/^\\d{4}-\\d{2}-\\d{2}$/)
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
           .optional(),
         periodEnd: z
           .string()
-          .regex(/^\\d{4}-\\d{2}-\\d{2}$/)
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
           .optional(),
       })
       .parse(d),
@@ -318,8 +301,8 @@ export const saveOperationalCostBudgetFn = createServerFn({ method: "POST" })
         tenantId: z.string().uuid(),
         propertyId: z.string().uuid(),
         categoryId: z.string().uuid(),
-        periodStart: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
-        periodEnd: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+        periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         currency: z.string().regex(/^[A-Z]{3}$/),
         budgetAmount: z.number().positive().finite(),
       })
@@ -344,7 +327,7 @@ export const updateOperationalExpenseFn = createServerFn({ method: "POST" })
         description: z.string().trim().min(2).max(240),
         amount: z.number().positive().finite(),
         currency: z.string().regex(/^[A-Z]{3}$/),
-        incurredOn: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+        incurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       })
       .parse(d),
   )
@@ -426,10 +409,10 @@ const recurringExpenseSchema = z.object({
   amount: z.number().positive().finite(),
   currency: z.string().regex(/^[A-Z]{3}$/),
   cadence: z.enum(["weekly", "monthly", "quarterly", "annually"]),
-  nextOccurrence: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+  nextOccurrence: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   endsOn: z
     .string()
-    .regex(/^\\d{4}-\\d{2}-\\d{2}$/)
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
     .nullable()
     .optional(),
 });
@@ -467,7 +450,7 @@ export const generateRecurringExpenseOccurrenceFn = createServerFn({ method: "PO
       .object({
         tenantId: z.string().uuid(),
         scheduleId: z.string().uuid(),
-        occurrenceDate: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+        occurrenceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       })
       .parse(d),
   )

@@ -337,7 +337,7 @@ const expenseInputSchema = z.object({
   description: z.string().trim().min(2).max(240),
   amount: z.number().positive().finite(),
   currency: z.string().regex(/^[A-Z]{3}$/),
-  incurredOn: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+  incurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   expenseStatus: z.enum(["draft", "recorded"]).default("recorded"),
 });
 const expenseEditSchema = expenseInputSchema
@@ -786,10 +786,10 @@ const recurringScheduleSchema = z.object({
   amount: z.number().positive().finite(),
   currency: z.string().regex(/^[A-Z]{3}$/),
   cadence: z.enum(["weekly", "monthly", "quarterly", "annually"]),
-  nextOccurrence: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+  nextOccurrence: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   endsOn: z
     .string()
-    .regex(/^\\d{4}-\\d{2}-\\d{2}$/)
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
     .nullable()
     .optional(),
 });
@@ -904,7 +904,7 @@ export async function generateRecurringExpenseOccurrence(
     .object({
       tenantId: z.string().uuid(),
       scheduleId: z.string().uuid(),
-      occurrenceDate: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+      occurrenceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     })
     .parse(input);
   const { data: s, error: readError } = await sb
@@ -1303,7 +1303,7 @@ export async function allocateOperationalExpenseByRule(
     const raw = (cents * Number(t.weight)) / totalWeight;
     return { ...t, index, cents: Math.floor(raw), remainder: raw - Math.floor(raw) };
   });
-  let remaining = cents - shares.reduce((sum, t) => sum + t.cents, 0);
+  const remaining = cents - shares.reduce((sum, t) => sum + t.cents, 0);
   [...shares]
     .sort(
       (a, b) =>
