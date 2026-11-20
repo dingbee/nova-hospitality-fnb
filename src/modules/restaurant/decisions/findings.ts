@@ -158,7 +158,12 @@ export function inventoryFindings(
   // as real. Dropping belowReorder rows with no velocity here was the exact
   // gap that let a genuinely below-reorder item raise no finding at all.
   for (const row of inv.atRisk
-    .filter((r) => (r.daysOfCover != null && r.daysOfCover <= SHORTAGE_DAYS) || r.belowReorder)
+    .filter(
+      (r) =>
+        r.currentQuantity <= 0 ||
+        (r.daysOfCover != null && r.daysOfCover <= SHORTAGE_DAYS) ||
+        r.belowReorder,
+    )
     .slice(0, 5)) {
     const days = row.daysOfCover;
     const severity =
@@ -171,7 +176,9 @@ export function inventoryFindings(
       headline:
         days != null
           ? `${row.name} is forecast to run out in ${days} day${days === 1 ? "" : "s"}`
-          : `${row.name} is already below its reorder point`,
+          : row.belowReorder
+            ? `${row.name} is already below its reorder point`
+            : `${row.name} is at zero or negative stock with no measured consumption`,
       detail: `${row.currentQuantity} on hand against ${row.dailyVelocity}/day consumption${row.belowReorder ? ", already below the reorder point" : ""}.`,
       metric: days != null ? `${days} days of cover` : "below reorder point",
       evidence: [
@@ -198,7 +205,7 @@ export function inventoryFindings(
         return {
           daysOfCover: days,
           belowReorder: row.belowReorder,
-          urgent: days != null ? days <= 2 : row.belowReorder,
+          urgent: row.currentQuantity <= 0 || (days != null ? days <= 2 : row.belowReorder),
           velocity: row.dailyVelocity,
           // Structured identifiers a downstream executor needs to raise a
           // real procurement request line — the same additive shape
