@@ -12,10 +12,22 @@
  * selforder.submit.server.test.ts and selforder.bar-routing.property-scope.
  * test.ts — no step of that chain is mocked out.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { submitGuestOrder, closeActiveGuestSession } from "./selforder.server";
 import { guestSessionProjection } from "./selfsession.server";
 import type { GuestLineInput } from "./selforder.contracts";
+
+// Guest-only ingredient gate (guest-composition.server.ts) has its own
+// dedicated suite (guest-composition.server.test.ts). This file's subject is
+// a different contract, so the gate is a pass-through here unless a test
+// explicitly narrows it via guestComposedIds.
+const guestComposedIds = vi.hoisted(() => ({ exclude: new Set<string>() }));
+vi.mock("./guest-composition.server", () => ({
+  ingredientBackedMenuItemIds: async (_sb: unknown, _tenantId: string, ids: string[]) =>
+    new Set(ids.filter((id) => !guestComposedIds.exclude.has(id))),
+  filterGuestComposedItems: async (_sb: unknown, _tenantId: string, items: Array<{ id: string }>) =>
+    items.filter((item) => !guestComposedIds.exclude.has(item.id)),
+}));
 
 const TENANT = "tenant-1";
 const TABLE = "table-1";
@@ -125,7 +137,7 @@ function makeFakeSupabase(initial: Record<string, any[]>) {
         return api;
       },
       is(col: string, val: unknown) {
-        filters.push((r) => val === null ? r[col] == null : r[col] === val);
+        filters.push((r) => (val === null ? r[col] == null : r[col] === val));
         return api;
       },
       lt(col: string, val: string) {
@@ -690,10 +702,7 @@ describe("guest dining session — the continuous-session defect (tests 13-30)",
     });
 
     expect(continued.session.session?.status).toBe("active");
-    expect(continued.session.orders.map((o: any) => o.id)).toEqual([
-      "staff-order",
-      continued.id,
-    ]);
+    expect(continued.session.orders.map((o: any) => o.id)).toEqual(["staff-order", continued.id]);
     expect(sb.store.restaurant_guest_sessions).toHaveLength(1);
   });
 
