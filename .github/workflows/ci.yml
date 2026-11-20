@@ -107,6 +107,14 @@ jobs:
         run: |
           psql -h localhost -U postgres -d lexibite_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-tenant-central-store-migration.sql
 
+      - name: Verify supplier credit-note lifecycle in isolated PostgreSQL
+        env:
+          PGPASSWORD: postgres
+        run: |
+          dropdb -h localhost -U postgres --if-exists lexibite_credit_test
+          createdb -h localhost -U postgres lexibite_credit_test
+          psql -h localhost -U postgres -d lexibite_credit_test -v ON_ERROR_STOP=1 -f standalone/db/verification/test-supplier-credit-note-lifecycle.sql
+
       - name: Apply and verify the complete LexiBite LB-02 migration chain
         env:
           PGPASSWORD: postgres

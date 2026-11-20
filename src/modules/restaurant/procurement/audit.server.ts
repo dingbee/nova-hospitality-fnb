@@ -104,3 +104,29 @@ export async function insertWithUniqueDocumentNumber(
   }
   throw new Error(lastError?.message ?? "Failed to create document.");
 }
+
+/**
+ * Strict audit writer for financial documents. Unlike legacy best-effort
+ * callers, invoice and settlement workflows must not report success when
+ * their audit evidence could not be persisted.
+ */
+export async function recordProcurementAuditStrict(
+  sb: Sb,
+  userId: string,
+  entry: Parameters<typeof recordProcurementAudit>[2],
+): Promise<void> {
+  const { error } = await sb.from("restaurant_procurement_audit").insert({
+    tenant_id: entry.tenantId,
+    document_type: entry.documentType,
+    document_id: entry.documentId,
+    document_number: entry.documentNumber ?? null,
+    action: entry.action,
+    previous_state: entry.previousState ?? null,
+    new_state: entry.newState ?? null,
+    reason: entry.reason ?? null,
+    actor_id: userId,
+    correlation_id: entry.correlationId ?? null,
+    metadata: entry.metadata ?? {},
+  });
+  if (error) throw new Error("Procurement audit persistence failed: " + error.message);
+}
