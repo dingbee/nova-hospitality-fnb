@@ -188,6 +188,8 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
             -f standalone/db/verification/test-p0-04-cross-tenant-procurement-rls.sql
           psql -X -v ON_ERROR_STOP=1 -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -f standalone/db/verification/test-pw08-credit-note-tenant-integrity.sql
+          psql -X -v ON_ERROR_STOP=1 -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
             -f standalone/db/verification/test-p0-04-security-definer-inventory.sql \
             > p0-04-security-definer-inventory.txt
 

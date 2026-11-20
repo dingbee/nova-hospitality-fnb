@@ -192,18 +192,32 @@ export async function applySupplierCreditNote(
   await assertCapability(sb, userId, input.tenantId, "invoice.manage");
   const { data: creditNote, error: creditNoteError } = await sb
     .from("restaurant_supplier_credit_notes")
-    .select("id, supplier_id, currency, property_id, location_id, reference_invoice_id")
+    .select(
+      "id, supplier_id, currency, property_id, location_id, reference_invoice_id, recorded_by",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("id", input.creditNoteId)
     .single();
   if (creditNoteError || !creditNote) throw new Error("Supplier credit note not found.");
   const { data: invoice, error: invoiceError } = await sb
     .from("restaurant_supplier_invoices")
-    .select("id, supplier_id, currency, property_id, location_id")
+    .select("id, supplier_id, currency, property_id, location_id, recorded_by")
     .eq("tenant_id", input.tenantId)
     .eq("id", input.invoiceId)
     .single();
   if (invoiceError || !invoice) throw new Error("Supplier invoice not found.");
+  // Applying credit can settle the invoice, so it follows the same maker-checker
+  // rule as setInvoicePaymentStatus. The database function enforces this too.
+  if (invoice.recorded_by === userId) {
+    throw new Error(
+      "Separation of duties — the invoice recorder cannot apply supplier credit to the same invoice.",
+    );
+  }
+  if (creditNote.recorded_by === userId) {
+    throw new Error(
+      "Separation of duties — the user who recorded this credit note cannot apply it.",
+    );
+  }
   if (creditNote.supplier_id !== invoice.supplier_id) {
     throw new Error("Supplier credit note and target invoice must belong to the same supplier.");
   }

@@ -39,11 +39,14 @@ GRANT USAGE ON SCHEMA auth TO authenticated;
 GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated;
 
 CREATE TABLE public.restaurant_tenants (id uuid PRIMARY KEY);
-CREATE TABLE public.restaurant_properties (id uuid PRIMARY KEY, tenant_id uuid);
-CREATE TABLE public.restaurant_locations (id uuid PRIMARY KEY);
+-- Stub keys mirror the production schema: every referenced table exposes a
+-- UNIQUE (tenant_id, id) key so credit notes can use tenant-composite FKs.
+CREATE TABLE public.restaurant_properties (id uuid PRIMARY KEY, tenant_id uuid, UNIQUE (tenant_id, id));
+CREATE TABLE public.restaurant_locations (id uuid PRIMARY KEY, tenant_id uuid, UNIQUE (tenant_id, id));
 CREATE TABLE public.restaurant_suppliers (
   id uuid PRIMARY KEY,
-  tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id)
+  tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id),
+  UNIQUE (tenant_id, id)
 );
 CREATE TABLE public.restaurant_supplier_invoices (
   id uuid PRIMARY KEY,
@@ -55,7 +58,10 @@ CREATE TABLE public.restaurant_supplier_invoices (
   total numeric(14,2) NOT NULL,
   amount_paid numeric(14,2) NOT NULL DEFAULT 0,
   payment_status text NOT NULL DEFAULT 'unpaid',
-  status text NOT NULL DEFAULT 'recorded'
+  status text NOT NULL DEFAULT 'recorded',
+  -- Maker identity (production: supplier invoices carry recorded_by, guarded by 0152).
+  recorded_by uuid NOT NULL DEFAULT '50000000-0000-4000-8000-000000000009',
+  UNIQUE (tenant_id, id)
 );
 CREATE TABLE public.restaurant_procurement_audit (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -141,16 +147,17 @@ INSERT INTO public.restaurant_supplier_credit_notes(
  id,tenant_id,supplier_id,reference_invoice_id,document_number,supplier_credit_note_number,
  credit_date,currency,subtotal,tax_total,total,reason,recorded_by
 ) VALUES
- ('40000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0001','SUP-CN-001',current_date,'TZS',60,0,60,'Supplier price adjustment','50000000-0000-4000-8000-000000000001'),
+ ('40000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0001','SUP-CN-001',current_date,'TZS',60,0,60,'Supplier price adjustment','50000000-0000-4000-8000-000000000009'),
  ('40000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000002',NULL,'SCN-0002','SUP-CN-002',current_date,'TZS',30,0,30,'Supplier price adjustment','50000000-0000-4000-8000-000000000002'),
- ('40000000-0000-4000-8000-000000000003','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0003','SUP-CN-003',current_date,'USD',100,0,100,'Foreign currency adjustment','50000000-0000-4000-8000-000000000001'),
- ('40000000-0000-4000-8000-000000000004','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000001','SCN-0004','SUP-CN-004',current_date,'TZS',100,0,100,'Invoice-specific adjustment','50000000-0000-4000-8000-000000000001'),
- ('40000000-0000-4000-8000-000000000005','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0005','SUP-CN-005',current_date,'TZS',100,0,100,'Additional supplier adjustment','50000000-0000-4000-8000-000000000001'),
- ('40000000-0000-4000-8000-000000000006','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0006','SUP-CN-006',current_date,'TZS',50,0,50,'Property-specific adjustment','50000000-0000-4000-8000-000000000001'),
- ('40000000-0000-4000-8000-000000000007','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0007','SUP-CN-007',current_date,'TZS',20,0,20,'Final settlement credit','50000000-0000-4000-8000-000000000001');
+ ('40000000-0000-4000-8000-000000000003','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0003','SUP-CN-003',current_date,'USD',100,0,100,'Foreign currency adjustment','50000000-0000-4000-8000-000000000009'),
+ ('40000000-0000-4000-8000-000000000004','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000001','SCN-0004','SUP-CN-004',current_date,'TZS',100,0,100,'Invoice-specific adjustment','50000000-0000-4000-8000-000000000009'),
+ ('40000000-0000-4000-8000-000000000005','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0005','SUP-CN-005',current_date,'TZS',100,0,100,'Additional supplier adjustment','50000000-0000-4000-8000-000000000009'),
+ ('40000000-0000-4000-8000-000000000006','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0006','SUP-CN-006',current_date,'TZS',50,0,50,'Property-specific adjustment','50000000-0000-4000-8000-000000000009'),
+ ('40000000-0000-4000-8000-000000000007','10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',NULL,'SCN-0007','SUP-CN-007',current_date,'TZS',20,0,20,'Final settlement credit','50000000-0000-4000-8000-000000000009');
 UPDATE public.restaurant_supplier_credit_notes SET property_id='70000000-0000-4000-8000-000000000001' WHERE id='40000000-0000-4000-8000-000000000006';
 INSERT INTO public.restaurant_members(tenant_id,user_id,property_id,role,active) VALUES
  ('10000000-0000-4000-8000-000000000001','50000000-0000-4000-8000-000000000001',NULL,'owner',true),
+ ('10000000-0000-4000-8000-000000000001','50000000-0000-4000-8000-000000000009',NULL,'purchasing_officer',true),
  ('10000000-0000-4000-8000-000000000002','50000000-0000-4000-8000-000000000002',NULL,'owner',true),
  ('10000000-0000-4000-8000-000000000001','50000000-0000-4000-8000-000000000003','70000000-0000-4000-8000-000000000001','owner',true);
 
@@ -172,6 +179,23 @@ BEGIN
   PERFORM set_config('request.test_user_id','50000000-0000-4000-8000-000000000001',true);
 END
 $credit_note_rls$;
+
+-- Separation of duties: the maker of the credit note or of the invoice can
+-- never apply credit (applying credit can settle the invoice).
+DO $credit_sod$
+BEGIN
+  PERFORM set_config('request.test_user_id','50000000-0000-4000-8000-000000000009',true);
+  BEGIN
+    PERFORM public.restaurant_apply_supplier_credit_note(
+      '10000000-0000-4000-8000-000000000001','40000000-0000-4000-8000-000000000001',
+      '30000000-0000-4000-8000-000000000004',1,'Maker attempts own settlement','60000000-0000-4000-8000-000000000091');
+    RAISE EXCEPTION 'Recorder applied credit (separation of duties bypassed)';
+  EXCEPTION WHEN insufficient_privilege THEN
+    IF SQLERRM NOT LIKE '%SEPARATION_OF_DUTIES%' THEN RAISE; END IF;
+  END;
+  PERFORM set_config('request.test_user_id','50000000-0000-4000-8000-000000000001',true);
+END
+$credit_sod$;
 
 DO $property_credit_application$
 BEGIN

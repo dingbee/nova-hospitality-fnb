@@ -5,10 +5,10 @@
 CREATE TABLE IF NOT EXISTS public.restaurant_supplier_credit_notes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE CASCADE,
-  property_id uuid REFERENCES public.restaurant_properties(id) ON DELETE SET NULL,
-  location_id uuid REFERENCES public.restaurant_locations(id) ON DELETE SET NULL,
-  supplier_id uuid NOT NULL REFERENCES public.restaurant_suppliers(id) ON DELETE RESTRICT,
-  reference_invoice_id uuid REFERENCES public.restaurant_supplier_invoices(id) ON DELETE RESTRICT,
+  property_id uuid,
+  location_id uuid,
+  supplier_id uuid NOT NULL,
+  reference_invoice_id uuid,
   document_number text NOT NULL,
   supplier_credit_note_number text NOT NULL,
   credit_date date NOT NULL DEFAULT current_date,
@@ -28,7 +28,22 @@ CREATE TABLE IF NOT EXISTS public.restaurant_supplier_credit_notes (
   CONSTRAINT restaurant_supplier_credit_note_document_unique
     UNIQUE (tenant_id, document_number),
   CONSTRAINT restaurant_supplier_credit_note_supplier_ref_unique
-    UNIQUE (tenant_id, supplier_id, supplier_credit_note_number)
+    UNIQUE (tenant_id, supplier_id, supplier_credit_note_number),
+  CONSTRAINT restaurant_supplier_credit_note_tenant_id_uq UNIQUE (tenant_id, id),
+  -- Tenant-composite references (P0-01 policy): a credit note can never point
+  -- at another tenant's property, outlet, supplier or invoice.
+  CONSTRAINT restaurant_supplier_credit_note_property_scope_fkey
+    FOREIGN KEY (tenant_id, property_id) REFERENCES public.restaurant_properties (tenant_id, id)
+    ON DELETE SET NULL (property_id),
+  CONSTRAINT restaurant_supplier_credit_note_location_scope_fkey
+    FOREIGN KEY (tenant_id, location_id) REFERENCES public.restaurant_locations (tenant_id, id)
+    ON DELETE SET NULL (location_id),
+  CONSTRAINT restaurant_supplier_credit_note_supplier_scope_fkey
+    FOREIGN KEY (tenant_id, supplier_id) REFERENCES public.restaurant_suppliers (tenant_id, id)
+    ON DELETE RESTRICT,
+  CONSTRAINT restaurant_supplier_credit_note_invoice_scope_fkey
+    FOREIGN KEY (tenant_id, reference_invoice_id)
+    REFERENCES public.restaurant_supplier_invoices (tenant_id, id) ON DELETE RESTRICT
 );
 
 CREATE INDEX IF NOT EXISTS idx_supplier_credit_notes_tenant_date
@@ -70,6 +85,42 @@ BEGIN
 END;
 $function$;
 
+-- Maker identity: recorded_by is bound to the authenticated actor and is
+-- immutable (same control as 0152 for supplier invoices). authenticated has
+-- INSERT on this table, so without this guard a caller could attribute a
+-- credit note to another user.
+CREATE OR REPLACE FUNCTION public.restaurant_guard_supplier_credit_note_recorder()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public
+AS $pw08$
+DECLARE
+  v_actor uuid := auth.uid();
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF v_actor IS NOT NULL THEN
+      NEW.recorded_by := v_actor;
+    ELSIF current_user <> 'service_role' AND NEW.recorded_by IS NULL THEN
+      RAISE EXCEPTION 'Supplier credit note recorder attribution is required.'
+        USING ERRCODE = '42501';
+    END IF;
+  ELSIF NEW.recorded_by IS DISTINCT FROM OLD.recorded_by THEN
+    RAISE EXCEPTION 'Supplier credit note recorder attribution is immutable.'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$pw08$;
+
+REVOKE ALL ON FUNCTION public.restaurant_guard_supplier_credit_note_recorder() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS restaurant_supplier_credit_note_recorder_guard
+  ON public.restaurant_supplier_credit_notes;
+CREATE TRIGGER restaurant_supplier_credit_note_recorder_guard
+  BEFORE INSERT OR UPDATE OF recorded_by ON public.restaurant_supplier_credit_notes
+  FOR EACH ROW EXECUTE FUNCTION public.restaurant_guard_supplier_credit_note_recorder();
+
 DROP TRIGGER IF EXISTS restaurant_supplier_credit_note_record_audit
   ON public.restaurant_supplier_credit_notes;
 CREATE TRIGGER restaurant_supplier_credit_note_record_audit
@@ -107,17 +158,29 @@ CREATE POLICY "supplier credit notes insert" ON public.restaurant_supplier_credi
 CREATE TABLE IF NOT EXISTS public.restaurant_supplier_credit_note_applications (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL REFERENCES public.restaurant_tenants(id) ON DELETE CASCADE,
-  property_id uuid REFERENCES public.restaurant_properties(id) ON DELETE SET NULL,
-  location_id uuid REFERENCES public.restaurant_locations(id) ON DELETE SET NULL,
-  credit_note_id uuid NOT NULL REFERENCES public.restaurant_supplier_credit_notes(id) ON DELETE RESTRICT,
-  invoice_id uuid NOT NULL REFERENCES public.restaurant_supplier_invoices(id) ON DELETE RESTRICT,
+  property_id uuid,
+  location_id uuid,
+  credit_note_id uuid NOT NULL,
+  invoice_id uuid NOT NULL,
   amount numeric(14,2) NOT NULL CHECK (amount > 0),
   idempotency_key uuid NOT NULL,
   reason text NOT NULL CHECK (length(trim(reason)) >= 3),
   applied_by uuid NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT restaurant_supplier_credit_note_application_idempotency_unique
-    UNIQUE (tenant_id, idempotency_key)
+    UNIQUE (tenant_id, idempotency_key),
+  CONSTRAINT restaurant_supplier_credit_note_application_property_scope_fkey
+    FOREIGN KEY (tenant_id, property_id) REFERENCES public.restaurant_properties (tenant_id, id)
+    ON DELETE SET NULL (property_id),
+  CONSTRAINT restaurant_supplier_credit_note_application_location_scope_fkey
+    FOREIGN KEY (tenant_id, location_id) REFERENCES public.restaurant_locations (tenant_id, id)
+    ON DELETE SET NULL (location_id),
+  CONSTRAINT restaurant_supplier_credit_note_application_note_scope_fkey
+    FOREIGN KEY (tenant_id, credit_note_id)
+    REFERENCES public.restaurant_supplier_credit_notes (tenant_id, id) ON DELETE RESTRICT,
+  CONSTRAINT restaurant_supplier_credit_note_application_invoice_scope_fkey
+    FOREIGN KEY (tenant_id, invoice_id)
+    REFERENCES public.restaurant_supplier_invoices (tenant_id, id) ON DELETE RESTRICT
 );
 
 CREATE INDEX IF NOT EXISTS idx_supplier_credit_note_applications_note
@@ -248,6 +311,18 @@ BEGIN
     v_invoice.property_id
   ) THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'CREDIT_NOTE_APPLICATION_PROPERTY_FORBIDDEN';
+  END IF;
+  -- Separation of duties: applying credit can settle an invoice (it moves
+  -- payment_status to partially_paid/paid), so it is subject to the same
+  -- maker-checker rule as setInvoicePaymentStatus. Neither the invoice
+  -- recorder nor the credit-note recorder may apply the credit.
+  IF v_invoice.recorded_by IS NOT DISTINCT FROM v_actor THEN
+    RAISE EXCEPTION USING ERRCODE = '42501',
+      MESSAGE = 'CREDIT_NOTE_APPLICATION_SEPARATION_OF_DUTIES_INVOICE_RECORDER';
+  END IF;
+  IF v_note.recorded_by IS NOT DISTINCT FROM v_actor THEN
+    RAISE EXCEPTION USING ERRCODE = '42501',
+      MESSAGE = 'CREDIT_NOTE_APPLICATION_SEPARATION_OF_DUTIES_NOTE_RECORDER';
   END IF;
   IF v_note.reference_invoice_id IS NOT NULL AND v_note.reference_invoice_id <> v_invoice.id THEN
     RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'CREDIT_NOTE_REFERENCE_INVOICE_MISMATCH';
