@@ -16,6 +16,7 @@ vi.mock("../events/emit.server", () => ({
 
 vi.mock("./audit.server", () => ({
   recordProcurementAudit: (...args: unknown[]) => mocks.recordProcurementAudit(...args),
+  recordProcurementAuditStrict: (...args: unknown[]) => mocks.recordProcurementAudit(...args),
 }));
 
 vi.mock("./variances.server", () => ({
@@ -74,5 +75,75 @@ describe("supplier invoice three-way reconciliation maker-checker", () => {
       locationId: LOCATION,
     });
     expect(mocks.recordProcurementAudit).not.toHaveBeenCalled();
+  });
+});
+
+const { setInvoicePaymentStatus } = await import("./invoices.server");
+const CHECKER = "66666666-6666-6666-6666-666666666666";
+
+function makeSettlementSupabase(creditApplied = 0) {
+  const updates: unknown[] = [];
+  const invoice = {
+    id: INVOICE,
+    payment_status: "unpaid",
+    document_number: "INV-001",
+    total: 1000,
+    amount_paid: 0,
+    match_status: "matched",
+    property_id: PROPERTY,
+    location_id: LOCATION,
+    recorded_by: MAKER,
+  };
+  const sb = {
+    from(table: string) {
+      let pendingUpdate: Record<string, unknown> | null = null;
+      const builder: Record<string, unknown> = {
+        select: () => builder,
+        eq: () => builder,
+        update: (payload: Record<string, unknown>) => {
+          pendingUpdate = payload;
+          updates.push(payload);
+          return builder;
+        },
+        single: async () => ({
+          data: pendingUpdate ? { id: INVOICE, ...pendingUpdate } : invoice,
+          error: null,
+        }),
+        then: (resolve: (v: unknown) => unknown) =>
+          resolve({
+            data:
+              table === "restaurant_supplier_credit_note_applications" && creditApplied > 0
+                ? [{ amount: creditApplied }]
+                : [],
+            error: null,
+          }),
+      };
+      return builder;
+    },
+  };
+  return { sb: sb as unknown as Parameters<typeof setInvoicePaymentStatus>[0], updates };
+}
+
+describe("supplier invoice settlement maker-checker", () => {
+  it("denies the invoice recorder from settling the same invoice, writing nothing", async () => {
+    const { sb, updates } = makeSettlementSupabase();
+    await expect(
+      setInvoicePaymentStatus(sb, MAKER, {
+        tenantId: TENANT,
+        invoiceId: INVOICE,
+        paymentStatus: "paid",
+      } as never),
+    ).rejects.toThrow(/Separation of duties — the invoice recorder cannot settle/);
+    expect(updates).toHaveLength(0);
+  });
+
+  it("lets a different authorised user settle the balance net of applied supplier credit", async () => {
+    const { sb, updates } = makeSettlementSupabase(250);
+    await setInvoicePaymentStatus(sb, CHECKER, {
+      tenantId: TENANT,
+      invoiceId: INVOICE,
+      paymentStatus: "paid",
+    } as never);
+    expect(updates[0]).toMatchObject({ payment_status: "paid", amount_paid: 750 });
   });
 });
