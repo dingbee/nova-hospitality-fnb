@@ -54,7 +54,7 @@ export const listStaffUsers = createServerFn({ method: "GET" })
 /**
  * Provisions a brand-new person: no existing account, no `app_users` row —
  * the gap `listStaffUsers`'s dropdown-only selection left, since every
- * other flow here (assignRole, TeamPanel's tenant role grant) assumes a
+ * other flow here (assignRole, StaffAccessSetupPanel's tenant role grant) assumes a
  * user already exists to pick from. Creates the `auth.users` account via
  * the service-role admin API (the only way to do this — there is no public
  * self-signup route in this app) and mirrors it into `app_users` so the

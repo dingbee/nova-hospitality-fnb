@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { StaffAccessSetupPanel } from "@/modules/restaurant/core/ui/StaffAccessSetupPanel";
 import { StaffPanel } from "@/modules/restaurant/core/ui/StaffPanel";
 
 export const Route = createFileRoute("/_authenticated/admin/restaurant/staff")({
@@ -7,10 +8,19 @@ export const Route = createFileRoute("/_authenticated/admin/restaurant/staff")({
       { title: "Staff & Roles — Restaurant & Bar OS" },
       {
         name: "description",
-        content: "Manage who has access to this restaurant and what they can do.",
+        content: "Manage team members, restaurant roles, property scope, stations and POS PINs.",
       },
       { name: "robots", content: "noindex,nofollow" },
     ],
   }),
-  component: StaffPanel,
+  component: StaffManagementPage,
 });
+
+function StaffManagementPage() {
+  return (
+    <>
+      <StaffPanel />
+      <StaffAccessSetupPanel />
+    </>
+  );
+}

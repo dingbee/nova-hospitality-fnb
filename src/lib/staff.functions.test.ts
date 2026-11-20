@@ -2,11 +2,11 @@
 /**
  * Ops UAT gap #1 — user/staff provisioning.
  *
- * TeamPanel could only grant a restaurant role to someone already present
+ * The team panel could only grant a restaurant role to someone already present
  * in the platform-wide staff directory (app_users), and nothing anywhere in
  * this codebase ever created that first account or app_users row — there
  * was no invite/signup path at all. provisionInvitedStaffUser closes that:
- * it's the piece TeamPanel's new "Invite a new person" form calls.
+ * it's the piece StaffAccessSetupPanel's "Invite a new person" form calls.
  */
 import { describe, expect, it } from "vitest";
 import { provisionInvitedStaffUser } from "./staff.functions";
