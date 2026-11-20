@@ -206,7 +206,12 @@ export async function handleWhatsAppGuestCommerceMessage(
             .eq("id", conversation.guest_customer_id)
             .eq("tenant_id", event.tenant_id)
             .maybeSingle(),
-          getWhatsAppGuestCustomerHistory(admin, event.tenant_id, conversation.guest_customer_id),
+          getWhatsAppGuestCustomerHistory(
+            admin,
+            event.tenant_id,
+            conversation.guest_customer_id,
+            event.property_id,
+          ),
         ]);
         customerContext = {
           displayName: customer?.display_name ?? null,
