@@ -71,7 +71,7 @@ jobs:
         run: |
           set -euo pipefail
           base_sha="$(git merge-base origin/main HEAD)"
-          files="$(git diff --name-only "$base_sha" "$GITHUB_SHA" -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
+          files="$(git diff --name-only --diff-filter=d "$base_sha" "$GITHUB_SHA" -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs')"
           if [ -n "$files" ]; then
             printf '%s\n' "$files"
             bunx eslint $files
