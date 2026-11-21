@@ -45,7 +45,7 @@ export async function getPurchasingIntelligence(
   let itemsQuery = sb
     .from("restaurant_inventory_items")
     .select(
-      "id, name, current_quantity, average_cost, currency, unit_id, purchase_unit_id, pack_size",
+      "id, name, current_quantity, reorder_point, par_level, average_cost, currency, unit_id, purchase_unit_id, pack_size",
     )
     .eq("tenant_id", tenantId);
   if (input.propertyId) itemsQuery = itemsQuery.eq("property_id", input.propertyId);
@@ -65,7 +65,7 @@ export async function getPurchasingIntelligence(
     sb
       .from("restaurant_supplier_products")
       .select(
-        "supplier_id, inventory_item_id, unit_id, pack_size, unit_price, lead_time_days, active",
+        "supplier_id, inventory_item_id, unit_id, pack_size, unit_price, currency, lead_time_days, active",
       )
       .eq("tenant_id", tenantId),
     sb
@@ -162,6 +162,12 @@ export async function getPurchasingIntelligence(
   const products = ((productsRes.data ?? []) as any[]).filter((p) => p.active !== false);
 
   const supplierById = new Map(suppliers.map((s) => [s.id, s]));
+  // An active supplier-product row is not enough: never recommend a supplier
+  // the restaurant has deactivated, a non-positive price, or a price quoted
+  // in a different currency from the stock item (no silent conversion).
+  const itemCurrencyById = new Map(
+    items.map((item) => [item.id, String(item.currency ?? "TZS").toUpperCase()]),
+  );
   const bestProduct = new Map<string, any>();
   for (const p of products) {
     if (!p.inventory_item_id || !p.unit_id) continue;
@@ -179,8 +185,11 @@ export async function getPurchasingIntelligence(
     } else {
       continue;
     }
+    if (supplierById.get(p.supplier_id)?.status !== "active") continue;
+    if (String(p.currency ?? "TZS").toUpperCase() !== itemCurrencyById.get(p.inventory_item_id))
+      continue;
     const price = Number(p.unit_price);
-    if (!Number.isFinite(price) || price < 0) continue;
+    if (!Number.isFinite(price) || price <= 0) continue;
     const normalized = {
       ...p,
       stockUnitsPerPurchaseUnit,
@@ -217,19 +226,37 @@ export async function getPurchasingIntelligence(
       );
     }
     const velocity = round((consumed.get(it.id) ?? 0) / windowDays, 3);
-    if (velocity <= 0) continue;
+    const incoming = outstandingByItem.get(it.id) ?? 0;
+    const target =
+      it.par_level == null
+        ? it.reorder_point == null
+          ? null
+          : Number(it.reorder_point)
+        : Number(it.par_level);
+    // No consumption history is not evidence that a zero-stock item is
+    // healthy. Use an explicitly configured par/reorder target when one
+    // exists; never invent demand when both are absent.
+    if (velocity <= 0) {
+      if (target == null || !Number.isFinite(target)) continue;
+      const belowReorder =
+        it.reorder_point != null && currentQuantity + incoming <= Number(it.reorder_point);
+      if (!belowReorder && currentQuantity + incoming > 0) continue;
+    }
     const product = bestProduct.get(it.id);
     const supplier = product ? supplierById.get(product.supplier_id) : null;
+    const productLeadTime = Number(product?.lead_time_days);
+    const supplierLeadTime = Number(supplier?.lead_time_days);
     const leadTime =
-      Number(product?.lead_time_days ?? supplier?.lead_time_days ?? DEFAULT_LEAD_TIME) ||
-      DEFAULT_LEAD_TIME;
+      Number.isFinite(productLeadTime) && productLeadTime > 0
+        ? productLeadTime
+        : Number.isFinite(supplierLeadTime) && supplierLeadTime > 0
+          ? supplierLeadTime
+          : DEFAULT_LEAD_TIME;
     const unitPrice = Number(product?.normalizedStockUnitPrice ?? it.average_cost ?? 0);
-    const qty = recommendedPurchaseQuantity(
-      currentQuantity + (outstandingByItem.get(it.id) ?? 0),
-      velocity,
-      leadTime,
-      COVER_DAYS,
-    );
+    const qty =
+      velocity > 0
+        ? recommendedPurchaseQuantity(currentQuantity + incoming, velocity, leadTime, COVER_DAYS)
+        : Math.max(0, Math.ceil(Number(target) - currentQuantity - incoming));
     expectedMonthlySpend += velocity * 30 * unitPrice;
     if (qty <= 0) continue;
     suggestions.push({
