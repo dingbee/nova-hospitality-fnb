@@ -12,31 +12,87 @@ type Sb = any;
 export async function procurementOverview(sb: Sb, userId: string, tenantId: string) {
   await assertTenantRead(sb, userId, tenantId);
 
-  const [{ data: requests }, { data: orders }, { data: receipts }, { data: invoices }, { data: variances }] =
-    await Promise.all([
-      sb.from("restaurant_purchase_requests").select("id, status, estimated_total").eq("tenant_id", tenantId),
-      sb
-        .from("restaurant_purchase_orders")
-        .select("id, status, confirmation_status, total, expected_at")
-        .eq("tenant_id", tenantId),
-      sb.from("restaurant_goods_receipts").select("id, status, accepted_value").eq("tenant_id", tenantId),
-      sb
-        .from("restaurant_supplier_invoices")
-        .select("id, status, payment_status, match_status, total, amount_paid, due_date")
-        .eq("tenant_id", tenantId),
-      sb.from("restaurant_procurement_variances").select("id, status, severity").eq("tenant_id", tenantId),
-    ]);
+  const [
+    requestsRes,
+    ordersRes,
+    receiptsRes,
+    invoicesRes,
+    variancesRes,
+    creditNotesRes,
+    creditApplicationsRes,
+  ] = await Promise.all([
+    sb
+      .from("restaurant_purchase_requests")
+      .select("id, status, estimated_total")
+      .eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_purchase_orders")
+      .select("id, status, confirmation_status, total, expected_at")
+      .eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_goods_receipts")
+      .select("id, status, accepted_value")
+      .eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_supplier_invoices")
+      .select("id, status, payment_status, match_status, total, amount_paid, due_date")
+      .eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_procurement_variances")
+      .select("id, status, severity")
+      .eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_supplier_credit_notes")
+      .select("id, status, total")
+      .eq("tenant_id", tenantId),
+    sb
+      .from("restaurant_supplier_credit_note_applications")
+      .select("invoice_id, amount")
+      .eq("tenant_id", tenantId),
+  ]);
 
-  const reqRows = (requests ?? []) as any[];
-  const orderRows = (orders ?? []) as any[];
-  const receiptRows = (receipts ?? []) as any[];
-  const invoiceRows = (invoices ?? []) as any[];
-  const varRows = (variances ?? []) as any[];
+  for (const [label, result] of [
+    ["purchase requests", requestsRes],
+    ["purchase orders", ordersRes],
+    ["goods receipts", receiptsRes],
+    ["supplier invoices", invoicesRes],
+    ["procurement variances", variancesRes],
+    ["supplier credit notes", creditNotesRes],
+    ["supplier credit applications", creditApplicationsRes],
+  ] as const) {
+    if (result.error)
+      throw new Error("Unable to load procurement " + label + ": " + result.error.message);
+  }
+
+  const reqRows = (requestsRes.data ?? []) as any[];
+  const orderRows = (ordersRes.data ?? []) as any[];
+  const receiptRows = (receiptsRes.data ?? []) as any[];
+  const invoiceRows = (invoicesRes.data ?? []) as any[];
+  const varRows = (variancesRes.data ?? []) as any[];
+  const creditNoteRows = (creditNotesRes.data ?? []) as any[];
+  const creditApplications = (creditApplicationsRes.data ?? []) as any[];
+  const creditByInvoice = new Map<string, number>();
+  for (const application of creditApplications) {
+    creditByInvoice.set(
+      application.invoice_id,
+      (creditByInvoice.get(application.invoice_id) ?? 0) + Number(application.amount ?? 0),
+    );
+  }
   const today = new Date().toISOString().slice(0, 10);
-
+  const invoiceOutstanding = (invoice: any) =>
+    Math.max(
+      0,
+      Number(invoice.total ?? 0) -
+        Number(invoice.amount_paid ?? 0) -
+        (creditByInvoice.get(invoice.id) ?? 0),
+    );
   const outstanding = invoiceRows
-    .filter((i) => i.payment_status !== "paid" && i.status !== "cancelled")
-    .reduce((s, i) => s + (Number(i.total ?? 0) - Number(i.amount_paid ?? 0)), 0);
+    .filter((invoice) => invoice.status !== "cancelled")
+    .reduce((sum, invoice) => sum + invoiceOutstanding(invoice), 0);
+  const creditAppliedTotal = creditApplications.reduce(
+    (sum, application) => sum + Number(application.amount ?? 0),
+    0,
+  );
 
   return {
     needed: {
@@ -48,14 +104,20 @@ export async function procurementOverview(sb: Sb, userId: string, tenantId: stri
         .reduce((s, r) => s + Number(r.estimated_total ?? 0), 0),
     },
     ordered: {
-      open: orderRows.filter((o) => ["submitted", "approved", "partially_received"].includes(o.status)).length,
+      open: orderRows.filter((o) =>
+        ["submitted", "approved", "partially_received"].includes(o.status),
+      ).length,
       awaitingConfirmation: orderRows.filter(
         (o) =>
           ["submitted", "approved"].includes(o.status) &&
           (!o.confirmation_status || o.confirmation_status === "pending"),
       ).length,
       overdue: orderRows.filter(
-        (o) => o.expected_at && o.expected_at < today && o.status !== "received" && o.status !== "cancelled",
+        (o) =>
+          o.expected_at &&
+          o.expected_at < today &&
+          o.status !== "received" &&
+          o.status !== "cancelled",
       ).length,
       openValue: orderRows
         .filter((o) => ["submitted", "approved", "partially_received"].includes(o.status))
@@ -74,9 +136,22 @@ export async function procurementOverview(sb: Sb, userId: string, tenantId: stri
       mismatched: invoiceRows.filter((i) => i.match_status === "mismatched").length,
       unpaid: invoiceRows.filter((i) => i.payment_status === "unpaid").length,
       overdue: invoiceRows.filter(
-        (i) => i.due_date && i.due_date < today && i.payment_status !== "paid",
+        (invoice) =>
+          invoice.due_date &&
+          invoice.due_date < today &&
+          invoice.status !== "cancelled" &&
+          invoiceOutstanding(invoice) > 0.01,
       ).length,
       outstandingValue: Number(outstanding.toFixed(2)),
+      creditNotesRecorded: creditNoteRows.filter((note) => note.status === "recorded").length,
+      creditNotesPartiallyApplied: creditNoteRows.filter(
+        (note) => note.status === "partially_applied",
+      ).length,
+      creditNotesApplied: creditNoteRows.filter((note) => note.status === "applied").length,
+      creditNoteValue: Number(
+        creditNoteRows.reduce((sum, note) => sum + Number(note.total ?? 0), 0).toFixed(2),
+      ),
+      creditAppliedValue: Number(creditAppliedTotal.toFixed(2)),
     },
     variances: {
       open: varRows.filter((v) => v.status === "open").length,
@@ -86,7 +161,11 @@ export async function procurementOverview(sb: Sb, userId: string, tenantId: stri
   };
 }
 
-export async function listProcurementAudit(sb: Sb, userId: string, input: z.infer<typeof listAuditSchema>) {
+export async function listProcurementAudit(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listAuditSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_procurement_audit")

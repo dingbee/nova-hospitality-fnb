@@ -21,6 +21,7 @@ import { StatusChip } from "@/components/os/StatusChip";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "../../ui/useRestaurantWorkspace";
 import { SupplierInvoiceSheet } from "./SupplierInvoiceSheet";
+import { ApplySupplierCreditNoteSheet, SupplierCreditNoteSheet } from "./SupplierCreditNoteSheet";
 import { DocumentActions } from "../../documents/ui/DocumentActions";
 import { formatMoney, formatQty, lifecycleBadge, VARIANCE_LABELS } from "../lifecycle";
 import {
@@ -31,6 +32,7 @@ import {
   listRestaurantProcurementVariancesFn,
   listRestaurantPurchaseRequestsFn,
   listRestaurantSupplierInvoicesFn,
+  listRestaurantSupplierCreditNotesFn,
   matchRestaurantSupplierInvoiceFn,
   postRestaurantGoodsReceiptFn,
   resolveRestaurantProcurementVarianceFn,
@@ -966,6 +968,7 @@ function ReceivingTab({ tenantId }: { tenantId: string }) {
 function InvoicesTab({ tenantId }: { tenantId: string }) {
   const qc = useQueryClient();
   const listFn = useServerFn(listRestaurantSupplierInvoicesFn);
+  const listCreditNotesFn = useServerFn(listRestaurantSupplierCreditNotesFn);
   const matchFn = useServerFn(matchRestaurantSupplierInvoiceFn);
   const payFn = useServerFn(setRestaurantInvoicePaymentStatusFn);
 
@@ -973,9 +976,16 @@ function InvoicesTab({ tenantId }: { tenantId: string }) {
     queryKey: ["restaurant.procurement.invoices", tenantId],
     queryFn: () => listFn({ data: { tenantId, limit: 100 } }),
   });
+  const creditNotes = useQuery({
+    queryKey: ["restaurant.procurement.credit-notes", tenantId],
+    queryFn: () => listCreditNotesFn({ data: { tenantId, limit: 100 } }),
+  });
   const [entryOpen, setEntryOpen] = useState(false);
+  const [creditEntryOpen, setCreditEntryOpen] = useState(false);
+  const [creditNoteToApply, setCreditNoteToApply] = useState<any | null>(null);
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["restaurant.procurement.invoices", tenantId] });
+    void qc.invalidateQueries({ queryKey: ["restaurant.procurement.credit-notes", tenantId] });
     void qc.invalidateQueries({ queryKey: ["restaurant.procurement.overview", tenantId] });
   };
 
@@ -996,70 +1006,137 @@ function InvoicesTab({ tenantId }: { tenantId: string }) {
   });
 
   return (
-    <SectionCard
-      title="Supplier invoices"
-      description="Matched against the order and the goods actually accepted."
-      actions={
-        <Button size="sm" className="h-10" onClick={() => setEntryOpen(true)}>
-          Record invoice
-        </Button>
-      }
-    >
-      {(q.data as any[] | undefined)?.length ? (
-        <ul className="divide-y text-sm">
-          {(q.data as any[]).map((i) => (
-            <Row key={i.id}>
-              <div className="min-w-0">
-                <div className="font-medium">
-                  {i.supplier_invoice_number}{" "}
-                  <span className="text-muted-foreground">· {i.supplier_name}</span>
+    <div className="space-y-4">
+      <SectionCard
+        title="Supplier invoices"
+        description="Matched against the order and the goods actually accepted. Applied supplier credits reduce the payable balance without rewriting the invoice."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-10"
+              onClick={() => setCreditEntryOpen(true)}
+            >
+              Record credit note
+            </Button>
+            <Button size="sm" className="h-10" onClick={() => setEntryOpen(true)}>
+              Record invoice
+            </Button>
+          </div>
+        }
+      >
+        {(q.data as any[] | undefined)?.length ? (
+          <ul className="divide-y text-sm">
+            {(q.data as any[]).map((i) => (
+              <Row key={i.id}>
+                <div className="min-w-0">
+                  <div className="font-medium">
+                    {i.supplier_invoice_number}{" "}
+                    <span className="text-muted-foreground">· {i.supplier_name}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Gross {formatMoney(i.total, i.currency)} · cash paid{" "}
+                    {formatMoney(i.amount_paid, i.currency)} · credit applied{" "}
+                    {formatMoney(i.credit_applied ?? 0, i.currency)} · outstanding{" "}
+                    {formatMoney(i.outstanding_balance ?? i.total - i.amount_paid, i.currency)} ·
+                    due {i.due_date ?? "—"}
+                  </div>
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  {formatMoney(i.total, i.currency)} · due {i.due_date ?? "—"} · paid{" "}
-                  {formatMoney(i.amount_paid, i.currency)}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Chip status={i.match_status} />
-                <Chip status={i.payment_status} />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-10"
-                  onClick={() => match.mutate(i.id)}
-                >
-                  Re-match
-                </Button>
-                {i.payment_status !== "paid" && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Chip status={i.match_status} />
+                  <Chip status={i.payment_status} />
                   <Button
                     size="sm"
+                    variant="outline"
                     className="h-10"
-                    onClick={() => {
-                      const reason =
-                        i.match_status === "mismatched"
-                          ? (window.prompt(
-                              "This invoice does not match. Reason for paying anyway?",
-                            ) ?? undefined)
-                          : undefined;
-                      if (i.match_status === "mismatched" && !reason) return;
-                      pay.mutate({ invoiceId: i.id, paymentStatus: "paid", reason });
-                    }}
+                    onClick={() => match.mutate(i.id)}
                   >
-                    Mark paid
+                    Re-match
                   </Button>
-                )}
-              </div>
-            </Row>
-          ))}
-        </ul>
-      ) : (
-        <EmptyState
-          title="No supplier invoices"
-          description="Invoices appear here once recorded against a supplier."
-        />
-      )}
+                  {i.payment_status !== "paid" && (
+                    <Button
+                      size="sm"
+                      className="h-10"
+                      onClick={() => {
+                        const reason =
+                          i.match_status === "mismatched"
+                            ? (window.prompt(
+                                "This invoice does not match. Reason for paying anyway?",
+                              ) ?? undefined)
+                            : undefined;
+                        if (i.match_status === "mismatched" && !reason) return;
+                        pay.mutate({ invoiceId: i.id, paymentStatus: "paid", reason });
+                      }}
+                    >
+                      Mark paid
+                    </Button>
+                  )}
+                </div>
+              </Row>
+            ))}
+          </ul>
+        ) : (
+          <EmptyState
+            title="No supplier invoices"
+            description="Invoices appear here once recorded against a supplier."
+          />
+        )}
+      </SectionCard>
+
+      <SectionCard
+        title="Supplier credit notes"
+        description="Credit notes are immutable documents. Applications are separately authorised, idempotent and net against the supplier invoice balance."
+      >
+        {(creditNotes.data as any[] | undefined)?.length ? (
+          <ul className="divide-y text-sm">
+            {(creditNotes.data as any[]).map((note) => (
+              <Row key={note.id}>
+                <div className="min-w-0">
+                  <div className="font-medium">
+                    {note.supplier_credit_note_number}{" "}
+                    <span className="text-muted-foreground">· {note.supplier_name}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {formatMoney(note.total, note.currency)} · applied{" "}
+                    {formatMoney(note.applied_amount, note.currency)} · remaining{" "}
+                    {formatMoney(note.remaining_amount, note.currency)} · {note.reason}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Chip status={note.status} />
+                  {note.status !== "voided" && note.remaining_amount > 0.01 && (
+                    <Button size="sm" className="h-10" onClick={() => setCreditNoteToApply(note)}>
+                      Apply to invoice
+                    </Button>
+                  )}
+                </div>
+              </Row>
+            ))}
+          </ul>
+        ) : (
+          <EmptyState
+            title="No supplier credit notes"
+            description="Record a supplier-issued credit note to track returns, rebates or invoice adjustments."
+          />
+        )}
+      </SectionCard>
+
       <SupplierInvoiceSheet open={entryOpen} onOpenChange={setEntryOpen} tenantId={tenantId} />
-    </SectionCard>
+      <SupplierCreditNoteSheet
+        open={creditEntryOpen}
+        onOpenChange={setCreditEntryOpen}
+        tenantId={tenantId}
+      />
+      <ApplySupplierCreditNoteSheet
+        open={Boolean(creditNoteToApply)}
+        onOpenChange={(open) => {
+          if (!open) setCreditNoteToApply(null);
+        }}
+        tenantId={tenantId}
+        creditNote={creditNoteToApply}
+      />
+    </div>
   );
 }
 
