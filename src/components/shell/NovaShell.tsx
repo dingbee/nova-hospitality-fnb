@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import { getCentralStoreStatusFn } from "@/modules/restaurant/inventory/control.functions";
 import { ChevronLeft, ChevronRight, LogOut, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { usePrincipal } from "@/lib/rbac/usePermissions";
@@ -83,9 +85,24 @@ export function NovaShell({ children }: { children: ReactNode }) {
     workspace?.platformAdmin ?? false,
   );
 
+  // Central-store mode is resolved server-side by the single authoritative
+  // resolver; the nav only reflects it.
+  const centralStoreFn = useServerFn(getCentralStoreStatusFn);
+  const tenantId = workspace?.tenant?.id;
+  const centralStore = useQuery({
+    queryKey: ["restaurant.central-store", tenantId],
+    queryFn: () => centralStoreFn({ data: { tenantId: tenantId! } }),
+    enabled: Boolean(tenantId),
+    staleTime: 60_000,
+  });
+  const centralStoreActive = Boolean(centralStore.data?.active);
+
   const groups = useMemo(
-    () => visibleGroups(principal?.permissions ?? [], principal?.commercialAdmin ?? false),
-    [principal?.permissions, principal?.commercialAdmin],
+    () =>
+      visibleGroups(principal?.permissions ?? [], principal?.commercialAdmin ?? false, {
+        centralStoreActive,
+      }),
+    [principal?.permissions, principal?.commercialAdmin, centralStoreActive],
   );
   const current = activeItem(pathname);
   const currentGroup = groupOf(current);

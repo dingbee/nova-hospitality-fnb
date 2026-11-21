@@ -22,6 +22,8 @@ import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "../../ui/useRestaurantWorkspace";
 import { resolveCommercialEntitlementFn } from "@/modules/commercial/commercial.functions";
 import { BatchSheet } from "./BatchSheet";
+import { TransferReceiveForm } from "./TransferReceiveForm";
+import { hasRestaurantCapability } from "../../core/permissions";
 import { BarcodeScanButton } from "./BarcodeScanButton";
 import { stocktakeBadge, transferBadge, type StockPosition } from "../contracts";
 import { filterStocktakeLines, matchStocktakeLineByCode } from "../stocktake-scan";
@@ -41,7 +43,6 @@ import {
   listStockTransfersFn,
   listStocktakesFn,
   postStocktakeFn,
-  receiveStockTransferFn,
   recordInventoryAdjustmentFn,
   recordInventoryWasteFn,
   saveStocktakeCountsFn,
@@ -91,9 +92,13 @@ export function InventoryCentre({ initialTab }: { initialTab?: string } = {}) {
     enabled: Boolean(tenantId),
     staleTime: 60_000,
   });
-  const inventoryAgentEntitled = ["included", "limited", "advanced", "enterprise", "add_on"].includes(
-    String((agentEntitlement.data as any)?.state ?? ""),
-  );
+  const inventoryAgentEntitled = [
+    "included",
+    "limited",
+    "advanced",
+    "enterprise",
+    "add_on",
+  ].includes(String((agentEntitlement.data as any)?.state ?? ""));
   const visibleTabs = useMemo(
     () => (inventoryAgentEntitled ? TABS : TABS.filter((t) => t.id !== "agent")),
     [inventoryAgentEntitled],
@@ -236,7 +241,9 @@ function InventoryAgentTab({ tenantId }: { tenantId: string }) {
         </SectionCard>
       ) : agent.isError ? (
         <SectionCard title="Scan failed">
-          <p className="text-sm text-destructive">{String(agent.error?.message ?? "Unable to run the inventory agent.")}</p>
+          <p className="text-sm text-destructive">
+            {String(agent.error?.message ?? "Unable to run the inventory agent.")}
+          </p>
         </SectionCard>
       ) : (
         <>
@@ -275,7 +282,15 @@ function InventoryAgentTab({ tenantId }: { tenantId: string }) {
                         <div className="mt-1 text-xs text-muted-foreground">{r.headline}</div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <StatusChip tone={r.severity === "critical" ? "danger" : r.severity === "high" ? "warning" : "info"}>
+                        <StatusChip
+                          tone={
+                            r.severity === "critical"
+                              ? "danger"
+                              : r.severity === "high"
+                                ? "warning"
+                                : "info"
+                          }
+                        >
                           {r.severity}
                         </StatusChip>
                         <StatusChip tone="neutral">{r.status}</StatusChip>
@@ -284,9 +299,14 @@ function InventoryAgentTab({ tenantId }: { tenantId: string }) {
                     <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
                       <span>Confidence: {Math.round(r.confidence * 100)}%</span>
                       <span>Decision: {r.recommendedOptionKey ?? "none"}</span>
-                      <span>Recommended quantity: {String(r.facts.recommendedQuantity ?? "not available")}</span>
+                      <span>
+                        Recommended quantity:{" "}
+                        {String(r.facts.recommendedQuantity ?? "not available")}
+                      </span>
                       <span>Supplier: {String(r.facts.supplierId ?? "not configured")}</span>
-                      <span>Estimated cost: {String(r.facts.estimatedCost ?? "not available")}</span>
+                      <span>
+                        Estimated cost: {String(r.facts.estimatedCost ?? "not available")}
+                      </span>
                       <span>Action: {r.actionStatus ?? "awaiting decision approval"}</span>
                     </div>
                   </li>
@@ -605,10 +625,25 @@ function PositionsTab({ tenantId }: { tenantId: string }) {
                     </span>
                     {p.sku && <span className="ml-2 text-xs text-muted-foreground">{p.sku}</span>}
                     <span className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
-                      <span><span className="text-muted-foreground">On hand</span><span className="ml-1 font-medium tabular-nums">{qty(p.onHand)}{p.unitId && unitNames.get(p.unitId) ? " " + unitNames.get(p.unitId) : ""}</span></span>
-                      <span><span className="text-muted-foreground">Reserved</span><span className="ml-1 font-medium tabular-nums">{qty(p.reserved)}</span></span>
-                      <span><span className="text-muted-foreground">Available</span><span className="ml-1 font-medium tabular-nums">{qty(p.available)}</span></span>
-                      <span><span className="text-muted-foreground">Incoming</span><span className="ml-1 font-medium tabular-nums">{qty(p.incoming)}</span></span>
+                      <span>
+                        <span className="text-muted-foreground">On hand</span>
+                        <span className="ml-1 font-medium tabular-nums">
+                          {qty(p.onHand)}
+                          {p.unitId && unitNames.get(p.unitId) ? " " + unitNames.get(p.unitId) : ""}
+                        </span>
+                      </span>
+                      <span>
+                        <span className="text-muted-foreground">Reserved</span>
+                        <span className="ml-1 font-medium tabular-nums">{qty(p.reserved)}</span>
+                      </span>
+                      <span>
+                        <span className="text-muted-foreground">Available</span>
+                        <span className="ml-1 font-medium tabular-nums">{qty(p.available)}</span>
+                      </span>
+                      <span>
+                        <span className="text-muted-foreground">Incoming</span>
+                        <span className="ml-1 font-medium tabular-nums">{qty(p.incoming)}</span>
+                      </span>
                     </span>
                   </span>
                   <span className="flex items-center gap-2 text-xs">
@@ -634,7 +669,10 @@ function PositionsTab({ tenantId }: { tenantId: string }) {
                         >
                           <span>{l.locationName}</span>
                           <span className="text-right text-muted-foreground">
-                            On hand {qty(l.onHand)}{p.unitId && unitNames.get(p.unitId) ? " " + unitNames.get(p.unitId) : ""}
+                            On hand {qty(l.onHand)}
+                            {p.unitId && unitNames.get(p.unitId)
+                              ? " " + unitNames.get(p.unitId)
+                              : ""}
                             <br />
                             Reserved {qty(l.reserved)} · Available {qty(l.available)}
                           </span>
@@ -656,12 +694,18 @@ function PositionsTab({ tenantId }: { tenantId: string }) {
 
 function TransfersTab({ tenantId }: { tenantId: string }) {
   const qc = useQueryClient();
+  const ws = useRestaurantWorkspace();
+  // Presentation only — closeTransfer enforces transfer.approve server-side.
+  const canApproveTransfers = hasRestaurantCapability(
+    ws.data?.roles ?? [],
+    "transfer.approve",
+    Boolean(ws.data?.platformAdmin),
+  );
   const listFn = useServerFn(listStockTransfersFn);
   const getFn = useServerFn(getStockTransferFn);
   const createFn = useServerFn(createStockTransferFn);
   const approveFn = useServerFn(approveStockTransferFn);
   const dispatchFn = useServerFn(dispatchStockTransferFn);
-  const receiveFn = useServerFn(receiveStockTransferFn);
   const locFn = useServerFn(listInventoryLocationsFn);
   const posFn = useServerFn(listStockPositionsFn);
 
@@ -735,20 +779,6 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
       lines: Array<{ lineId: string; dispatchedQuantity: number }>;
     }) => dispatchFn({ data: { tenantId, transferId: vars.transferId, lines: vars.lines } }),
     successMessage: "Dispatched — stock left the source location",
-    onSuccess: invalidate,
-  });
-
-  const receive = useAdminMutation({
-    mutationFn: (vars: {
-      transferId: string;
-      lines: Array<{
-        lineId: string;
-        receivedQuantity: number;
-        rejectedQuantity: number;
-        damagedQuantity: number;
-      }>;
-    }) => receiveFn({ data: { tenantId, transferId: vars.transferId, lines: vars.lines } }),
-    successMessage: "Received — stock entered the destination",
     onSuccess: invalidate,
   });
 
@@ -916,25 +946,29 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
                             Dispatch all
                           </Button>
                         )}
-                        {(d.status === "dispatched" || d.status === "partially_received") && (
-                          <Button
-                            size="sm"
-                            onClick={() =>
-                              receive.mutate({
-                                transferId: d.id,
-                                lines: (d.lines ?? []).map((l: any) => ({
-                                  lineId: l.id,
-                                  receivedQuantity: Number(l.dispatched_quantity),
-                                  rejectedQuantity: 0,
-                                  damagedQuantity: 0,
-                                })),
-                              })
-                            }
-                          >
-                            Receive all
-                          </Button>
-                        )}
                       </div>
+                      {(d.status === "dispatched" || d.status === "partially_received") && (
+                        <TransferReceiveForm
+                          key={`${d.id}:${(d.lines ?? [])
+                            .map(
+                              (l: any) =>
+                                `${l.received_quantity}/${l.rejected_quantity}/${l.damaged_quantity}`,
+                            )
+                            .join(",")}`}
+                          tenantId={tenantId}
+                          transferId={d.id}
+                          canClose={canApproveTransfers}
+                          onDone={invalidate}
+                          lines={(d.lines ?? []).map((l: any) => ({
+                            id: l.id,
+                            label: l.item_name ?? "Item",
+                            dispatched: Number(l.dispatched_quantity ?? 0),
+                            received: Number(l.received_quantity ?? 0),
+                            rejected: Number(l.rejected_quantity ?? 0),
+                            damaged: Number(l.damaged_quantity ?? 0),
+                          }))}
+                        />
+                      )}
                     </div>
                   )}
                 </li>

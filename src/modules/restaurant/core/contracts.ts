@@ -335,7 +335,12 @@ export const createPurchaseOrderSchema = tenantScopeSchema.extend({
   supplierId: uuid.optional(),
   reference: z.string().max(60).optional(),
   expectedAt: z.string().optional(),
-  currency: z.string().min(3).max(3).default("TZS"),
+  currency: z
+    .string()
+    .length(3)
+    .transform((c) => c.toUpperCase())
+    .refine((c) => /^[A-Z]{3}$/.test(c), "Currency must be an ISO 4217 code.")
+    .default("TZS"),
   notes: z.string().max(2000).optional(),
   /**
    * A purchase order raised without a requisition is an exception, not a
@@ -350,8 +355,11 @@ export const createPurchaseOrderSchema = tenantScopeSchema.extend({
         supplierProductId: uuid.optional(),
         unitId: uuid.optional(),
         description: z.string().min(1).max(200),
-        quantity: z.number().min(0),
-        unitPrice: z.number().min(0),
+        quantity: z.number().finite().positive(),
+        /** Zero is refused server-side unless `priceExceptionReason` is given. */
+        unitPrice: z.number().finite().min(0),
+        /** Authorised zero-price exception (sample, complimentary, supplier-funded). */
+        priceExceptionReason: z.string().max(500).optional(),
       }),
     )
     .default([]),

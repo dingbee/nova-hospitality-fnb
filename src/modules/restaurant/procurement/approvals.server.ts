@@ -142,5 +142,13 @@ export async function assertMayApprove(
   if (propertyId && !matching.some((g) => g.propertyId === null || g.propertyId === propertyId)) {
     throw new Error("You are not authorized to approve at this property.");
   }
+  // A document without a property (a central-store order, or a legacy
+  // unassigned one) is NOT "nothing to check": only an approver whose grant is
+  // itself tenant-wide may approve it. Property-scoped approvers are refused.
+  if (!propertyId && !matching.some((g) => g.propertyId === null)) {
+    throw new Error(
+      "Approval of a tenant-level (central store) document requires a tenant-wide approver grant.",
+    );
+  }
   return rule;
 }

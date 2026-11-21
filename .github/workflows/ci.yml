@@ -217,6 +217,38 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_full_replay \
             -f standalone/db/verification/test-wce08-property-scoped-marketing-consent.sql
 
+      - name: Verify central-store procurement governance (0157) on the full replay
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d lexibite_full_replay \
+            -f standalone/db/verification/test-central-store-procurement-governance.sql
+
+      - name: Full-stack central-store acceptance (services → PostgREST → RLS) on the full replay
+        env:
+          PGPASSWORD: postgres
+          NOVA_E2E_POSTGREST_URL: http://127.0.0.1:3901
+          NOVA_E2E_JWT_SECRET: ci-only-central-store-e2e-jwt-secret-0123456789abcdef
+          NOVA_E2E_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/lexibite_full_replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          pgrst_dir="$(mktemp -d)"
+          curl -sSfL -o "$pgrst_dir/postgrest.tar.xz" \
+            https://github.com/PostgREST/postgrest/releases/download/v12.2.3/postgrest-v12.2.3-linux-static-x64.tar.xz
+          tar -xf "$pgrst_dir/postgrest.tar.xz" -C "$pgrst_dir"
+          cat > "$pgrst_dir/postgrest.conf" <<EOF
+          db-uri = "postgres://nova_authenticator:p0-01-ci-only-authenticator-password@127.0.0.1:5432/lexibite_full_replay"
+          db-schemas = "public"
+          db-anon-role = "anon"
+          jwt-secret = "$NOVA_E2E_JWT_SECRET"
+          server-host = "127.0.0.1"
+          server-port = 3901
+          EOF
+          "$pgrst_dir/postgrest" "$pgrst_dir/postgrest.conf" > "$pgrst_dir/postgrest.log" 2>&1 &
+          for _ in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:3901/ && break; sleep 1; done
+          bunx vitest run src/modules/restaurant/inventory/central-store.e2e.test.ts
+
       - name: Scoped GTM and changed-path functional tests
         run: |
           bunx vitest run \

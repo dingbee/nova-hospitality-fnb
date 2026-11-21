@@ -13,6 +13,11 @@ import {
 } from "./audit.server";
 import { assertMayApprove } from "./approvals.server";
 import { recordPriceObservation } from "./pricing.server";
+import { assertCurrency, priceOrderLines } from "../purchasing/governance";
+import {
+  assertSupplierEligible,
+  resolvePurchaseOrderDestination,
+} from "../purchasing/governance.server";
 import {
   DOCUMENT_PREFIX,
   type ConvertRequestToOrderInput,
@@ -344,15 +349,59 @@ export async function convertRequestToOrder(
     .eq("tenant_id", input.tenantId)
     .eq("purchase_request_id", input.requestId);
 
-  const orderLines = ((lines ?? []) as any[]).map((l) => ({
-    quantity: Number(l.approved_quantity ?? l.quantity ?? 0),
-    unitPrice: Number(l.estimated_unit_cost ?? 0),
-    inventoryItemId: l.inventory_item_id,
-    unitId: l.unit_id,
-    description: l.description,
-  }));
+  // Supplier eligibility is checked against the supplier's CURRENT status.
+  await assertSupplierEligible(sb, input.tenantId, input.supplierId);
+  const currency = assertCurrency(req.currency ?? "TZS");
 
-  const subtotal = orderLines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+  // The requisition's own destination is preserved. A requisition with no
+  // location follows the procurement policy: in central-store mode the order
+  // goes to the Main Store with the requesting property kept as its origin;
+  // otherwise it stays with the requesting property. Never unassigned.
+  const destination = await resolvePurchaseOrderDestination(sb, input.tenantId, {
+    propertyId: req.property_id ?? null,
+    locationId: req.location_id ?? null,
+  });
+  if (destination.centralStore) {
+    await assertCapability(sb, userId, input.tenantId, "purchasing.manage", {
+      locationId: destination.locationId,
+      tenantWide: true,
+    });
+  }
+
+  // A line with no estimate takes the supplier's active catalogue price for
+  // that item. A line still without a price cannot become an order line.
+  const itemIds = [
+    ...new Set(((lines ?? []) as any[]).map((l) => l.inventory_item_id).filter(Boolean)),
+  ] as string[];
+  const catalogue = new Map<string, number>();
+  if (itemIds.length > 0) {
+    const { data: products } = await sb
+      .from("restaurant_supplier_products")
+      .select("inventory_item_id, unit_price, currency, active")
+      .eq("tenant_id", input.tenantId)
+      .eq("supplier_id", input.supplierId)
+      .in("inventory_item_id", itemIds);
+    for (const p of (products ?? []) as any[]) {
+      if (p.active === false || String(p.currency ?? "").toUpperCase() !== currency) continue;
+      const price = Number(p.unit_price ?? 0);
+      if (price > 0 && !catalogue.has(p.inventory_item_id))
+        catalogue.set(p.inventory_item_id, price);
+    }
+  }
+
+  const rawLines = ((lines ?? []) as any[]).map((l) => {
+    const estimate = Number(l.estimated_unit_cost ?? 0);
+    return {
+      quantity: Number(l.approved_quantity ?? l.quantity ?? 0),
+      unitPrice: estimate > 0 ? estimate : (catalogue.get(l.inventory_item_id) ?? 0),
+      inventoryItemId: l.inventory_item_id,
+      unitId: l.unit_id,
+      description: l.description,
+    };
+  });
+  const priced = priceOrderLines(rawLines);
+  const orderLines = priced.lines.map((l, i) => ({ ...rawLines[i]!, ...l }));
+  const subtotal = priced.subtotal;
 
   // Never a client-supplied reference here — always safe to retry with a
   // freshly generated document number if it happens to collide with an
@@ -369,8 +418,8 @@ export async function convertRequestToOrder(
         .from("restaurant_purchase_orders")
         .insert({
           tenant_id: input.tenantId,
-          property_id: req.property_id,
-          location_id: req.location_id,
+          property_id: destination.propertyId,
+          location_id: destination.locationId,
           supplier_id: input.supplierId,
           purchase_request_id: input.requestId,
           reference: documentNumber,
@@ -381,10 +430,19 @@ export async function convertRequestToOrder(
           payment_terms: input.paymentTerms ?? null,
           subtotal,
           total: subtotal,
-          currency: req.currency ?? "TZS",
+          currency,
           notes: input.notes ?? req.notes ?? null,
           created_by: userId,
           correlation_id: req.correlation_id,
+          metadata: {
+            origin: "requisition",
+            purchase_request_id: input.requestId,
+            destination: {
+              central_store: destination.centralStore,
+              resolved_by: destination.resolvedBy,
+              originating_property_id: destination.originatingPropertyId,
+            },
+          },
         })
         .select("id, document_number, total, currency")
         .single(),
@@ -400,7 +458,7 @@ export async function convertRequestToOrder(
         description: l.description,
         quantity: l.quantity,
         unit_price: l.unitPrice,
-        line_total: l.quantity * l.unitPrice,
+        line_total: l.lineTotal,
       })),
     );
     if (liErr) throw new Error(liErr.message);
@@ -414,7 +472,7 @@ export async function convertRequestToOrder(
         priceType: "ordered",
         price: l.unitPrice,
         quantity: l.quantity,
-        currency: req.currency ?? "TZS",
+        currency,
         sourceType: "purchase_order",
         sourceId: po.id,
       });
@@ -456,8 +514,8 @@ export async function convertRequestToOrder(
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.purchase.order.created",
     tenantId: input.tenantId,
-    propertyId: req.property_id ?? undefined,
-    locationId: req.location_id ?? undefined,
+    propertyId: destination.propertyId ?? undefined,
+    locationId: destination.locationId ?? undefined,
     entityType: "restaurant_purchase_order",
     entityId: po.id,
     source: "restaurant-os",

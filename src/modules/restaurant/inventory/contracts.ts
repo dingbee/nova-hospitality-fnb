@@ -170,15 +170,34 @@ export const receiveTransferSchema = z.object({
     .array(
       z.object({
         lineId: uuid,
-        receivedQuantity: z.number().min(0),
-        rejectedQuantity: z.number().min(0).default(0),
-        damagedQuantity: z.number().min(0).default(0),
+        /**
+         * Quantities accounted for by THIS receiving event. Several partial
+         * receipts may be recorded against one dispatch; the line keeps the
+         * cumulative totals and never exceeds the dispatched quantity.
+         */
+        receivedQuantity: z.number().finite().min(0),
+        rejectedQuantity: z.number().finite().min(0).default(0),
+        damagedQuantity: z.number().finite().min(0).default(0),
+        /**
+         * Optimistic concurrency: the cumulative quantity (received + rejected
+         * + damaged) the receiver saw before this event. When supplied, a
+         * stale or replayed submission is refused instead of being counted twice.
+         */
+        expectedPriorAccounted: z.number().finite().min(0).optional(),
         notes: z.string().max(500).optional(),
       }),
     )
     .min(1),
 });
 export type ReceiveTransferInput = z.infer<typeof receiveTransferSchema>;
+
+export const closeTransferSchema = z.object({
+  tenantId: uuid,
+  transferId: uuid,
+  /** Why the outstanding in-transit quantity will never be received. */
+  reason: z.string().trim().min(10).max(500),
+});
+export type CloseTransferInput = z.infer<typeof closeTransferSchema>;
 
 export const cancelTransferSchema = z.object({
   tenantId: uuid,

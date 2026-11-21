@@ -161,11 +161,17 @@ beforeEach(() => {
   db["restaurant_inventory_batches"] = [];
   db["restaurant_goods_receipts"] = [];
   db["restaurant_goods_receipt_items"] = [];
+  // 0157: accepted stock is always posted into a known receiving location.
+  db["restaurant_locations"] = [
+    { id: "loc-store", tenant_id: TENANT, property_id: "prop-1", status: "active" },
+  ];
 });
 
 function draftReceipt(itemId: string, unitId: string, quantity: number, unitCost: number) {
   return createGoodsReceipt(sb, USER, {
     tenantId: TENANT,
+    propertyId: "prop-1",
+    locationId: "loc-store",
     currency: "TZS",
     post: false,
     lines: [

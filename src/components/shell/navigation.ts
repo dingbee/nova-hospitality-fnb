@@ -49,6 +49,12 @@ export interface NavItem {
    * A tenant OWNER's ALL_PERMISSIONS never satisfies this.
    */
   requiresCommercialAdmin?: boolean;
+  /**
+   * Shown only while the tenant's central store (Main Store) is configured
+   * and active. Discoverability only: the workspace's server read enforces
+   * the tenant-wide grant the central store requires.
+   */
+  requiresCentralStore?: boolean;
   exact?: boolean;
   hint?: string;
 }
@@ -194,6 +200,14 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Boxes,
         permission: "INVENTORY:READ",
         hint: "Counts, waste and variance control",
+      },
+      {
+        to: "/admin/restaurant/main-store",
+        label: "Main Store",
+        icon: Landmark,
+        permission: "INVENTORY:READ",
+        requiresCentralStore: true,
+        hint: "Central store stock, receiving, transfers and reconciliation",
       },
       {
         to: "/admin/restaurant/inventory",
@@ -413,13 +427,22 @@ export const ACCOUNT_ITEM: NavItem = {
   permission: "RESTAURANT:READ",
   hint: "Password and session",
 };
-export function visibleGroups(permissions: readonly string[], commercialAdmin = false): NavGroup[] {
+export function visibleGroups(
+  permissions: readonly string[],
+  commercialAdmin = false,
+  options: { centralStoreActive?: boolean } = {},
+): NavGroup[] {
   const held = new Set(permissions);
   return NAV_GROUPS.map((g) => ({
     label: g.label,
-    items: g.items.filter((i) =>
-      i.requiresCommercialAdmin ? commercialAdmin : i.permission ? held.has(i.permission) : false,
-    ),
+    items: g.items.filter((i) => {
+      if (i.requiresCentralStore && !options.centralStoreActive) return false;
+      return i.requiresCommercialAdmin
+        ? commercialAdmin
+        : i.permission
+          ? held.has(i.permission)
+          : false;
+    }),
   })).filter((g) => g.items.length > 0);
 }
 export function activeItem(pathname: string): NavItem | null {

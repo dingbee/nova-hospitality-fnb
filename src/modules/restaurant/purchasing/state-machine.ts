@@ -24,7 +24,11 @@ export const PO_SERVICE_OWNED_STATUSES: readonly PurchaseOrderStatus[] = [
 ];
 
 /** Statuses a user may request through the governed transition service. */
-export const PO_MANUAL_STATUSES: readonly PurchaseOrderStatus[] = ["submitted", "approved", "cancelled"];
+export const PO_MANUAL_STATUSES: readonly PurchaseOrderStatus[] = [
+  "submitted",
+  "approved",
+  "cancelled",
+];
 
 export const PO_TERMINAL_STATUSES: readonly PurchaseOrderStatus[] = ["received", "cancelled"];
 
@@ -60,11 +64,13 @@ export function assertPurchaseOrderTransition(
 
 /**
  * Statuses an order must hold for goods to be received against it. `draft` has
- * not been issued to anyone; `received` and `cancelled` are final. Receiving
- * owns the business fact, this machine owns whether the state may move.
+ * not been issued to anyone and `submitted` has not been approved; `received`
+ * and `cancelled` are final. Only an APPROVED commitment can be received —
+ * the same rule the database transition trigger enforces (submitted may only
+ * move to approved or cancelled), so stock can never be posted against an
+ * order whose fulfilment state the database would then refuse to advance.
  */
 export const PO_RECEIVABLE_STATUSES: readonly PurchaseOrderStatus[] = [
-  "submitted",
   "approved",
   "partially_received",
 ];
@@ -76,7 +82,11 @@ export function assertPurchaseOrderReceivable(status: string): void {
     );
   }
   if (!(PO_RECEIVABLE_STATUSES as readonly string[]).includes(status)) {
-    throw new Error(`Goods cannot be received against a ${status} purchase order.`);
+    throw new Error(
+      status === "submitted"
+        ? "Goods cannot be received against a submitted purchase order — it has not been approved."
+        : `Goods cannot be received against a ${status} purchase order.`,
+    );
   }
 }
 

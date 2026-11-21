@@ -9,13 +9,23 @@ import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { EntitySheet, Field, FieldRow, QuantityField, SearchSelect, type SearchOption } from "../../ui/forms";
+import {
+  EntitySheet,
+  Field,
+  FieldRow,
+  QuantityField,
+  SearchSelect,
+  type SearchOption,
+} from "../../ui/forms";
+import { PRICE_EXCEPTION_MIN_REASON, roundMoney } from "../governance";
 
 export interface PurchaseOrderLineValue {
   description: string;
   quantity: number;
   unitPrice: number;
   inventoryItemId: string | null;
+  /** Authorised zero-price exception (sample, complimentary). Required when unitPrice is 0. */
+  priceExceptionReason: string;
 }
 
 export interface PurchaseOrderFormValue {
@@ -25,10 +35,18 @@ export interface PurchaseOrderFormValue {
   currency: string;
   notes: string;
   directReason: string;
+  /** Explicit destination; empty = the tenant Main Store (central-store mode) or none. */
+  locationId: string | null;
   lines: PurchaseOrderLineValue[];
 }
 
-const EMPTY_LINE: PurchaseOrderLineValue = { description: "", quantity: 1, unitPrice: 0, inventoryItemId: null };
+const EMPTY_LINE: PurchaseOrderLineValue = {
+  description: "",
+  quantity: 1,
+  unitPrice: 0,
+  inventoryItemId: null,
+  priceExceptionReason: "",
+};
 const EMPTY: PurchaseOrderFormValue = {
   supplierId: null,
   reference: "",
@@ -36,6 +54,7 @@ const EMPTY: PurchaseOrderFormValue = {
   currency: "TZS",
   notes: "",
   directReason: "",
+  locationId: null,
   lines: [{ ...EMPTY_LINE }],
 };
 
@@ -44,13 +63,20 @@ export function PurchaseOrderSheet({
   onOpenChange,
   suppliers,
   items,
+  destinations = [],
+  centralStoreName = null,
   onSubmit,
   pending,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  /** Active suppliers only — the server refuses any other. */
   suppliers: SearchOption[];
   items: SearchOption[];
+  /** Destination stores the caller may order into. */
+  destinations?: SearchOption[];
+  /** Name of the active Main Store, when central-store mode is on. */
+  centralStoreName?: string | null;
   onSubmit: (value: PurchaseOrderFormValue) => void;
   pending?: boolean;
 }) {
@@ -59,11 +85,22 @@ export function PurchaseOrderSheet({
     if (open) setValue(EMPTY);
   }, [open]);
 
-  const total = value.lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+  const total = roundMoney(
+    value.lines.reduce((s, l) => s + roundMoney(l.quantity * l.unitPrice), 0),
+  );
+  const hasDestination = Boolean(value.locationId) || Boolean(centralStoreName);
   const valid =
     Boolean(value.supplierId) &&
+    hasDestination &&
+    /^[A-Z]{3}$/.test(value.currency) &&
     value.directReason.trim().length >= 10 &&
-    value.lines.every((l) => l.description.trim() && l.quantity > 0);
+    value.lines.every(
+      (l) =>
+        l.description.trim() &&
+        l.quantity > 0 &&
+        l.unitPrice >= 0 &&
+        (l.unitPrice > 0 || l.priceExceptionReason.trim().length >= PRICE_EXCEPTION_MIN_REASON),
+    );
 
   return (
     <EntitySheet
@@ -86,16 +123,45 @@ export function PurchaseOrderSheet({
           allowClear={false}
         />
       </Field>
+      <Field
+        label="Deliver to"
+        required
+        hint={
+          centralStoreName
+            ? `Central-store mode: orders are delivered to ${centralStoreName} unless you choose another authorised store.`
+            : "Choose the store that will receive and verify the goods."
+        }
+      >
+        <SearchSelect
+          options={destinations}
+          value={value.locationId}
+          onChange={(v) => setValue((s) => ({ ...s, locationId: v }))}
+          placeholder={centralStoreName ? `${centralStoreName} (Main Store)` : "Choose a store…"}
+        />
+      </Field>
       <FieldRow>
         <Field label="Reference" hint="Optional, e.g. an internal PO number.">
-          <Input className="h-11" value={value.reference} onChange={(e) => setValue((v) => ({ ...v, reference: e.target.value }))} />
+          <Input
+            className="h-11"
+            value={value.reference}
+            onChange={(e) => setValue((v) => ({ ...v, reference: e.target.value }))}
+          />
         </Field>
         <Field label="Expected delivery">
-          <Input className="h-11" type="date" value={value.expectedAt} onChange={(e) => setValue((v) => ({ ...v, expectedAt: e.target.value }))} />
+          <Input
+            className="h-11"
+            type="date"
+            value={value.expectedAt}
+            onChange={(e) => setValue((v) => ({ ...v, expectedAt: e.target.value }))}
+          />
         </Field>
       </FieldRow>
       <Field label="Currency" required>
-        <Input className="h-11 w-32" value={value.currency} onChange={(e) => setValue((v) => ({ ...v, currency: e.target.value.toUpperCase() }))} />
+        <Input
+          className="h-11 w-32"
+          value={value.currency}
+          onChange={(e) => setValue((v) => ({ ...v, currency: e.target.value.toUpperCase() }))}
+        />
       </Field>
 
       <Field
@@ -133,7 +199,9 @@ export function PurchaseOrderSheet({
                   size="icon"
                   variant="ghost"
                   className="h-8 w-8"
-                  onClick={() => setValue((v) => ({ ...v, lines: v.lines.filter((_, i) => i !== idx) }))}
+                  onClick={() =>
+                    setValue((v) => ({ ...v, lines: v.lines.filter((_, i) => i !== idx) }))
+                  }
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
@@ -148,7 +216,13 @@ export function PurchaseOrderSheet({
                     ...s,
                     lines: s.lines.map((l, i) =>
                       i === idx
-                        ? { ...l, inventoryItemId: v, description: v ? items.find((o) => o.value === v)?.label ?? l.description : l.description }
+                        ? {
+                            ...l,
+                            inventoryItemId: v,
+                            description: v
+                              ? (items.find((o) => o.value === v)?.label ?? l.description)
+                              : l.description,
+                          }
                         : l,
                     ),
                   }))
@@ -161,7 +235,12 @@ export function PurchaseOrderSheet({
                 className="h-11"
                 value={line.description}
                 onChange={(e) =>
-                  setValue((s) => ({ ...s, lines: s.lines.map((l, i) => (i === idx ? { ...l, description: e.target.value } : l)) }))
+                  setValue((s) => ({
+                    ...s,
+                    lines: s.lines.map((l, i) =>
+                      i === idx ? { ...l, description: e.target.value } : l,
+                    ),
+                  }))
                 }
               />
             </Field>
@@ -170,24 +249,58 @@ export function PurchaseOrderSheet({
                 <QuantityField
                   value={line.quantity}
                   step={1}
-                  onChange={(n) => setValue((s) => ({ ...s, lines: s.lines.map((l, i) => (i === idx ? { ...l, quantity: n } : l)) }))}
+                  onChange={(n) =>
+                    setValue((s) => ({
+                      ...s,
+                      lines: s.lines.map((l, i) => (i === idx ? { ...l, quantity: n } : l)),
+                    }))
+                  }
                 />
               </Field>
-              <Field label="Unit price">
+              <Field label="Unit price" required>
                 <QuantityField
                   value={line.unitPrice}
                   step={100}
                   suffix={value.currency}
-                  onChange={(n) => setValue((s) => ({ ...s, lines: s.lines.map((l, i) => (i === idx ? { ...l, unitPrice: n } : l)) }))}
+                  onChange={(n) =>
+                    setValue((s) => ({
+                      ...s,
+                      lines: s.lines.map((l, i) => (i === idx ? { ...l, unitPrice: n } : l)),
+                    }))
+                  }
                 />
               </Field>
             </FieldRow>
+            {line.unitPrice === 0 && (
+              <Field
+                label="Zero-price exception reason"
+                required
+                hint={`Only for genuinely free goods (sample, complimentary, supplier-funded). At least ${PRICE_EXCEPTION_MIN_REASON} characters; recorded with your approval authority in the audit trail. Otherwise enter the agreed price.`}
+              >
+                <Input
+                  className="h-11"
+                  value={line.priceExceptionReason}
+                  onChange={(e) =>
+                    setValue((s) => ({
+                      ...s,
+                      lines: s.lines.map((l, i) =>
+                        i === idx ? { ...l, priceExceptionReason: e.target.value } : l,
+                      ),
+                    }))
+                  }
+                />
+              </Field>
+            )}
           </div>
         ))}
       </div>
 
       <Field label="Notes">
-        <Textarea rows={2} value={value.notes} onChange={(e) => setValue((v) => ({ ...v, notes: e.target.value }))} />
+        <Textarea
+          rows={2}
+          value={value.notes}
+          onChange={(e) => setValue((v) => ({ ...v, notes: e.target.value }))}
+        />
       </Field>
 
       <p className="text-sm text-muted-foreground">

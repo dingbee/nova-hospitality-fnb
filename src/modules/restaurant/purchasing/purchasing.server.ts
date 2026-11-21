@@ -14,6 +14,13 @@ import {
   recordProcurementAudit,
 } from "../procurement/audit.server";
 import { DOCUMENT_PREFIX } from "../procurement/contracts";
+import { assertCurrency, priceOrderLines } from "./governance";
+import {
+  assertPurchaseOrderCommitmentReady,
+  assertSupplierEligible,
+  assertSupplierProductsBelongToSupplier,
+  resolvePurchaseOrderDestination,
+} from "./governance.server";
 import type { PurchaseOrderStatus } from "../core/contracts";
 
 type Sb = any;
@@ -30,7 +37,7 @@ export async function listPurchaseOrders(
   let q = sb
     .from("restaurant_purchase_orders")
     .select(
-      "id, reference, status, supplier_id, order_date, expected_at, received_at, subtotal, total, currency, location_id",
+      "id, reference, document_number, status, supplier_id, order_date, expected_at, received_at, subtotal, total, currency, property_id, location_id, purchase_request_id, metadata",
     )
     .eq("tenant_id", input.tenantId)
     .order("created_at", { ascending: false })
@@ -44,16 +51,44 @@ export async function listPurchaseOrders(
 }
 
 export async function createPurchaseOrder(sb: Sb, userId: string, input: CreatePurchaseOrderInput) {
-  // A purchase order raised outside the requisition flow is a management
-  // exception: it needs ordering authority, not just purchasing access.
-  const scope = {
+  // Destination first: an order is never created unassigned. In central-store
+  // mode an omitted destination resolves to the tenant Main Store.
+  const destination = await resolvePurchaseOrderDestination(sb, input.tenantId, {
     propertyId: input.propertyId ?? null,
     locationId: input.locationId ?? null,
+  });
+
+  // A purchase order raised outside the requisition flow is a management
+  // exception: it needs ordering authority, not just purchasing access —
+  // at the resolved destination (a central-store order needs a tenant-wide grant).
+  const scope = {
+    propertyId: destination.propertyId,
+    locationId: destination.locationId,
+    tenantWide: destination.centralStore || undefined,
   };
   await assertCapability(sb, userId, input.tenantId, "purchasing.manage", scope);
   await assertCapability(sb, userId, input.tenantId, "purchasing.approve", scope);
+  // The originating property (if any) must itself be within the caller's scope.
+  if (destination.originatingPropertyId && destination.centralStore) {
+    await assertCapability(sb, userId, input.tenantId, "purchasing.manage", {
+      propertyId: destination.originatingPropertyId,
+    });
+  }
 
-  const subtotal = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
+  const currency = assertCurrency(input.currency);
+  if (input.supplierId) await assertSupplierEligible(sb, input.tenantId, input.supplierId);
+  await assertSupplierProductsBelongToSupplier(
+    sb,
+    input.tenantId,
+    input.supplierId ?? null,
+    currency,
+    input.lines.map((l) => l.supplierProductId).filter(Boolean) as string[],
+  );
+
+  // Every amount is calculated here; nothing the client totals is trusted.
+  const priced = priceOrderLines(input.lines);
+  const subtotal = priced.subtotal;
+  const now = new Date().toISOString();
 
   // An explicit reference is client-supplied (e.g. a supplier's own PO
   // number) and never comes from the sequence — a retry that resubmits the
@@ -82,8 +117,8 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
         .from("restaurant_purchase_orders")
         .insert({
           tenant_id: input.tenantId,
-          property_id: input.propertyId ?? null,
-          location_id: input.locationId ?? null,
+          property_id: destination.propertyId,
+          location_id: destination.locationId,
           supplier_id: input.supplierId ?? null,
           reference: input.reference ?? documentNumber,
           document_number: documentNumber,
@@ -91,11 +126,20 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
           expected_at: input.expectedAt ?? null,
           subtotal,
           total: subtotal,
-          currency: input.currency,
+          currency,
           notes: input.notes ?? null,
           created_by: userId,
           buyer_id: userId,
-          metadata: { origin: "direct", direct_reason: input.directReason, authorised_by: userId },
+          metadata: {
+            origin: "direct",
+            direct_reason: input.directReason,
+            authorised_by: userId,
+            destination: {
+              central_store: destination.centralStore,
+              resolved_by: destination.resolvedBy,
+              originating_property_id: destination.originatingPropertyId,
+            },
+          },
         })
         .select("id, reference, document_number, total, currency")
         .single(),
@@ -105,22 +149,26 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
     { retryOnCollision: !input.reference },
   );
 
-  if (input.lines.length > 0) {
+  if (priced.lines.length > 0) {
     const { error: lineError } = await sb.from("restaurant_purchase_order_items").insert(
-      input.lines.map((l) => ({
+      priced.lines.map((l, i) => ({
         tenant_id: input.tenantId,
         purchase_order_id: po.id,
-        inventory_item_id: l.inventoryItemId ?? null,
-        supplier_product_id: l.supplierProductId ?? null,
-        unit_id: l.unitId ?? null,
+        inventory_item_id: input.lines[i]!.inventoryItemId ?? null,
+        supplier_product_id: input.lines[i]!.supplierProductId ?? null,
+        unit_id: input.lines[i]!.unitId ?? null,
         description: l.description,
         quantity: l.quantity,
         unit_price: l.unitPrice,
-        line_total: l.quantity * l.unitPrice,
+        line_total: l.lineTotal,
+        price_exception_reason: l.priceExceptionReason,
+        price_exception_authorised_by: l.priceExceptionReason ? userId : null,
+        price_exception_authorised_at: l.priceExceptionReason ? now : null,
       })),
     );
     if (lineError) throw new Error(lineError.message);
   }
+  const priceExceptions = priced.lines.filter((l) => l.priceExceptionReason);
 
   await recordProcurementAudit(sb, userId, {
     tenantId: input.tenantId,
@@ -130,14 +178,34 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
     action: "created_direct",
     newState: "draft",
     reason: input.directReason,
-    metadata: { origin: "direct", lines: input.lines.length, subtotal },
+    metadata: {
+      origin: "direct",
+      lines: priced.lines.length,
+      subtotal,
+      destination_location_id: destination.locationId,
+      destination_property_id: destination.propertyId,
+      central_store: destination.centralStore,
+      originating_property_id: destination.originatingPropertyId,
+    },
   });
+  if (priceExceptions.length > 0) {
+    await recordProcurementAudit(sb, userId, {
+      tenantId: input.tenantId,
+      documentType: "purchase_order",
+      documentId: po.id,
+      documentNumber: po.document_number,
+      action: "zero_price_exception_authorised",
+      newState: "draft",
+      reason: priceExceptions.map((l) => `${l.description}: ${l.priceExceptionReason}`).join("; "),
+      metadata: { lines: priceExceptions.map((l) => l.description) },
+    });
+  }
 
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.purchase.created",
     tenantId: input.tenantId,
-    propertyId: input.propertyId,
-    locationId: input.locationId,
+    propertyId: destination.propertyId ?? undefined,
+    locationId: destination.locationId ?? undefined,
     entityType: "restaurant_purchase_order",
     entityId: po.id,
     source: "restaurant-os",
@@ -146,8 +214,9 @@ export async function createPurchaseOrder(sb: Sb, userId: string, input: CreateP
       reference: po.reference,
       document_number: po.document_number,
       total: Number(po.total),
-      lines: input.lines.length,
+      lines: priced.lines.length,
       origin: "direct",
+      central_store: destination.centralStore,
     },
   });
   return po;
@@ -176,9 +245,12 @@ export async function transitionPurchaseOrder(
     .eq("id", input.id)
     .single();
   if (readErr || !current) throw new Error("Purchase order not found.");
+  // A NULL property is never a tenant-wide bypass: an order without a
+  // property (central-store or legacy unassigned) needs a tenant-wide grant.
   await assertCapability(sb, userId, input.tenantId, capability, {
     propertyId: current.property_id ?? null,
     locationId: current.location_id ?? null,
+    tenantWide: current.property_id ? undefined : true,
   });
 
   // Idempotent: repeating the same decision is not a second business effect.
@@ -214,6 +286,14 @@ export async function transitionPurchaseOrder(
     });
   }
 
+  // Authorization is decided first (above); then submission and approval
+  // re-validate the order against CURRENT supplier status, destination and
+  // pricing rules — an order created before a supplier was deactivated is
+  // never silently carried into a commitment.
+  if (input.status === "submitted" || input.status === "approved") {
+    await assertPurchaseOrderCommitmentReady(sb, input.tenantId, input.id);
+  }
+
   const patch: Record<string, unknown> = {
     status: input.status,
     updated_at: new Date().toISOString(),
@@ -230,8 +310,13 @@ export async function transitionPurchaseOrder(
     .eq("tenant_id", input.tenantId)
     .eq("status", current.status)
     .select("id, reference, status, total, location_id, property_id")
-    .single();
+    .maybeSingle();
   if (error) throw new Error(error.message);
+  if (!data) {
+    throw new Error(
+      "The purchase order changed while this decision was being made — reload and try again.",
+    );
+  }
 
   await recordProcurementAudit(sb, userId, {
     tenantId: input.tenantId,

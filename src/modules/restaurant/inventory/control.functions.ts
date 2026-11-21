@@ -11,6 +11,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   approveTransferSchema,
   cancelTransferSchema,
+  closeTransferSchema,
   createReservationSchema,
   createTransferSchema,
   dispatchTransferSchema,
@@ -122,6 +123,14 @@ export const receiveStockTransferFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./transfers.server");
     return mod.receiveTransfer(context.supabase, context.userId, data);
+  });
+
+export const closeStockTransferFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => closeTransferSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./transfers.server");
+    return mod.closeTransfer(context.supabase, context.userId, data);
   });
 
 export const cancelStockTransferFn = createServerFn({ method: "POST" })
@@ -276,4 +285,23 @@ export const listInventoryReconciliationFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./overview.server");
     return mod.listReconciliation(context.supabase, context.userId, data);
+  });
+/* ---------------- Main Store (tenant central store) ---------------- */
+
+const mainStoreTenantSchema = z.object({ tenantId: z.string().uuid() });
+
+export const getCentralStoreStatusFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => mainStoreTenantSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./central-store.server");
+    return mod.getCentralStoreStatus(context.supabase, data.tenantId);
+  });
+
+export const getMainStoreOverviewFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => mainStoreTenantSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./main-store.server");
+    return mod.getMainStoreOverview(context.supabase, context.userId, data.tenantId);
   });

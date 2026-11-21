@@ -41,6 +41,8 @@ const PO_REFERENCE_CONSTRAINT = "restaurant_purchase_orders_tenant_id_reference_
 function baseInput(overrides: Partial<Record<string, any>> = {}) {
   return {
     tenantId: TENANT,
+    // 0157: property-level purchasing (no central store configured) needs a property.
+    propertyId: "33333333-3333-3333-3333-333333333333",
     currency: "TZS",
     directReason: "UAT regression test",
     lines: [{ description: "Test item", quantity: 1, unitPrice: 1000 }],
@@ -144,6 +146,9 @@ function makeFakeSupabase(seedReferences: Array<{ tenantId: string; reference: s
       from: (table: string) => from(table),
       rpc: async (fn: string, args: any) => {
         if (fn === "has_any_role") return { data: false, error: null };
+        if (fn === "restaurant_central_store_resolution") {
+          return { data: [{ resolution: "not_configured" }], error: null };
+        }
         if (fn === "restaurant_next_document_number") {
           const n = nextSequenceNumber(args._tenant, args._doc_type);
           const prefix = args._prefix || "DOC";
