@@ -259,6 +259,11 @@ BEGIN
     SELECT s.status INTO v_supplier_status
     FROM public.restaurant_suppliers s
     WHERE s.id = NEW.supplier_id AND s.tenant_id = NEW.tenant_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'PO_SUPPLIER_NOT_IN_TENANT'
+        USING ERRCODE = '23503',
+              DETAIL = 'The supplier does not belong to this tenant.';
+    END IF;
     IF v_supplier_status IS DISTINCT FROM 'active' THEN
       RAISE EXCEPTION 'PO_SUPPLIER_INACTIVE'
         USING ERRCODE = '23514',

@@ -13,6 +13,7 @@ import type { z } from "zod";
 import { assertCapability, assertTenantRead } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
 import { insertMovement } from "../inventory/movements.server";
+import { resolveCentralStore } from "../inventory/central-store.server";
 import { assertLocationInTenant } from "../inventory/locations.server";
 import { purchaseToStock, convertUnits, type UnitRow } from "../inventory/units";
 import {
@@ -202,7 +203,27 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
   // stock ledger, misattributing received stock to the wrong property's
   // location. At minimum it must belong to this tenant; per-line storage
   // locations get the same check below.
-  const resolvedLocationId = input.locationId ?? po?.location_id ?? null;
+  let resolvedLocationId = input.locationId ?? po?.location_id ?? null;
+  // A delivery received without an order or a named location goes to the
+  // tenant Main Store in central-store mode — never to an unassigned balance.
+  if (!resolvedLocationId && !po && !input.propertyId) {
+    const store = await resolveCentralStore(sb, input.tenantId);
+    if (store?.locationId) {
+      await assertCapability(sb, userId, input.tenantId, "receiving.manage", {
+        locationId: store.locationId,
+        tenantWide: true,
+      });
+      resolvedLocationId = store.locationId;
+    }
+  }
+  if (
+    !resolvedLocationId &&
+    input.lines.some((l) => l.acceptedQuantity > 0 && l.inventoryItemId && !l.storageLocationId)
+  ) {
+    throw new Error(
+      "Select the receiving location: accepted stock must be posted into a known store.",
+    );
+  }
   await assertLocationInTenant(sb, input.tenantId, resolvedLocationId);
   const lineStorageLocationIds = [
     ...new Set(input.lines.map((l) => l.storageLocationId).filter(Boolean) as string[]),

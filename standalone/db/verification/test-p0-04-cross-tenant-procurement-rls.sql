@@ -31,10 +31,11 @@ VALUES
   ('c4000000-0000-4000-8000-000000000001', 'c0000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'XT Flour A'),
   ('d4000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000001', 'd1000000-0000-4000-8000-000000000001', 'XT Flour B');
 
-INSERT INTO public.restaurant_purchase_orders (id, tenant_id, reference, supplier_id)
+-- 0157: a purchase order always carries a destination (property or location).
+INSERT INTO public.restaurant_purchase_orders (id, tenant_id, property_id, reference, supplier_id)
 VALUES
-  ('c5000000-0000-4000-8000-000000000001', 'c0000000-0000-4000-8000-000000000001', 'XT-PO-A', 'c3000000-0000-4000-8000-000000000001'),
-  ('d5000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000001', 'XT-PO-B', 'd3000000-0000-4000-8000-000000000001');
+  ('c5000000-0000-4000-8000-000000000001', 'c0000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'XT-PO-A', 'c3000000-0000-4000-8000-000000000001'),
+  ('d5000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000001', 'd1000000-0000-4000-8000-000000000001', 'XT-PO-B', 'd3000000-0000-4000-8000-000000000001');
 
 INSERT INTO public.restaurant_supplier_invoices
   (id, tenant_id, document_number, supplier_invoice_number, supplier_id, recorded_by)
@@ -112,8 +113,8 @@ BEGIN
   END;
 
   BEGIN
-    INSERT INTO public.restaurant_purchase_orders (tenant_id, reference, supplier_id)
-    VALUES ('d0000000-0000-4000-8000-000000000001', 'XT-INJECT', 'd3000000-0000-4000-8000-000000000001');
+    INSERT INTO public.restaurant_purchase_orders (tenant_id, property_id, reference, supplier_id)
+    VALUES ('d0000000-0000-4000-8000-000000000001', 'd1000000-0000-4000-8000-000000000001', 'XT-INJECT', 'd3000000-0000-4000-8000-000000000001');
     RAISE EXCEPTION 'P0-04 FAIL: Tenant A owner created a Tenant B purchase order';
   EXCEPTION WHEN insufficient_privilege THEN
     RAISE NOTICE 'P0-04 PASS: cross-tenant purchase-order insert denied';
@@ -130,8 +131,8 @@ BEGIN
   -- Own-tenant row pointing at a foreign-tenant supplier must also fail
   -- (tenant-composite referential integrity, independent of RLS).
   BEGIN
-    INSERT INTO public.restaurant_purchase_orders (tenant_id, reference, supplier_id)
-    VALUES ('c0000000-0000-4000-8000-000000000001', 'XT-CROSS-REF', 'd3000000-0000-4000-8000-000000000001');
+    INSERT INTO public.restaurant_purchase_orders (tenant_id, property_id, reference, supplier_id)
+    VALUES ('c0000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'XT-CROSS-REF', 'd3000000-0000-4000-8000-000000000001');
     RAISE EXCEPTION 'P0-04 FAIL: Tenant A purchase order referenced a Tenant B supplier';
   EXCEPTION WHEN foreign_key_violation OR insufficient_privilege THEN
     RAISE NOTICE 'P0-04 PASS: cross-tenant supplier reference denied';

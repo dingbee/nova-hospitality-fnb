@@ -47,6 +47,8 @@ import {
   listRestaurantPurchaseOrdersFn,
 } from "../../purchasing/purchasing.functions";
 import { matchRestaurantInventoryItemsFn } from "../../inventory/inventory.functions";
+import { listInventoryLocationsFn } from "../../inventory/control.functions";
+import { PO_RECEIVABLE_STATUSES } from "../../purchasing/state-machine";
 import { BarcodeScanButton } from "../../inventory/ui/BarcodeScanButton";
 
 const TABS = [
@@ -474,8 +476,9 @@ function ReceivingTab({ tenantId }: { tenantId: string }) {
   });
   const receivableOrders = useMemo(
     () =>
+      // Only approved commitments can be received (same rule as the server).
       ((ordersQ.data as any[]) ?? []).filter((o) =>
-        ["submitted", "approved", "partially_received"].includes(String(o.status)),
+        (PO_RECEIVABLE_STATUSES as readonly string[]).includes(String(o.status)),
       ),
     [ordersQ.data],
   );
@@ -547,6 +550,18 @@ function ReceivingTab({ tenantId }: { tenantId: string }) {
   });
 
   const [deliveryNote, setDeliveryNote] = useState("");
+  const [basketLocationId, setBasketLocationId] = useState("");
+  const locationsFn = useServerFn(listInventoryLocationsFn);
+  const storesQ = useQuery({
+    queryKey: ["restaurant.inventory.locations", tenantId, "storage"],
+    queryFn: () =>
+      locationsFn({ data: { tenantId, storageOnly: true, includeInactive: false } }),
+  });
+  const stores = (storesQ.data as any[] | undefined) ?? [];
+  // Default: the tenant Main Store when one is visible to this user.
+  const effectiveBasketLocationId =
+    basketLocationId || stores.find((l) => l.scope === "tenant")?.id || "";
+  const basketLocation = stores.find((l) => l.id === effectiveBasketLocationId);
 
   /* --- Fast capture: search/scan an item, build a basket, post once --- */
   const matchFn = useServerFn(matchRestaurantInventoryItemsFn);
@@ -574,6 +589,8 @@ function ReceivingTab({ tenantId }: { tenantId: string }) {
       createFn({
         data: {
           tenantId,
+          locationId: effectiveBasketLocationId || undefined,
+          propertyId: basketLocation?.property_id ?? undefined,
           deliveryNoteRef: deliveryNote || undefined,
           currency: "TZS",
           post: true,
@@ -892,6 +909,22 @@ function ReceivingTab({ tenantId }: { tenantId: string }) {
 
           <div className="grid gap-3 md:grid-cols-3">
             <div>
+              <Label htmlFor="gr-location">Receiving store</Label>
+              <select
+                id="gr-location"
+                className="mt-1 h-11 w-full rounded-md border bg-background px-3 text-sm"
+                value={effectiveBasketLocationId}
+                onChange={(e) => setBasketLocationId(e.target.value)}
+              >
+                <option value="">Select a store…</option>
+                {stores.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.display_name ?? l.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
               <Label htmlFor="gr-note">Delivery note ref</Label>
               <Input
                 id="gr-note"
@@ -900,11 +933,12 @@ function ReceivingTab({ tenantId }: { tenantId: string }) {
                 onChange={(e) => setDeliveryNote(e.target.value)}
               />
             </div>
-            <div className="flex items-end md:col-span-2">
+            <div className="flex items-end">
               <Button
                 className="h-11 w-full"
                 disabled={
                   basket.length === 0 ||
+                  !effectiveBasketLocationId ||
                   postBasket.isPending ||
                   basket.some((l) => Number(l.rejectedQuantity) > 0 && !l.rejectionReason.trim())
                 }

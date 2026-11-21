@@ -286,3 +286,22 @@ export const listInventoryReconciliationFn = createServerFn({ method: "POST" })
     const mod = await import("./overview.server");
     return mod.listReconciliation(context.supabase, context.userId, data);
   });
+/* ---------------- Main Store (tenant central store) ---------------- */
+
+const mainStoreTenantSchema = z.object({ tenantId: z.string().uuid() });
+
+export const getCentralStoreStatusFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => mainStoreTenantSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./central-store.server");
+    return mod.getCentralStoreStatus(context.supabase, data.tenantId);
+  });
+
+export const getMainStoreOverviewFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => mainStoreTenantSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./main-store.server");
+    return mod.getMainStoreOverview(context.supabase, context.userId, data.tenantId);
+  });

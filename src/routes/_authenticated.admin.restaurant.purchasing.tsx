@@ -22,6 +22,10 @@ import { PO_TRANSITIONS, PO_MANUAL_STATUSES } from "@/modules/restaurant/purchas
 import { listRestaurantSuppliersFn } from "@/modules/restaurant/suppliers/suppliers.functions";
 import { listRestaurantInventoryFn } from "@/modules/restaurant/inventory/inventory.functions";
 import {
+  getCentralStoreStatusFn,
+  listInventoryLocationsFn,
+} from "@/modules/restaurant/inventory/control.functions";
+import {
   PurchaseOrderSheet,
   type PurchaseOrderFormValue,
 } from "@/modules/restaurant/purchasing/ui/PurchaseOrderSheet";
@@ -79,6 +83,19 @@ function PurchasingPage() {
     queryFn: () => suppliersFn({ data: { tenantId: tenantId!, limit: 200 } }),
     enabled: Boolean(tenantId),
   });
+  const centralStoreFn = useServerFn(getCentralStoreStatusFn);
+  const locationsFn = useServerFn(listInventoryLocationsFn);
+  const centralStore = useQuery({
+    queryKey: ["restaurant.central-store", tenantId],
+    queryFn: () => centralStoreFn({ data: { tenantId: tenantId! } }),
+    enabled: Boolean(tenantId),
+  });
+  const destinationsQ = useQuery({
+    queryKey: ["restaurant.inventory.locations", tenantId, "storage"],
+    queryFn: () =>
+      locationsFn({ data: { tenantId: tenantId!, storageOnly: true, includeInactive: false } }),
+    enabled: Boolean(tenantId),
+  });
   const items = useQuery({
     queryKey: ["restaurant.inventory", tenantId],
     queryFn: () => itemsFn({ data: { tenantId: tenantId!, lowOnly: false, limit: 300 } }),
@@ -113,11 +130,17 @@ function PurchasingPage() {
           currency: v.currency,
           notes: v.notes || undefined,
           directReason: v.directReason,
+          locationId: v.locationId ?? undefined,
+          propertyId:
+            (destinationsQ.data as any[] | undefined)?.find((l) => l.id === v.locationId)
+              ?.property_id ?? undefined,
           lines: v.lines.map((l) => ({
             description: l.description,
             quantity: l.quantity,
             unitPrice: l.unitPrice,
             inventoryItemId: l.inventoryItemId ?? undefined,
+            priceExceptionReason:
+              l.unitPrice === 0 ? l.priceExceptionReason || undefined : undefined,
           })),
         },
       }),
@@ -128,10 +151,22 @@ function PurchasingPage() {
     },
   });
 
-  const supplierOptions = ((suppliers.data ?? []) as any[]).map((s) => ({
-    value: s.id,
-    label: s.name,
+  // Inactive suppliers are not offered for new purchasing (the server and the
+  // database refuse them regardless of what the browser sends).
+  const supplierOptions = ((suppliers.data ?? []) as any[])
+    .filter((s) => s.status === "active")
+    .map((s) => ({
+      value: s.id,
+      label: s.name,
+    }));
+  const destinationOptions = ((destinationsQ.data ?? []) as any[]).map((l) => ({
+    value: l.id,
+    label: l.display_name ?? l.name,
   }));
+  const supplierName = new Map(((suppliers.data ?? []) as any[]).map((s) => [s.id, s]));
+  const locationName = new Map(
+    ((destinationsQ.data ?? []) as any[]).map((l) => [l.id, l.name as string]),
+  );
   const itemOptions = ((items.data ?? []) as any[]).map((i) => ({
     value: i.id,
     label: i.name,
@@ -177,7 +212,22 @@ function PurchasingPage() {
                 key={o.id}
                 className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-2"
               >
-                <span>{o.document_number ?? o.reference ?? o.id.slice(0, 8)}</span>
+                <span className="min-w-0">
+                  <span className="block">{o.document_number ?? o.reference ?? o.id.slice(0, 8)}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {supplierName.get(o.supplier_id)?.name ?? "No supplier"}
+                    {supplierName.get(o.supplier_id) &&
+                    supplierName.get(o.supplier_id)?.status !== "active"
+                      ? ` (${supplierName.get(o.supplier_id)?.status})`
+                      : ""}{" "}
+                    →{" "}
+                    {o.location_id
+                      ? (locationName.get(o.location_id) ?? "Restricted store")
+                      : o.property_id
+                        ? "Property (no store)"
+                        : "UNASSIGNED — cannot be submitted or approved"}
+                  </span>
+                </span>
                 <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <StatusChip tone={PO_TONE[o.status] ?? "neutral"}>{o.status}</StatusChip>
                   {o.currency} {Number(o.total ?? 0).toLocaleString()}
@@ -262,6 +312,8 @@ function PurchasingPage() {
         onOpenChange={setOpen}
         suppliers={supplierOptions}
         items={itemOptions}
+        destinations={destinationOptions}
+        centralStoreName={centralStore.data?.active ? centralStore.data.name : null}
         pending={create.isPending}
         onSubmit={(v) => create.mutate(v)}
       />

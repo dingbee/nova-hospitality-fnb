@@ -10,12 +10,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { EntitySheet, Field, FieldRow, QuantityField, SearchSelect, type SearchOption } from "../../ui/forms";
+import { PRICE_EXCEPTION_MIN_REASON, roundMoney } from "../governance";
 
 export interface PurchaseOrderLineValue {
   description: string;
   quantity: number;
   unitPrice: number;
   inventoryItemId: string | null;
+  /** Authorised zero-price exception (sample, complimentary). Required when unitPrice is 0. */
+  priceExceptionReason: string;
 }
 
 export interface PurchaseOrderFormValue {
@@ -25,10 +28,18 @@ export interface PurchaseOrderFormValue {
   currency: string;
   notes: string;
   directReason: string;
+  /** Explicit destination; empty = the tenant Main Store (central-store mode) or none. */
+  locationId: string | null;
   lines: PurchaseOrderLineValue[];
 }
 
-const EMPTY_LINE: PurchaseOrderLineValue = { description: "", quantity: 1, unitPrice: 0, inventoryItemId: null };
+const EMPTY_LINE: PurchaseOrderLineValue = {
+  description: "",
+  quantity: 1,
+  unitPrice: 0,
+  inventoryItemId: null,
+  priceExceptionReason: "",
+};
 const EMPTY: PurchaseOrderFormValue = {
   supplierId: null,
   reference: "",
@@ -36,6 +47,7 @@ const EMPTY: PurchaseOrderFormValue = {
   currency: "TZS",
   notes: "",
   directReason: "",
+  locationId: null,
   lines: [{ ...EMPTY_LINE }],
 };
 
@@ -44,13 +56,20 @@ export function PurchaseOrderSheet({
   onOpenChange,
   suppliers,
   items,
+  destinations = [],
+  centralStoreName = null,
   onSubmit,
   pending,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  /** Active suppliers only — the server refuses any other. */
   suppliers: SearchOption[];
   items: SearchOption[];
+  /** Destination stores the caller may order into. */
+  destinations?: SearchOption[];
+  /** Name of the active Main Store, when central-store mode is on. */
+  centralStoreName?: string | null;
   onSubmit: (value: PurchaseOrderFormValue) => void;
   pending?: boolean;
 }) {
@@ -59,11 +78,20 @@ export function PurchaseOrderSheet({
     if (open) setValue(EMPTY);
   }, [open]);
 
-  const total = value.lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+  const total = roundMoney(value.lines.reduce((s, l) => s + roundMoney(l.quantity * l.unitPrice), 0));
+  const hasDestination = Boolean(value.locationId) || Boolean(centralStoreName);
   const valid =
     Boolean(value.supplierId) &&
+    hasDestination &&
+    /^[A-Z]{3}$/.test(value.currency) &&
     value.directReason.trim().length >= 10 &&
-    value.lines.every((l) => l.description.trim() && l.quantity > 0);
+    value.lines.every(
+      (l) =>
+        l.description.trim() &&
+        l.quantity > 0 &&
+        l.unitPrice >= 0 &&
+        (l.unitPrice > 0 || l.priceExceptionReason.trim().length >= PRICE_EXCEPTION_MIN_REASON),
+    );
 
   return (
     <EntitySheet
@@ -84,6 +112,22 @@ export function PurchaseOrderSheet({
           onChange={(v) => setValue((s) => ({ ...s, supplierId: v }))}
           placeholder="Choose a supplier…"
           allowClear={false}
+        />
+      </Field>
+      <Field
+        label="Deliver to"
+        required
+        hint={
+          centralStoreName
+            ? `Central-store mode: orders are delivered to ${centralStoreName} unless you choose another authorised store.`
+            : "Choose the store that will receive and verify the goods."
+        }
+      >
+        <SearchSelect
+          options={destinations}
+          value={value.locationId}
+          onChange={(v) => setValue((s) => ({ ...s, locationId: v }))}
+          placeholder={centralStoreName ? `${centralStoreName} (Main Store)` : "Choose a store…"}
         />
       </Field>
       <FieldRow>
@@ -173,7 +217,7 @@ export function PurchaseOrderSheet({
                   onChange={(n) => setValue((s) => ({ ...s, lines: s.lines.map((l, i) => (i === idx ? { ...l, quantity: n } : l)) }))}
                 />
               </Field>
-              <Field label="Unit price">
+              <Field label="Unit price" required>
                 <QuantityField
                   value={line.unitPrice}
                   step={100}
@@ -182,6 +226,24 @@ export function PurchaseOrderSheet({
                 />
               </Field>
             </FieldRow>
+            {line.unitPrice === 0 && (
+              <Field
+                label="Zero-price exception reason"
+                required
+                hint={`Only for genuinely free goods (sample, complimentary, supplier-funded). At least ${PRICE_EXCEPTION_MIN_REASON} characters; recorded with your approval authority in the audit trail. Otherwise enter the agreed price.`}
+              >
+                <Input
+                  className="h-11"
+                  value={line.priceExceptionReason}
+                  onChange={(e) =>
+                    setValue((s) => ({
+                      ...s,
+                      lines: s.lines.map((l, i) => (i === idx ? { ...l, priceExceptionReason: e.target.value } : l)),
+                    }))
+                  }
+                />
+              </Field>
+            )}
           </div>
         ))}
       </div>

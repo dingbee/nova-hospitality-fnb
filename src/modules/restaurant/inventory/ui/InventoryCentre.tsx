@@ -22,6 +22,8 @@ import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { useRestaurantWorkspace } from "../../ui/useRestaurantWorkspace";
 import { resolveCommercialEntitlementFn } from "@/modules/commercial/commercial.functions";
 import { BatchSheet } from "./BatchSheet";
+import { TransferReceiveForm } from "./TransferReceiveForm";
+import { hasRestaurantCapability } from "../../core/permissions";
 import { BarcodeScanButton } from "./BarcodeScanButton";
 import { stocktakeBadge, transferBadge, type StockPosition } from "../contracts";
 import { filterStocktakeLines, matchStocktakeLineByCode } from "../stocktake-scan";
@@ -41,7 +43,6 @@ import {
   listStockTransfersFn,
   listStocktakesFn,
   postStocktakeFn,
-  receiveStockTransferFn,
   recordInventoryAdjustmentFn,
   recordInventoryWasteFn,
   saveStocktakeCountsFn,
@@ -656,12 +657,18 @@ function PositionsTab({ tenantId }: { tenantId: string }) {
 
 function TransfersTab({ tenantId }: { tenantId: string }) {
   const qc = useQueryClient();
+  const ws = useRestaurantWorkspace();
+  // Presentation only — closeTransfer enforces transfer.approve server-side.
+  const canApproveTransfers = hasRestaurantCapability(
+    ws.data?.roles ?? [],
+    "transfer.approve",
+    Boolean(ws.data?.platformAdmin),
+  );
   const listFn = useServerFn(listStockTransfersFn);
   const getFn = useServerFn(getStockTransferFn);
   const createFn = useServerFn(createStockTransferFn);
   const approveFn = useServerFn(approveStockTransferFn);
   const dispatchFn = useServerFn(dispatchStockTransferFn);
-  const receiveFn = useServerFn(receiveStockTransferFn);
   const locFn = useServerFn(listInventoryLocationsFn);
   const posFn = useServerFn(listStockPositionsFn);
 
@@ -738,19 +745,6 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
     onSuccess: invalidate,
   });
 
-  const receive = useAdminMutation({
-    mutationFn: (vars: {
-      transferId: string;
-      lines: Array<{
-        lineId: string;
-        receivedQuantity: number;
-        rejectedQuantity: number;
-        damagedQuantity: number;
-      }>;
-    }) => receiveFn({ data: { tenantId, transferId: vars.transferId, lines: vars.lines } }),
-    successMessage: "Received — stock entered the destination",
-    onSuccess: invalidate,
-  });
 
   const rows = (transfers.data ?? []) as any[];
   const d = detail.data as any;
@@ -916,25 +910,26 @@ function TransfersTab({ tenantId }: { tenantId: string }) {
                             Dispatch all
                           </Button>
                         )}
-                        {(d.status === "dispatched" || d.status === "partially_received") && (
-                          <Button
-                            size="sm"
-                            onClick={() =>
-                              receive.mutate({
-                                transferId: d.id,
-                                lines: (d.lines ?? []).map((l: any) => ({
-                                  lineId: l.id,
-                                  receivedQuantity: Number(l.dispatched_quantity),
-                                  rejectedQuantity: 0,
-                                  damagedQuantity: 0,
-                                })),
-                              })
-                            }
-                          >
-                            Receive all
-                          </Button>
-                        )}
                       </div>
+                      {(d.status === "dispatched" || d.status === "partially_received") && (
+                        <TransferReceiveForm
+                          key={`${d.id}:${(d.lines ?? [])
+                            .map((l: any) => `${l.received_quantity}/${l.rejected_quantity}/${l.damaged_quantity}`)
+                            .join(",")}`}
+                          tenantId={tenantId}
+                          transferId={d.id}
+                          canClose={canApproveTransfers}
+                          onDone={invalidate}
+                          lines={(d.lines ?? []).map((l: any) => ({
+                            id: l.id,
+                            label: l.item_name ?? "Item",
+                            dispatched: Number(l.dispatched_quantity ?? 0),
+                            received: Number(l.received_quantity ?? 0),
+                            rejected: Number(l.rejected_quantity ?? 0),
+                            damaged: Number(l.damaged_quantity ?? 0),
+                          }))}
+                        />
+                      )}
                     </div>
                   )}
                 </li>
