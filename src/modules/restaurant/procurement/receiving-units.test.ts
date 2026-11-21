@@ -278,7 +278,7 @@ describe("purchase-order fulfilment is never silently dropped", () => {
       /Purchase-order fulfilment could not be recorded/,
     );
     const receipt = db["restaurant_goods_receipts"].find((r: any) => r.id === draft.id);
-    expect(receipt.status).not.toBe("posted");
+    expect(receipt?.status).not.toBe("posted");
   });
 
   it("records fulfilment on the PO line when the update succeeds", async () => {
