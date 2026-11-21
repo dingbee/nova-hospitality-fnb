@@ -16,9 +16,21 @@
  * chain out — "no duplicate order" only means something if the real write
  * path is exercised, not bypassed.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { submitGuestOrder } from "./selforder.server";
 import type { GuestLineInput } from "./selforder.contracts";
+
+// Guest-only ingredient gate (guest-composition.server.ts) has its own
+// dedicated suite (guest-composition.server.test.ts). This file's subject is
+// a different contract, so the gate is a pass-through here unless a test
+// explicitly narrows it via guestComposedIds.
+const guestComposedIds = vi.hoisted(() => ({ exclude: new Set<string>() }));
+vi.mock("./guest-composition.server", () => ({
+  ingredientBackedMenuItemIds: async (_sb: unknown, _tenantId: string, ids: string[]) =>
+    new Set(ids.filter((id) => !guestComposedIds.exclude.has(id))),
+  filterGuestComposedItems: async (_sb: unknown, _tenantId: string, items: Array<{ id: string }>) =>
+    items.filter((item) => !guestComposedIds.exclude.has(item.id)),
+}));
 
 const TENANT = "tenant-1";
 const OTHER_TENANT = "tenant-2";
@@ -210,7 +222,12 @@ function baseRows(overrides: Partial<Record<string, any[]>> = {}) {
       },
     ],
     restaurant_tenants: [
-      { id: TENANT, name: "Demo", status: "active", settings: { onboarding: { operatingMode: "table_service" } } },
+      {
+        id: TENANT,
+        name: "Demo",
+        status: "active",
+        settings: { onboarding: { operatingMode: "table_service" } },
+      },
       { id: OTHER_TENANT, name: "Other tenant", status: "active", settings: null },
     ],
     restaurant_currencies: [],
@@ -905,5 +922,43 @@ describe("submitGuestOrder — guest-facing error sanitization (ME-07)", () => {
         clientRequestId: "req-raw-db-error-header",
       }),
     ).rejects.toThrow(/couldn't process your order/i);
+  });
+});
+
+describe("submitGuestOrder — guest-only ingredient gate cannot be bypassed", () => {
+  it("rejects a crafted submission for an item the guest menu hides for missing ingredients — no order, no ticket", async () => {
+    guestComposedIds.exclude = new Set([ITEM_FRIES]);
+    try {
+      const sb = makeFakeSupabase(baseRows());
+      await expect(
+        submitGuestOrder(sb, {
+          tableId: TABLE,
+          lines: [colaLine({ menuItemId: ITEM_FRIES, description: "Fries" })],
+          clientRequestId: "req-bypass",
+        }),
+      ).rejects.toThrow(/no longer available/);
+      expect(sb.store.restaurant_orders ?? []).toHaveLength(0);
+      expect(sb.store.restaurant_order_items ?? []).toHaveLength(0);
+      expect(sb.store.restaurant_kitchen_tickets ?? []).toHaveLength(0);
+    } finally {
+      guestComposedIds.exclude = new Set();
+    }
+  });
+
+  it("a mixed basket containing one ingredient-less item is rejected whole, never partially placed", async () => {
+    guestComposedIds.exclude = new Set([ITEM_FRIES]);
+    try {
+      const sb = makeFakeSupabase(baseRows());
+      await expect(
+        submitGuestOrder(sb, {
+          tableId: TABLE,
+          lines: [colaLine(), colaLine({ menuItemId: ITEM_FRIES, description: "Fries" })],
+          clientRequestId: "req-mixed",
+        }),
+      ).rejects.toThrow(/no longer available/);
+      expect(sb.store.restaurant_orders ?? []).toHaveLength(0);
+    } finally {
+      guestComposedIds.exclude = new Set();
+    }
   });
 });

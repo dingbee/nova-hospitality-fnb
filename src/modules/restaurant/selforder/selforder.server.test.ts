@@ -96,8 +96,10 @@ function fakeSb(rows: Record<string, any[]>) {
           return builder;
         },
         maybeSingle: async () => ({ data: filtered[0] ?? null }),
-        then: (resolve: (v: { data: any[]; error: null }) => unknown, reject: (reason: unknown) => unknown) =>
-          Promise.resolve({ data: filtered, error: null }).then(resolve, reject),
+        then: (
+          resolve: (v: { data: any[]; error: null }) => unknown,
+          reject: (reason: unknown) => unknown,
+        ) => Promise.resolve({ data: filtered, error: null }).then(resolve, reject),
       };
       return builder;
     },
@@ -365,9 +367,48 @@ describe("guestMenu", () => {
           priceConfigured: true,
         },
         { id: "item-unpriced", name: "No Price Set", available: true, priceConfigured: false },
+        { id: "item-no-ingredients", name: "Placeholder", available: true, priceConfigured: true },
       ],
     });
-    const menu = await guestMenu(fakeSb(tableRows) as any, "table-1");
+    const sb = fakeSb({
+      ...tableRows,
+      restaurant_products: [
+        { tenant_id: "tenant-1", menu_item_id: "item-ok", recipe_id: "recipe-fish", active: true },
+        {
+          tenant_id: "tenant-1",
+          menu_item_id: "item-unavailable",
+          recipe_id: "recipe-fish",
+          active: true,
+        },
+        {
+          tenant_id: "tenant-1",
+          menu_item_id: "item-unpriced",
+          recipe_id: "recipe-fish",
+          active: true,
+        },
+      ],
+      restaurant_recipes: [
+        {
+          tenant_id: "tenant-1",
+          id: "recipe-fish",
+          lineage_id: "recipe-fish",
+          version: 1,
+          status: "active",
+        },
+      ],
+      restaurant_recipe_lines: [
+        {
+          tenant_id: "tenant-1",
+          recipe_id: "recipe-fish",
+          inventory_item_id: "inv-fish",
+          sub_recipe_id: null,
+          quantity: 0.2,
+        },
+      ],
+      restaurant_recipe_components: [],
+    });
+    const menu = await guestMenu(sb as any, "table-1");
+    // Unavailable, unpriced, and ingredient-less items are all hidden from guests.
     expect(menu.items.map((i: any) => i.id)).toEqual(["item-ok"]);
   });
 
