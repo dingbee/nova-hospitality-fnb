@@ -4,8 +4,11 @@ import { ChannelIntegrationsCentre } from "@/modules/api-platform/ui/ChannelInte
 export const Route = createFileRoute("/_authenticated/admin/restaurant/integrations")({
   head: () => ({
     meta: [
-      { title: "Channel Integrations — Restaurant & Bar OS" },
-      { name: "description", content: "Connect external ordering and delivery channels to LexiBite." },
+      { title: "Integrations — Restaurant & Bar OS" },
+      {
+        name: "description",
+        content: "Connect external ordering and delivery channels to LexiBite.",
+      },
       { name: "robots", content: "noindex,nofollow" },
     ],
   }),
