@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { getRestaurantWorkspaceFn } from "../core/tenancy.functions";
@@ -111,6 +111,44 @@ function writeSelection(scope: string, propertyId: string | null) {
   notify(store);
 }
 
+type ContextProperty = { id: string; status?: string | null };
+
+/**
+ * Only an active property can be the operating context. Pending (not yet
+ * commercially activated) or inactive properties stay visible to setup
+ * screens through `properties`, but POS, bar, stock and other operational
+ * consumers must never adopt them — the database already refuses to
+ * activate outlets under a pending property.
+ */
+export function operatingProperties<T extends ContextProperty>(properties: readonly T[]): T[] {
+  return properties.filter((property) => !property.status || property.status === "active");
+}
+
+/**
+ * Resolve the active property from a restored preference. A stored id is
+ * honoured only if it is in the server-authorized, operational list; any
+ * stale, foreign-tenant, unauthorized or pending id falls back to the first
+ * operational property (or null).
+ */
+export function resolveActiveProperty<T extends ContextProperty>(
+  properties: readonly T[],
+  storedPropertyId: string | null,
+): { activeProperty: T | null; storedSelectionIsValid: boolean } {
+  const operating = operatingProperties(properties);
+  const stored = storedPropertyId
+    ? (operating.find((property) => property.id === storedPropertyId) ?? null)
+    : null;
+  return {
+    activeProperty: stored ?? operating[0] ?? null,
+    storedSelectionIsValid: stored !== null,
+  };
+}
+
+/** A selection is accepted only for an authorized, operational property. */
+export function canSelectProperty(properties: readonly ContextProperty[], propertyId: string) {
+  return operatingProperties(properties).some((property) => property.id === propertyId);
+}
+
 export function useRestaurantWorkspace(tenantId?: string) {
   const fn = useServerFn(getRestaurantWorkspaceFn);
   const query = useQuery({
@@ -134,24 +172,23 @@ export function useRestaurantWorkspace(tenantId?: string) {
     getServerSnapshot,
   );
 
-  const properties = query.data?.properties ?? [];
-  const storedSelectionIsValid = properties.some((property) => property.id === storedPropertyId);
+  const properties = useMemo(() => query.data?.properties ?? [], [query.data?.properties]);
+  const { activeProperty, storedSelectionIsValid } = resolveActiveProperty(
+    properties,
+    storedPropertyId,
+  );
 
   // Reconcile only after the server has returned the allowed property list.
   // This prevents stale/cross-tenant local storage from becoming active.
   useEffect(() => {
     if (!query.data || !resolvedTenantId) return;
     if (storedSelectionIsValid) return;
-    writeSelection(resolvedTenantId, properties[0]?.id ?? null);
-  }, [query.data, resolvedTenantId, storedSelectionIsValid, properties]);
-
-  const activeProperty = storedSelectionIsValid
-    ? properties.find((property) => property.id === storedPropertyId) ?? null
-    : properties[0] ?? null;
+    writeSelection(resolvedTenantId, activeProperty?.id ?? null);
+  }, [query.data, resolvedTenantId, storedSelectionIsValid, activeProperty?.id]);
 
   const selectProperty = useCallback(
     (propertyId: string) => {
-      if (!resolvedTenantId || !properties.some((property) => property.id === propertyId)) return;
+      if (!resolvedTenantId || !canSelectProperty(properties, propertyId)) return;
       writeSelection(resolvedTenantId, propertyId);
     },
     [resolvedTenantId, properties],
@@ -164,6 +201,7 @@ export function useRestaurantWorkspace(tenantId?: string) {
           ...query.data,
           activePropertyId: activeProperty?.id ?? null,
           activeProperty,
+          operatingProperties: operatingProperties(query.data.properties ?? []),
           selectProperty,
         }
       : query.data,
