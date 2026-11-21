@@ -146,12 +146,14 @@ export async function hasWhatsAppGuestMarketingConsent(
   admin: Db,
   tenantId: string,
   guestCustomerId: string,
+  propertyId: string,
 ): Promise<boolean> {
   const { data, error } = await admin
     .from("restaurant_guest_customer_consents")
     .select("state")
     .eq("tenant_id", tenantId)
     .eq("guest_customer_id", guestCustomerId)
+    .eq("property_id", propertyId)
     .eq("channel", "whatsapp")
     .eq("purpose", "marketing")
     .order("recorded_at", { ascending: false })
@@ -166,6 +168,7 @@ export async function getWhatsAppGuestCustomerHistory(
   admin: Db,
   tenantId: string,
   guestCustomerId: string,
+  propertyId: string,
 ): Promise<WhatsAppGuestCustomerHistory> {
   const [{ data: orders, error: orderError }, marketingConsent, loyaltyPointsBalance] =
     await Promise.all([
@@ -174,9 +177,10 @@ export async function getWhatsAppGuestCustomerHistory(
         .select("id, order_number, order_type, status, total, currency, opened_at, closed_at")
         .eq("tenant_id", tenantId)
         .eq("guest_customer_id", guestCustomerId)
+        .eq("property_id", propertyId)
         .order("opened_at", { ascending: false })
         .limit(10),
-      hasWhatsAppGuestMarketingConsent(admin, tenantId, guestCustomerId),
+      hasWhatsAppGuestMarketingConsent(admin, tenantId, guestCustomerId, propertyId),
       admin.rpc("restaurant_guest_loyalty_balance", {
         _tenant_id: tenantId,
         _guest_customer_id: guestCustomerId,

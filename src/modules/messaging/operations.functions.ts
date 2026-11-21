@@ -69,11 +69,40 @@ export const getFounderWhatsAppOverviewFn = createServerFn({ method: "POST" })
     return mod.getFounderWhatsAppOverview(context.supabase, context.userId);
   });
 
+function isValidWhatsAppTemplateBodyText(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const unmatchedPlaceholders = value.replace(/\{\{[1-9][0-9]*\}\}/g, "");
+  return (
+    value.trim().length > 0 &&
+    value.length <= 1024 &&
+    !unmatchedPlaceholders.includes("{{") &&
+    !unmatchedPlaceholders.includes("}}")
+  );
+}
+
 const templateDraftSchema = tenantFilterSchema.extend({
   templateName: z.string().regex(/^[a-z0-9_]{3,512}$/),
   language: z.string().regex(/^[a-z]{2}([_-][A-Z]{2})?$/),
   category: z.enum(["marketing", "utility", "authentication"]),
-  components: z.array(z.record(z.string(), z.unknown())).optional(),
+  components: z
+    .array(z.record(z.string(), z.unknown()))
+    .min(1)
+    .superRefine((components, context) => {
+      const bodyComponents = components.filter((component) => component.type === "BODY");
+      if (bodyComponents.length !== 1) {
+        context.addIssue({
+          code: "custom",
+          message: "Exactly one WhatsApp BODY component is required.",
+        });
+        return;
+      }
+      if (!isValidWhatsAppTemplateBodyText(bodyComponents[0].text)) {
+        context.addIssue({
+          code: "custom",
+          message: "WhatsApp BODY text must be 1–1024 characters with valid numbered placeholders.",
+        });
+      }
+    }),
 });
 
 export const createWhatsAppTemplateDraftFn = createServerFn({ method: "POST" })

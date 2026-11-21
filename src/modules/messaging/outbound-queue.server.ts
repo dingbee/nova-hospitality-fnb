@@ -125,7 +125,12 @@ export async function processPendingWhatsAppOutboundMessages(
         if (
           template.category === "marketing" &&
           (typeof guestCustomerId !== "string" ||
-            !(await hasWhatsAppGuestMarketingConsent(admin, message.tenant_id, guestCustomerId)))
+            !(await hasWhatsAppGuestMarketingConsent(
+              admin,
+              message.tenant_id,
+              guestCustomerId,
+              message.property_id,
+            )))
         ) {
           throw new CampaignDispatchBlockedError("marketing_consent_revoked");
         }
