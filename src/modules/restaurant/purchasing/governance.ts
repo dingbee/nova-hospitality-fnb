@@ -27,9 +27,18 @@ export class PurchaseOrderGovernanceError extends Error {
   }
 }
 
-/** Money precision used by the order header and line totals (numeric(14,2)). */
+/**
+ * Money precision used by the order header and line totals (numeric(14,2)),
+ * rounding half away from zero on the DECIMAL value — the same result
+ * PostgreSQL's round(numeric, 2) gives. Binary floats misplace halves
+ * (3 × 333.335 is 1000.00499… in IEEE-754), so the value is first fixed to
+ * 15 significant digits and shifted in decimal notation, never multiplied.
+ */
 export function roundMoney(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
+  if (!Number.isFinite(value)) return value;
+  const sign = value < 0 ? -1 : 1;
+  const shifted = Number(`${Math.abs(value).toPrecision(15)}e2`);
+  return (sign * Math.round(shifted)) / 100;
 }
 
 export const PRICE_EXCEPTION_MIN_REASON = 10;
@@ -154,7 +163,8 @@ export function purchaseOrderCommitmentIssues(o: PurchaseOrderCommitmentSnapshot
   for (const l of o.lines) {
     lineSum += Number(l.lineTotal);
     const label = l.description || "Line";
-    if (!(Number(l.quantity) > 0)) issues.push(`PO_LINE_INVALID — "${label}": quantity must be > 0.`);
+    if (!(Number(l.quantity) > 0))
+      issues.push(`PO_LINE_INVALID — "${label}": quantity must be > 0.`);
     if (!(Number(l.unitPrice) >= 0)) {
       issues.push(`PO_PRICE_REQUIRED — "${label}": unit price is invalid.`);
     } else if (Number(l.unitPrice) === 0) {
@@ -165,8 +175,12 @@ export function purchaseOrderCommitmentIssues(o: PurchaseOrderCommitmentSnapshot
         );
       }
     }
-    if (Math.abs(Number(l.lineTotal) - roundMoney(Number(l.quantity) * Number(l.unitPrice))) > 0.01) {
-      issues.push(`PO_TOTALS_UNRECONCILED — "${label}": line total does not equal quantity × price.`);
+    if (
+      Math.abs(Number(l.lineTotal) - roundMoney(Number(l.quantity) * Number(l.unitPrice))) > 0.01
+    ) {
+      issues.push(
+        `PO_TOTALS_UNRECONCILED — "${label}": line total does not equal quantity × price.`,
+      );
     }
   }
   if (Math.abs(Number(o.subtotal) - roundMoney(lineSum)) > 0.01) {
@@ -174,7 +188,11 @@ export function purchaseOrderCommitmentIssues(o: PurchaseOrderCommitmentSnapshot
       `PO_TOTALS_UNRECONCILED — lines sum to ${roundMoney(lineSum)} but the subtotal is ${o.subtotal}.`,
     );
   }
-  if (Math.abs(Number(o.total) - (Number(o.subtotal) + Number(o.taxTotal) - Number(o.discountTotal))) > 0.01) {
+  if (
+    Math.abs(
+      Number(o.total) - (Number(o.subtotal) + Number(o.taxTotal) - Number(o.discountTotal)),
+    ) > 0.01
+  ) {
     issues.push("PO_TOTALS_UNRECONCILED — total ≠ subtotal + tax − discount.");
   }
   return issues;

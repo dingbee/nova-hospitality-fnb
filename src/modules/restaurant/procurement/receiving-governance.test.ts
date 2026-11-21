@@ -369,7 +369,13 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
     db["restaurant_goods_receipts"] = [];
     db["restaurant_goods_receipt_items"] = [];
     db["restaurant_locations"] = [
-      { id: "loc-central", tenant_id: TENANT, property_id: null, scope: "tenant", status: "active" },
+      {
+        id: "loc-central",
+        tenant_id: TENANT,
+        property_id: null,
+        scope: "tenant",
+        status: "active",
+      },
     ];
 
     poBridgeMocks.createPurchaseOrder.mockImplementation(
@@ -386,13 +392,15 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
           property_id: null,
           location_id: input.locationId ?? "loc-central",
           subtotal: input.lines.reduce(
-            (sum: number, item: any) => sum + Math.round(item.quantity * item.unitPrice * 100) / 100,
+            (sum: number, item: any) =>
+              sum + Math.round(item.quantity * item.unitPrice * 100) / 100,
             0,
           ),
           tax_total: 0,
           discount_total: 0,
           total: input.lines.reduce(
-            (sum: number, item: any) => sum + Math.round(item.quantity * item.unitPrice * 100) / 100,
+            (sum: number, item: any) =>
+              sum + Math.round(item.quantity * item.unitPrice * 100) / 100,
             0,
           ),
           currency: input.currency,

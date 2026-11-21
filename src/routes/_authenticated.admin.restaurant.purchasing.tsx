@@ -213,7 +213,9 @@ function PurchasingPage() {
                 className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-2"
               >
                 <span className="min-w-0">
-                  <span className="block">{o.document_number ?? o.reference ?? o.id.slice(0, 8)}</span>
+                  <span className="block">
+                    {o.document_number ?? o.reference ?? o.id.slice(0, 8)}
+                  </span>
                   <span className="block text-xs text-muted-foreground">
                     {supplierName.get(o.supplier_id)?.name ?? "No supplier"}
                     {supplierName.get(o.supplier_id) &&

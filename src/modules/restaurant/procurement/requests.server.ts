@@ -384,7 +384,8 @@ export async function convertRequestToOrder(
     for (const p of (products ?? []) as any[]) {
       if (p.active === false || String(p.currency ?? "").toUpperCase() !== currency) continue;
       const price = Number(p.unit_price ?? 0);
-      if (price > 0 && !catalogue.has(p.inventory_item_id)) catalogue.set(p.inventory_item_id, price);
+      if (price > 0 && !catalogue.has(p.inventory_item_id))
+        catalogue.set(p.inventory_item_id, price);
     }
   }
 

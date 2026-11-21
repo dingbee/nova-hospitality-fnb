@@ -24,7 +24,11 @@ export const PO_SERVICE_OWNED_STATUSES: readonly PurchaseOrderStatus[] = [
 ];
 
 /** Statuses a user may request through the governed transition service. */
-export const PO_MANUAL_STATUSES: readonly PurchaseOrderStatus[] = ["submitted", "approved", "cancelled"];
+export const PO_MANUAL_STATUSES: readonly PurchaseOrderStatus[] = [
+  "submitted",
+  "approved",
+  "cancelled",
+];
 
 export const PO_TERMINAL_STATUSES: readonly PurchaseOrderStatus[] = ["received", "cancelled"];
 

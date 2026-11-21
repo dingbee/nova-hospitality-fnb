@@ -9,7 +9,14 @@ import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { EntitySheet, Field, FieldRow, QuantityField, SearchSelect, type SearchOption } from "../../ui/forms";
+import {
+  EntitySheet,
+  Field,
+  FieldRow,
+  QuantityField,
+  SearchSelect,
+  type SearchOption,
+} from "../../ui/forms";
 import { PRICE_EXCEPTION_MIN_REASON, roundMoney } from "../governance";
 
 export interface PurchaseOrderLineValue {
@@ -78,7 +85,9 @@ export function PurchaseOrderSheet({
     if (open) setValue(EMPTY);
   }, [open]);
 
-  const total = roundMoney(value.lines.reduce((s, l) => s + roundMoney(l.quantity * l.unitPrice), 0));
+  const total = roundMoney(
+    value.lines.reduce((s, l) => s + roundMoney(l.quantity * l.unitPrice), 0),
+  );
   const hasDestination = Boolean(value.locationId) || Boolean(centralStoreName);
   const valid =
     Boolean(value.supplierId) &&
@@ -132,14 +141,27 @@ export function PurchaseOrderSheet({
       </Field>
       <FieldRow>
         <Field label="Reference" hint="Optional, e.g. an internal PO number.">
-          <Input className="h-11" value={value.reference} onChange={(e) => setValue((v) => ({ ...v, reference: e.target.value }))} />
+          <Input
+            className="h-11"
+            value={value.reference}
+            onChange={(e) => setValue((v) => ({ ...v, reference: e.target.value }))}
+          />
         </Field>
         <Field label="Expected delivery">
-          <Input className="h-11" type="date" value={value.expectedAt} onChange={(e) => setValue((v) => ({ ...v, expectedAt: e.target.value }))} />
+          <Input
+            className="h-11"
+            type="date"
+            value={value.expectedAt}
+            onChange={(e) => setValue((v) => ({ ...v, expectedAt: e.target.value }))}
+          />
         </Field>
       </FieldRow>
       <Field label="Currency" required>
-        <Input className="h-11 w-32" value={value.currency} onChange={(e) => setValue((v) => ({ ...v, currency: e.target.value.toUpperCase() }))} />
+        <Input
+          className="h-11 w-32"
+          value={value.currency}
+          onChange={(e) => setValue((v) => ({ ...v, currency: e.target.value.toUpperCase() }))}
+        />
       </Field>
 
       <Field
@@ -177,7 +199,9 @@ export function PurchaseOrderSheet({
                   size="icon"
                   variant="ghost"
                   className="h-8 w-8"
-                  onClick={() => setValue((v) => ({ ...v, lines: v.lines.filter((_, i) => i !== idx) }))}
+                  onClick={() =>
+                    setValue((v) => ({ ...v, lines: v.lines.filter((_, i) => i !== idx) }))
+                  }
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
@@ -192,7 +216,13 @@ export function PurchaseOrderSheet({
                     ...s,
                     lines: s.lines.map((l, i) =>
                       i === idx
-                        ? { ...l, inventoryItemId: v, description: v ? items.find((o) => o.value === v)?.label ?? l.description : l.description }
+                        ? {
+                            ...l,
+                            inventoryItemId: v,
+                            description: v
+                              ? (items.find((o) => o.value === v)?.label ?? l.description)
+                              : l.description,
+                          }
                         : l,
                     ),
                   }))
@@ -205,7 +235,12 @@ export function PurchaseOrderSheet({
                 className="h-11"
                 value={line.description}
                 onChange={(e) =>
-                  setValue((s) => ({ ...s, lines: s.lines.map((l, i) => (i === idx ? { ...l, description: e.target.value } : l)) }))
+                  setValue((s) => ({
+                    ...s,
+                    lines: s.lines.map((l, i) =>
+                      i === idx ? { ...l, description: e.target.value } : l,
+                    ),
+                  }))
                 }
               />
             </Field>
@@ -214,7 +249,12 @@ export function PurchaseOrderSheet({
                 <QuantityField
                   value={line.quantity}
                   step={1}
-                  onChange={(n) => setValue((s) => ({ ...s, lines: s.lines.map((l, i) => (i === idx ? { ...l, quantity: n } : l)) }))}
+                  onChange={(n) =>
+                    setValue((s) => ({
+                      ...s,
+                      lines: s.lines.map((l, i) => (i === idx ? { ...l, quantity: n } : l)),
+                    }))
+                  }
                 />
               </Field>
               <Field label="Unit price" required>
@@ -222,7 +262,12 @@ export function PurchaseOrderSheet({
                   value={line.unitPrice}
                   step={100}
                   suffix={value.currency}
-                  onChange={(n) => setValue((s) => ({ ...s, lines: s.lines.map((l, i) => (i === idx ? { ...l, unitPrice: n } : l)) }))}
+                  onChange={(n) =>
+                    setValue((s) => ({
+                      ...s,
+                      lines: s.lines.map((l, i) => (i === idx ? { ...l, unitPrice: n } : l)),
+                    }))
+                  }
                 />
               </Field>
             </FieldRow>
@@ -238,7 +283,9 @@ export function PurchaseOrderSheet({
                   onChange={(e) =>
                     setValue((s) => ({
                       ...s,
-                      lines: s.lines.map((l, i) => (i === idx ? { ...l, priceExceptionReason: e.target.value } : l)),
+                      lines: s.lines.map((l, i) =>
+                        i === idx ? { ...l, priceExceptionReason: e.target.value } : l,
+                      ),
                     }))
                   }
                 />
@@ -249,7 +296,11 @@ export function PurchaseOrderSheet({
       </div>
 
       <Field label="Notes">
-        <Textarea rows={2} value={value.notes} onChange={(e) => setValue((v) => ({ ...v, notes: e.target.value }))} />
+        <Textarea
+          rows={2}
+          value={value.notes}
+          onChange={(e) => setValue((v) => ({ ...v, notes: e.target.value }))}
+        />
       </Field>
 
       <p className="text-sm text-muted-foreground">

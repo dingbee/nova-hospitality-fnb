@@ -297,7 +297,14 @@ export async function getMainStoreOverview(sb: Sb, userId: string, tenantId: str
   }));
   const performance = new Map<
     string,
-    { supplier: string; deliveries: number; onTime: number; dated: number; acceptedValue: number; openVariances: number }
+    {
+      supplier: string;
+      deliveries: number;
+      onTime: number;
+      dated: number;
+      acceptedValue: number;
+      openVariances: number;
+    }
   >();
   for (const r of (receipts ?? []) as any[]) {
     if (r.status !== "posted" || !r.supplier_id) continue;
@@ -338,7 +345,8 @@ export async function getMainStoreOverview(sb: Sb, userId: string, tenantId: str
       value: num(t.total_value),
       currency: t.currency,
       lines: lines.map((l) => {
-        const accounted = num(l.received_quantity) + num(l.rejected_quantity) + num(l.damaged_quantity);
+        const accounted =
+          num(l.received_quantity) + num(l.rejected_quantity) + num(l.damaged_quantity);
         return {
           id: l.id,
           item: itemName.get(l.inventory_item_id) ?? "Item",
@@ -382,7 +390,10 @@ export async function getMainStoreOverview(sb: Sb, userId: string, tenantId: str
   // ---- reconciliation: posted GRN value == ledger receipt value ------------
   const ledgerByReceipt = new Map<string, number>();
   for (const m of (receiptMovements ?? []) as any[]) {
-    ledgerByReceipt.set(m.reference_id, (ledgerByReceipt.get(m.reference_id) ?? 0) + num(m.total_cost));
+    ledgerByReceipt.set(
+      m.reference_id,
+      (ledgerByReceipt.get(m.reference_id) ?? 0) + num(m.total_cost),
+    );
   }
   const postedReceipts = ((receipts ?? []) as any[]).filter((r) => r.status === "posted");
   const grnValue = round2(postedReceipts.reduce((s, r) => s + num(r.accepted_value), 0));
@@ -401,7 +412,10 @@ export async function getMainStoreOverview(sb: Sb, userId: string, tenantId: str
       entityId: o.id,
     });
   }
-  for (const o of [...orderRows.filter((x) => OPEN_PO.includes(x.status) || x.status === "draft"), ...unassignedRows]) {
+  for (const o of [
+    ...orderRows.filter((x) => OPEN_PO.includes(x.status) || x.status === "draft"),
+    ...unassignedRows,
+  ]) {
     const supplier = supplierById.get(o.supplier_id);
     if (supplier && supplier.status !== "active") {
       exceptions.push({

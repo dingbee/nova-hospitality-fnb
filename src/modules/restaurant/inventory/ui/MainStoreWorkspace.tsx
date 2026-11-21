@@ -36,7 +36,11 @@ const TABS = [
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
-const SEVERITY_TONE: Record<string, StatusTone> = { high: "danger", medium: "warning", low: "info" };
+const SEVERITY_TONE: Record<string, StatusTone> = {
+  high: "danger",
+  medium: "warning",
+  low: "info",
+};
 
 export function MainStoreWorkspace() {
   const ws = useRestaurantWorkspace();
@@ -109,7 +113,9 @@ export function MainStoreWorkspace() {
             onClick={() => setTab(t.id)}
           >
             {t.label}
-            {t.id === "exceptions" && data.exceptions.length > 0 ? ` (${data.exceptions.length})` : ""}
+            {t.id === "exceptions" && data.exceptions.length > 0
+              ? ` (${data.exceptions.length})`
+              : ""}
           </Button>
         ))}
       </div>
@@ -137,9 +143,15 @@ export function MainStoreWorkspace() {
               </span>
             </div>
           </SectionCard>
-          <SectionCard title="Property allocation" description="Stock sent from the Main Store, by destination.">
+          <SectionCard
+            title="Property allocation"
+            description="Stock sent from the Main Store, by destination."
+          >
             {data.allocation.length === 0 ? (
-              <EmptyState title="No allocations yet" description="Dispatch a transfer from the Main Store to a property store." />
+              <EmptyState
+                title="No allocations yet"
+                description="Dispatch a transfer from the Main Store to a property store."
+              />
             ) : (
               <ul className="divide-y text-sm">
                 {data.allocation.map((a: any) => (
@@ -162,14 +174,21 @@ export function MainStoreWorkspace() {
           description="On hand at the Main Store from the stock ledger. Adjustments are made through the authorised adjustment workflow."
           actions={
             canAdjust ? (
-              <Link to="/admin/restaurant/inventory-control" search={{ tab: "waste" }} className="text-sm underline">
+              <Link
+                to="/admin/restaurant/inventory-control"
+                search={{ tab: "waste" }}
+                className="text-sm underline"
+              >
                 Record an authorised adjustment
               </Link>
             ) : undefined
           }
         >
           {data.stock.length === 0 ? (
-            <EmptyState title="No stock at the Main Store" description="Receive a purchase order or a transfer into the Main Store." />
+            <EmptyState
+              title="No stock at the Main Store"
+              description="Receive a purchase order or a transfer into the Main Store."
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -212,7 +231,10 @@ export function MainStoreWorkspace() {
           }
         >
           {data.incomingOrders.length === 0 ? (
-            <EmptyState title="No open orders" description="Raise a purchase order; it is delivered to the Main Store by default." />
+            <EmptyState
+              title="No open orders"
+              description="Raise a purchase order; it is delivered to the Main Store by default."
+            />
           ) : (
             <ul className="divide-y text-sm">
               {data.incomingOrders.map((o: any) => (
@@ -224,8 +246,10 @@ export function MainStoreWorkspace() {
                         {o.status === "submitted" ? "Submitted — awaiting approval" : o.status}
                       </StatusChip>
                       {o.supplier ?? "No supplier"}
-                      {o.supplierStatus && o.supplierStatus !== "active" ? ` (${o.supplierStatus})` : ""} ·{" "}
-                      {formatMoney(o.total, o.currency)}
+                      {o.supplierStatus && o.supplierStatus !== "active"
+                        ? ` (${o.supplierStatus})`
+                        : ""}{" "}
+                      · {formatMoney(o.total, o.currency)}
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -238,8 +262,9 @@ export function MainStoreWorkspace() {
                       <li key={l.id} className="flex justify-between gap-2">
                         <span>{l.description}</span>
                         <span className="text-muted-foreground">
-                          ordered {formatQuantity(l.ordered)} · received {formatQuantity(l.received)} · accepted{" "}
-                          {formatQuantity(l.accepted)} · rejected {formatQuantity(l.rejected)} · outstanding{" "}
+                          ordered {formatQuantity(l.ordered)} · received{" "}
+                          {formatQuantity(l.received)} · accepted {formatQuantity(l.accepted)} ·
+                          rejected {formatQuantity(l.rejected)} · outstanding{" "}
                           {formatQuantity(l.outstanding)}
                         </span>
                       </li>
@@ -257,13 +282,20 @@ export function MainStoreWorkspace() {
           title="Goods receiving"
           description="Supplier deliveries received at the Main Store. Accepted quantities post to the ledger once; rejected and damaged quantities never enter stock."
           actions={
-            <Link to="/admin/restaurant/procurement" search={{ tab: "receiving" }} className="text-sm underline">
+            <Link
+              to="/admin/restaurant/procurement"
+              search={{ tab: "receiving" }}
+              className="text-sm underline"
+            >
               Receive a delivery
             </Link>
           }
         >
           {data.receipts.length === 0 ? (
-            <EmptyState title="No receipts yet" description="Receive an approved order from the Procurement Centre." />
+            <EmptyState
+              title="No receipts yet"
+              description="Receive an approved order from the Procurement Centre."
+            />
           ) : (
             <ul className="divide-y text-sm">
               {data.receipts.map((r: any) => (
@@ -271,13 +303,15 @@ export function MainStoreWorkspace() {
                   <span>
                     <span className="font-medium">{r.reference}</span>
                     <span className="block text-xs text-muted-foreground">
-                      {r.supplier ?? "Supplier"} · received {r.receivedAt ? formatDateTime(r.receivedAt) : "—"} by{" "}
-                      {r.receivedBy ?? "—"}
+                      {r.supplier ?? "Supplier"} · received{" "}
+                      {r.receivedAt ? formatDateTime(r.receivedAt) : "—"} by {r.receivedBy ?? "—"}
                       {r.postedBy ? ` · posted by ${r.postedBy}` : ""}
                     </span>
                   </span>
                   <span className="flex items-center gap-2 text-xs">
-                    <StatusChip tone={r.status === "posted" ? "success" : "warning"}>{r.status}</StatusChip>
+                    <StatusChip tone={r.status === "posted" ? "success" : "warning"}>
+                      {r.status}
+                    </StatusChip>
                     {formatMoney(r.acceptedValue, r.currency)}
                   </span>
                 </li>
@@ -294,7 +328,10 @@ export function MainStoreWorkspace() {
             description="Stock dispatched to the Main Store. It is credited only when an authorised receiver verifies what arrived."
           >
             {data.incomingTransfers.length === 0 ? (
-              <EmptyState title="Nothing in transit to the Main Store" description="Transfers dispatched to the Main Store appear here." />
+              <EmptyState
+                title="Nothing in transit to the Main Store"
+                description="Transfers dispatched to the Main Store appear here."
+              />
             ) : (
               <ul className="divide-y text-sm">
                 {data.incomingTransfers.map((t: any) => (
@@ -306,22 +343,25 @@ export function MainStoreWorkspace() {
                       <StatusChip tone="warning">{t.status}</StatusChip>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Dispatched {t.dispatchedAt ? formatDateTime(t.dispatchedAt) : "—"} by {t.dispatchedBy ?? "—"}
+                      Dispatched {t.dispatchedAt ? formatDateTime(t.dispatchedAt) : "—"} by{" "}
+                      {t.dispatchedBy ?? "—"}
                     </p>
                     <ul className="text-xs">
                       {t.lines.map((l: any) => (
                         <li key={l.id} className="flex justify-between gap-2">
                           <span>{l.item}</span>
                           <span className="text-muted-foreground">
-                            dispatched {formatQuantity(l.dispatched)} · received {formatQuantity(l.received)} · rejected{" "}
-                            {formatQuantity(l.rejected)} · damaged {formatQuantity(l.damaged)} · in transit{" "}
+                            dispatched {formatQuantity(l.dispatched)} · received{" "}
+                            {formatQuantity(l.received)} · rejected {formatQuantity(l.rejected)} ·
+                            damaged {formatQuantity(l.damaged)} · in transit{" "}
                             {formatQuantity(l.inTransit)}
                           </span>
                         </li>
                       ))}
                     </ul>
-                    {canTransfer && ["dispatched", "partially_received"].includes(t.status) && (
-                      receivingTransfer === t.id ? (
+                    {canTransfer &&
+                      ["dispatched", "partially_received"].includes(t.status) &&
+                      (receivingTransfer === t.id ? (
                         <TransferReceiveForm
                           tenantId={tenantId!}
                           transferId={t.id}
@@ -341,8 +381,7 @@ export function MainStoreWorkspace() {
                         <Button size="sm" onClick={() => setReceivingTransfer(t.id)}>
                           Receive & verify
                         </Button>
-                      )
-                    )}
+                      ))}
                   </li>
                 ))}
               </ul>
@@ -352,13 +391,20 @@ export function MainStoreWorkspace() {
             title="Outgoing transfers"
             description="Allocations from the Main Store to property stores."
             actions={
-              <Link to="/admin/restaurant/inventory-control" search={{ tab: "transfers" }} className="text-sm underline">
+              <Link
+                to="/admin/restaurant/inventory-control"
+                search={{ tab: "transfers" }}
+                className="text-sm underline"
+              >
                 New transfer
               </Link>
             }
           >
             {data.outgoingTransfers.length === 0 ? (
-              <EmptyState title="No open outgoing transfers" description="Create a transfer from the Main Store to a property store." />
+              <EmptyState
+                title="No open outgoing transfers"
+                description="Create a transfer from the Main Store to a property store."
+              />
             ) : (
               <ul className="divide-y text-sm">
                 {data.outgoingTransfers.map((t: any) => (
@@ -367,8 +413,8 @@ export function MainStoreWorkspace() {
                       {t.reference} · {t.source} → {t.destination}
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      <StatusChip tone="info">{t.status}</StatusChip>{" "}
-                      in transit {formatQuantity(t.lines.reduce((s: number, l: any) => s + l.inTransit, 0))}
+                      <StatusChip tone="info">{t.status}</StatusChip> in transit{" "}
+                      {formatQuantity(t.lines.reduce((s: number, l: any) => s + l.inTransit, 0))}
                     </span>
                   </li>
                 ))}
@@ -395,9 +441,15 @@ export function MainStoreWorkspace() {
       )}
 
       {tab === "movements" && (
-        <SectionCard title="Stock movement history" description="The latest ledger entries at the Main Store.">
+        <SectionCard
+          title="Stock movement history"
+          description="The latest ledger entries at the Main Store."
+        >
           {data.movements.length === 0 ? (
-            <EmptyState title="No movements yet" description="Ledger entries at the Main Store appear here." />
+            <EmptyState
+              title="No movements yet"
+              description="Ledger entries at the Main Store appear here."
+            />
           ) : (
             <ul className="divide-y text-sm">
               {data.movements.map((m: any) => (
@@ -421,9 +473,15 @@ export function MainStoreWorkspace() {
       )}
 
       {tab === "suppliers" && (
-        <SectionCard title="Supplier delivery performance" description="Posted deliveries into the Main Store.">
+        <SectionCard
+          title="Supplier delivery performance"
+          description="Posted deliveries into the Main Store."
+        >
           {data.supplierPerformance.length === 0 ? (
-            <EmptyState title="No supplier deliveries yet" description="Posted receipts build supplier performance." />
+            <EmptyState
+              title="No supplier deliveries yet"
+              description="Posted receipts build supplier performance."
+            />
           ) : (
             <ul className="divide-y text-sm">
               {data.supplierPerformance.map((p: any) => (
@@ -431,8 +489,11 @@ export function MainStoreWorkspace() {
                   <span>{p.supplier}</span>
                   <span className="text-xs text-muted-foreground">
                     {p.deliveries} deliveries ·{" "}
-                    {p.dated > 0 ? `${Math.round((p.onTime / p.dated) * 100)}% on time` : "no expected dates"} ·{" "}
-                    {formatMoney(p.acceptedValue, currency)} accepted · {p.openVariances} open variance(s)
+                    {p.dated > 0
+                      ? `${Math.round((p.onTime / p.dated) * 100)}% on time`
+                      : "no expected dates"}{" "}
+                    · {formatMoney(p.acceptedValue, currency)} accepted · {p.openVariances} open
+                    variance(s)
                   </span>
                 </li>
               ))}
@@ -444,16 +505,24 @@ export function MainStoreWorkspace() {
       {tab === "exceptions" && (
         <SectionCard title="Exceptions & unresolved discrepancies">
           {data.exceptions.length === 0 ? (
-            <EmptyState title="No exceptions" description="Procurement, transfers and the ledger are consistent." />
+            <EmptyState
+              title="No exceptions"
+              description="Procurement, transfers and the ledger are consistent."
+            />
           ) : (
             <ul className="divide-y text-sm">
               {data.exceptions.map((e: any, i: number) => (
-                <li key={`${e.kind}:${e.entityId ?? i}:${i}`} className="flex flex-wrap items-start justify-between gap-2 py-2">
+                <li
+                  key={`${e.kind}:${e.entityId ?? i}:${i}`}
+                  className="flex flex-wrap items-start justify-between gap-2 py-2"
+                >
                   <span>
                     <span className="font-medium">{e.reference}</span>
                     <span className="block text-xs text-muted-foreground">{e.message}</span>
                   </span>
-                  <StatusChip tone={SEVERITY_TONE[e.severity] ?? "neutral"}>{e.kind.replaceAll("_", " ")}</StatusChip>
+                  <StatusChip tone={SEVERITY_TONE[e.severity] ?? "neutral"}>
+                    {e.kind.replaceAll("_", " ")}
+                  </StatusChip>
                 </li>
               ))}
             </ul>

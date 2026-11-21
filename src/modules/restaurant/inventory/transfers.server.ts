@@ -747,7 +747,10 @@ export async function closeTransfer(sb: Sb, userId: string, input: CloseTransfer
   if (!["dispatched", "partially_received"].includes(transfer.status)) {
     throw new Error(`Only an in-transit transfer can be closed (status is "${transfer.status}").`);
   }
-  if (transfer.status === "dispatched" && lines.every((l) => Number(l.received_quantity ?? 0) === 0)) {
+  if (
+    transfer.status === "dispatched" &&
+    lines.every((l) => Number(l.received_quantity ?? 0) === 0)
+  ) {
     // Closing a transfer nobody has received is a write-off of the whole
     // dispatch; it must be a separate, deliberate decision by someone other
     // than the dispatcher.
@@ -786,7 +789,8 @@ export async function closeTransfer(sb: Sb, userId: string, input: CloseTransfer
     .select("id")
     .maybeSingle();
   if (error) throw new Error(error.message);
-  if (!updated) throw new Error("The transfer changed while it was being closed — reload and retry.");
+  if (!updated)
+    throw new Error("The transfer changed while it was being closed — reload and retry.");
 
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.inventory.variance.detected",

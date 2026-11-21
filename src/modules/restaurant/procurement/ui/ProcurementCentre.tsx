@@ -554,8 +554,7 @@ function ReceivingTab({ tenantId }: { tenantId: string }) {
   const locationsFn = useServerFn(listInventoryLocationsFn);
   const storesQ = useQuery({
     queryKey: ["restaurant.inventory.locations", tenantId, "storage"],
-    queryFn: () =>
-      locationsFn({ data: { tenantId, storageOnly: true, includeInactive: false } }),
+    queryFn: () => locationsFn({ data: { tenantId, storageOnly: true, includeInactive: false } }),
   });
   const stores = (storesQ.data as any[] | undefined) ?? [];
   // Default: the tenant Main Store when one is visible to this user.

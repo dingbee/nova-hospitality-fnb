@@ -14,11 +14,7 @@
 type Sb = any;
 
 export type CentralStoreResolution =
-  | "active"
-  | "not_configured"
-  | "inactive"
-  | "invalid"
-  | "ambiguous";
+  "active" | "not_configured" | "inactive" | "invalid" | "ambiguous";
 
 export interface CentralStoreStatus {
   resolution: CentralStoreResolution;
