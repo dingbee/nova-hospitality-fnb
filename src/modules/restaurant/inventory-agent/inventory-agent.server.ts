@@ -30,10 +30,74 @@ import type { RestaurantFinding } from "../decisions/decision.types";
 type Sb = any;
 
 const INVENTORY_ACTION_TYPE = "restaurant.inventory.replenish_review";
-const INVENTORY_FINDING_KINDS = new Set([
-  "inventory_shortage",
-  "purchasing_replenishment",
-]);
+const INVENTORY_FINDING_KINDS = new Set(["inventory_shortage", "purchasing_replenishment"]);
+
+const DECISION_PAGE_SIZE = 500;
+const ACTION_ID_BATCH_SIZE = 100;
+
+type DecisionScope = { propertyId?: string; locationId?: string };
+
+/** Read every scoped decision in bounded pages; never silently drop inventory findings behind a fixed newest-50 window. */
+async function fetchTenantDecisions(
+  sb: Sb,
+  tenantId: string,
+  scope: DecisionScope,
+  columns: string,
+): Promise<any[]> {
+  const rows: any[] = [];
+  for (let offset = 0; ; offset += DECISION_PAGE_SIZE) {
+    let query = sb
+      .from("intelligence_decisions")
+      .select(columns)
+      .eq("module", "restaurant")
+      .eq("tenant_id", tenantId)
+      .order("updated_at", { ascending: false })
+      .range(offset, offset + DECISION_PAGE_SIZE - 1);
+    if (scope.propertyId) query = query.eq("property_id", scope.propertyId);
+    if (scope.locationId) query = query.eq("location_id", scope.locationId);
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    const page = (data ?? []) as any[];
+    rows.push(...page);
+    if (page.length < DECISION_PAGE_SIZE) return rows;
+  }
+}
+
+/** Bound PostgREST IN lists and propagate every query failure instead of silently losing actions. */
+async function fetchActionsForDecisionIds(
+  sb: Sb,
+  decisionIds: string[],
+  columns: string,
+  filters: { actionType?: string; status?: string; unverifiedOnly?: boolean } = {},
+): Promise<any[]> {
+  const rows: any[] = [];
+  for (let offset = 0; offset < decisionIds.length; offset += ACTION_ID_BATCH_SIZE) {
+    const batch = decisionIds.slice(offset, offset + ACTION_ID_BATCH_SIZE);
+    let query = sb
+      .from("intelligence_actions")
+      .select(columns)
+      .in("decision_id", batch)
+      .order("created_at", { ascending: true });
+    if (filters.actionType) query = query.eq("action_type", filters.actionType);
+    if (filters.status) query = query.eq("status", filters.status);
+    if (filters.unverifiedOnly) query = query.is("verified_at", null);
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    rows.push(...((data ?? []) as any[]));
+  }
+  return rows;
+}
+
+async function fetchActionsByIds(sb: Sb, actionIds: string[], columns: string): Promise<any[]> {
+  const rows: any[] = [];
+  for (let offset = 0; offset < actionIds.length; offset += ACTION_ID_BATCH_SIZE) {
+    const batch = actionIds.slice(offset, offset + ACTION_ID_BATCH_SIZE);
+    const { data, error } = await sb.from("intelligence_actions").select(columns).in("id", batch);
+    if (error) throw new Error(error.message);
+    rows.push(...((data ?? []) as any[]));
+  }
+  return rows;
+}
 
 export interface InventoryAgentRunInput {
   tenantId: string;
@@ -42,17 +106,29 @@ export interface InventoryAgentRunInput {
   locationId?: string;
 }
 
-export interface InventoryAgentActionSweepInput { tenantId: string; limit?: number; propertyId?: string; locationId?: string; }
+export interface InventoryAgentActionSweepInput {
+  tenantId: string;
+  limit?: number;
+  propertyId?: string;
+  locationId?: string;
+}
 
 type InventoryAgentFactValue = string | number | boolean | null;
 
-function serializableFacts(value: Record<string, unknown>): Record<string, InventoryAgentFactValue> {
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-    key,
-    item === null || typeof item === "string" || typeof item === "number" || typeof item === "boolean"
-      ? item
-      : JSON.stringify(item),
-  ]));
+function serializableFacts(
+  value: Record<string, unknown>,
+): Record<string, InventoryAgentFactValue> {
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      item === null ||
+      typeof item === "string" ||
+      typeof item === "number" ||
+      typeof item === "boolean"
+        ? item
+        : JSON.stringify(item),
+    ]),
+  );
 }
 
 export interface InventoryAgentRecommendation {
@@ -104,21 +180,12 @@ export async function runInventoryAgent(
     locationId: input.locationId,
   });
 
-  let decisionQuery = sb
-    .from("intelligence_decisions")
-    .select(
-      "id, decision_key, status, confidence, recommended_option_key, options, context, action_id, property_id, location_id, created_at, updated_at",
-    )
-    .eq("module", "restaurant")
-    .eq("tenant_id", input.tenantId)
-    .order("updated_at", { ascending: false })
-    .limit(50);
-
-  if (input.propertyId) decisionQuery = decisionQuery.eq("property_id", input.propertyId);
-  if (input.locationId) decisionQuery = decisionQuery.eq("location_id", input.locationId);
-
-  const { data: decisions, error: decisionError } = await decisionQuery;
-  if (decisionError) throw new Error(decisionError.message);
+  const decisions = await fetchTenantDecisions(
+    sb,
+    input.tenantId,
+    { propertyId: input.propertyId, locationId: input.locationId },
+    "id, decision_key, status, confidence, recommended_option_key, options, context, action_id, property_id, location_id, created_at, updated_at",
+  );
 
   const inventoryDecisions = ((decisions ?? []) as any[]).filter((row) => {
     const kind = row.context?.finding?.kind;
@@ -132,18 +199,11 @@ export async function runInventoryAgent(
     .map((row) => row.action_id)
     .filter((id): id is string => typeof id === "string");
 
-  const { data: actions, error: actionError } = actionIds.length
-    ? await sb
-        .from("intelligence_actions")
-        .select("id, status, verification_result")
-        .in("id", actionIds)
-    : { data: [], error: null };
+  const actions = actionIds.length
+    ? await fetchActionsByIds(sb, actionIds, "id, status, verification_result")
+    : [];
 
-  if (actionError) throw new Error(actionError.message);
-
-  const actionById = new Map<string, any>(
-    ((actions ?? []) as any[]).map((action) => [action.id, action]),
-  );
+  const actionById = new Map<string, any>(actions.map((action) => [action.id, action]));
 
   const recommendations: InventoryAgentRecommendation[] = inventoryDecisions.map((row) => {
     const finding = (row.context?.finding ?? {}) as Partial<RestaurantFinding>;
@@ -209,19 +269,14 @@ export async function executeApprovedInventoryAgentActions(
 
   const limit = Math.min(Math.max(input.limit ?? 20, 1), 50);
 
-  let decisionQuery = sb
-    .from("intelligence_decisions")
-    .select("id, decision_key, property_id, location_id")
-    .eq("module", "restaurant")
-    .eq("tenant_id", input.tenantId);
+  const decisions = await fetchTenantDecisions(
+    sb,
+    input.tenantId,
+    { propertyId: input.propertyId, locationId: input.locationId },
+    "id, decision_key, property_id, location_id",
+  );
 
-  if (input.propertyId) decisionQuery = decisionQuery.eq("property_id", input.propertyId);
-  if (input.locationId) decisionQuery = decisionQuery.eq("location_id", input.locationId);
-
-  const { data: decisions, error: decisionError } = await decisionQuery;
-  if (decisionError) throw new Error(decisionError.message);
-
-  const decisionRows = (decisions ?? []) as Array<{
+  const decisionRows = decisions as Array<{
     id: string;
     decision_key: string;
     property_id: string | null;
@@ -231,21 +286,23 @@ export async function executeApprovedInventoryAgentActions(
 
   const decisionById = new Map(decisionRows.map((row) => [row.id, row]));
 
-  const { data: actions, error: actionError } = await sb
-    .from("intelligence_actions")
-    .select("id, decision_id, action_type, status, created_at")
-    .in("decision_id", decisionRows.map((row) => row.id))
-    .eq("action_type", INVENTORY_ACTION_TYPE)
-    .order("created_at", { ascending: true });
+  const actions = await fetchActionsForDecisionIds(
+    sb,
+    decisionRows.map((row) => row.id),
+    "id, decision_id, action_type, status, created_at",
+    { actionType: INVENTORY_ACTION_TYPE },
+  );
 
-  if (actionError) throw new Error(actionError.message);
-
-  const eligible = ((actions ?? []) as Array<{
-    id: string;
-    decision_id: string;
-    action_type: string;
-    status: string;
-  }>)
+  const eligible = (
+    actions as Array<{
+      id: string;
+      decision_id: string;
+      action_type: string;
+      status: string;
+    }>
+  )
+    // Defense in depth: never trust the query filter alone to exclude other
+    // restaurant actions from an automated execution sweep.
     .filter(
       (row) =>
         row.action_type === INVENTORY_ACTION_TYPE &&
@@ -311,18 +368,13 @@ export async function verifyExecutedInventoryAgentActions(
 
   const limit = Math.min(Math.max(input.limit ?? 20, 1), 50);
 
-  let decisionQuery = sb
-    .from("intelligence_decisions")
-    .select("id, decision_key, property_id, location_id")
-    .eq("module", "restaurant")
-    .eq("tenant_id", input.tenantId);
-
-  if (input.propertyId) decisionQuery = decisionQuery.eq("property_id", input.propertyId);
-  if (input.locationId) decisionQuery = decisionQuery.eq("location_id", input.locationId);
-
-  const { data: decisions, error: decisionError } = await decisionQuery;
-  if (decisionError) throw new Error(decisionError.message);
-  const decisionRows = (decisions ?? []) as Array<{
+  const decisions = await fetchTenantDecisions(
+    sb,
+    input.tenantId,
+    { propertyId: input.propertyId, locationId: input.locationId },
+    "id, decision_key, property_id, location_id",
+  );
+  const decisionRows = decisions as Array<{
     id: string;
     decision_key: string;
     property_id: string | null;
@@ -332,23 +384,27 @@ export async function verifyExecutedInventoryAgentActions(
 
   const decisionById = new Map(decisionRows.map((row) => [row.id, row]));
 
-  const { data: actions, error: actionError } = await sb
-    .from("intelligence_actions")
-    .select("id, decision_id, action_type, status, created_at")
-    .in("decision_id", decisionRows.map((row) => row.id))
-    .eq("action_type", INVENTORY_ACTION_TYPE)
-    .eq("status", "executed")
-    .order("created_at", { ascending: true });
+  const actions = await fetchActionsForDecisionIds(
+    sb,
+    decisionRows.map((row) => row.id),
+    "id, decision_id, action_type, status, created_at, verified_at",
+    { actionType: INVENTORY_ACTION_TYPE, status: "executed", unverifiedOnly: true },
+  );
 
-  if (actionError) throw new Error(actionError.message);
-
-  const eligible = ((actions ?? []) as Array<{
-    id: string;
-    decision_id: string;
-    action_type: string;
-    status: string;
-  }>)
-    .filter((row) => row.action_type === INVENTORY_ACTION_TYPE && row.status === "executed")
+  const eligible = (
+    actions as Array<{
+      id: string;
+      decision_id: string;
+      action_type: string;
+      status: string;
+      created_at?: string;
+      verified_at?: string | null;
+    }>
+  )
+    .filter(
+      (row) =>
+        row.action_type === INVENTORY_ACTION_TYPE && row.status === "executed" && !row.verified_at,
+    )
     .slice(0, limit);
 
   const outcomes: InventoryAgentVerificationSweepResult["outcomes"] = [];
