@@ -119,8 +119,10 @@ function query(table: string) {
   };
   return api;
 }
+let fulfilmentRpcError: { message: string } | null = null;
 function rpc(name: string, args: any) {
   if (name === "restaurant_increment_po_item_fulfilment") {
+    if (fulfilmentRpcError) return Promise.resolve({ data: null, error: fulfilmentRpcError });
     const rows = db["restaurant_purchase_order_items"] ?? [];
     const row = rows.find((r) => r.id === args._po_item_id && r.tenant_id === args._tenant);
     if (row) {
@@ -147,6 +149,7 @@ const LITRE = "unit-litre";
 const KG = "unit-kg";
 
 beforeEach(() => {
+  fulfilmentRpcError = null;
   movements.length = 0;
   for (const k of Object.keys(db)) delete db[k];
   db["restaurant_inventory_units"] = [
@@ -247,5 +250,57 @@ describe("unit conversion at receiving", () => {
     // captured quantity is trusted as-is rather than the post being blocked.
     expect(movements).toHaveLength(1);
     expect(movements[0].quantity).toBe(5);
+  });
+});
+
+describe("purchase-order fulfilment is never silently dropped", () => {
+  it("fails closed and leaves the receipt un-posted when the fulfilment update errors", async () => {
+    db["restaurant_inventory_items"] = [
+      { id: "item-1", tenant_id: TENANT, unit_id: BOTTLE, purchase_unit_id: null, pack_size: 1 },
+    ];
+    db["restaurant_purchase_order_items"] = [
+      {
+        id: "po-line-1",
+        tenant_id: TENANT,
+        received_quantity: 0,
+        accepted_quantity: 0,
+        rejected_quantity: 0,
+      },
+    ];
+    const draft = await draftReceipt("item-1", BOTTLE, 5, 100);
+    for (const line of db["restaurant_goods_receipt_items"])
+      line.purchase_order_item_id = "po-line-1";
+    fulfilmentRpcError = {
+      message: "function restaurant_increment_po_item_fulfilment does not exist",
+    };
+
+    await expect(postGoodsReceipt(sb, USER, TENANT, draft.id)).rejects.toThrow(
+      /Purchase-order fulfilment could not be recorded/,
+    );
+    const receipt = db["restaurant_goods_receipts"].find((r: any) => r.id === draft.id);
+    expect(receipt?.status).not.toBe("posted");
+  });
+
+  it("records fulfilment on the PO line when the update succeeds", async () => {
+    db["restaurant_inventory_items"] = [
+      { id: "item-1", tenant_id: TENANT, unit_id: BOTTLE, purchase_unit_id: null, pack_size: 1 },
+    ];
+    db["restaurant_purchase_order_items"] = [
+      {
+        id: "po-line-1",
+        tenant_id: TENANT,
+        received_quantity: 0,
+        accepted_quantity: 0,
+        rejected_quantity: 0,
+      },
+    ];
+    const draft = await draftReceipt("item-1", BOTTLE, 5, 100);
+    for (const line of db["restaurant_goods_receipt_items"])
+      line.purchase_order_item_id = "po-line-1";
+    await postGoodsReceipt(sb, USER, TENANT, draft.id);
+    expect(db["restaurant_purchase_order_items"][0]).toMatchObject({
+      received_quantity: 5,
+      accepted_quantity: 5,
+    });
   });
 });
