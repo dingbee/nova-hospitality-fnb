@@ -554,13 +554,21 @@ export async function postGoodsReceipt(
     // both read the pre-update row, compute independently, and the second
     // UPDATE silently overwrites the first's contribution.
     if (l.purchase_order_item_id && !alreadyPosted) {
-      await sb.rpc("restaurant_increment_po_item_fulfilment", {
+      const { error: fulfilmentError } = await sb.rpc("restaurant_increment_po_item_fulfilment", {
         _tenant: tenantId,
         _po_item_id: l.purchase_order_item_id,
         _received_delta: receivedQty,
         _accepted_delta: accepted,
         _rejected_delta: rejected,
       });
+      // Fail closed: a dropped increment silently leaves the PO line showing
+      // nothing received, so replenishment keeps treating delivered goods as
+      // outstanding. The receipt is left un-posted and the error surfaces.
+      if (fulfilmentError) {
+        throw new Error(
+          `Purchase-order fulfilment could not be recorded for receipt ${receipt.document_number}: ${fulfilmentError.message}`,
+        );
+      }
     }
   }
 
