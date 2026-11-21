@@ -142,7 +142,12 @@ export async function saveRequisitionDraft(
   userId: string,
   input: SaveRequisitionDraftInput,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "requisition.create");
+  await assertCapability(sb, userId, input.tenantId, "requisition.create", {
+    locationId: input.sourceLocationId,
+  });
+  await assertCapability(sb, userId, input.tenantId, "requisition.create", {
+    locationId: input.destinationLocationId,
+  });
   if (input.sourceLocationId === input.destinationLocationId) {
     throw new Error("Source store and destination must be different locations.");
   }
@@ -281,8 +286,16 @@ export async function submitRequisition(
   userId: string,
   input: { tenantId: string; requisitionId: string },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "requisition.create");
   const { requisition } = await loadRequisition(sb, input.tenantId, input.requisitionId);
+  await assertCapability(sb, userId, input.tenantId, "requisition.create", {
+    propertyId: requisition.property_id ?? null,
+    locationId: requisition.source_location_id ?? null,
+  });
+  if (requisition.destination_location_id) {
+    await assertCapability(sb, userId, input.tenantId, "requisition.create", {
+      locationId: requisition.destination_location_id,
+    });
+  }
   if (requisition.status !== "draft") {
     throw new Error(`Requisition cannot be submitted from status "${requisition.status}".`);
   }
@@ -312,7 +325,21 @@ export async function approveRequisition(sb: Sb, userId: string, input: ApproveR
   const { requisition, lines } = await loadRequisition(sb, input.tenantId, input.requisitionId);
   await assertCapability(sb, userId, input.tenantId, "requisition.approve", {
     propertyId: requisition.property_id ?? null,
+    locationId: requisition.source_location_id ?? null,
   });
+  if (
+    requisition.destination_location_id &&
+    requisition.destination_location_id !== requisition.source_location_id
+  ) {
+    await assertCapability(sb, userId, input.tenantId, "requisition.approve", {
+      locationId: requisition.destination_location_id,
+    });
+  }
+  if (requisition.created_by === userId) {
+    throw new Error(
+      "Separation of duties — a requisition creator cannot approve or reject their own request.",
+    );
+  }
   if (!["submitted"].includes(requisition.status)) {
     throw new Error(`Requisition cannot be approved from status "${requisition.status}".`);
   }
@@ -358,7 +385,21 @@ export async function rejectRequisition(
   const { requisition } = await loadRequisition(sb, input.tenantId, input.requisitionId);
   await assertCapability(sb, userId, input.tenantId, "requisition.approve", {
     propertyId: requisition.property_id ?? null,
+    locationId: requisition.source_location_id ?? null,
   });
+  if (
+    requisition.destination_location_id &&
+    requisition.destination_location_id !== requisition.source_location_id
+  ) {
+    await assertCapability(sb, userId, input.tenantId, "requisition.approve", {
+      locationId: requisition.destination_location_id,
+    });
+  }
+  if (requisition.created_by === userId) {
+    throw new Error(
+      "Separation of duties — a requisition creator cannot reject their own request.",
+    );
+  }
   if (!["submitted"].includes(requisition.status)) {
     throw new Error(`Requisition cannot be rejected from status "${requisition.status}".`);
   }
@@ -395,8 +436,16 @@ export async function cancelRequisition(
   userId: string,
   input: { tenantId: string; requisitionId: string; reason?: string },
 ) {
-  await assertCapability(sb, userId, input.tenantId, "requisition.create");
   const { requisition } = await loadRequisition(sb, input.tenantId, input.requisitionId);
+  await assertCapability(sb, userId, input.tenantId, "requisition.create", {
+    propertyId: requisition.property_id ?? null,
+    locationId: requisition.source_location_id ?? null,
+  });
+  if (requisition.destination_location_id) {
+    await assertCapability(sb, userId, input.tenantId, "requisition.create", {
+      locationId: requisition.destination_location_id,
+    });
+  }
   if (["fulfilled", "cancelled", "rejected"].includes(requisition.status)) {
     throw new Error(`Requisition cannot be cancelled from status "${requisition.status}".`);
   }
@@ -418,7 +467,13 @@ export async function issueRequisition(sb: Sb, userId: string, input: IssueRequi
   const { requisition, lines } = await loadRequisition(sb, input.tenantId, input.requisitionId);
   await assertCapability(sb, userId, input.tenantId, "requisition.issue", {
     propertyId: requisition.property_id ?? null,
+    locationId: requisition.source_location_id ?? null,
   });
+  if (requisition.destination_location_id) {
+    await assertCapability(sb, userId, input.tenantId, "requisition.issue", {
+      locationId: requisition.destination_location_id,
+    });
+  }
   if (!["approved", "partially_issued"].includes(requisition.status)) {
     throw new Error(`Requisition cannot be issued from status "${requisition.status}".`);
   }

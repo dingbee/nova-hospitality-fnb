@@ -15,11 +15,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusChip } from "@/components/os/StatusChip";
-import { EntitySheet, Field, FieldRow, QuantityField, SearchSelect } from "@/modules/restaurant/ui/forms";
+import {
+  EntitySheet,
+  Field,
+  FieldRow,
+  QuantityField,
+  SearchSelect,
+} from "@/modules/restaurant/ui/forms";
 import { useAdminMutation } from "@/hooks/use-admin-mutation";
 import { getRestaurantPurchaseOrderDetailFn } from "@/modules/restaurant/purchasing/purchasing.functions";
 import { listRestaurantSuppliersFn } from "@/modules/restaurant/suppliers/suppliers.functions";
-import { recordRestaurantSupplierInvoiceFn, matchRestaurantSupplierInvoiceFn } from "../procurement.functions";
+import { recordRestaurantSupplierInvoiceFn } from "../procurement.functions";
 import { formatMoney } from "../lifecycle";
 
 interface Props {
@@ -46,12 +52,17 @@ interface LineState {
 let keySeed = 0;
 const nextKey = () => `line-${++keySeed}`;
 
-export function SupplierInvoiceSheet({ open, onOpenChange, tenantId, purchaseOrderId, defaultCurrency = "TZS" }: Props) {
+export function SupplierInvoiceSheet({
+  open,
+  onOpenChange,
+  tenantId,
+  purchaseOrderId,
+  defaultCurrency = "TZS",
+}: Props) {
   const qc = useQueryClient();
   const detailFn = useServerFn(getRestaurantPurchaseOrderDetailFn);
   const suppliersFn = useServerFn(listRestaurantSuppliersFn);
   const recordFn = useServerFn(recordRestaurantSupplierInvoiceFn);
-  const matchFn = useServerFn(matchRestaurantSupplierInvoiceFn);
 
   const detail = useQuery({
     queryKey: ["restaurant.purchase-order.detail", tenantId, purchaseOrderId],
@@ -87,11 +98,22 @@ export function SupplierInvoiceSheet({ open, onOpenChange, tenantId, purchaseOrd
     }
   }, [open, purchaseOrderId]);
 
+  type PurchaseOrderLine = {
+    id: string;
+    description: string;
+    accepted_quantity?: number | null;
+    quantity: number;
+    confirmed_unit_price?: number | null;
+    unit_price: number;
+  };
+  const order = d?.order;
+  const orderItems = d?.items as PurchaseOrderLine[] | undefined;
+
   React.useEffect(() => {
-    if (!open || !purchaseOrderId || !d?.order) return;
-    setSupplierId(d.order.supplier_id ?? null);
+    if (!open || !purchaseOrderId || !order) return;
+    setSupplierId(order.supplier_id ?? null);
     setLines(
-      (d.items as any[]).map((i) => {
+      (orderItems ?? []).map((i) => {
         const accepted = Number(i.accepted_quantity ?? 0);
         return {
           key: nextKey(),
@@ -106,7 +128,7 @@ export function SupplierInvoiceSheet({ open, onOpenChange, tenantId, purchaseOrd
         };
       }),
     );
-  }, [open, purchaseOrderId, d?.order?.id]);
+  }, [open, purchaseOrderId, order, orderItems]);
 
   const setLine = (key: string, patch: Partial<LineState>) =>
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -145,33 +167,44 @@ export function SupplierInvoiceSheet({ open, onOpenChange, tenantId, purchaseOrd
             })),
         },
       });
-      // Matching is a server decision; we only request it once the invoice exists.
-      if (purchaseOrderId && invoice?.id) {
-        await matchFn({ data: { tenantId, invoiceId: invoice.id } });
-      }
+      // Reconciliation is deliberately not run by the recorder. A separate
+      // authorized user performs the three-way match from the invoice list.
       return invoice;
     },
-    successMessage: "Supplier invoice recorded",
+    successMessage: "Supplier invoice recorded — independent reconciliation pending",
     loadingMessage: "Recording invoice…",
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["restaurant.procurement.invoices", tenantId] });
       void qc.invalidateQueries({ queryKey: ["restaurant.procurement.variances", tenantId] });
       void qc.invalidateQueries({ queryKey: ["restaurant.procurement.overview", tenantId] });
-      void qc.invalidateQueries({ queryKey: ["restaurant.purchase-order.detail", tenantId, purchaseOrderId] });
+      void qc.invalidateQueries({
+        queryKey: ["restaurant.purchase-order.detail", tenantId, purchaseOrderId],
+      });
       onOpenChange(false);
     },
   });
 
-  const supplierOptions = ((suppliers.data ?? []) as any[]).map((s) => ({ value: s.id, label: s.name, hint: s.code ?? undefined }));
-  const canSubmit = Boolean(supplierId) && invoiceNumber.trim().length > 0 && lines.some((l) => l.description.trim());
+  const supplierOptions = ((suppliers.data ?? []) as any[]).map((s) => ({
+    value: s.id,
+    label: s.name,
+    hint: s.code ?? undefined,
+  }));
+  const canSubmit =
+    Boolean(supplierId) &&
+    invoiceNumber.trim().length > 0 &&
+    lines.some((l) => l.description.trim());
 
   return (
     <EntitySheet
       open={open}
       onOpenChange={onOpenChange}
       wide
-      title={purchaseOrderId ? `Invoice for ${d?.order?.document_number ?? d?.order?.reference ?? "order"}` : "Record supplier invoice"}
-      description="Lines prefill from what was received. Matching runs on the server after the invoice is saved."
+      title={
+        purchaseOrderId
+          ? `Invoice for ${d?.order?.document_number ?? d?.order?.reference ?? "order"}`
+          : "Record supplier invoice"
+      }
+      description="Lines prefill from what was received. A separate authorized user must perform the three-way match after recording."
       submitLabel="Record invoice"
       pending={save.isPending}
       disabled={!canSubmit}
@@ -183,7 +216,10 @@ export function SupplierInvoiceSheet({ open, onOpenChange, tenantId, purchaseOrd
             variant="outline"
             className="h-11"
             onClick={() =>
-              setLines((prev) => [...prev, { key: nextKey(), description: "", quantity: 1, unitPrice: 0, taxAmount: 0 }])
+              setLines((prev) => [
+                ...prev,
+                { key: nextKey(), description: "", quantity: 1, unitPrice: 0, taxAmount: 0 },
+              ])
             }
           >
             <Plus className="mr-1 h-4 w-4" /> Add line
@@ -202,15 +238,30 @@ export function SupplierInvoiceSheet({ open, onOpenChange, tenantId, purchaseOrd
           />
         </Field>
         <Field label="Supplier invoice number" required>
-          <Input className="h-11" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} placeholder="e.g. INV-10233" />
+          <Input
+            className="h-11"
+            value={invoiceNumber}
+            onChange={(e) => setInvoiceNumber(e.target.value)}
+            placeholder="e.g. INV-10233"
+          />
         </Field>
       </FieldRow>
       <FieldRow>
         <Field label="Invoice date" required>
-          <Input type="date" className="h-11" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+          <Input
+            type="date"
+            className="h-11"
+            value={invoiceDate}
+            onChange={(e) => setInvoiceDate(e.target.value)}
+          />
         </Field>
         <Field label="Due date">
-          <Input type="date" className="h-11" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+          <Input
+            type="date"
+            className="h-11"
+            value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)}
+          />
         </Field>
       </FieldRow>
 
@@ -244,15 +295,27 @@ export function SupplierInvoiceSheet({ open, onOpenChange, tenantId, purchaseOrd
               </div>
               <FieldRow>
                 <Field label="Quantity">
-                  <QuantityField value={l.quantity} onChange={(v) => setLine(l.key, { quantity: v })} step={1} min={0} />
+                  <QuantityField
+                    value={l.quantity}
+                    onChange={(v) => setLine(l.key, { quantity: v })}
+                    step={1}
+                    min={0}
+                  />
                 </Field>
                 <Field label="Unit price">
-                  <QuantityField value={l.unitPrice} onChange={(v) => setLine(l.key, { unitPrice: v })} step={100} min={0} />
+                  <QuantityField
+                    value={l.unitPrice}
+                    onChange={(v) => setLine(l.key, { unitPrice: v })}
+                    step={100}
+                    min={0}
+                  />
                 </Field>
               </FieldRow>
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <span>Line {formatMoney(l.quantity * l.unitPrice, currency)}</span>
-                {l.acceptedQuantity !== undefined ? <span>· received {l.acceptedQuantity}</span> : null}
+                {l.acceptedQuantity !== undefined ? (
+                  <span>· received {l.acceptedQuantity}</span>
+                ) : null}
                 {qtyOff ? <StatusChip tone="warning">quantity vs receipt</StatusChip> : null}
                 {priceOff ? <StatusChip tone="warning">price vs order</StatusChip> : null}
               </div>

@@ -48,8 +48,22 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
     current_quantity: opts.itemQuantity,
   };
   const locations = [
-    { id: SOURCE, name: "Dry store" },
-    { id: DEST, name: "Kitchen" },
+    {
+      id: SOURCE,
+      tenant_id: TENANT,
+      property_id: "property-1",
+      scope: "property",
+      status: "active",
+      name: "Dry store",
+    },
+    {
+      id: DEST,
+      tenant_id: TENANT,
+      property_id: "property-1",
+      scope: "property",
+      status: "active",
+      name: "Kitchen",
+    },
   ];
   const transfers: Record<string, any> = {};
   const transferLines: Record<string, any> = {};
@@ -106,9 +120,12 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
         return { data: mode === "list" ? [item] : item, error: null };
       }
       if (table === "restaurant_locations" && op === "select") {
-        if (inFilters.id)
-          return { data: locations.filter((l) => inFilters.id!.includes(l.id)), error: null };
-        return { data: locations, error: null };
+        let rows = locations;
+        if (filters.id) rows = rows.filter((location) => location.id === filters.id);
+        if (filters.tenant_id)
+          rows = rows.filter((location) => location.tenant_id === filters.tenant_id);
+        if (inFilters.id) rows = rows.filter((location) => inFilters.id!.includes(location.id));
+        return { data: single ? (rows[0] ?? null) : rows, error: null };
       }
       if (table === "restaurant_members")
         return {
@@ -125,8 +142,12 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
         }
         if (op === "update") {
           const id = filters.id as string;
-          transfers[id] = { ...transfers[id], ...payload };
-          return { data: transfers[id], error: null };
+          const current = transfers[id];
+          if (filters.status !== undefined && current?.status !== filters.status) {
+            return { data: null, error: null };
+          }
+          transfers[id] = { ...current, ...payload };
+          return { data: single ? transfers[id] : [transfers[id]], error: null };
         }
         // select
         const id = filters.id as string;
@@ -148,14 +169,44 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
         }
         if (op === "update") {
           const id = filters.id as string;
-          transferLines[id] = { ...transferLines[id], ...payload };
-          return { data: null, error: null };
+          const current = transferLines[id];
+          const compareFields = [
+            "dispatched_quantity",
+            "received_quantity",
+            "rejected_quantity",
+            "damaged_quantity",
+          ];
+          if (
+            compareFields.some(
+              (field) =>
+                filters[field] !== undefined &&
+                Number(current?.[field] ?? 0) !== Number(filters[field]),
+            )
+          ) {
+            return { data: null, error: null };
+          }
+          transferLines[id] = { ...current, ...payload };
+          return { data: single ? transferLines[id] : [transferLines[id]], error: null };
         }
-        const transferId = filters.transfer_id as string;
+        const rows = Object.values(transferLines).filter((line: any) => {
+          if (filters.transfer_id && line.transfer_id !== filters.transfer_id) return false;
+          if (filters.id && line.id !== filters.id) return false;
+          if (filters.tenant_id && line.tenant_id !== filters.tenant_id) return false;
+          return true;
+        });
         return {
-          data: Object.values(transferLines).filter((l: any) => l.transfer_id === transferId),
+          data: single ? (rows[0] ?? null) : rows,
           error: null,
         };
+      }
+
+      if (table === "restaurant_stock_movements" && op === "select") {
+        if (filters.dedupe_key) {
+          const row =
+            movements.find((movement) => movement.dedupe_key === filters.dedupe_key) ?? null;
+          return { data: row, error: null };
+        }
+        return { data: single ? null : movements, error: null };
       }
 
       if (table === "restaurant_stock_movements" && op === "insert") {
@@ -200,6 +251,7 @@ function makeFakeSupabase(opts: { itemQuantity: number }) {
     movements,
     transfers,
     transferLines,
+    locations,
     onHandAt,
   };
 }
@@ -285,6 +337,80 @@ describe("stock transfer lifecycle — the exact reported P0 scenario", () => {
     } as any);
     expect(fake.transfers[created.id].status).toBe("completed");
     expect(fake.onHandAt(DEST)).toBe(10);
+  });
+
+  it("serializes simultaneous receipt retries and records one inbound movement", async () => {
+    const fake = makeFakeSupabase({ itemQuantity: 16 });
+    const created = await createTransfer(fake.supabase, USER, {
+      tenantId: TENANT,
+      sourceLocationId: SOURCE,
+      destinationLocationId: DEST,
+      requiresApproval: false,
+      submit: true,
+      lines: [{ inventoryItemId: ITEM, requestedQuantity: 15 }],
+    } as any);
+    const lineId = Object.keys(fake.transferLines)[0];
+
+    await dispatchTransfer(fake.supabase, USER, {
+      tenantId: TENANT,
+      transferId: created.id,
+      lines: [{ lineId, dispatchedQuantity: 15 }],
+    } as any);
+
+    const receive = () =>
+      receiveTransfer(fake.supabase, USER, {
+        tenantId: TENANT,
+        transferId: created.id,
+        lines: [{ lineId, receivedQuantity: 10, rejectedQuantity: 0, damagedQuantity: 0 }],
+      } as any);
+
+    const outcomes = await Promise.allSettled([receive(), receive()]);
+    expect(outcomes.some((outcome) => outcome.status === "fulfilled")).toBe(true);
+    expect(
+      fake.movements.filter((movement) => movement.dedupe_key === `transfer:in:${lineId}`),
+    ).toHaveLength(1);
+    expect(
+      fake.movements.find((movement) => movement.dedupe_key === `transfer:in:${lineId}`)?.quantity,
+    ).toBe(10);
+    expect(fake.transferLines[lineId].received_quantity).toBe(10);
+    expect(fake.transfers[created.id].status).toBe("partially_received");
+    expect(fake.item.current_quantity).toBe(11);
+  });
+
+  it("rejects a concurrent receipt retry with a different quantity without corrupting the ledger", async () => {
+    const fake = makeFakeSupabase({ itemQuantity: 16 });
+    const created = await createTransfer(fake.supabase, USER, {
+      tenantId: TENANT,
+      sourceLocationId: SOURCE,
+      destinationLocationId: DEST,
+      requiresApproval: false,
+      submit: true,
+      lines: [{ inventoryItemId: ITEM, requestedQuantity: 15 }],
+    } as any);
+    const lineId = Object.keys(fake.transferLines)[0];
+
+    await dispatchTransfer(fake.supabase, USER, {
+      tenantId: TENANT,
+      transferId: created.id,
+      lines: [{ lineId, dispatchedQuantity: 15 }],
+    } as any);
+
+    const receive = (receivedQuantity: number) =>
+      receiveTransfer(fake.supabase, USER, {
+        tenantId: TENANT,
+        transferId: created.id,
+        lines: [{ lineId, receivedQuantity, rejectedQuantity: 0, damagedQuantity: 0 }],
+      } as any);
+
+    const outcomes = await Promise.allSettled([receive(8), receive(10)]);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+    const inbound = fake.movements.find(
+      (movement) => movement.dedupe_key === `transfer:in:${lineId}`,
+    );
+    expect(inbound).toBeDefined();
+    expect(fake.transferLines[lineId].received_quantity).toBe(inbound?.quantity);
+    expect(fake.item.current_quantity).toBe(1 + Number(inbound?.quantity));
   });
 
   it("refuses a same-location transfer", async () => {
@@ -377,6 +503,59 @@ describe("stock transfer lifecycle — the exact reported P0 scenario", () => {
     expect(fake.movements).toHaveLength(1);
   });
 
+  it("serializes simultaneous dispatch retries — one ledger movement only", async () => {
+    const fake = makeFakeSupabase({ itemQuantity: 16 });
+    const created = await createTransfer(fake.supabase, USER, {
+      tenantId: TENANT,
+      sourceLocationId: SOURCE,
+      destinationLocationId: DEST,
+      requiresApproval: false,
+      submit: true,
+      lines: [{ inventoryItemId: ITEM, requestedQuantity: 15 }],
+    } as any);
+    const lineId = Object.keys(fake.transferLines)[0];
+    const attempt = () =>
+      dispatchTransfer(fake.supabase, USER, {
+        tenantId: TENANT,
+        transferId: created.id,
+        lines: [{ lineId, dispatchedQuantity: 15 }],
+      } as any);
+
+    // Both callers start from the same approved transfer snapshot. The
+    // database dedupe key and line compare-and-set must prevent double issue.
+    const outcomes = await Promise.allSettled([attempt(), attempt()]);
+    expect(outcomes.some((outcome) => outcome.status === "fulfilled")).toBe(true);
+    expect(
+      fake.movements.filter((movement) => movement.dedupe_key === `transfer:out:${lineId}`),
+    ).toHaveLength(1);
+    expect(fake.item.current_quantity).toBe(1);
+    expect(fake.transferLines[lineId].dispatched_quantity).toBe(15);
+    expect(fake.transfers[created.id].status).toBe("dispatched");
+  });
+
+  it("rejects transfer creation and dispatch when a referenced location is inactive", async () => {
+    const fake = makeFakeSupabase({ itemQuantity: 16 });
+    const created = await createTransfer(fake.supabase, USER, {
+      tenantId: TENANT,
+      sourceLocationId: SOURCE,
+      destinationLocationId: DEST,
+      requiresApproval: false,
+      submit: true,
+      lines: [{ inventoryItemId: ITEM, requestedQuantity: 5 }],
+    } as any);
+    const lineId = Object.keys(fake.transferLines)[0];
+    fake.locations.find((location) => location.id === SOURCE)!.status = "inactive";
+
+    await expect(
+      dispatchTransfer(fake.supabase, USER, {
+        tenantId: TENANT,
+        transferId: created.id,
+        lines: [{ lineId, dispatchedQuantity: 5 }],
+      } as any),
+    ).rejects.toThrow(/inactive and cannot accept new inventory transactions/i);
+    expect(fake.movements).toHaveLength(0);
+  });
+
   it("refuses an insufficient-stock dispatch unless the item allows negative stock", async () => {
     const fake = makeFakeSupabase({ itemQuantity: 5 });
     const created = await createTransfer(fake.supabase, USER, {
@@ -456,10 +635,34 @@ describe("P1 property scope — stock transfers dual-location AND/OR matrix", ()
       { tenant_id: TENANT_B, user_id: USER_B1_OWNER, role: "owner", property_id: null },
     ];
     const locations = [
-      { id: LOC_A1_STORE, property_id: PROPERTY_A1 },
-      { id: LOC_A1_KITCHEN, property_id: PROPERTY_A1 },
-      { id: LOC_A2_STORE, property_id: PROPERTY_A2 },
-      { id: LOC_B1_STORE, property_id: PROPERTY_B1 },
+      {
+        id: LOC_A1_STORE,
+        tenant_id: TENANT_A,
+        property_id: PROPERTY_A1,
+        scope: "property",
+        status: "active",
+      },
+      {
+        id: LOC_A1_KITCHEN,
+        tenant_id: TENANT_A,
+        property_id: PROPERTY_A1,
+        scope: "property",
+        status: "active",
+      },
+      {
+        id: LOC_A2_STORE,
+        tenant_id: TENANT_A,
+        property_id: PROPERTY_A2,
+        scope: "property",
+        status: "active",
+      },
+      {
+        id: LOC_B1_STORE,
+        tenant_id: TENANT_B,
+        property_id: PROPERTY_B1,
+        scope: "property",
+        status: "active",
+      },
     ];
     const item = {
       id: ITEM,
@@ -518,6 +721,7 @@ describe("P1 property scope — stock transfers dual-location AND/OR matrix", ()
           let rows = locations;
           if (inFilters.id) rows = rows.filter((l) => inFilters.id!.includes(l.id));
           if (filters.id) rows = rows.filter((l) => l.id === filters.id);
+          if (filters.tenant_id) rows = rows.filter((l) => l.tenant_id === filters.tenant_id);
           if (mode === "maybeSingle") return { data: rows[0] ?? null, error: null };
           return { data: rows, error: null };
         }
@@ -637,6 +841,24 @@ describe("P1 property scope — stock transfers dual-location AND/OR matrix", ()
     const fixture = makeScopeFixture();
     const created = await makeTransfer(fixture, USER_A_OWNER, LOC_A1_STORE, LOC_A2_STORE);
     expect(created.id).toBeDefined();
+  });
+
+  it("a transfer requester cannot approve their own approval-required transfer", async () => {
+    const fixture = makeScopeFixture();
+    const ownTransfer = await makeTransfer(
+      fixture,
+      USER_A1_MANAGER,
+      LOC_A1_STORE,
+      LOC_A1_KITCHEN,
+      true,
+    );
+    await expect(
+      approveTransfer(fixture.supabase, USER_A1_MANAGER, {
+        tenantId: TENANT_A,
+        transferId: ownTransfer.id,
+        approve: true,
+      }),
+    ).rejects.toThrow(/Separation of duties/);
   });
 
   it("A1-manager can APPROVE a transfer that touches only their own property, but is DENIED approving one reaching into Property A2", async () => {

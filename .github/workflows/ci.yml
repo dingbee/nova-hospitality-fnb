@@ -173,6 +173,16 @@ jobs:
           test "$fixture" -eq 1
           test "$bar_station" -eq 1
 
+          # P0-04: adversarially exercise tenant-composite transfer-line FKs
+          # against the fully replayed isolated PostgreSQL schema.
+          psql -X -v ON_ERROR_STOP=1 -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -f standalone/db/verification/test-p0-04-transfer-line-tenant-integrity.sql
+          psql -X -v ON_ERROR_STOP=1 -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -f standalone/db/verification/test-p0-04-cross-tenant-procurement-rls.sql
+          psql -X -v ON_ERROR_STOP=1 -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" \
+            -f standalone/db/verification/test-p0-04-security-definer-inventory.sql \
+            > p0-04-security-definer-inventory.txt
+
           psql -X -h "$NOVA_DB_HOST" -p "$NOVA_DB_PORT" -U "$NOVA_DB_SUPERUSER" -d "$NOVA_DB_NAME" -c "\\copy (SELECT filename, checksum, status, applied_at, note FROM nova_local.schema_migrations ORDER BY filename) TO STDOUT WITH CSV HEADER" > migration-replay-ledger.csv
 
           pg_container="$(docker ps -q --filter ancestor=postgres:17 | head -1)"
@@ -186,6 +196,7 @@ jobs:
           path: |
             migration-replay-ledger.csv
             migration-replay-schema.sql
+            p0-04-security-definer-inventory.txt
           if-no-files-found: error
           retention-days: 14
 

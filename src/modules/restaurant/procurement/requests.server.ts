@@ -76,7 +76,10 @@ export async function getPurchaseRequest(sb: Sb, userId: string, tenantId: strin
 }
 
 export async function savePurchaseRequest(sb: Sb, userId: string, input: SavePurchaseRequestInput) {
-  await assertCapability(sb, userId, input.tenantId, "purchase.request");
+  await assertCapability(sb, userId, input.tenantId, "purchase.request", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
 
   const estimatedTotal = input.lines.reduce(
     (s, l) => s + l.quantity * (l.estimatedUnitCost ?? 0),
@@ -206,14 +209,20 @@ export async function transitionPurchaseRequest(
   let newState = req.status as string;
 
   if (input.action === "submit") {
-    await assertCapability(sb, userId, input.tenantId, "purchase.request");
+    await assertCapability(sb, userId, input.tenantId, "purchase.request", {
+      propertyId: req.property_id ?? null,
+      locationId: req.location_id ?? null,
+    });
     if (req.status !== "draft") throw new Error("Only a draft request can be submitted.");
     newState = "submitted";
     patch.status = newState;
     patch.submitted_at = new Date().toISOString();
     patch.submitted_by = userId;
   } else if (input.action === "cancel") {
-    await assertCapability(sb, userId, input.tenantId, "purchase.request");
+    await assertCapability(sb, userId, input.tenantId, "purchase.request", {
+      propertyId: req.property_id ?? null,
+      locationId: req.location_id ?? null,
+    });
     if (["converted_to_po", "cancelled"].includes(req.status)) {
       throw new Error("This request can no longer be cancelled.");
     }

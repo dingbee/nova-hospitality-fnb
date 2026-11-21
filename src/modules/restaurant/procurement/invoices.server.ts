@@ -26,7 +26,11 @@ type Sb = any;
 const INVOICE_SELECT =
   "id, document_number, supplier_invoice_number, supplier_id, purchase_order_id, status, payment_status, match_status, matched_at, invoice_date, due_date, currency, subtotal, tax_total, total, amount_paid, attachment_url, notes, created_at";
 
-export async function listSupplierInvoices(sb: Sb, userId: string, input: z.infer<typeof listInvoicesSchema>) {
+export async function listSupplierInvoices(
+  sb: Sb,
+  userId: string,
+  input: z.infer<typeof listInvoicesSchema>,
+) {
   await assertTenantRead(sb, userId, input.tenantId);
   let q = sb
     .from("restaurant_supplier_invoices")
@@ -45,11 +49,17 @@ export async function listSupplierInvoices(sb: Sb, userId: string, input: z.infe
     .select("id, name")
     .eq("tenant_id", input.tenantId);
   const names = new Map(((suppliers ?? []) as any[]).map((s) => [s.id, s.name]));
-  return ((data ?? []) as any[]).map((i) => ({ ...i, supplier_name: names.get(i.supplier_id) ?? "—" }));
+  return ((data ?? []) as any[]).map((i) => ({
+    ...i,
+    supplier_name: names.get(i.supplier_id) ?? "—",
+  }));
 }
 
 export async function recordSupplierInvoice(sb: Sb, userId: string, input: RecordInvoiceInput) {
-  await assertCapability(sb, userId, input.tenantId, "invoice.manage");
+  await assertCapability(sb, userId, input.tenantId, "invoice.manage", {
+    propertyId: input.propertyId ?? null,
+    locationId: input.locationId ?? null,
+  });
 
   const subtotal = input.lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
   const taxTotal = input.taxTotal || input.lines.reduce((s, l) => s + (l.taxAmount ?? 0), 0);
@@ -151,28 +161,52 @@ export async function recordSupplierInvoice(sb: Sb, userId: string, input: Recor
     payload: { document_number: documentNumber, total, supplier_id: input.supplierId },
   });
 
-  const match = await matchSupplierInvoice(sb, userId, input.tenantId, invoice.id);
-  return { id: invoice.id, documentNumber, total, match };
+  // Recording and reconciling are separate duties. The recorder must not
+  // automatically perform the independent three-way match in the same call.
+  return {
+    id: invoice.id,
+    documentNumber,
+    total,
+    matchStatus: "unmatched" as const,
+    requiresIndependentReconciliation: true,
+  };
 }
 
 /** Three-way match: order vs accepted receipts vs invoice. Reports, never approves. */
-export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: string, invoiceId: string) {
-  await assertCapability(sb, userId, tenantId, "invoice.manage");
-
+export async function matchSupplierInvoice(
+  sb: Sb,
+  userId: string,
+  tenantId: string,
+  invoiceId: string,
+) {
   const { data: invoice, error } = await sb
     .from("restaurant_supplier_invoices")
     .select(
-      "id, tenant_id, supplier_id, purchase_order_id, document_number, total, currency, property_id, location_id",
+      "id, tenant_id, supplier_id, purchase_order_id, document_number, total, currency, property_id, location_id, recorded_by",
     )
     .eq("tenant_id", tenantId)
     .eq("id", invoiceId)
     .single();
   if (error || !invoice) throw new Error("Supplier invoice not found.");
+  await assertCapability(sb, userId, tenantId, "invoice.manage", {
+    propertyId: invoice.property_id ?? null,
+    locationId: invoice.location_id ?? null,
+  });
+  if (invoice.recorded_by === userId) {
+    throw new Error(
+      "Separation of duties — the user who recorded this supplier invoice cannot reconcile it.",
+    );
+  }
 
   const invoiceTotal = Number(invoice.total ?? 0);
   let orderTotal: number | null = null;
   let receivedValue: number | null = null;
-  const dimensions: Array<{ dimension: "quantity" | "price"; label: string; expected: number; actual: number }> = [];
+  const dimensions: Array<{
+    dimension: "quantity" | "price";
+    label: string;
+    expected: number;
+    actual: number;
+  }> = [];
 
   if (invoice.purchase_order_id) {
     const { data: po } = await sb
@@ -189,31 +223,35 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
       .eq("tenant_id", tenantId)
       .eq("purchase_order_id", invoice.purchase_order_id)
       .eq("status", "posted");
-    receivedValue = ((receipts ?? []) as any[]).reduce((s, r) => s + Number(r.accepted_value ?? 0), 0);
+    receivedValue = ((receipts ?? []) as any[]).reduce(
+      (s, r) => s + Number(r.accepted_value ?? 0),
+      0,
+    );
 
     // ---- line-level match: quantity and price are separate dimensions -----
-    const [{ data: invoiceLines }, { data: orderLines }, { data: receiptLines }] = await Promise.all([
-      sb
-        .from("restaurant_supplier_invoice_items")
-        .select("id, purchase_order_item_id, description, quantity, unit_price")
-        .eq("tenant_id", tenantId)
-        .eq("invoice_id", invoice.id),
-      sb
-        .from("restaurant_purchase_order_items")
-        .select("id, description, quantity, unit_price")
-        .eq("tenant_id", tenantId)
-        .eq("purchase_order_id", invoice.purchase_order_id),
-      ((receipts ?? []) as any[]).length
-        ? sb
-            .from("restaurant_goods_receipt_items")
-            .select("purchase_order_item_id, accepted_quantity")
-            .eq("tenant_id", tenantId)
-            .in(
-              "receipt_id",
-              ((receipts ?? []) as any[]).map((r) => r.id),
-            )
-        : Promise.resolve({ data: [] }),
-    ]);
+    const [{ data: invoiceLines }, { data: orderLines }, { data: receiptLines }] =
+      await Promise.all([
+        sb
+          .from("restaurant_supplier_invoice_items")
+          .select("id, purchase_order_item_id, description, quantity, unit_price")
+          .eq("tenant_id", tenantId)
+          .eq("invoice_id", invoice.id),
+        sb
+          .from("restaurant_purchase_order_items")
+          .select("id, description, quantity, unit_price")
+          .eq("tenant_id", tenantId)
+          .eq("purchase_order_id", invoice.purchase_order_id),
+        ((receipts ?? []) as any[]).length
+          ? sb
+              .from("restaurant_goods_receipt_items")
+              .select("purchase_order_item_id, accepted_quantity")
+              .eq("tenant_id", tenantId)
+              .in(
+                "receipt_id",
+                ((receipts ?? []) as any[]).map((r) => r.id),
+              )
+          : Promise.resolve({ data: [] }),
+      ]);
 
     const orderById = new Map(((orderLines ?? []) as any[]).map((o) => [o.id, o]));
     const acceptedByOrderItem = new Map<string, number>();
@@ -310,7 +348,12 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
     .update({
       match_status: matchStatus,
       matched_at: new Date().toISOString(),
-      status: matchStatus === "mismatched" ? "disputed" : matchStatus === "matched" ? "matched" : "recorded",
+      status:
+        matchStatus === "mismatched"
+          ? "disputed"
+          : matchStatus === "matched"
+            ? "matched"
+            : "recorded",
     })
     .eq("tenant_id", tenantId)
     .eq("id", invoice.id);
@@ -322,7 +365,11 @@ export async function matchSupplierInvoice(sb: Sb, userId: string, tenantId: str
     documentNumber: invoice.document_number,
     action: "matched",
     newState: matchStatus,
-    metadata: { order_total: orderTotal, received_value: receivedValue, invoice_total: invoiceTotal },
+    metadata: {
+      order_total: orderTotal,
+      received_value: receivedValue,
+      invoice_total: invoiceTotal,
+    },
   });
 
   await emitRestaurantEvent(sb, userId, {
@@ -351,24 +398,33 @@ export async function setInvoicePaymentStatus(
   userId: string,
   input: z.infer<typeof setInvoicePaymentStatusSchema>,
 ) {
-  await assertCapability(sb, userId, input.tenantId, "invoice.manage");
   const { data: before } = await sb
     .from("restaurant_supplier_invoices")
-    .select("id, payment_status, document_number, total, match_status")
+    .select(
+      "id, payment_status, document_number, total, match_status, property_id, location_id, recorded_by",
+    )
     .eq("tenant_id", input.tenantId)
     .eq("id", input.invoiceId)
     .single();
   if (!before) throw new Error("Supplier invoice not found.");
-  // Settlement is separate from matching: paying an invoice never resolves a
-  // procurement variance, and an unmatched invoice is never quietly settled.
+  const scope = {
+    propertyId: before.property_id ?? null,
+    locationId: before.location_id ?? null,
+  };
+  await assertCapability(sb, userId, input.tenantId, "invoice.manage", scope);
+
+  // Settlement is a financial decision separate from both recording and matching.
   const settling = input.paymentStatus === "paid" || input.paymentStatus === "partially_paid";
-  if (settling && before.match_status !== "matched" && !input.reason) {
+  if (settling && before.recorded_by === userId) {
+    throw new Error("Separation of duties — the invoice recorder cannot settle the same invoice.");
+  }
+  if (settling && before.match_status !== "matched" && !input.reason?.trim()) {
     throw new Error(
       `This invoice is "${before.match_status ?? "unmatched"}" — an authorised written reason is required before it can be settled.`,
     );
   }
   if (settling && before.match_status !== "matched") {
-    await assertCapability(sb, userId, input.tenantId, "variance.manage");
+    await assertCapability(sb, userId, input.tenantId, "variance.manage", scope);
   }
 
   const { data, error } = await sb
@@ -376,7 +432,8 @@ export async function setInvoicePaymentStatus(
     .update({
       payment_status: input.paymentStatus,
       amount_paid:
-        input.amountPaid ?? (input.paymentStatus === "paid" ? Number(before.total ?? 0) : undefined),
+        input.amountPaid ??
+        (input.paymentStatus === "paid" ? Number(before.total ?? 0) : undefined),
     })
     .eq("tenant_id", input.tenantId)
     .eq("id", input.invoiceId)

@@ -17,7 +17,7 @@ import {
   getTenantScope,
 } from "../core/access.server";
 import { emitRestaurantEvent } from "../events/emit.server";
-import { insertMovement } from "./movements.server";
+import { findMovementByDedupeKey, insertMovement } from "./movements.server";
 import { assertLocationInTenant, locationNameMap } from "./locations.server";
 import type {
   CreateTransferInput,
@@ -272,6 +272,17 @@ export async function approveTransfer(
     transfer.source_location_id,
     transfer.destination_location_id,
   );
+  // Maker-checker: an approval-required transfer must be approved by a
+  // different authenticated member, including when the creator holds
+  // multiple roles or the action is invoked through an agent workflow.
+  if (
+    transfer.requires_approval &&
+    (transfer.requested_by === userId || transfer.created_by === userId)
+  ) {
+    throw new Error(
+      "Separation of duties — the transfer requester cannot approve their own transfer.",
+    );
+  }
   if (!["draft", "requested"].includes(transfer.status)) {
     throw new Error(`Transfer cannot be approved from status "${transfer.status}".`);
   }
@@ -315,6 +326,12 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
     transfer.source_location_id,
     transfer.destination_location_id,
   );
+  await assertLocationInTenant(
+    sb,
+    input.tenantId,
+    transfer.source_location_id,
+    transfer.destination_location_id,
+  );
   if (!["approved", "requested"].includes(transfer.status)) {
     throw new Error(`Transfer cannot be dispatched from status "${transfer.status}".`);
   }
@@ -337,7 +354,26 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
     if (l.dispatchedQuantity > Number(line.requested_quantity)) {
       throw new Error("Dispatched quantity cannot exceed the requested quantity.");
     }
-    await insertMovement(sb, userId, {
+    const dedupeKey = `transfer:out:${line.id}`;
+    const existingDispatched = Number(line.dispatched_quantity ?? 0);
+    if (existingDispatched > 0) {
+      if (Math.abs(existingDispatched - l.dispatchedQuantity) > 1e-9) {
+        throw new Error("A dispatched transfer line cannot be retried with a different quantity.");
+      }
+      const existingMovement = await findMovementByDedupeKey(sb, input.tenantId, dedupeKey);
+      if (
+        !existingMovement ||
+        Math.abs(Number(existingMovement.quantity) + l.dispatchedQuantity) > 1e-9
+      ) {
+        throw new Error(
+          "Transfer dispatch ledger and line quantity are inconsistent; reconciliation is required.",
+        );
+      }
+      dispatchedValue += l.dispatchedQuantity * Number(line.unit_cost ?? 0);
+      continue;
+    }
+
+    const movementAttempt = await insertMovement(sb, userId, {
       tenantId: input.tenantId,
       propertyId: transfer.property_id,
       locationId: transfer.source_location_id,
@@ -356,17 +392,43 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
       correlationId: transfer.id,
       batchId: line.batch_id,
       occurredAt: stamp,
-      dedupeKey: `transfer:out:${line.id}`,
+      dedupeKey,
     });
-    dispatchedValue += l.dispatchedQuantity * Number(line.unit_cost ?? 0);
-    await sb
+    const movement =
+      movementAttempt ?? (await findMovementByDedupeKey(sb, input.tenantId, dedupeKey));
+    if (!movement || Math.abs(Number(movement.quantity) + l.dispatchedQuantity) > 1e-9) {
+      throw new Error(
+        "A prior dispatch attempt used a different quantity; ledger reconciliation is required.",
+      );
+    }
+
+    const { data: updatedLine, error: lineError } = await sb
       .from("restaurant_stock_transfer_lines")
       .update({ dispatched_quantity: l.dispatchedQuantity })
       .eq("id", line.id)
-      .eq("tenant_id", input.tenantId);
+      .eq("tenant_id", input.tenantId)
+      .eq("dispatched_quantity", existingDispatched)
+      .select("id")
+      .maybeSingle();
+    if (lineError) throw new Error(lineError.message);
+    if (!updatedLine) {
+      const { data: latestLine, error: latestError } = await sb
+        .from("restaurant_stock_transfer_lines")
+        .select("dispatched_quantity")
+        .eq("id", line.id)
+        .eq("tenant_id", input.tenantId)
+        .single();
+      if (latestError) throw new Error(latestError.message);
+      if (Math.abs(Number(latestLine?.dispatched_quantity ?? 0) - l.dispatchedQuantity) > 1e-9) {
+        throw new Error(
+          "Concurrent dispatch changed this line quantity; reconciliation is required.",
+        );
+      }
+    }
+    dispatchedValue += l.dispatchedQuantity * Number(line.unit_cost ?? 0);
   }
 
-  const { error } = await sb
+  const { data: updatedTransfer, error } = await sb
     .from("restaurant_stock_transfers")
     .update({
       status: "dispatched",
@@ -375,8 +437,25 @@ export async function dispatchTransfer(sb: Sb, userId: string, input: DispatchTr
       notes: input.notes ?? transfer.notes,
     })
     .eq("id", input.transferId)
-    .eq("tenant_id", input.tenantId);
+    .eq("tenant_id", input.tenantId)
+    .eq("status", transfer.status)
+    .select("id")
+    .maybeSingle();
   if (error) throw new Error(error.message);
+  if (!updatedTransfer) {
+    const { data: latestTransfer, error: latestError } = await sb
+      .from("restaurant_stock_transfers")
+      .select("status")
+      .eq("id", input.transferId)
+      .eq("tenant_id", input.tenantId)
+      .single();
+    if (latestError) throw new Error(latestError.message);
+    if (latestTransfer?.status !== "dispatched") {
+      throw new Error(
+        "Concurrent dispatch changed the transfer status; reconciliation is required.",
+      );
+    }
+  }
 
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.inventory.transfer.dispatched",
@@ -404,6 +483,12 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
     userId,
     input.tenantId,
     "transfer.manage",
+    transfer.source_location_id,
+    transfer.destination_location_id,
+  );
+  await assertLocationInTenant(
+    sb,
+    input.tenantId,
     transfer.source_location_id,
     transfer.destination_location_id,
   );
@@ -437,7 +522,8 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
       );
     }
     if (l.receivedQuantity > 0) {
-      await insertMovement(sb, userId, {
+      const dedupeKey = `transfer:in:${line.id}`;
+      const movementAttempt = await insertMovement(sb, userId, {
         tenantId: input.tenantId,
         propertyId: transfer.property_id,
         locationId: transfer.destination_location_id,
@@ -455,14 +541,21 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
         correlationId: transfer.id,
         batchId: line.batch_id,
         occurredAt: stamp,
-        dedupeKey: `transfer:in:${line.id}`,
+        dedupeKey,
       });
+      const movement =
+        movementAttempt ?? (await findMovementByDedupeKey(sb, input.tenantId, dedupeKey));
+      if (!movement || Math.abs(Number(movement.quantity) - l.receivedQuantity) > 1e-9) {
+        throw new Error(
+          "A prior receipt attempt used a different quantity; ledger reconciliation is required.",
+        );
+      }
     }
     const lineVariance = dispatched - total;
     variance += Math.abs(lineVariance) * Number(line.unit_cost ?? 0);
     if (total < dispatched - 1e-9) fullyReceived = false;
 
-    await sb
+    const { data: updatedLine, error: lineError } = await sb
       .from("restaurant_stock_transfer_lines")
       .update({
         received_quantity: l.receivedQuantity,
@@ -471,11 +564,35 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
         notes: l.notes ?? line.notes,
       })
       .eq("id", line.id)
-      .eq("tenant_id", input.tenantId);
+      .eq("tenant_id", input.tenantId)
+      .eq("received_quantity", Number(line.received_quantity ?? 0))
+      .eq("rejected_quantity", Number(line.rejected_quantity ?? 0))
+      .eq("damaged_quantity", Number(line.damaged_quantity ?? 0))
+      .select("id")
+      .maybeSingle();
+    if (lineError) throw new Error(lineError.message);
+    if (!updatedLine) {
+      const { data: latestLine, error: latestError } = await sb
+        .from("restaurant_stock_transfer_lines")
+        .select("received_quantity, rejected_quantity, damaged_quantity")
+        .eq("id", line.id)
+        .eq("tenant_id", input.tenantId)
+        .single();
+      if (latestError) throw new Error(latestError.message);
+      if (
+        Math.abs(Number(latestLine?.received_quantity ?? 0) - l.receivedQuantity) > 1e-9 ||
+        Math.abs(Number(latestLine?.rejected_quantity ?? 0) - l.rejectedQuantity) > 1e-9 ||
+        Math.abs(Number(latestLine?.damaged_quantity ?? 0) - l.damagedQuantity) > 1e-9
+      ) {
+        throw new Error(
+          "Concurrent receipt changed this line's quantities; reconciliation is required.",
+        );
+      }
+    }
   }
 
   const status = fullyReceived ? "completed" : "partially_received";
-  const { error } = await sb
+  const { data: updatedTransfer, error } = await sb
     .from("restaurant_stock_transfers")
     .update({
       status,
@@ -485,8 +602,25 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
       notes: input.notes ?? transfer.notes,
     })
     .eq("id", input.transferId)
-    .eq("tenant_id", input.tenantId);
+    .eq("tenant_id", input.tenantId)
+    .eq("status", transfer.status)
+    .select("id")
+    .maybeSingle();
   if (error) throw new Error(error.message);
+  if (!updatedTransfer) {
+    const { data: latestTransfer, error: latestError } = await sb
+      .from("restaurant_stock_transfers")
+      .select("status")
+      .eq("id", input.transferId)
+      .eq("tenant_id", input.tenantId)
+      .single();
+    if (latestError) throw new Error(latestError.message);
+    if (latestTransfer?.status !== status) {
+      throw new Error(
+        "Concurrent receipt changed the transfer status; reconciliation is required.",
+      );
+    }
+  }
 
   await emitRestaurantEvent(sb, userId, {
     type: "restaurant.inventory.transfer.received",

@@ -50,8 +50,26 @@ function makeFakeSupabase(opts: {
     current_quantity: opts.itemQuantity ?? 20,
   };
   const locations = [
-    { id: SOURCE, tenant_id: TENANT_A, name: "Main Store", location_type: "storage" },
-    { id: DEST, tenant_id: TENANT_A, name: "Kitchen", location_type: "kitchen" },
+    {
+      id: SOURCE,
+      tenant_id: TENANT_A,
+      property_id: null,
+      scope: "tenant",
+      status: "active",
+      is_storage: true,
+      name: "Main Store",
+      location_type: "storage",
+    },
+    {
+      id: DEST,
+      tenant_id: TENANT_A,
+      property_id: null,
+      scope: "tenant",
+      status: "active",
+      is_storage: true,
+      name: "Kitchen",
+      location_type: "kitchen",
+    },
   ];
   const members: Member[] =
     opts.members ?? ([{ tenantId: TENANT_A, userId: OWNER, role: "owner" }] as Member[]);
@@ -214,16 +232,23 @@ function makeFakeSupabase(opts: {
         }
         if (op === "update") {
           const id = filters.id as string;
-          transferLines[id] = { ...transferLines[id], ...payload };
-          return { data: null, error: null };
+          const current = transferLines[id];
+          if (
+            filters.dispatched_quantity !== undefined &&
+            Number(current?.dispatched_quantity ?? 0) !== Number(filters.dispatched_quantity)
+          ) {
+            return { data: null, error: null };
+          }
+          transferLines[id] = { ...current, ...payload };
+          return { data: single ? transferLines[id] : [transferLines[id]], error: null };
         }
-        const transferId = filters.transfer_id as string;
         const rows = Object.values(transferLines).filter(
-          (l: any) =>
-            l.transfer_id === transferId &&
-            (filters.tenant_id === undefined || l.tenant_id === filters.tenant_id),
+          (line: any) =>
+            (filters.transfer_id === undefined || line.transfer_id === filters.transfer_id) &&
+            (filters.id === undefined || line.id === filters.id) &&
+            (filters.tenant_id === undefined || line.tenant_id === filters.tenant_id),
         );
-        return { data: rows, error: null };
+        return { data: single ? (rows[0] ?? null) : rows, error: null };
       }
 
       if (table === "intelligence_memory") {
@@ -275,11 +300,13 @@ function makeFakeSupabase(opts: {
         let rows = movements.filter(
           (m) => filters.tenant_id === undefined || m.tenant_id === filters.tenant_id,
         );
+        if (filters.dedupe_key !== undefined)
+          rows = rows.filter((m) => m.dedupe_key === filters.dedupe_key);
         if (filters.reference_type !== undefined)
           rows = rows.filter((m) => m.reference_type === filters.reference_type);
         if (filters.reference_id !== undefined)
           rows = rows.filter((m) => m.reference_id === filters.reference_id);
-        return { data: rows, error: null };
+        return { data: single ? (rows[0] ?? null) : rows, error: null };
       }
 
       return { data: single ? null : [], error: null };
@@ -344,8 +371,10 @@ describe("previewNovaExecution — read-only, never writes", () => {
     expect(preview.lines).toEqual([
       expect.objectContaining({ inventoryItemId: ITEM, quantity: 3, availableQuantity: 0 }),
     ]);
-    expect(preview.sourceLocationName).toMatch(/^Main Store(?: · Property · Service outlet)?$/);
-    expect(preview.destinationLocationName).toMatch(/^Kitchen(?: · Property · Service outlet)?$/);
+    expect(preview.sourceLocationName).toContain("Main Store");
+    expect(preview.sourceLocationName).toContain("Tenant central store");
+    expect(preview.destinationLocationName).toContain("Kitchen");
+    expect(preview.destinationLocationName).toContain("Tenant central store");
     expect(fake.movements).toHaveLength(0);
     expect(fake.transfers[created.id].status).toBe("draft"); // untouched
   });
