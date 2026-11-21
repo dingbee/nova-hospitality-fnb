@@ -94,11 +94,38 @@ export async function createGoodsReceipt(sb: Sb, userId: string, input: CreateRe
     assertPurchaseOrderReceivable(data.status);
     po = data;
   }
+  // Goods for an order are received at that order's destination. A receiver
+  // cannot redirect a central-store delivery (or any other) into a location
+  // of their choosing; a different destination needs a different order.
+  if (po?.location_id && input.locationId && input.locationId !== po.location_id) {
+    throw new Error("Goods for this purchase order must be received at its destination location.");
+  }
+  if (po && !po.property_id && input.propertyId) {
+    throw new Error("A tenant-level (central store) order cannot be received into a property.");
+  }
+  // A receipt without an order still may not introduce an inactive supplier.
+  if (!po && input.supplierId) {
+    const { data: supplier } = await sb
+      .from("restaurant_suppliers")
+      .select("status, name")
+      .eq("tenant_id", input.tenantId)
+      .eq("id", input.supplierId)
+      .maybeSingle();
+    if (!supplier || supplier.status !== "active") {
+      throw new Error(
+        "PO_SUPPLIER_INACTIVE — goods cannot be received from an inactive supplier without an approved purchase order.",
+      );
+    }
+  }
   const scope = {
     propertyId: input.propertyId ?? po?.property_id ?? null,
     locationId: input.locationId ?? po?.location_id ?? null,
   };
-  await assertCapability(sb, userId, input.tenantId, "receiving.manage", scope);
+  await assertCapability(sb, userId, input.tenantId, "receiving.manage", {
+    ...scope,
+    // No property on the receipt means a tenant-level record: tenant-wide grant only.
+    tenantWide: scope.propertyId ? undefined : true,
+  });
 
   for (const l of input.lines) {
     if (l.acceptedQuantity + l.rejectedQuantity + l.damagedQuantity > l.receivedQuantity + 0.0001) {
@@ -302,6 +329,7 @@ export async function postGoodsReceipt(
   await assertCapability(sb, userId, tenantId, "receiving.manage", {
     propertyId: receipt.property_id ?? null,
     locationId: receipt.location_id ?? null,
+    tenantWide: receipt.property_id ? undefined : true,
   });
   if (receipt.status === "cancelled") throw new Error("A cancelled receipt cannot be posted.");
   if (receipt.status === "posted") {
@@ -338,6 +366,20 @@ export async function postGoodsReceipt(
     .eq("receipt_id", receipt.id);
 
   const rows = (lines ?? []) as any[];
+
+  // Accepted stock must land in a known location. Refuse the whole post
+  // before any ledger write rather than crediting an "Unassigned" balance.
+  for (const l of rows) {
+    if (
+      Number(l.accepted_quantity ?? 0) > 0 &&
+      l.inventory_item_id &&
+      !(l.storage_location_id ?? receipt.location_id)
+    ) {
+      throw new Error(
+        `"${l.description}": no receiving location — set the receipt's storage location before posting.`,
+      );
+    }
+  }
 
   // ---- unit conversion: what was captured -> what the ledger holds -------
   // A receipt line is captured in whatever unit the delivery note actually
@@ -617,7 +659,7 @@ export async function postGoodsReceipt(
     const next = resolveFulfilmentTransition(from, target);
     orderStatus = next ?? from;
     if (next) {
-      await sb
+      const { error: statusError } = await sb
         .from("restaurant_purchase_orders")
         .update({
           status: next,
@@ -627,6 +669,14 @@ export async function postGoodsReceipt(
         .eq("id", receipt.purchase_order_id)
         // Optimistic guard: only move the order we actually evaluated.
         .eq("status", from);
+      // Never report success while the order's fulfilment state silently
+      // failed to move: the stock facts are posted and idempotent, the
+      // order state needs reconciliation.
+      if (statusError) {
+        throw new Error(
+          `Receipt ${receipt.document_number} was posted, but purchase order fulfilment status could not advance (${statusError.message}). Reconciliation is required.`,
+        );
+      }
     }
   }
 

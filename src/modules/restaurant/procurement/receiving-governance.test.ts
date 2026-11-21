@@ -177,8 +177,9 @@ function seedOrder(status: string, quantity = 100) {
       status,
       currency: "TZS",
       supplier_id: "sup-1",
-      property_id: null,
-      location_id: null,
+      // 0157: an order always has a resolved destination.
+      property_id: "prop-1",
+      location_id: "loc-1",
       document_number: "PO-1",
       reference: "PO-1",
       correlation_id: "corr-1",
@@ -201,6 +202,9 @@ function seedOrder(status: string, quantity = 100) {
     },
   ];
   db["restaurant_inventory_items"] = [{ id: "inv-1", tenant_id: TENANT, track_batches: false }];
+  db["restaurant_locations"] = [
+    { id: "loc-1", tenant_id: TENANT, property_id: "prop-1", scope: "property", status: "active" },
+  ];
   db["restaurant_inventory_batches"] = [];
   db["restaurant_goods_receipts"] = [];
   db["restaurant_goods_receipt_items"] = [];
@@ -364,6 +368,9 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
     db["restaurant_inventory_batches"] = [];
     db["restaurant_goods_receipts"] = [];
     db["restaurant_goods_receipt_items"] = [];
+    db["restaurant_locations"] = [
+      { id: "loc-central", tenant_id: TENANT, property_id: null, scope: "tenant", status: "active" },
+    ];
 
     poBridgeMocks.createPurchaseOrder.mockImplementation(
       async (_sb: any, _user: string, input: any) => {
@@ -374,10 +381,18 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
           reference: input.reference,
           status: "draft",
           supplier_id: input.supplierId,
-          property_id: input.propertyId ?? null,
-          location_id: input.locationId ?? null,
+          // Mirrors the real service in central-store mode: an omitted
+          // destination resolves to the tenant Main Store.
+          property_id: null,
+          location_id: input.locationId ?? "loc-central",
+          subtotal: input.lines.reduce(
+            (sum: number, item: any) => sum + Math.round(item.quantity * item.unitPrice * 100) / 100,
+            0,
+          ),
+          tax_total: 0,
+          discount_total: 0,
           total: input.lines.reduce(
-            (sum: number, item: any) => sum + item.quantity * item.unitPrice,
+            (sum: number, item: any) => sum + Math.round(item.quantity * item.unitPrice * 100) / 100,
             0,
           ),
           currency: input.currency,
@@ -396,6 +411,7 @@ describe("IA-BRIDGE-01 persisted procurement-to-receiving closure", () => {
             description: item.description,
             quantity: item.quantity,
             unit_price: item.unitPrice,
+            line_total: Math.round(item.quantity * item.unitPrice * 100) / 100,
             received_quantity: 0,
             accepted_quantity: 0,
             rejected_quantity: 0,

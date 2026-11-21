@@ -20,6 +20,7 @@ import { emitRestaurantEvent } from "../events/emit.server";
 import { findMovementByDedupeKey, insertMovement } from "./movements.server";
 import { assertLocationInTenant, locationNameMap } from "./locations.server";
 import type {
+  CloseTransferInput,
   CreateTransferInput,
   DispatchTransferInput,
   ReceiveTransferInput,
@@ -509,20 +510,48 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
   const byId = new Map(lines.map((l) => [l.id, l]));
   const stamp = new Date().toISOString();
   let variance = 0;
-  let fullyReceived = true;
+  const seen = new Set<string>();
+  const accountedAfter = new Map<string, number>();
 
   for (const l of input.lines) {
     const line = byId.get(l.lineId);
     if (!line) throw new Error("Transfer line not found.");
+    if (seen.has(line.id)) throw new Error("A transfer line may appear only once per receipt.");
+    seen.add(line.id);
+
     const dispatched = Number(line.dispatched_quantity ?? 0);
-    const total = l.receivedQuantity + l.rejectedQuantity + l.damagedQuantity;
-    if (total > dispatched + 1e-9) {
+    const priorReceived = Number(line.received_quantity ?? 0);
+    const priorRejected = Number(line.rejected_quantity ?? 0);
+    const priorDamaged = Number(line.damaged_quantity ?? 0);
+    const priorAccounted = priorReceived + priorRejected + priorDamaged;
+    if (
+      l.expectedPriorAccounted !== undefined &&
+      Math.abs(l.expectedPriorAccounted - priorAccounted) > 1e-9
+    ) {
       throw new Error(
-        "Received, rejected and damaged quantities cannot exceed the dispatched quantity.",
+        "This transfer was received by someone else since you opened it — reload and record only what is still outstanding.",
       );
     }
+    const eventTotal = l.receivedQuantity + l.rejectedQuantity + l.damagedQuantity;
+    const outstanding = dispatched - priorAccounted;
+    if (eventTotal > outstanding + 1e-9) {
+      throw new Error(
+        `Received, rejected and damaged quantities (${eventTotal}) exceed the ${outstanding} still in transit on this line.`,
+      );
+    }
+    if (l.rejectedQuantity + l.damagedQuantity > 0 && !(l.notes ?? input.notes)?.trim()) {
+      throw new Error("A reason is required when transferred stock is rejected or damaged.");
+    }
+
     if (l.receivedQuantity > 0) {
-      const dedupeKey = `transfer:in:${line.id}`;
+      // One ledger fact per receiving event. The first event keeps the
+      // historical key so earlier single-receipt transfers stay idempotent;
+      // later events are keyed by the cumulative quantity already received,
+      // so a retried event collides with itself and never posts twice.
+      const dedupeKey =
+        priorReceived === 0
+          ? `transfer:in:${line.id}`
+          : `transfer:in:${line.id}:after:${priorReceived}`;
       const movementAttempt = await insertMovement(sb, userId, {
         tenantId: input.tenantId,
         propertyId: transfer.property_id,
@@ -551,23 +580,25 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
         );
       }
     }
-    const lineVariance = dispatched - total;
-    variance += Math.abs(lineVariance) * Number(line.unit_cost ?? 0);
-    if (total < dispatched - 1e-9) fullyReceived = false;
+
+    const nextReceived = priorReceived + l.receivedQuantity;
+    const nextRejected = priorRejected + l.rejectedQuantity;
+    const nextDamaged = priorDamaged + l.damagedQuantity;
+    variance += (l.rejectedQuantity + l.damagedQuantity) * Number(line.unit_cost ?? 0);
 
     const { data: updatedLine, error: lineError } = await sb
       .from("restaurant_stock_transfer_lines")
       .update({
-        received_quantity: l.receivedQuantity,
-        rejected_quantity: l.rejectedQuantity,
-        damaged_quantity: l.damagedQuantity,
+        received_quantity: nextReceived,
+        rejected_quantity: nextRejected,
+        damaged_quantity: nextDamaged,
         notes: l.notes ?? line.notes,
       })
       .eq("id", line.id)
       .eq("tenant_id", input.tenantId)
-      .eq("received_quantity", Number(line.received_quantity ?? 0))
-      .eq("rejected_quantity", Number(line.rejected_quantity ?? 0))
-      .eq("damaged_quantity", Number(line.damaged_quantity ?? 0))
+      .eq("received_quantity", priorReceived)
+      .eq("rejected_quantity", priorRejected)
+      .eq("damaged_quantity", priorDamaged)
       .select("id")
       .maybeSingle();
     if (lineError) throw new Error(lineError.message);
@@ -580,16 +611,30 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
         .single();
       if (latestError) throw new Error(latestError.message);
       if (
-        Math.abs(Number(latestLine?.received_quantity ?? 0) - l.receivedQuantity) > 1e-9 ||
-        Math.abs(Number(latestLine?.rejected_quantity ?? 0) - l.rejectedQuantity) > 1e-9 ||
-        Math.abs(Number(latestLine?.damaged_quantity ?? 0) - l.damagedQuantity) > 1e-9
+        Math.abs(Number(latestLine?.received_quantity ?? 0) - nextReceived) > 1e-9 ||
+        Math.abs(Number(latestLine?.rejected_quantity ?? 0) - nextRejected) > 1e-9 ||
+        Math.abs(Number(latestLine?.damaged_quantity ?? 0) - nextDamaged) > 1e-9
       ) {
         throw new Error(
           "Concurrent receipt changed this line's quantities; reconciliation is required.",
         );
       }
     }
+    accountedAfter.set(line.id, nextReceived + nextRejected + nextDamaged);
   }
+
+  // Completion is decided over EVERY line of the transfer, not just the lines
+  // named in this event: an omitted line that is still in transit keeps the
+  // transfer open.
+  const fullyReceived = lines.every((line) => {
+    const dispatched = Number(line.dispatched_quantity ?? 0);
+    const accounted =
+      accountedAfter.get(line.id) ??
+      Number(line.received_quantity ?? 0) +
+        Number(line.rejected_quantity ?? 0) +
+        Number(line.damaged_quantity ?? 0);
+    return accounted >= dispatched - 1e-9;
+  });
 
   const status = fullyReceived ? "completed" : "partially_received";
   const { data: updatedTransfer, error } = await sb
@@ -635,7 +680,7 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
       status,
       variance_value: Number(variance.toFixed(2)),
     },
-    dedupeKey: `transfer:received:${transfer.id}:${status}`,
+    dedupeKey: `transfer:received:${transfer.id}:${status}:${stamp}`,
   });
 
   // Bar mirror when the receiving location is a bar service point.
@@ -675,10 +720,92 @@ export async function receiveTransfer(sb: Sb, userId: string, input: ReceiveTran
         transfer_number: transfer.transfer_number,
         variance_value: Number(variance.toFixed(2)),
       },
-      dedupeKey: `transfer:variance:${transfer.id}`,
+      dedupeKey: `transfer:variance:${transfer.id}:${stamp}`,
     });
   }
   return { status, varianceValue: Number(variance.toFixed(2)) };
+}
+
+/**
+ * Short-close: a transfer whose remaining in-transit quantity will never
+ * arrive (lost, consumed en route, mis-dispatched) is closed with a reason by
+ * an approver. Nothing is credited to the destination; the unaccounted
+ * quantity stays visible as the line's variance and is reported as an
+ * inventory variance, so the source debit and the destination credit still
+ * reconcile line by line.
+ */
+export async function closeTransfer(sb: Sb, userId: string, input: CloseTransferInput) {
+  const { transfer, lines } = await loadTransfer(sb, input.tenantId, input.transferId);
+  await assertTransferWriteAccess(
+    sb,
+    userId,
+    input.tenantId,
+    "transfer.approve",
+    transfer.source_location_id,
+    transfer.destination_location_id,
+  );
+  if (!["dispatched", "partially_received"].includes(transfer.status)) {
+    throw new Error(`Only an in-transit transfer can be closed (status is "${transfer.status}").`);
+  }
+  if (transfer.status === "dispatched" && lines.every((l) => Number(l.received_quantity ?? 0) === 0)) {
+    // Closing a transfer nobody has received is a write-off of the whole
+    // dispatch; it must be a separate, deliberate decision by someone other
+    // than the dispatcher.
+    if (transfer.dispatched_by === userId) {
+      throw new Error(
+        "Separation of duties — the dispatcher cannot write off a transfer that was never received.",
+      );
+    }
+  }
+  const outstanding = lines.map((l) => ({
+    lineId: l.id as string,
+    inventoryItemId: l.inventory_item_id as string,
+    quantity:
+      Number(l.dispatched_quantity ?? 0) -
+      Number(l.received_quantity ?? 0) -
+      Number(l.rejected_quantity ?? 0) -
+      Number(l.damaged_quantity ?? 0),
+    unitCost: Number(l.unit_cost ?? 0),
+  }));
+  const unaccountedValue = outstanding.reduce(
+    (s, l) => s + Math.max(0, l.quantity) * l.unitCost,
+    0,
+  );
+  const stamp = new Date().toISOString();
+  const closingNote = `Closed short by ${userId} at ${stamp}: ${input.reason}`;
+  const { data: updated, error } = await sb
+    .from("restaurant_stock_transfers")
+    .update({
+      status: "completed",
+      completed_at: stamp,
+      notes: transfer.notes ? `${transfer.notes}\n${closingNote}` : closingNote,
+    })
+    .eq("id", input.transferId)
+    .eq("tenant_id", input.tenantId)
+    .eq("status", transfer.status)
+    .select("id")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!updated) throw new Error("The transfer changed while it was being closed — reload and retry.");
+
+  await emitRestaurantEvent(sb, userId, {
+    type: "restaurant.inventory.variance.detected",
+    tenantId: input.tenantId,
+    propertyId: transfer.property_id ?? undefined,
+    locationId: transfer.destination_location_id,
+    entityType: "restaurant_stock_transfer",
+    entityId: transfer.id,
+    source: "restaurant-os",
+    payload: {
+      kind: "transfer_closed_short",
+      transfer_number: transfer.transfer_number,
+      reason: input.reason,
+      variance_value: Number(unaccountedValue.toFixed(2)),
+      lines: outstanding.filter((l) => l.quantity > 1e-9),
+    },
+    dedupeKey: `transfer:closed-short:${transfer.id}`,
+  });
+  return { status: "completed" as const, unaccountedValue: Number(unaccountedValue.toFixed(2)) };
 }
 
 export async function cancelTransfer(

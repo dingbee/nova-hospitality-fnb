@@ -11,6 +11,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   approveTransferSchema,
   cancelTransferSchema,
+  closeTransferSchema,
   createReservationSchema,
   createTransferSchema,
   dispatchTransferSchema,
@@ -122,6 +123,14 @@ export const receiveStockTransferFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mod = await import("./transfers.server");
     return mod.receiveTransfer(context.supabase, context.userId, data);
+  });
+
+export const closeStockTransferFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => closeTransferSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const mod = await import("./transfers.server");
+    return mod.closeTransfer(context.supabase, context.userId, data);
   });
 
 export const cancelStockTransferFn = createServerFn({ method: "POST" })
